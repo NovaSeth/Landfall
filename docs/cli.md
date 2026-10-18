@@ -74,6 +74,7 @@ Commands:
   slots                Show the machine scheduler: calibration, load and free memory, leases with ports and DB names, FIFO queues.
   slots calibrate      Calibrate the scheduler: cores, RAM, memory method; save LOAD_MAX, FREE_MIN and per-kind max overrides.
   state unlock         Remove a lock left by a process that is gone (store and machine data); writes never take one over.
+  status               Show this repository: activation, tier, open tasks with their next step, the loop and leases; the default command.
   task done            Mark your task done; only after a passing verify for the code at HEAD (the only way to status done).
   task list            List the tasks of this repository: ID, status, kind, lane, title.
   task merge           Merge a task branch with --no-ff --no-commit, run the outcome gates on the merged tree, commit only on pass.
@@ -690,6 +691,21 @@ Options:
 
 Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
 Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
+```
+
+### `caw status [--json]`
+
+```text
+usage: caw status [--json]
+
+Show this repository: activation, tier, open tasks with their next step, the loop and leases; the default command.
+Also what the CLI prints with no command (--help prints the help). State: active (the state directory, in the
+repository or linked), declined or not active. Tier: evaluated now and never recorded (`tier` records a change).
+Tasks: each open task with the next step of the loop's step table, as `tick` would list it. Then the loop record and
+the scheduler leases of this project. At most 25 lines; --json holds every task and step. Writes nothing.
+
+Read-only.
+Exit codes: 0 OK · 1 FAIL · 7 REFUSED · 8 ENV
 ```
 
 ### `caw task done <id> [--yes] [--json]`

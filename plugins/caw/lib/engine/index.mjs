@@ -100,9 +100,10 @@ function engineMode(store) {
 }
 
 // Evaluates the tier of the resolved repository `where` (lib/state resolve) at `now` and records a change by the
-// mode. Returns { repo, active, mode, head, day, tier, name, previous, target, change, waiting, written (shadow |
+// mode; record: false (the status view) evaluates the same way and writes nothing, so a change is only reported.
+// Returns { repo, active, mode, head, day, tier, name, previous, target, change, waiting, written (shadow |
 // decision | null), decision (ID | null), reasons, signals, toggles, capabilities, detail }.
-export function evaluate(where, { names, env, now = new Date().toISOString(), thresholds = THRESHOLDS } = {}) {
+export function evaluate(where, { names, env, now = new Date().toISOString(), thresholds = THRESHOLDS, record = true } = {}) {
   const store = where.active ? open(where.dir, { names }) : null;
   const mode = engineMode(store);
   const s = readSignals(where, { names, env, now, thresholds });
@@ -120,6 +121,7 @@ export function evaluate(where, { names, env, now = new Date().toISOString(), th
     };
   };
   if (!store) return assess(NONE);
+  if (mode === 'shadow' && !record) return assess(lastShadowChange(store.readText(SHADOW_LOG) ?? ''));
   if (mode === 'shadow') {
     return store.locked(() => {
       store.assertWritable();
@@ -135,7 +137,7 @@ export function evaluate(where, { names, env, now = new Date().toISOString(), th
     });
   }
   const r = assess(lastRecordedChange(where.dir));
-  if (!r.change) return r;
+  if (!r.change || !record) return r;
   const handle = authorHandle({ store, where, names, env });
   const { why, cost } = recordBody(r, thresholds);
   const { id } = createDecision({ store, where, names, env, handle, today: s.day, input: { title: `Tier ${r.change.to} from ${r.change.from}`, why, cost, kind: 'tier', scope: [], supersedes: [] } });

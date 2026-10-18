@@ -33,6 +33,9 @@ export const GLOBAL_FLAGS = [
   { flag: '--version', alias: '-V', key: 'version', summary: 'print the version' },
 ];
 
+// What the CLI runs when no command is given (spec §8.2); `--help` prints the help instead.
+export const DEFAULT_COMMAND = 'status';
+
 // The key of a parsed flag: `--state-dir` → stateDir.
 export const flagKey = (flag) => flag.replace(/^-+/, '').replace(/-([a-z0-9])/g, (_, c) => c.toUpperCase());
 // Whether the form of `row` given by its parsed flags changes files (consent per form, from I4.1).
@@ -48,6 +51,21 @@ const DECISION_FLAGS = [
 ];
 
 const ROWS = [
+  // Views (spec §8.2, §12): lib/ui.
+  {
+    name: 'status',
+    summary: 'Show this repository: activation, tier, open tasks with their next step, the loop and leases; the default command.',
+    details: [
+      'Also what the CLI prints with no command (--help prints the help). State: active (the state directory, in the',
+      'repository or linked), declined or not active. Tier: evaluated now and never recorded (`tier` records a change).',
+      'Tasks: each open task with the next step of the loop\'s step table, as `tick` would list it. Then the loop record and',
+      'the scheduler leases of this project. At most 25 lines; --json holds every task and step. Writes nothing.',
+    ],
+    args: [],
+    flags: [],
+    exits: ['OK', 'FAIL', 'REFUSED', 'ENV'],
+    load: () => import('../ui/status.mjs').then((m) => m.status),
+  },
   {
     name: 'doctor',
     summary: 'Health report: Claude Code floor, plugin and hooks, release, state, profile, flags, context cost, permissions.',

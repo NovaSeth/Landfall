@@ -1,12 +1,13 @@
 // CLI entry (spec §8.1, §8.2): parses argv by the command table, asks for consent before a command form that
 // changes files (REV-58; per form: mutates()), runs the command and hands its result to lib/cli/output.mjs, the one
-// writer: one JSON envelope line (--json) or text.
+// writer: one JSON envelope line (--json) or text. No command (only --json, if anything) runs the default command,
+// `status` (spec §8.2); --help prints the help.
 // A StateError the command throws becomes its result here (typedResult), so no command maps them itself.
 // main() returns the exit code; the launcher sets it. Names come from lib/name.json, the version from
 // .claude-plugin/plugin.json.
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { COMMANDS, EXIT, EXIT_CODES, GLOBAL_FLAGS, flagKey, mutates } from './commands.mjs';
+import { COMMANDS, DEFAULT_COMMAND, EXIT, EXIT_CODES, GLOBAL_FLAGS, flagKey, mutates } from './commands.mjs';
 import { commandUsage, generalUsage, renderCommandHelp, renderHelp } from './help.mjs';
 import { processIo, writeHook, writeResult } from './output.mjs';
 
@@ -39,6 +40,7 @@ function split(argv, commands) {
     const parts = r.name.split(' ');
     if (parts.length <= words.length && parts.every((p, k) => p === words[k]) && (!row || parts.length > row.name.split(' ').length)) row = r;
   }
+  if (!row && tokens.length === 0 && !globals.help && !globals.version) row = commands.find((r) => r.name === DEFAULT_COMMAND) ?? null;
   return { globals, tokens, words, row };
 }
 
