@@ -11,7 +11,8 @@
 // Verify compares with the baseline committed at the anchor (the task base; the target tip for task merge) united
 // with the working file, which can only add. So a pin counts once it is committed on the target: pin there, and a
 // task based before the pin takes that commit as its base. A pin inside a task branch cannot shrink the accepted
-// inventory.
+// inventory. With a state directory outside the repository (linked) the pinned store baseline is the anchor of the
+// code its head describes: the commit pinned at and its descendants (lib/verify/run.mjs).
 import { readRecords } from '../decisions/index.mjs';
 import { emptyProfile } from '../profile/index.mjs';
 import { PATTERNS, StateError } from '../state/index.mjs';
