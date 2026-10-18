@@ -10,14 +10,16 @@
 //      report (or there is no test gate). A test gate read only by the generic scan is weak: reported, and always
 //      refused for a critical task (review r2 D4; no decision waives it). Focused tests (.only, fit) fail.
 //   5. The reference: the accepted inventory as of the anchor (the task base; the target tip for a merge; stateAt) united
-//      with the working baseline file, which can only add. The working baseline counts only while it describes the code
-//      verified: its head is the anchor or an ancestor of it or of the verified HEAD (in a merge: of the tip or the
-//      merged branch); one collected on a parallel branch (worktrees share the state) is no reference here. As of the
-//      anchor: with the state directory in the repository, the baseline committed there; with a state directory outside
-//      the repository (linked), which no commit holds and no branch writes, the store's baseline when it describes the
-//      code. Without such a baseline (r2 D5) the working baseline is accepted only when the change touches no test
-//      file, so the inventory still is the anchor's; else, or with a missing or malformed baseline at an anchor whose
-//      history has one, `baseline-unanchored`. Another collector cannot be compared. Removed and newly skipped tests need an allowance. A failing test gate is excused only when every failure it reports is pinned and the reporter
+//      with the working baseline file, which can only add. Worktrees share the state, so the working baseline is
+//      placed on the history (lineOf): it is on the line of the code verified when its head is the anchor or an
+//      ancestor of it or of the verified HEAD (in a merge: of the tip or the merged branch). In-repo state: it counts
+//      unless it lies on another live branch (a parallel worktree's verify), so where git cannot tell and after a
+//      rewritten history it still counts; the accepted inventory is the baseline committed at the anchor. A state
+//      directory outside the repository (linked), which no commit holds and no branch writes: the store's baseline is
+//      the anchor only on the line of the code; off it, or where git cannot tell, `baseline-unanchored` whatever the
+//      change touches (fail closed). Without an accepted baseline (r2 D5) the working baseline is accepted only when the
+//      change touches no test file, so the inventory still is the anchor's; else, or with a missing or malformed
+//      baseline at an anchor whose history has one, `baseline-unanchored`. Another collector cannot be compared. Removed and newly skipped tests need an allowance. A failing test gate is excused only when every failure it reports is pinned and the reporter
 //      counts no more failures than were collected; a new failure fails even when its gate exited 0.
 //   6. The route re-classified from `git diff --numstat <base>` plus untracked files, the state directory left out
 //      (the lib/router ratchet: the class only rises); the report's RED/GREEN evidence; the
@@ -158,12 +160,23 @@ export function stateAt(where, env, commit, path) {
   return { rel, path: `${rel}/${path}`, text: shown.status === 0 ? shown.stdout : null };
 }
 
-// Whether the baseline `doc` describes code that descends from `commits`: its head is one of them or an ancestor of
-// one (a baseline collected before the first commit, head null, precedes every commit).
-function describes(where, env, doc, commits) {
-  if (!doc) return false;
-  if (doc.head === null) return true;
-  return commits.some((c) => c && gitIn(where, env, ['merge-base', '--is-ancestor', doc.head, c]).status === 0);
+// Where the baseline `doc` lies relative to code that descends from `commits`: 'none' (no baseline) · 'line' (its head
+// is one of them or an ancestor of one; head null, a baseline collected before the first commit, precedes every
+// commit) · 'branch' (off the line, on another local branch) · 'off' (off the line and on no branch: a rewritten
+// history) · 'unknown' (git cannot tell: the head is no commit here, or git fails). git that cannot run throws (ENV).
+function lineOf(where, env, doc, commits) {
+  if (!doc) return 'none';
+  if (doc.head === null) return 'line';
+  let unknown = false;
+  for (const c of commits.filter(Boolean)) {
+    const r = gitIn(where, env, ['merge-base', '--is-ancestor', doc.head, c]);
+    if (r.status === 0) return 'line';
+    if (r.status !== 1) unknown = true;
+  }
+  if (unknown) return 'unknown';
+  const branches = gitIn(where, env, ['for-each-ref', '--count=1', '--contains', doc.head, '--format=%(refname)', 'refs/heads']);
+  if (branches.status !== 0) return 'unknown';
+  return branches.stdout.trim() ? 'branch' : 'off';
 }
 
 // The accepted inventory as of `commit`: { doc, problem }. In-repo state: the baseline committed there, problem
@@ -296,17 +309,21 @@ export function evaluate({ where, names, env, id, mode, handle = null, at = now(
       say('fail', 'baseline-invalid', `${stateShown}/${VERIFY_KINDS.baseline.path()} does not match its sha256: it was changed outside verify`, 'restore it from git; a new baseline needs a decision');
     }
     // the code verified descends from the anchor and HEAD (a merge: the tip and the merged branch)
-    const commits = [anchorCommit, mode === 'merge' ? merged : code.head];
-    const working = describes(where, env, current, commits) ? current : null;
+    const line = lineOf(where, env, current, [anchorCommit, mode === 'merge' ? merged : code.head]);
+    const linked = code.rel === null;
+    const working = line === 'line' || (!linked && (line === 'off' || line === 'unknown')) ? current : null;
     const anchored = anchorAt(where, env, anchorCommit, working);
     const tests = (change?.paths ?? []).filter((p) => scannerOf(p) !== null);
+    const pinHint = `merge the branch it was collected on into this one once it has landed, or pin one for this code (${names.bin} baseline pin --decision <D>), then verify again`;
     if (anchored.problem) {
       say('fail', 'baseline-unanchored', `the baseline at ${anchorCommit.slice(0, 12)} is ${anchored.problem}, though its history has one: there is no accepted inventory to compare with`, 'restore the baseline on the target branch (git), or pin one with a decision');
-    } else if (!anchored.doc && anchorCommit && tests.length && code.rel) {
+    } else if (linked && current && line !== 'line') {
+      const why = line === 'unknown' ? `git cannot tell whether the baseline in ${stateShown} (collected at ${String(current.head).slice(0, 12)}) is on the history of this code` : `the baseline in ${stateShown} was collected at ${String(current.head).slice(0, 12)}, not on the history of this code`;
+      say('fail', 'baseline-unanchored', `${why}: there is no accepted inventory to compare with`, pinHint);
+    } else if (!anchored.doc && anchorCommit && tests.length && !linked) {
       say('fail', 'baseline-unanchored', `no baseline is committed at ${anchorCommit.slice(0, 12)} and the change touches test files (${some(tests)}): the working baseline cannot be trusted`, `land the initial baseline in a task without test changes, or pin it on the target (${names.bin} baseline pin --decision <D>) and base the task on that commit`);
     } else if (!anchored.doc && anchorCommit && tests.length) {
-      const what = current ? `the baseline in ${stateShown} was collected at ${String(current.head).slice(0, 12)}, not on the history of this code` : `no baseline is recorded in ${stateShown}`;
-      say('fail', 'baseline-unanchored', `${what}, and the change touches test files (${some(tests)}): there is no accepted inventory to compare with`, `merge the branch it was collected on first, or pin one for this code (${names.bin} baseline pin --decision <D>), then verify again`);
+      say('fail', 'baseline-unanchored', `no baseline is recorded in ${stateShown} and the change touches test files (${some(tests)}): there is no accepted inventory to compare with`, `land the initial baseline in a task without test changes, or pin one (${names.bin} baseline pin --decision <D>), then verify again`);
     }
     const pinned = [anchored.doc, working].filter((b, k, all) => b && all.indexOf(b) === k);
     const other = pinned.find((b) => b.collector !== inv.collector);
