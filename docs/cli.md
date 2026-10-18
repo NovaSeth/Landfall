@@ -585,9 +585,9 @@ whole micro-dollars (costMicroUsd); durations in milliseconds. --task saves rece
 repository (unchanged: no write; never fewer tokens than the saved one); an inactive one only prints.
 Something unreadable or unpriced: exit 1 with the numbers found (data.receipt.partial).
 --loop: every request and external run of the repository since the loop started (until its exit), as its cost cap
-counts them; no loop record: exit 1. --since: the saved receipts that ended on or after the day (UTC) and the run
-records no saved receipt lists, per task class or per executor (agent type, provider). --loop and --since write
-nothing (data.partial when something could not be read).
+counts them; no loop record: exit 1. --since: the saved receipts that ended on or after the day (UTC), their runs
+from the current run records, and the other runs that did not end before it, per task class or per executor (agent
+type, provider). --loop and --since write nothing (exit 1 with data.partial when a number is a lower bound).
 
 Options:
   --task <id>            the task, such as T-AB-1
