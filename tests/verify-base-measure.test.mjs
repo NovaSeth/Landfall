@@ -122,13 +122,14 @@ for (const linked of [true, false]) {
     assert.equal(va.code, 0, show(va));
     const vb = await p.run(['verify', b, '--yes']);
     assert.equal(vb.code, 0, `B after A: ${show(vb)}`);
-    const again = await p.run(['verify', a, '--yes'], 'wt');
-    assert.equal(again.code, 0, `A after B: ${show(again)}`);
     p.commit('wt', 'a.test.mjs', null);
     const shrunk = await p.run(['verify', a, '--yes'], 'wt');
     assert.equal(shrunk.code, 1, show(shrunk));
     assert.deepEqual(codes(shrunk), ['baseline-shrunk'], show(shrunk));
     assert.match(shrunk.out.errors[0].message, /"x"/, show(shrunk));
+    p.commit('wt', 'a.test.mjs', `${HEADER}${TEST('x')}`);
+    const again = await p.run(['verify', a, '--yes'], 'wt');
+    assert.equal(again.code, 0, `A after B: ${show(again)}`);
     p.noTempWorktree();
   });
 }

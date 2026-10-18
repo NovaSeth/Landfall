@@ -67,7 +67,8 @@ export const VERIFY_KINDS = Object.freeze({
       }, 100),
       inventory: {
         t: 'obj',
-        f: { collector: str(80, { re: /^(?:none|[a-z][a-z0-9-]*(?:\+[a-z][a-z0-9-]*)*)$/ }), total: count, added: many(testId), removed: many(testId), newlySkipped: many(testId), allowedBy: many(str(LIMITS.token, { re: PATTERNS.decisionId }), 10000), weak: bool },
+        f: { collector: str(80, { re: /^(?:none|[a-z][a-z0-9-]*(?:\+[a-z][a-z0-9-]*)*)$/ }), total: count, added: many(testId), removed: many(testId), newlySkipped: many(testId), allowedBy: many(str(LIMITS.token, { re: PATTERNS.decisionId }), 10000), weak: bool, tests: many({ t: 'obj', f: { id: testId, file: str(LIMITS.path), skipped: bool } }) },
+        opt: ['tests'],
       },
       failures: { t: 'obj', f: { preexisting: many(fingerprint, 100000), new: many(fingerprint, 100000) } },
       route: { t: 'obj', f: { declared: cls, actual: cls, escalated: bool, missingSteps: many(str(40, { re: PATTERNS.kebab }), 20) } },

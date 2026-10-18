@@ -47,6 +47,7 @@ import { PROFILE_KINDS, emptyProfile, listFiles, observe } from '../profile/inde
 import { MAX_PATHS, addedSteps, applyClass, classify, rank, recordedKeys, routeFor, routeTask } from '../router/index.mjs';
 import { KINDS, StateError, check, open, resolve } from '../state/index.mjs';
 import { readReport, reportHasEvidence, reviewNeed, reviewState } from './artifacts.mjs';
+import { measureAt } from './base.mjs';
 import { baselineSha, compareInventory, excusable, fingerprint, referenceOf, splitFailures } from './baseline.mjs';
 import { runGate, tailLines } from './gates.mjs';
 import { byCodeUnit, hashOf } from './inventory.mjs';
@@ -314,18 +315,21 @@ export function evaluate({ where, names, env, id, mode, handle = null, at = now(
     const working = line === 'line' || (!linked && (line === 'off' || line === 'unknown')) ? current : null;
     const anchored = anchorAt(where, env, anchorCommit, working);
     const tests = (change?.paths ?? []).filter((p) => scannerOf(p) !== null);
-    const pinHint = `merge the branch it was collected on into this one once it has landed, or pin one for this code (${names.bin} baseline pin --decision <D>), then verify again`;
+    // No stored baseline describes the anchor (linked: none, or off the line; in-repo: none committed there and the
+    // change touches tests): the reference is measured at the anchor itself.
+    const measure = !anchored.problem && anchorCommit && (linked ? line !== 'line' : !anchored.doc && tests.length > 0);
+    let measured = null;
     if (anchored.problem) {
       say('fail', 'baseline-unanchored', `the baseline at ${anchorCommit.slice(0, 12)} is ${anchored.problem}, though its history has one: there is no accepted inventory to compare with`, 'restore the baseline on the target branch (git), or pin one with a decision');
-    } else if (linked && current && line !== 'line') {
-      const why = line === 'unknown' ? `git cannot tell whether the baseline in ${stateShown} (collected at ${String(current.head).slice(0, 12)}) is on the history of this code` : `the baseline in ${stateShown} was collected at ${String(current.head).slice(0, 12)}, not on the history of this code`;
-      say('fail', 'baseline-unanchored', `${why}: there is no accepted inventory to compare with`, pinHint);
-    } else if (!anchored.doc && anchorCommit && tests.length && !linked) {
-      say('fail', 'baseline-unanchored', `no baseline is committed at ${anchorCommit.slice(0, 12)} and the change touches test files (${some(tests)}): the working baseline cannot be trusted`, `land the initial baseline in a task without test changes, or pin it on the target (${names.bin} baseline pin --decision <D>) and base the task on that commit`);
-    } else if (!anchored.doc && anchorCommit && tests.length) {
-      say('fail', 'baseline-unanchored', `no baseline is recorded in ${stateShown} and the change touches test files (${some(tests)}): there is no accepted inventory to compare with`, `land the initial baseline in a task without test changes, or pin one (${names.bin} baseline pin --decision <D>), then verify again`);
+    } else if (measure) {
+      const m = measureAt({ where, env, commit: anchorCommit, gates: profile.gates, gitIn, inventory: (runs, dir) => inventoryOf(runs, context({ ...where, worktree: dir }, env, code.rel)) });
+      if (m.error) say('error', 'base-gate-error', `${m.error}: there is no reference to compare with`, 'make the gates run at the base (install what they run), or pin a baseline (' + names.bin + ' baseline pin --decision <D>), then verify again');
+      measured = m.doc;
     }
-    const pinned = [anchored.doc, working].filter((b, k, all) => b && all.indexOf(b) === k);
+    // The task's own last passing verify: a test it verified and later removes is removed, whatever replaced the baseline.
+    const last = store.read('verify', id);
+    const own = last?.result === 'pass' && last.inventory.tests ? { collector: last.inventory.collector, tests: last.inventory.tests, failing: last.failures.preexisting } : null;
+    const pinned = [measure ? measured : anchored.doc, working, own].filter((b, k, all) => b && all.indexOf(b) === k);
     const other = pinned.find((b) => b.collector !== inv.collector);
     let reference = { tests: [], failing: [] };
     let cmp = { added: inv.tests.map((t) => t.id), removed: [], newlySkipped: [], allowedBy: [], unallowed: [] };
@@ -352,7 +356,7 @@ export function evaluate({ where, names, env, id, mode, handle = null, at = now(
       }
     }
     if (doc.failures.new.length) say('fail', 'new-failures', `new failing tests: ${some(doc.failures.new)}`, 'fix them; only failures pinned in the baseline are tolerated');
-    doc.inventory = { collector: inv.collector, total: inv.tests.length, added: cmp.added, removed: cmp.removed, newlySkipped: cmp.newlySkipped, allowedBy: [], weak: inv.weak };
+    doc.inventory = { collector: inv.collector, total: inv.tests.length, added: cmp.added, removed: cmp.removed, newlySkipped: cmp.newlySkipped, allowedBy: [], weak: inv.weak, tests: inv.tests.map(({ id: t, file, skipped }) => ({ id: t, file, skipped })) };
   }
 
   if (mode !== 'merge') {
