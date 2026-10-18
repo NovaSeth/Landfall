@@ -679,6 +679,37 @@ const ROWS = [
     mutating: true,
     load: () => import('../config/commands.mjs').then((m) => m.flagsSet),
   },
+  {
+    name: 'config show',
+    summary: 'Show the configuration: threshold overrides with their default and decision, executor preferences, changed flags.',
+    details: [
+      'Sources: the repository\'s config.json and the machine config (config.json in the plugin data directory, edited by',
+      'hand: flags of rollout capabilities and executor preferences). Writes nothing.',
+    ],
+    args: [],
+    flags: [],
+    exits: ['OK', 'FAIL', 'REFUSED', 'ENV'],
+    load: () => import('../config/commands.mjs').then((m) => m.configShow),
+  },
+  {
+    name: 'config set',
+    summary: 'Set one config value: a threshold override (only with an active decision) or the providers of an executor role.',
+    details: [
+      'Keys: thresholds.<unit>.<path> (a whole number of lib/router or lib/engine thresholds.json, such as',
+      'thresholds.router.trivial.maxLoc) and executors.reviewer|implementer (providers in order, comma-separated).',
+      'A threshold override needs --decision with an active decision (else exit 1, nothing written); config.json keeps',
+      'the decision with the value. The value default removes an override or a preference. Flags: use flags set.',
+      'Changes files: needs a terminal or --yes.',
+    ],
+    args: [
+      { name: 'key', required: true, summary: 'thresholds.<unit>.<path> or executors.<role>' },
+      { name: 'value', required: true, summary: 'a whole number, a comma-separated provider list, or default' },
+    ],
+    flags: [{ flag: '--decision', value: 'D', summary: 'required for a threshold override: an active decision, such as D-AB-3' }],
+    exits: ['OK', 'FAIL', 'USAGE', 'REFUSED', 'ENV'],
+    mutating: true,
+    load: () => import('../config/commands.mjs').then((m) => m.configSet),
+  },
   // Decisions (spec §7.10): rows sorted by name.
   {
     name: 'decide',

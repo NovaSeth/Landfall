@@ -43,6 +43,8 @@ Commands:
   baseline pin         Repair the test baseline: replace it with the inventory collected now, with a gate-change or test-removal decision.
   baseline show        Print the pinned test baseline: every test with its skip flag, pinned failures, collector and last pin.
   brief                Render the brief of a routed task from the brief template and the state; --write saves tasks/<id>/brief.md.
+  config set           Set one config value: a threshold override (only with an active decision) or the providers of an executor role.
+  config show          Show the configuration: threshold overrides with their default and decision, executor preferences, changed flags.
   deactivate           Remove the untracked state of this repository (or the link of its external state) and remember the opt-out.
   decide               Record a decision: a new D-<H>-<n> file under the state directory with what, why and cost if wrong.
   decisions check      Validate the decision records and every D-<H>-<n> cited in tracked files; exit 1 on a problem.
@@ -153,6 +155,42 @@ Options:
 
 Read-only. Changes files with --write: needs a terminal or --yes, otherwise exit 7 REFUSED.
 Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
+```
+
+### `caw config set <key> <value> [--decision <D>] [--yes] [--json]`
+
+```text
+usage: caw config set <key> <value> [--decision <D>] [--yes] [--json]
+
+Set one config value: a threshold override (only with an active decision) or the providers of an executor role.
+Keys: thresholds.<unit>.<path> (a whole number of lib/router or lib/engine thresholds.json, such as
+thresholds.router.trivial.maxLoc) and executors.reviewer|implementer (providers in order, comma-separated).
+A threshold override needs --decision with an active decision (else exit 1, nothing written); config.json keeps
+the decision with the value. The value default removes an override or a preference. Flags: use flags set.
+Changes files: needs a terminal or --yes.
+
+Arguments:
+  key    thresholds.<unit>.<path> or executors.<role>
+  value  a whole number, a comma-separated provider list, or default
+
+Options:
+  --decision <D>  required for a threshold override: an active decision, such as D-AB-3
+
+Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
+Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
+```
+
+### `caw config show [--json]`
+
+```text
+usage: caw config show [--json]
+
+Show the configuration: threshold overrides with their default and decision, executor preferences, changed flags.
+Sources: the repository's config.json and the machine config (config.json in the plugin data directory, edited by
+hand: flags of rollout capabilities and executor preferences). Writes nothing.
+
+Read-only.
+Exit codes: 0 OK · 1 FAIL · 7 REFUSED · 8 ENV
 ```
 
 ### `caw deactivate [--yes] [--json]`

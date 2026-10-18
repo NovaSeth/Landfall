@@ -4,15 +4,22 @@
 //                generated files: set by the engine at a tier change or here; unset = what the tier offers).
 //   flags set    one flag of an active repository, to a mode it has; a flip is recorded first as a decision (kind
 //                general, the user's --reason as its Why), then written to config.json. The same value writes nothing.
+//   config show  the threshold overrides with their default and decision, the executor preferences with their source,
+//                the flags that differ from their default.
+//   config set   thresholds.<unit>.<path> <integer|default> --decision <D>: an override of a number of the unit's
+//                threshold data (router, engine), only with an active decision (lib/decisions requireDecision; exit 1
+//                otherwise, nothing written), which config.json keeps with it; `default` removes it.
+//                executors.<role> <provider,…|default>: the role's providers in order of preference; no decision.
 // Context comes from io (cwd, env), never from process state (REV-58). Exit 2 an unknown flag or mode · 7 an inactive
 // repository, a newer schema, no consent · 8 not a git repository.
 import { relative } from 'node:path';
 import { EXIT } from '../cli/commands.mjs';
-import { authorHandle, createDecision } from '../decisions/index.mjs';
-import { ENGINE_FLAGS } from '../engine/index.mjs';
+import { authorHandle, createDecision, requireDecision } from '../decisions/index.mjs';
+import { ENGINE_FLAGS, THRESHOLDS as ENGINE_THRESHOLDS } from '../engine/index.mjs';
 import { TARGETS } from '../gen/index.mjs';
-import { LIMITS, StateError, machineDataDir, open, resolve } from '../state/index.mjs';
-import { ROLLOUT, flagsOf, readConfig, rollout } from './index.mjs';
+import { THRESHOLDS as ROUTER_THRESHOLDS } from '../router/index.mjs';
+import { LIMITS, PATTERNS, StateError, machineDataDir, open, resolve } from '../state/index.mjs';
+import { ROLES, ROLLOUT, executorsOf, flagsOf, readConfig, rollout, thresholdKeys, thresholdsOf } from './index.mjs';
 
 const usage = (code, message, hint = '') => new StateError(code, 'USAGE', message, { hint });
 const guarded = (fn) => (ctx) => {
@@ -97,4 +104,91 @@ export const flagsSet = guarded(({ args, flags: opts, io, names }) => {
     text: `${name}: ${from} → ${mode} (${id}, ${rel && !rel.startsWith('..') ? `${rel}/` : ''}config.json)\n`,
     warnings,
   };
+});
+
+// The threshold data a key may override, per unit (the data each unit ships).
+const THRESHOLD_DATA = Object.freeze({ router: ROUTER_THRESHOLDS, engine: ENGINE_THRESHOLDS });
+const DEFAULT = 'default';
+const valueAt = (data, path) => path.split('.').reduce((v, k) => v?.[k], data);
+
+function inactive(where, names) {
+  return new StateError('inactive', 'REFUSED', `${where.repo} is not active: the config is written only in an active repository`, { hint: `activate it first (${names.bin} init)` });
+}
+
+export const configShow = guarded(({ io, names }) => {
+  const where = here({ io, names });
+  const configs = readConfig(where, { names, env: io.env });
+  const thresholds = {};
+  const unknown = [];
+  for (const [unit, data] of Object.entries(THRESHOLD_DATA)) {
+    const r = thresholdsOf(unit, data, configs.repo);
+    unknown.push(...r.unknown);
+    for (const [key, o] of Object.entries(r.applied)) thresholds[key] = { value: o.value, default: valueAt(data, key.slice(unit.length + 1)), decision: o.decision, at: o.at };
+  }
+  const executors = executorsOf(configs);
+  const { flags } = flagsOf(configs);
+  const changed = Object.entries(flags).filter(([, f]) => f.source !== 'default');
+  const file = machineFile(where, names, io.env);
+  const lines = [
+    `Config of ${where.repo} (${where.active ? 'config.json' : 'not active: defaults'}; machine overrides: ${file ?? 'no plugin data directory'})`,
+    'Thresholds (override, shipped default, decision):',
+    ...(Object.keys(thresholds).length ? Object.entries(thresholds).map(([k, o]) => `  ${k} = ${o.value} (default ${o.default}) · ${o.decision} · ${o.at.slice(0, 10)}`) : ['  (none: the shipped data)']),
+    ...unknown.map((k) => `  ${k}: names no number of this version's data; ignored`),
+    'Executors (providers in order of preference):',
+    ...ROLES.map((role) => `  ${role.padEnd(12)}${executors[role].providers.length ? executors[role].providers.join(', ') : '(none)'} (${executors[role].source})`),
+    `Flags: ${changed.length ? changed.map(([k, f]) => `${k} ${f.mode} (${f.source})`).join(', ') : 'all at their defaults'}; ${names.bin} flags show lists every flag`,
+  ];
+  return { data: { repo: where.repo, active: where.active, thresholds, unknownThresholds: unknown, executors, flags, machineConfig: file }, text: `${lines.join('\n')}\n` };
+});
+
+// { kind: 'threshold', key (unit.path), unit, default } | { kind: 'executors', role }, or a USAGE refusal.
+function parseKey(raw, names) {
+  const known = `thresholds.<unit>.<path> (units: ${Object.keys(THRESHOLD_DATA).join(', ')}) or executors.<role> (roles: ${ROLES.join(', ')})`;
+  if (raw.startsWith('flags.')) throw usage('use-flags-set', `${raw.slice(0, 60)} is a flag`, `set flags with '${names.bin} flags set ${raw.slice(6, 46)} <mode>'`);
+  const t = /^thresholds\.([a-z][a-z0-9]*)\.(.+)$/.exec(raw);
+  if (t && Object.hasOwn(THRESHOLD_DATA, t[1])) {
+    const key = `${t[1]}.${t[2]}`;
+    if (!thresholdKeys(t[1], THRESHOLD_DATA[t[1]]).includes(key)) throw usage('unknown-key', `${raw.slice(0, 80)} names no number of the ${t[1]} threshold data`, `known: ${thresholdKeys(t[1], THRESHOLD_DATA[t[1]]).slice(0, 8).map((k) => `thresholds.${k}`).join(', ')}, …`);
+    return { kind: 'threshold', key, default: valueAt(THRESHOLD_DATA[t[1]], t[2]) };
+  }
+  const e = /^executors\.(.+)$/.exec(raw);
+  if (e && ROLES.includes(e[1])) return { kind: 'executors', role: e[1] };
+  throw usage('unknown-key', `unknown config key: ${raw.slice(0, 80)}`, `keys: ${known}`);
+}
+
+export const configSet = guarded(({ args, flags: opts, io, names }) => {
+  const key = parseKey(String(args.key), names);
+  const raw = String(args.value);
+  const where = here({ io, names });
+  if (key.kind === 'executors') {
+    if (opts.decision !== undefined) throw usage('unexpected-decision', '--decision applies to threshold overrides only', `drop it: '${names.bin} config set executors.${key.role} <provider,…>'`);
+    const providers = raw === DEFAULT ? null : [...new Set(raw.split(',').map((x) => x.trim()).filter(Boolean))];
+    if (providers && (providers.length === 0 || providers.length > LIMITS.providers || providers.some((x) => !PATTERNS.kebab.test(x) || x.length > LIMITS.token))) {
+      throw usage('invalid-value', `executors.${key.role}: ${JSON.stringify(raw.slice(0, 60))} is not a list of provider names`, `up to ${LIMITS.providers} kebab-case names, comma-separated (such as codex,claude), or ${DEFAULT}`);
+    }
+    if (!where.active) throw inactive(where, names);
+    const store = open(where.dir, { names });
+    const doc = store.update('config', null, (cur) => {
+      const executors = { ...(cur?.executors ?? {}) };
+      if (providers) executors[key.role] = providers; else delete executors[key.role];
+      const { executors: _, ...rest } = cur ?? {};
+      return Object.keys(executors).length ? { ...rest, executors } : rest;
+    });
+    const set = doc?.executors?.[key.role] ?? [];
+    return { data: { executors: { role: key.role, providers: set } }, text: `executors.${key.role}: ${set.length ? set.join(', ') : 'default (none)'}\n` };
+  }
+  const value = raw === DEFAULT ? null : /^(0|[1-9]\d{0,9})$/.test(raw) ? Number(raw) : NaN;
+  if (Number.isNaN(value) || (value !== null && value > LIMITS.thresholdValue)) throw usage('invalid-value', `${args.key}: ${JSON.stringify(raw.slice(0, 20))} is not a whole number from 0 to ${LIMITS.thresholdValue}`, `a whole number, or ${DEFAULT} to remove the override`);
+  if (!where.active) throw inactive(where, names);
+  const record = requireDecision({ dir: where.dir, id: opts.decision, names, what: `the threshold override ${key.key}` });
+  const at = new Date().toISOString();
+  const store = open(where.dir, { names });
+  store.update('config', null, (cur) => {
+    const thresholds = { ...(cur?.thresholds ?? {}) };
+    if (value === null) delete thresholds[key.key]; else thresholds[key.key] = { value, decision: record.id, at };
+    const { thresholds: _, ...rest } = cur ?? {};
+    return Object.keys(thresholds).length ? { ...rest, thresholds } : rest;
+  });
+  const threshold = { key: key.key, value: value ?? key.default, default: key.default, decision: record.id, at };
+  return { data: { threshold }, text: `${key.key} = ${threshold.value} (default ${key.default}) · ${record.id}\n` };
 });
