@@ -159,13 +159,14 @@ export const pathKey = (path) => `risk-path:${createHash('sha256').update(path).
 const strip = ({ code, text, path }) => (path === undefined ? { code, text } : { code, text, path });
 
 // { class, reasons: [{ code, text, path? }], all: [{ code, text, path?, level, key }], files, loc, flags }.
-// `riskPaths` are the profile's globs, added to the defaults.
-export function classify({ paths, loc, flags = [], riskPaths = [] } = {}) {
+// `riskPaths` are the profile's globs, added to the defaults; `thresholds` are the shipped ones with the repository's
+// overrides (lib/config thresholdsOf), the shipped ones when omitted.
+export function classify({ paths, loc, flags = [], riskPaths = [], thresholds = THRESHOLDS } = {}) {
   const files = checkPaths(paths);
   checkLoc(loc);
   const declared = checkFlags(flags);
   const globs = checkGlobs(riskPaths);
-  const { trivial, critical } = THRESHOLDS;
+  const { trivial, critical } = thresholds;
 
   const all = [];
   const add = (level, code, text, key, path) => all.push(path === undefined ? { code, text, level, key } : { code, text, path, level, key });

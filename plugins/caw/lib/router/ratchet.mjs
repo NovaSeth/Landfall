@@ -17,8 +17,9 @@
 // Accepted residual: the decision and the task are two writes under two lock holds (the store lock is not
 // re-entrant). If the task changed in between (class or recorded reasons) or the process stops, the decision stays
 // without effect; the error names it.
+import { thresholdsOf } from '../config/index.mjs';
 import { LIMITS, allocateId } from '../state/index.mjs';
-import { FLAGS, classify, publicReasons } from './classify.mjs';
+import { FLAGS, THRESHOLDS, classify, publicReasons } from './classify.mjs';
 import { checkQuote, renderOverride } from './decision.mjs';
 import { RouteError, usage } from './errors.mjs';
 import { CLASSES, addedSteps, rank, routeFor } from './routes.mjs';
@@ -135,10 +136,13 @@ function result({ id, doc, previous, computed, outcome, reasons, flags, decision
   };
 }
 
+// The router thresholds of the repository behind `store`: the shipped ones with the overrides of its config.json.
+export const routerThresholds = (store) => thresholdsOf('router', THRESHOLDS, store.read('config', null)).data;
+
 // Classifies the declared plan of task `id` and applies the ratchet. `handle` is the caller's registered handle;
 // `riskPaths` are the profile's risk globs (added to the defaults).
 export function routeTask(store, id, { paths, loc, flags = [], riskPaths = [], handle, at = new Date().toISOString() }) {
-  const plan = classify({ paths, loc, flags, riskPaths });
+  const plan = classify({ paths, loc, flags, riskPaths, thresholds: routerThresholds(store) });
   let step;
   const doc = store.update('task', id, (cur) => {
     step = applyClass(owned(cur, id, handle), plan, { at, by: handle });

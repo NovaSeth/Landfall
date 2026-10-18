@@ -4,7 +4,7 @@
 - External executors (Codex, Gemini) as rows in the Claude Code agent panel, and the `caw exec / wait / runs / providers` commands. You can still run another provider yourself.
 - The scheduler's admission check is not wired into the hooks: `caw heavy` and `caw slots` work from the CLI; agent spawns are not gated.
 - `caw status` as a summary command, `caw brief`, `caw method`, and `receipt --loop|--since`.
-- Threshold overrides (`caw config set thresholds.…`) are recorded with their decision and shown by `caw config show`; the router and the engine still use their shipped thresholds. Executor preferences are recorded for the external executors, which are not in this beta.
+- Threshold overrides (`caw config set thresholds.…`) are recorded with their decision and shown by `caw config show`; the router and the engine read them. Executor preferences are recorded for the external executors, which are not in this beta.
 - Skills mostly point to `caw rule` and `caw doctor`; they do not yet walk the whole activation → task → verify → merge flow step by step.
 - The adaptive engine runs in shadow mode: `caw tier` explains the recommended tier; tier changes are not applied automatically.
 - No published evaluation numbers yet; no example project.

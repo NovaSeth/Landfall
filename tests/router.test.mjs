@@ -780,3 +780,18 @@ test('route row: listed in help, changes files, and its --flags help names exact
   assert.deepEqual(listed, [...router.FLAGS]);
   assert.deepEqual(/: (.+)$/.exec(row.flags.find((f) => f.flag === '--override').summary)[1].split(', '), [...router.CLASSES]);
 });
+
+// ---- threshold overrides from config.json (T-MG-40) ----
+
+test('route --probe and the ratchet read router threshold overrides from config.json; defaults hold without them', async (t) => {
+  const r = repo(t);
+  const probe = ['route', '--probe', '--paths', 'src/a.js', '--loc', '500', '--yes'];
+  assert.equal((await cli(probe, r)).env.data.class, 'critical', 'default: 500 LOC > 400');
+  r.store.write('config', null, { schema: 1, thresholds: { 'router.critical.overLoc': { value: 800, decision: 'D-TU-1', at: AT } } });
+  const over = await cli(probe, r);
+  assert.equal(over.env.data.class, 'standard', 'override 800: 500 LOC is standard');
+  const id = newTask(r.store, r.handle);
+  assert.equal(router.routeTask(r.store, id, { paths: ['src/a.js'], loc: 500, handle: r.handle, at: AT }).class, 'standard');
+  const outside = repo(t, { active: false });
+  assert.equal((await cli(probe, outside)).env.data.class, 'critical', 'no repository state: defaults');
+});

@@ -48,7 +48,7 @@ import { join } from 'node:path';
 import { authorHandle, readRecords, stateRel } from '../decisions/index.mjs';
 import { git } from '../git/index.mjs';
 import { PROFILE_KINDS, emptyProfile, listFiles, observe } from '../profile/index.mjs';
-import { MAX_PATHS, addedSteps, applyClass, classify, rank, recordedKeys, routeFor, routeTask } from '../router/index.mjs';
+import { MAX_PATHS, addedSteps, applyClass, classify, rank, recordedKeys, routeFor, routeTask, routerThresholds } from '../router/index.mjs';
 import { KINDS, StateError, check, open, resolve } from '../state/index.mjs';
 import { readReport, reportHasEvidence, reviewNeed, reviewState } from './artifacts.mjs';
 import { measureAt } from './base.mjs';
@@ -256,7 +256,7 @@ function reroute({ store, task, id, write, handle, riskPaths, change, at }) {
     flags = recordedKeys(store.read('task', id)).flags;
     return { route: { declared, actual: r.class, escalated: r.escalated, missingSteps: [...r.addedSteps] }, flags };
   }
-  const step = applyClass(task, classify(plan), { at, by: handle ?? 'verify' });
+  const step = applyClass(task, classify({ ...plan, thresholds: routerThresholds(store) }), { at, by: handle ?? 'verify' });
   const actual = step.next?.class ?? declared;
   const escalated = declared !== null && rank(actual) > rank(declared);
   return { route: { declared, actual, escalated, missingSteps: escalated ? [...addedSteps(declared, actual, { flags: step.flags })] : [] }, flags: step.flags };

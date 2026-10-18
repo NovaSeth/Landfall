@@ -548,3 +548,10 @@ test('tier [--explain]: one table row; the envelope carries tier, change and cap
   const ex = JSON.parse((await cli(['tier', '--json', '--explain'], { dir })).stdout);
   assert.ok(Array.isArray(ex.data.explain) && ex.data.explain.length >= 5);
 });
+
+test('evaluate reads engine threshold overrides from config.json; defaults hold without them', (t) => {
+  assert.equal(evaluate(l1Repo(t, {}).dir).tier, 'L1', 'default: 5,000 lines call for L1');
+  const { dir, store } = l1Repo(t, {});
+  put(store, 'config.json', { schema: KINDS.config.version, thresholds: { 'engine.tierSignals.loc.levels.0.up': { value: 8000, decision: 'D-TU-1', at: isoAt(1) } } });
+  assert.equal(evaluate(dir).tier, 'L0', 'override 8000: 5,000 lines stay L0');
+});
