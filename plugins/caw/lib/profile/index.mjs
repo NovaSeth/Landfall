@@ -1,6 +1,7 @@
 // Profile unit (spec §4.2, §7.3, SD-12): facts, observation scan, question bank. Other units import only this
 // file. profile.json and local/scan-cache.json are written only through lib/state (kind.mjs), and only in an
-// active repository: an inactive one is observed read-only (GC2, zero footprint).
+// active repository: an inactive one is observed read-only (GC2, zero footprint). The code observed is the worktree's
+// (lib/state resolve: the git top level of the current directory), its HEAD the scan head; the profile is the project's.
 import { relative, isAbsolute } from 'node:path';
 import { StateError } from '../state/index.mjs';
 import { ProfileError, parseValue, requireFactKey, CONFIDENCE_OF } from './keys.mjs';
@@ -19,7 +20,8 @@ export { factValues } from './values.mjs';
 
 const nowIso = () => new Date().toISOString();
 
-// The state directory relative to the repository when it lives inside it (its files are not project files).
+// The state directory relative to the repository when it lives inside it (its files are not project files): a tree
+// path, the same in every worktree of the project.
 function insideRepo(where) {
   const rel = relative(where.repo, where.dir).split('\\').join('/');
   return rel && !rel.startsWith('..') && !isAbsolute(rel) ? rel : null;
@@ -42,7 +44,7 @@ export function readProfile(where, { names, env, now = nowIso() }) {
   const store = openStore(where.dir, names);
   if (!store.active) return { active: false, profile: null, scan: null };
   const profile = store.read('profile') ?? emptyProfile();
-  const commits = profile.lastScan ? commitsSince(where.repo, profile.lastScan.head, { env }) : null;
+  const commits = profile.lastScan ? commitsSince(where.worktree, profile.lastScan.head, { env }) : null;
   return { active: true, profile, scan: scanDue(profile, { commits, now }) };
 }
 
@@ -51,7 +53,7 @@ export function readProfile(where, { names, env, now = nowIso() }) {
 export function runObserve(where, { names, env, now = nowIso() }) {
   const store = openStore(where.dir, names);
   const active = store.active;
-  const head = headOf(where.repo, { env });
+  const head = headOf(where.worktree, { env });
   let observation = null;
   let cached = false;
   if (active && head) {
@@ -61,7 +63,7 @@ export function runObserve(where, { names, env, now = nowIso() }) {
       cached = true;
     }
   }
-  observation ??= observe(where.repo, { env, exclude: insideRepo(where) });
+  observation ??= observe(where.worktree, { env, exclude: insideRepo(where) });
   if (!active) return { active, written: false, cached, head, observation, changed: [], removed: [], conflicts: [], gates: null };
   let result;
   store.update('profile', null, (cur) => {

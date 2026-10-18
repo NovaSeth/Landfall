@@ -5,7 +5,8 @@
 //   route <task> --override <class> --by user --quote <text> the user's override (a decision when it lowers)
 // Context comes from the target (REV-58): the repository of the current directory, its git user.email (the
 // caller's handle in the store's team registry), never process state. Paths are repository-relative and
-// comma-separated; an absolute path inside the repository is made relative.
+// comma-separated; an absolute path inside the repository (the worktree of the current directory, lib/state resolve) is
+// made relative.
 // Risk globs: the router defaults plus the profile's additions (profile.riskPaths, read through lib/profile by an
 // injectable reader; makeRoute takes another one in tests). A probe reads the profile only in a tracked repository.
 // Exit 0 done · 1 not classified yet, task changed meanwhile, invalid state · 2 usage · 7 no consent, untracked
@@ -85,7 +86,7 @@ function probe(f, { io, names, readRisk }) {
     if (!(err instanceof StateError && err.exit === 'ENV')) throw err; // outside git: paths stay as given
   }
   const riskPaths = where?.active ? readRisk({ dir: where.dir, names }) : [];
-  const plan = classify({ paths: inRepo(where?.repo ?? null, f.paths), loc: f.loc, flags: f.flags, riskPaths });
+  const plan = classify({ paths: inRepo(where?.worktree ?? null, f.paths), loc: f.loc, flags: f.flags, riskPaths });
   return {
     task: null, class: plan.class, computed: plan.class, previous: null, outcome: 'probed', escalated: false, reasons: plan.reasons,
     route: routeFor(plan.class, { flags: plan.flags }), addedSteps: [], decision: null, input: { files: plan.files, loc: plan.loc, flags: plan.flags },
@@ -121,7 +122,7 @@ export function makeRoute({ readProfileRiskPaths: readRisk = readProfileRiskPath
         const { where, store, handle } = tracked({ io, names });
         const out = f.kind === 'override'
           ? { ...overrideTask(store, f.task, { to: flags.override, by: flags.by, quote: flags.quote, handle }), input: null }
-          : routeTask(store, f.task, { paths: inRepo(where.repo, f.paths), loc: f.loc, flags: f.flags, riskPaths: readRisk({ dir: where.dir, names }), handle });
+          : routeTask(store, f.task, { paths: inRepo(where.worktree, f.paths), loc: f.loc, flags: f.flags, riskPaths: readRisk({ dir: where.dir, names }), handle });
         data = { probe: false, ...out };
       }
       data = { task: data.task, probe: data.probe, class: data.class, computed: data.computed, previous: data.previous, outcome: data.outcome, escalated: data.escalated, reasons: data.reasons, route: data.route, addedSteps: data.addedSteps, decision: data.decision, input: data.input };

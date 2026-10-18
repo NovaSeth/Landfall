@@ -62,7 +62,7 @@ export function pinBaseline({ cwd, env, names, decision, at = new Date().toISOSt
   const profile = store.read('profile', null) ?? emptyProfile();
   if (profile.gates.length === 0) throw fail('no-gates', 'the profile has no gates, so nothing collects the tests to pin', `${names.bin} profile observe detects them`);
   const code = codeState(where, env);
-  const runs = profile.gates.filter((g) => g.kind === 'test').map((g) => runGate(g, { cwd: where.repo, env }));
+  const runs = profile.gates.filter((g) => g.kind === 'test').map((g) => runGate(g, { cwd: where.worktree, env }));
   const output = runs.map((r) => ({ name: r.gate.name, lines: tailLines(r.output) }));
   for (const { gate } of runs) {
     if (gate.result === 'error') throw envError('gate-error', `gate ${gate.name} could not run (exit ${gate.exit ?? '-'}); nothing was pinned`, 'install what the gate runs, or fix its command in the profile');

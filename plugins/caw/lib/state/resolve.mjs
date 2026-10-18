@@ -1,13 +1,20 @@
-// State directory resolution (spec §5.3, §7.2, SD-7, SD-36, REV-58): the repository is the git top level of the
-// target directory (real path); its state directory is <repo>/<stateDir of name.json>, or the external
-// directory linked for that real path in machine data projects.json (`init --state-dir`, for repositories that
-// must stay clean). Context comes only from the arguments: the target cwd and the env passed in.
+// State directory resolution (spec §5.3, §7.2, §7.6, §7.12, SD-7, SD-36, REV-58). Two roots, both real paths:
+//   worktree  the git top level of the target directory: where the code is (gates, HEAD, diffs, file scans).
+//   repo      the project: the main checkout. In a linked worktree (its git directory is not git's common directory)
+//             that is the parent of the common directory when the common directory is named .git; otherwise (the main
+//             checkout itself, a bare repository with worktrees, a submodule) the worktree. The state is anchored here:
+//             its state directory is <repo>/<stateDir of name.json>, or the external directory linked for that real
+//             path in machine data projects.json (`init --state-dir`, for repositories that must stay clean).
+// Every worktree of a project shares its state; writes from a worktree land in the project's state directory. `copy`:
+// a linked worktree's <worktree>/<stateDir> with an in-repo state directory, the checked-out copy of committed state,
+// which is no state (the hooks guard it like the state directory). Context comes only from the arguments: the target
+// cwd and the env passed in.
 // Resolution reads and never writes: no state directory, no machine data directory (GC2, zero footprint).
 // updateProject is the only writer of projects.json: read-modify-write under its lock (projects.lock, lib/fsx)
 // with every check inside; an older projects.json is read through the migration chain and written back at the
 // current schema. A refusal leaves nothing (the lock and a machine data directory it created are removed).
 import { existsSync, lstatSync, readFileSync, realpathSync } from 'node:fs';
-import { dirname, isAbsolute, join, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, resolve as resolvePath, sep } from 'node:path';
 import { unlockStale as fsxUnlockStale, withLock, writeAtomic } from '../fsx/index.mjs';
 import { git } from '../git/index.mjs';
 import { checkWrite, parseDoc, requireArg } from './document.mjs';
@@ -64,16 +71,33 @@ function gitEntryAbove(dir) {
   }
 }
 
-// { repo, dir, local, linked, declined, active, dataDir } for the repository containing cwd. timeoutMs bounds the git
-// call (hooks pass what is left of their time budget). "Not a repository" only from git's own answer for it (exit 128,
-// "not a git repository", messages in the C locale) with no .git entry in cwd or above; any other failure (no answer in
-// time, dubious ownership, a permission error, a crash, that answer where a .git exists) is git-failed (findings-r2 B2).
+// The project of a worktree from git's answers for cwd (the git and the common directory, as git prints them: absolute
+// or relative to cwd, resolved here without --path-format, which older git lacks). Only a linked worktree, whose git
+// directory is not the common one, has another main checkout: the parent of a common directory named .git, as git's own
+// `worktree list` names it. A main checkout whose git directory lives elsewhere (--separate-git-dir) stays its own.
+function projectOf(worktree, cwd, gitDir, commonDir) {
+  if (!gitDir || !commonDir) return worktree;
+  try {
+    const here = realpathSync.native(cwd); // git answers relative to its physical working directory
+    const common = resolvePath(here, commonDir);
+    if (resolvePath(here, gitDir) === common || basename(common) !== '.git') return worktree;
+    return realpathSync.native(dirname(common));
+  } catch (err) {
+    throw new StateError('git-failed', 'ENV', `the main checkout of ${worktree} cannot be read (${err.code ?? err.message})`, { hint: 'check the worktrees with git worktree list' });
+  }
+}
+
+// { repo, worktree, copy, dir, local, linked, declined, active, dataDir } for the repository containing cwd. timeoutMs
+// bounds the one git call (hooks pass what is left of their time budget). "Not a repository" only from git's own answer
+// for it (exit 128, "not a git repository", messages in the C locale) with no .git entry in cwd or above; any other
+// failure (no answer in time, dubious ownership, a permission error, a crash, that answer where a .git exists) is
+// git-failed (findings-r2 B2).
 const NOT_A_REPO = /^fatal: not a git repository\b/m;
 export function resolve({ cwd, env, names, timeoutMs } = {}) {
   requireArg(env, 'env', 'resolve');
   requireArg(names, 'names', 'resolve');
   if (typeof cwd !== 'string' || !existsSync(cwd)) throw new StateError('not-a-repo', 'ENV', `${cwd} does not exist`, { hint: 'run it inside a git repository' });
-  const top = git(['rev-parse', '--show-toplevel'], { cwd, env: { ...env, LC_ALL: 'C' }, ...(timeoutMs > 0 ? { timeoutMs } : {}) });
+  const top = git(['rev-parse', '--show-toplevel', '--git-dir', '--git-common-dir'], { cwd, env: { ...env, LC_ALL: 'C' }, ...(timeoutMs > 0 ? { timeoutMs } : {}) });
   if (top.error === 'missing') throw new StateError('git-missing', 'ENV', 'git is not on PATH', { hint: 'install git and put it on PATH' });
   if (top.error) throw new StateError('git-failed', 'ENV', `git did not answer (${top.error})`, { hint: 'check that git runs in this directory' });
   if (top.status !== 0 || !top.stdout.trim()) {
@@ -83,11 +107,15 @@ export function resolve({ cwd, env, names, timeoutMs } = {}) {
     const said = top.stderr.trim().split('\n')[0].slice(0, 160);
     throw new StateError('git-failed', 'ENV', `git failed in ${cwd} (${top.signal ?? `exit ${top.status}`}${said ? `: ${said}` : ''})`, { hint: 'check that git runs in this directory' });
   }
-  const repo = realpathSync.native(top.stdout.trim()); // the name on disk, also on case-insensitive volumes
+  const [shown, gitDir, commonDir] = top.stdout.trim().split('\n');
+  const worktree = realpathSync.native(shown); // the name on disk, also on case-insensitive volumes
+  const repo = projectOf(worktree, cwd, gitDir, commonDir);
   const dataDir = machineDataDir(names, env);
   const entry = dataDir ? readProjects(dataDir, names).projects[repo] : undefined;
+  const linked = Boolean(entry?.stateDir);
   const dir = entry?.stateDir ?? join(repo, names.stateDir);
-  return { repo, dir, local: join(dir, 'local'), linked: Boolean(entry?.stateDir), declined: Boolean(entry?.declinedAt), active: existsSync(join(dir, 'state.json')), dataDir };
+  const copy = !linked && worktree !== repo ? join(worktree, names.stateDir) : null;
+  return { repo, worktree, copy, dir, local: join(dir, 'local'), linked, declined: Boolean(entry?.declinedAt), active: existsSync(join(dir, 'state.json')), dataDir };
 }
 
 // An active-looking marker for a directory whose repository git could not resolve (findings-r2 B2): a state directory

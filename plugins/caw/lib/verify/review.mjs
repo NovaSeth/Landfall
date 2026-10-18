@@ -110,7 +110,7 @@ export function recordReview({ cwd, env, names, id, from, at = new Date().toISOS
     open(cur);
     return { ...cur, events: [...cur.events, { at, by: handle, event: 'review', data: { round, verdict: doc.verdict, reviewer: doc.reviewer.kind } }] };
   });
-  const rel = stateRel(where.repo, where.dir);
+  const rel = stateRel(where.worktree, where.dir); // shown from the worktree, absolute outside it
   const path = `tasks/${reviewKey(id, round)}.json`;
   return { task: id, round, key: reviewKey(id, round), file: rel ? `${rel}/${path}` : join(where.dir, path), doc: { schema: VERIFY_KINDS.review.version, ...doc } };
 }

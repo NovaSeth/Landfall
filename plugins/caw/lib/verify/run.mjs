@@ -29,6 +29,10 @@
 // instead (class, baselineSha, the latest review round).
 // Modes: write (default; the task's owner only) · ci (--ci: nothing written, no owner needed) · merge (task merge:
 // the outcome gates against the target tip, without route and review; nothing written).
+// The code is the worktree's (lib/state resolve: `worktree`, the git top level of the current directory): the gates run
+// there, its HEAD is verified and its change against the base classified; the state is the project's (a linked worktree
+// shares the state of its main checkout). State paths in git pathspecs are tree paths (relative to the project root,
+// the same in every checkout); state paths in messages are shown relative to the worktree, or absolute outside it.
 // Known limit: with an external state directory there is no git anchor, so a change touching test files is always
 // unanchored there.
 import { lstatSync, readFileSync } from 'node:fs';
@@ -72,9 +76,9 @@ export function activeWhere({ cwd, env, names }) {
   return where;
 }
 
-// git in the repository; git missing or failing to start is an environment problem.
+// git in the worktree (the code); git missing or failing to start is an environment problem.
 export function gitIn(where, env, args) {
-  const r = git(args, { cwd: where.repo, env });
+  const r = git(args, { cwd: where.worktree, env });
   if (r.error) throw envError('git-failed', `git ${args[0]} could not run (${r.error})`, 'install git and put it on PATH');
   return r;
 }
@@ -95,7 +99,7 @@ export function codeState(where, env) {
   const routeScope = ['--', '.', ...(rel ? [`:(exclude)${rel}`] : [])];
   const h = gitIn(where, env, ['rev-parse', '--verify', '-q', 'HEAD']);
   const st = gitIn(where, env, ['status', '--porcelain', '--untracked-files=all', ...scope]);
-  if (st.status !== 0) throw envError('git-failed', `git status failed in ${where.repo}`, 'check that the repository is readable');
+  if (st.status !== 0) throw envError('git-failed', `git status failed in ${where.worktree}`, 'check that the repository is readable');
   return { rel, scope, routeScope, head: h.status === 0 ? h.stdout.trim() : null, dirty: st.stdout.trim() !== '' };
 }
 
@@ -104,19 +108,19 @@ export function codeState(where, env) {
 export function context(where, env, rel) {
   let files = null;
   let known = null;
-  const list = () => (files ??= listFiles(where.repo, { env, exclude: rel }).filter((f) => !SKIP_DIRS.test(f)));
+  const list = () => (files ??= listFiles(where.worktree, { env, exclude: rel }).filter((f) => !SKIP_DIRS.test(f)));
   const read = (path) => {
     known ??= new Set(list());
     if (!known.has(path)) return null;
     try {
-      const file = join(where.repo, path);
+      const file = join(where.worktree, path);
       const st = lstatSync(file);
       return st.isFile() && st.size <= SOURCE_MAX ? readFileSync(file, 'utf8') : null;
     } catch {
       return null;
     }
   };
-  return { repo: where.repo, files: list, read };
+  return { repo: where.worktree, files: list, read };
 }
 
 export function inventoryOf(runs, ctx) {
@@ -189,7 +193,7 @@ function changeSince(where, env, base, scope) {
   for (const p of u.status === 0 ? u.stdout.split('\0').filter(Boolean) : []) {
     if (paths.has(p)) continue;
     paths.add(p);
-    loc += lineCount(join(where.repo, p));
+    loc += lineCount(join(where.worktree, p));
   }
   return { paths: [...paths].filter((p) => !UNSAFE_PATH.test(p)).slice(0, MAX_PATHS), loc };
 }
@@ -228,7 +232,7 @@ export function evaluate({ where, names, env, id, mode, handle = null, at = now(
   if (task === null) throw unknownTask(id, where, names);
   const profile = store.read('profile', null) ?? emptyProfile();
   const code = codeState(where, env);
-  const stateShown = code.rel ?? where.dir;
+  const stateShown = stateRel(where.worktree, where.dir) ?? where.dir;
   const reasons = [];
   const say = (level, c, message, hint = '') => reasons.push({ level, code: c, message, hint });
   const active = readRecords(where.dir).records.map((r) => r.doc).filter((d) => d.status === 'active');
@@ -252,14 +256,14 @@ export function evaluate({ where, names, env, id, mode, handle = null, at = now(
   if (baseOk && change === null && mode !== 'merge') say('fail', 'base-missing', `git cannot compare the work with the base ${task.base.slice(0, 12)}`, 'fetch the base commit, then verify again');
 
   if (profile.gates.length === 0) {
-    candidates = observe(where.repo, { env, exclude: code.rel }).gates;
+    candidates = observe(where.worktree, { env, exclude: code.rel }).gates;
     say('fail', 'no-gates', `the profile has no gates, so nothing can verify ${id}`, candidates.length ? `detected: ${some(candidates.map((g) => g.cmd))}; changing gates is a gate-change decision` : 'add a gate of kind test to the profile');
   } else {
     if (!profile.gates.some((g) => g.kind === 'test')) {
       if (gateChange) allowedBy.add(gateChange.id);
       else say('fail', 'no-test-gate', 'the profile has no gate of kind test', 'add one, or record a gate-change decision that waives it (a docs-only repository)');
     }
-    const runs = profile.gates.map((g) => runGate(g, { cwd: where.repo, env }));
+    const runs = profile.gates.map((g) => runGate(g, { cwd: where.worktree, env }));
     doc.gates = runs.map((r) => r.gate);
     output = runs.map((r) => ({ name: r.gate.name, lines: tailLines(r.output) }));
     inv = inventoryOf(runs, context(where, env, code.rel));
