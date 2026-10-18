@@ -683,6 +683,20 @@ const ROWS = [
     load: () => import('../engine/command.mjs').then((m) => m.tier),
   },
   {
+    name: 'install',
+    summary: 'Install the plugin for an agent without it (npx channel): run the SD-3 commands with claude, or print them.',
+    details: [
+      'Runs `claude plugin install <plugin> --marketplace <owner>/<repo>`; when it exits non-zero, `claude plugin marketplace',
+      'add <owner>/<repo>` and `claude plugin install <plugin>@<marketplace>`; then checks `claude plugin list --json` for the',
+      'plugin enabled (else exit 1). Without claude on PATH it prints the commands and exits 0. Writes no file itself:',
+      'Claude Code keeps its own records; nothing lands in a project. The one manual step is /reload-plugins.',
+    ],
+    args: [],
+    flags: [],
+    exits: ['OK', 'FAIL'],
+    load: () => import('./install.mjs').then((m) => m.install),
+  },
+  {
     name: 'migrate',
     summary: 'Run the forward migrations on every state file of this repository; --dry-run lists the steps and writes nothing.',
     details: [

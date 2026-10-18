@@ -60,6 +60,7 @@ Commands:
   gen plan             Show what gen apply would do for each generated file; writes nothing.
   heavy                Run a heavy command (full tests, build) in the machine-wide FIFO queue under a heavy lease, with time and output limits.
   init                 Activate tracking in this repository: state.json, .gitignore and your handle in team/<H>.json.
+  install              Install the plugin for an agent without it (npx channel): run the SD-3 commands with claude, or print them.
   lane claim           Claim a lane on origin for 7 days: free → yours, yours → renewed, another's past expiry + 24 h → taken over.
   lane list            List the lane claims on origin: lane, owner, expiry, and whether it is live, expired or open for takeover.
   lane release         Release your lane: its claim on origin is deleted only while it is still the one you hold (lease).
@@ -468,6 +469,21 @@ Options:
 
 Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
 Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
+```
+
+### `caw install [--json]`
+
+```text
+usage: caw install [--json]
+
+Install the plugin for an agent without it (npx channel): run the SD-3 commands with claude, or print them.
+Runs `claude plugin install <plugin> --marketplace <owner>/<repo>`; when it exits non-zero, `claude plugin marketplace
+add <owner>/<repo>` and `claude plugin install <plugin>@<marketplace>`; then checks `claude plugin list --json` for the
+plugin enabled (else exit 1). Without claude on PATH it prints the commands and exits 0. Writes no file itself:
+Claude Code keeps its own records; nothing lands in a project. The one manual step is /reload-plugins.
+
+Read-only.
+Exit codes: 0 OK · 1 FAIL
 ```
 
 ### `caw lane claim <lane> [--yes] [--json]`
