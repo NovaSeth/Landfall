@@ -6,6 +6,6 @@ disable-model-invocation: true
 
 # Doctor
 
-1. Run `{{bin}} doctor --json`.
-2. Report each check from `data.checks` as ok or failed, with its detail, and the always-on cost from `data.alwaysOnTokens`.
-3. For each error, give its hint as the next step. Exit 8 means Claude Code is missing or does not run: say so and stop.
+1. Run `{{bin}} doctor --json`. It writes nothing.
+2. Report each row of `data.rows` as ok, warning or failed, with its detail, and the always-on cost.
+3. For each warning or failure, give its hint as the next step. Exit 8 means `claude` or `git` is missing: say so and stop.

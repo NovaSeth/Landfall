@@ -7,7 +7,6 @@ disable-model-invocation: true
 
 # Status
 
-Report the state in at most 10 lines; read summaries, never whole logs.
-
-1. Run `caw --help --json`. When `data.commands` lists `status`, run it through the CLI with `--json` and report the tier, tasks in progress with their next step, the loop and running agents.
-2. Otherwise this version keeps no repository state: run `caw doctor --json` and report plugin health instead, and say that nothing is tracked yet.
+1. Run `caw status --json`. It writes nothing.
+2. Report in at most 10 lines: activation and tier, open tasks with their next step, the loop, running leases. Read summaries, never whole logs.
+3. For the loop in detail run `caw loop status`.
