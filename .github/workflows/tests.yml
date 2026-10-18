@@ -16,9 +16,24 @@ jobs:
         node: [18, 24] # oldest declared (package.json engines) and current
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # the secrets scan reads a pull request's commits; the differential test reads the v1.5.1 tag
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ matrix.node }}
+      # A pull request: every commit it adds (also a secret added and removed again); a push: the tree. Exit 1 findings,
+      # 8 the scan could not run; both fail the job.
+      - name: secrets scan
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if [ "$EVENT" = pull_request ]; then
+            npm run check-secrets -- --range "$BASE_SHA..$HEAD_SHA"
+          else
+            npm run check-secrets
+          fi
       - name: git identity (tests create repositories)
         run: git config --global user.email ci@example.com && git config --global user.name ci && git config --global init.defaultBranch main
       # The package declares Node >= 22 (an EBADENGINE warning on 18), but its CLI is a native binary.

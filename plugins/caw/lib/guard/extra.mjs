@@ -2,13 +2,14 @@
 // the pattern is a JS RegExp (\b, \s, \d work) with POSIX classes in brackets ([[:space:]], [^[:alnum:]_], …), matched
 // against the raw and the normalized command and against each simple command. A bad, empty or risky pattern (a nested
 // quantifier, e.g. (a+)+) is skipped with a warning; a match over the time limit blocks. The text comes from a reader the
-// caller injects (the state directory belongs to lib/state).
+// caller injects (the state directory belongs to lib/state). The pattern syntax and the nested-quantifier check are
+// shared with the project patterns of the secrets scan (lib/secrets/patterns.mjs).
 import vm from 'node:vm';
 
 const POSIX_CLASS = { alpha: 'A-Za-z', digit: '0-9', alnum: '0-9A-Za-z', upper: 'A-Z', lower: 'a-z', space: ' \\t\\n\\r\\f\\v',
   blank: ' \\t', punct: '!-\\/:-@\\[-`{-~', xdigit: '0-9A-Fa-f', cntrl: '\\x00-\\x1f\\x7f', print: '\\x20-\\x7e', graph: '\\x21-\\x7e' };
 // POSIX classes become ASCII ranges; "]" right after "[" or "[^" is a literal character (as in POSIX ERE).
-function extraRegExp(src) {
+export function extraRegExp(src) {
   if (!src) throw new Error('an empty pattern would match every command');
   let out = ''; let i = 0;
   while (i < src.length) {
@@ -40,7 +41,7 @@ function extraRegExp(src) {
   return new RegExp(out);
 }
 // A nested quantifier: a group with a repetition inside and a repetition after it: (a+)+, (\w*x)*, (.+){2,}.
-function nestedQuantifier(src) {
+export function nestedQuantifier(src) {
   const stack = [];
   for (let i = 0; i < src.length; i++) {
     const c = src[i];

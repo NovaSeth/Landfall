@@ -19,5 +19,5 @@
 - Receipts: tier, gates, defects before merge and hook-injected characters are not filled yet; `null` means not measured.
 - `caw doctor` does not check branch protection; there is no degraded mode below the minimum Claude Code version (doctor reports it).
 - Terminal output: an unterminated escape sequence in data hides the rest of that text (nothing unsafe is printed).
+- Secrets scan: files over 16 MiB in a diff are listed as not scanned (`--staged`, `--range`, the pre-push hook and the CI pull request step); the working tree and artifact modes read them from disk.
 - Emoji in decision titles show in text presentation.
-- The repository's own CI has no secrets scan step in this beta (it returns with `caw secrets` in 2.0.0).

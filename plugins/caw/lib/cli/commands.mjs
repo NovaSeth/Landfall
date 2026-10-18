@@ -285,6 +285,31 @@ const ROWS = [
     exits: ['OK', 'USAGE'],
     load: () => import('./rule.mjs').then((m) => m.rule),
   },
+  // Secrets scan (spec §8.2, §11, SD-29): lib/secrets; the pre-push hook and the CI workflow run it (lib/gen).
+  {
+    name: 'secrets',
+    summary: 'Scan for secrets and key files: working tree and index, staged changes, a commit range or a built artifact.',
+    details: [
+      'Default: tracked files and untracked files that are not ignored, and what the index holds. --staged: the lines added',
+      'in the index. --range: the lines every commit of the range adds (also a secret added and removed again) and the key',
+      'and env files it adds (a merge: what it adds against every parent). --artifact: every file under a built file or',
+      'directory, ignored or not. BOM-marked UTF-16 text is decoded in every mode; other binary files are skipped. A file over',
+      '16 MiB in a diff is not read: it is listed as "not scanned" (data.skipped) and changes no exit.',
+      'Patterns: lib/secrets/patterns.mjs and the project\'s secrets-patterns.txt in the state directory (UTF-8, one per line,',
+      'the syntax of guard-extra.txt). A line holding the word SYNTH or "check-secrets: synthetic" is a synthetic test value',
+      '(SEC-11); in an artifact nothing is exempt. Findings print path:line (commit:path:line in a range), the pattern and the first',
+      'characters and length of the match, never the value. Exit 8: the scan could not run (not a git repository, a git',
+      'error, an unreadable file or pattern file, a refused pattern): the result is invalid, never clean. Run it without a pipe.',
+    ],
+    args: [],
+    flags: [
+      { flag: '--range', value: 'revs', summary: 'revisions as git log takes them, such as A..B or "<sha> --not --remotes" (options: --not --all --branches --remotes --tags)' },
+      { flag: '--staged', summary: 'only the lines added in the index' },
+      { flag: '--artifact', value: 'path', summary: 'a built file or directory, relative to the current directory' },
+    ],
+    exits: ['OK', 'FAIL', 'USAGE', 'ENV'],
+    load: () => import('../secrets/command.mjs').then((m) => m.secrets),
+  },
   {
     name: 'method',
     summary: 'Print one pack or one section of the method by name: each rule line of it, under its section heading.',

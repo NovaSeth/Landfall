@@ -19,7 +19,7 @@
 
 ### Secrets
 **SEC-5.** Keep secrets server-side only (env files with mode 0600, ignored by git); MUST NOT put them in client variables, the repository, logs, reports or errors; a report names `file:line` and the secret type, never the value.
-**SEC-6.** Run the secrets scan without a pipe in the mode the moment needs (working tree in the task gate, staged before a commit, a commit range for history) and check its exit code (2 = error, not clean).
+**SEC-6.** Run the secrets scan without a pipe in the mode the moment needs (working tree in the task gate, staged before a commit, a commit range for history) and check its exit code (8 = error, not clean).
 **SEC-11.** Exempt a synthetic value only in test and fixture files, with the `SYNTH` marker as a separate word on its line; MUST NOT loosen patterns or exclude files because of false positives.
 **SEC-7.** On a leak, rotate the secret, record a decision and check the history; removing it from the tree does not close the case; remove a secret the pre-push scan finds from the pushed commits before pushing.
 
