@@ -95,6 +95,7 @@ test('brief renders the template from the state: title, kind, class and reason, 
   const rules = rulesFor('standard', 'implementer');
   assert.ok(text.includes(`Rules: ${rules.join(' ')}; read them with \`${BIN} rule <ID…>\`.`), text);
   assert.ok(text.includes(`\`\`\`bash\n${GATES.map((g) => g.cmd).join('\n')}\n<secrets scan>; echo "exit $?"\n\`\`\``), 'the profile gates replace the gate placeholders');
+  assert.match(text, /^Review: none$/m, 'shadow mode (L0): a standard task needs no review');
   assert.ok(!text.includes('{{'), 'every name placeholder is filled');
   for (const ph of ['<Task title>', '<task ID>', '<trivial | standard | critical>', '<rule IDs>', '<typecheck>', '<lint>', '<tests with a worker limit>']) assert.ok(!text.includes(ph), `${ph} is filled`);
   assert.ok(text.includes('(branch <branch> from <base branch> at <base SHA>;'), 'no branch or base recorded yet: placeholders stay');
@@ -107,6 +108,7 @@ test('brief renders the template from the state: title, kind, class and reason, 
 
   const j = await cli(['brief', 'T-TU-1'], { ...p, json: true });
   assert.equal(j.code, 0, show(j));
+  assert.deepEqual(j.out.data.review, { need: 'none', text: 'none' });
   assert.deepEqual([j.out.command, j.out.data.task, j.out.data.role, j.out.data.class, j.out.data.kind, j.out.data.rules, j.out.data.lease, j.out.data.written],
     ['brief', 'T-TU-1', 'implementer', 'standard', 'task', rules, null, null]);
   assert.deepEqual(j.out.data.gates, GATES.map((g) => g.cmd));

@@ -25,6 +25,7 @@ const pluginDir = (() => {
 const lib = (rel) => import(pathToFileURL(join(pluginDir, 'lib', rel)).href);
 const router = await lib('router/index.mjs');
 const state = await lib('state/index.mjs');
+const decisions = await lib('decisions/index.mjs');
 const { main } = await lib('cli/main.mjs');
 const { COMMANDS } = await lib('cli/commands.mjs');
 const names = JSON.parse(readFileSync(join(pluginDir, 'lib', 'name.json'), 'utf8'));
@@ -779,4 +780,26 @@ test('route row: listed in help, changes files, and its --flags help names exact
   const listed = /: (.+)$/.exec(row.flags.find((f) => f.flag === '--flags').summary)[1].split(', ');
   assert.deepEqual(listed, [...router.FLAGS]);
   assert.deepEqual(/: (.+)$/.exec(row.flags.find((f) => f.flag === '--override').summary)[1].split(', '), [...router.CLASSES]);
+});
+
+// ---- the review need (spec §7.4): route prints it, from class x applied tier ----
+
+function atTier(r, tier) {
+  r.store.write('config', null, { flags: { engine: 'on' } });
+  decisions.createDecision({ store: r.store, where: state.resolve({ cwd: r.dir, env: r.env, names }), names, env: r.env, handle: r.handle, today: AT.slice(0, 10), input: { title: `Tier ${tier} from L0`, why: 'test fixture', cost: 'none', kind: 'tier', scope: [], supersedes: [] } });
+}
+
+test('route: the review need is in the data and the text (critical: cross-provider at L2; trivial: none; shadow mode: any reviewer)', async (t) => {
+  const r = repo(t);
+  const crit = ['--paths', 'src/auth/a.js', '--loc', '5', '--yes'];
+  const a = newTask(r.store, r.handle);
+  const shadow = await cli(['route', a, ...crit], r);
+  assert.deepEqual([shadow.env.data.review.need, shadow.env.data.review.text], ['any', 'any reviewer'], shadow.text);
+  const probe = await cli(['route', '--probe', '--paths', 'src/a.js', '--loc', '1'], r);
+  assert.deepEqual(probe.env.data.review, { need: 'none', text: 'none' });
+  atTier(r, 'L2');
+  const j = await cli(['route', '--probe', '--paths', 'src/auth/a.js', '--loc', '5'], r);
+  assert.deepEqual(j.env.data.review, { need: 'external', text: 'cross-provider' });
+  const text = await cli(['route', '--probe', '--paths', 'src/auth/a.js', '--loc', '5'], { ...r, json: false });
+  assert.match(text.text, /^review: cross-provider$/m);
 });

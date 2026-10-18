@@ -15,6 +15,7 @@ import { isAbsolute, relative } from 'node:path';
 import { EXIT } from '../cli/commands.mjs';
 import { openStore } from '../profile/index.mjs';
 import { StateError, emailHash, gitIdentity, open, resolve } from '../state/index.mjs';
+import { reviewShown } from '../verify/artifacts.mjs';
 import { classify } from './classify.mjs';
 import { RouteError, usage } from './errors.mjs';
 import { overrideTask, routeTask } from './ratchet.mjs';
@@ -89,9 +90,12 @@ function probe(f, { io, names, readRisk }) {
   const plan = classify({ paths: inRepo(where?.worktree ?? null, f.paths), loc: f.loc, flags: f.flags, riskPaths });
   return {
     task: null, class: plan.class, computed: plan.class, previous: null, outcome: 'probed', escalated: false, reasons: plan.reasons,
-    route: routeFor(plan.class, { flags: plan.flags }), addedSteps: [], decision: null, input: { files: plan.files, loc: plan.loc, flags: plan.flags },
+    route: routeFor(plan.class, { flags: plan.flags }), addedSteps: [], decision: null, review: reviewShown(where?.active ? open(where.dir, { names }) : NO_STORE, plan.class, { names, env: io.env }), input: { files: plan.files, loc: plan.loc, flags: plan.flags },
   };
 }
+
+// A probe outside a tracked repository has no store: the applied tier is L0.
+const NO_STORE = { read: () => null };
 
 const HEADLINE = {
   classified: () => '',
@@ -105,6 +109,7 @@ const HEADLINE = {
 
 function render(d) {
   const lines = [`${d.task ?? 'plan'}: ${d.class}${HEADLINE[d.outcome](d)}`, `route: ${d.route.steps.join(' > ')}`];
+  lines.push(`review: ${d.review.text}`);
   if (d.addedSteps.length) lines.push(`adds: ${d.addedSteps.join(', ')}`);
   lines.push(`outcome gates (the same for every class): ${d.route.gates.join(', ')}`, 'reasons:');
   for (const r of d.reasons) lines.push(`  - ${r.path ? `${r.path}: ` : ''}${r.text}`);
@@ -123,9 +128,9 @@ export function makeRoute({ readProfileRiskPaths: readRisk = readProfileRiskPath
         const out = f.kind === 'override'
           ? { ...overrideTask(store, f.task, { to: flags.override, by: flags.by, quote: flags.quote, handle }), input: null }
           : routeTask(store, f.task, { paths: inRepo(where.worktree, f.paths), loc: f.loc, flags: f.flags, riskPaths: readRisk({ dir: where.dir, names }), handle });
-        data = { probe: false, ...out };
+        data = { probe: false, ...out, review: reviewShown(store, out.class, { names, env: io.env }) };
       }
-      data = { task: data.task, probe: data.probe, class: data.class, computed: data.computed, previous: data.previous, outcome: data.outcome, escalated: data.escalated, reasons: data.reasons, route: data.route, addedSteps: data.addedSteps, decision: data.decision, input: data.input };
+      data = { task: data.task, probe: data.probe, class: data.class, computed: data.computed, previous: data.previous, outcome: data.outcome, escalated: data.escalated, reasons: data.reasons, route: data.route, addedSteps: data.addedSteps, decision: data.decision, review: data.review, input: data.input };
       return { data, text: render(data) };
     } catch (err) {
       if (err instanceof RouteError || err instanceof StateError) return { code: EXIT[err.exit], errors: [err] };
