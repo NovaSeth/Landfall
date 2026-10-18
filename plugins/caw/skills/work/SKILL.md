@@ -6,7 +6,7 @@ description: Use when the user asks for a change to code in a repository, such a
 
 # Work
 
-Rules by ID, never whole files: `caw rule PRI-2 FLW-1 COD-1 COD-3 PRI-15`. Run every `caw` command with `--json`; commands that write files also take `--yes`.
+Rules by ID, never whole files: `caw rule PRI-2 FLW-1 COD-1 COD-3 PRI-15`. Run every caw command with `--json`; commands that write files also take `--yes`.
 
 1. `caw status --json`. Active: go to 4. Declined: work without caw, stop here.
 2. Class the change without writing anything: `caw route --probe --paths <p,…> --loc <n>` (PRI-2).
