@@ -8,9 +8,9 @@ description: Use when making or changing a technical, scope or process decision 
 
 Rules: `caw rule PRI-8 PRI-10 PRI-16 PRI-17 MEM-2 MEM-3 COD-12 SPC-15`.
 
-1. Decide technical scope, variants, spec and plan conflicts yourself and record each (PRI-16); ask the human only in the cases PRI-17 lists.
-2. A record holds what, why and the cost if wrong; quote the human's words verbatim (PRI-8, MEM-2). A stated preference also goes into the collaboration rules with its reason (MEM-3).
-3. Records are append-only: a change is a new decision that supersedes the old one, and decided behavior changes only that way (MEM-2, PRI-8, SPC-15).
-4. A number in the method is a default: record the project's own value as a decision (PRI-10).
-5. Cite the decision next to the code it constrains (COD-12).
-6. When `caw --help` lists no `decide` command, append the record to the project's decision log and tell the user where it is.
+1. Decide technical scope, variants, spec and plan conflicts yourself (PRI-16); ask the human only in the cases PRI-17 lists.
+2. Look for an existing one: `caw decisions find <words>`.
+3. Record: `caw decide --title "<what>" --why "<why>" --cost "<cost if wrong>" [--scope <globs>] [--kind <kind>] --yes`. Quote the human's words verbatim (PRI-8, MEM-2); a stated preference also goes into the collaboration rules with its reason (MEM-3).
+4. A change is a new record that replaces the old: `--supersedes <ids>`. Never edit a record (MEM-2, SPC-15).
+5. A number in the method is a default: record the project's own value (PRI-10).
+6. Cite the ID next to the code it constrains: `// D-<H>-<n>: <why in five words>` (COD-12). Then run `caw decisions check`; it exits 1 on a bad record or citation.

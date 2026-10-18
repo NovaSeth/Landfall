@@ -8,8 +8,9 @@ description: Use when the user asks to keep working unattended through a plan, t
 
 Rules: `caw rule FLW-4 FLW-5 FLW-9 ORC-9 ORC-11 MEM-4 MEM-5 MEM-10`.
 
-1. Each tick asks the CLI for the next steps and does them (FLW-4). The wakeup prompt is fixed and carries no task state; after DONE, STALLED or BUDGET, schedule no wakeup (FLW-5).
-2. When `caw --help` lists no `tick` command, this version has no loop: work through the plan task by task and stop when it is done.
-3. Every task in progress has a live next step; without one it returns to todo or is marked blocked with what unblocks it (FLW-9).
-4. Fill free machine slots with the next independent task (ORC-11); ask an agent that runs long for a 5-line status (ORC-9).
-5. Before a break, write a resume note (MEM-4). On resume, inventory worktrees, locks and processes before dispatching again (MEM-5, MEM-10).
+1. Start: `caw loop start` (change caps only on the user's word: `--caps wallMin=…,ticks=…,usd=…,rounds=…`). After a break, check `caw loop status` first and inventory worktrees, locks and processes (MEM-4, MEM-5, MEM-10).
+2. Tick: `caw tick` (add `--plan <file>` for a plan). The exit says what to do (FLW-4).
+3. ACTION (exit 0): do the steps it prints, then tick again. Fill free machine slots with the next independent task (ORC-11); ask a long-running agent for a 5-line status (ORC-9).
+4. WAIT (exit 3): schedule one ScheduleWakeup after NEXT_TICK seconds with the fixed prompt tick printed, nothing else in it.
+5. DONE (4), STALLED (5), BUDGET (6): the loop ended. Schedule no wakeup, cancel a pending one, report the exit (FLW-5). `caw loop stop` ends a running loop.
+6. A task in progress always has a live next step; otherwise it returns to todo or is blocked with what unblocks it (FLW-9).
