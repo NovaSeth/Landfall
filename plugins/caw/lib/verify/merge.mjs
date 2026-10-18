@@ -41,7 +41,7 @@ function profileOf(text) {
   }
 }
 
-export function mergeTask({ cwd, env, names, id, branch, at = new Date().toISOString() }) {
+export function mergeTask({ cwd, env, names, id, branch, version = null, at = new Date().toISOString() }) {
   const where = activeWhere({ cwd, env, names });
   KINDS.task.path(id);
   const store = storeOf(where, names);
@@ -94,7 +94,7 @@ export function mergeTask({ cwd, env, names, id, branch, at = new Date().toISOSt
       const fresh = readRecords(where.dir).records.some((r) => r.doc.status === 'active' && r.doc.kind === 'gate-change' && !known.has(r.name));
       if (!fresh) return refused('gate-change-required', `${ref} changes the target's gates or drops one of its risk paths`, 'record the change as a gate-change decision in the branch, then merge again');
     }
-    out = evaluate({ where, names, env, id, mode: 'merge', at, anchor: tip, merged: gitIn(where, env, ['rev-parse', '-q', '--verify', 'MERGE_HEAD']).stdout.trim() || null });
+    out = evaluate({ where, names, env, id, mode: 'merge', at, anchor: tip, merged: gitIn(where, env, ['rev-parse', '-q', '--verify', 'MERGE_HEAD']).stdout.trim() || null, version });
     const verified = { result: out.doc.result, verify: out.doc, output: out.output };
     if (out.doc.result !== 'pass') {
       undo();

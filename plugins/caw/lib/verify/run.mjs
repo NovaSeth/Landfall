@@ -53,6 +53,7 @@ import { KINDS, StateError, check, open, resolve } from '../state/index.mjs';
 import { readReport, reportHasEvidence, reviewNeed, reviewState } from './artifacts.mjs';
 import { measureAt } from './base.mjs';
 import { baselineSha, compareInventory, excusable, fingerprint, referenceOf, splitFailures } from './baseline.mjs';
+import { cacheKey, lookup, store as storeRuns, treeOf } from './gate-cache.mjs';
 import { runGate, tailLines } from './gates.mjs';
 import { byCodeUnit, hashOf } from './inventory.mjs';
 import { VERIFY_KINDS } from './kinds.mjs';
@@ -138,7 +139,8 @@ export function inventoryOf(runs, ctx) {
   let weak = false;
   let scan = tests.length === 0;
   for (const run of tests) {
-    const inv = parseReport(run.output, ctx);
+    // a run reused from the gate cache carries the inventory its report collected (null: its output was no report)
+    const inv = run.report !== undefined ? run.report : parseReport(run.output, ctx);
     if (inv) parts.push({ ...inv, run });
     else { scan = true; weak = true; }
   }
@@ -263,9 +265,10 @@ function reroute({ store, task, id, write, handle, riskPaths, change, at }) {
 }
 
 // The evaluation of task `id` in a resolved, active repository: { doc (verify.json), reasons, written, candidates,
-// output }. `anchor`: the commit whose baseline is the accepted inventory (merge mode: the target tip); `merged`: the
-// commit a merge brings onto it (merge mode).
-export function evaluate({ where, names, env, id, mode, handle = null, at = now(), anchor = null, merged = null }) {
+// output, reused (the time of the gate runs reused from the gate cache, else null) }. `anchor`: the commit whose
+// baseline is the accepted inventory (merge mode: the target tip); `merged`: the commit a merge brings onto it (merge
+// mode). `version`: the plugin version (part of the gate cache key); `cache` false runs the gates whatever is stored.
+export function evaluate({ where, names, env, id, mode, handle = null, at = now(), anchor = null, merged = null, version = null, cache = true }) {
   const started = Date.now();
   const write = mode === 'write';
   const store = storeOf(where, names);
@@ -289,6 +292,7 @@ export function evaluate({ where, names, env, id, mode, handle = null, at = now(
   let candidates = null;
   let inv = null;
   let output = [];
+  let reused = null;
   const baseOk = mode === 'merge' || commitExists(where, env, task.base);
   if (!baseOk) say('fail', 'base-missing', task.base ? `the base commit ${task.base.slice(0, 12)} of ${id} is not in this repository` : `${id} has no base commit`, `record it: ${names.bin} task set ${id} dispatched --executor <e> --base <sha> (fetch it first in a shallow clone)`);
   const anchorCommit = mode === 'merge' ? anchor : baseOk ? task.base : null;
@@ -304,10 +308,25 @@ export function evaluate({ where, names, env, id, mode, handle = null, at = now(
       if (gateChange) allowedBy.add(gateChange.id);
       else say('fail', 'no-test-gate', 'the profile has no gate of kind test', 'add one, or record a gate-change decision that waives it (a docs-only repository)');
     }
-    const runs = profile.gates.map((g) => runGate(g, { cwd: where.worktree, env }));
+    // The gate cache (gate-cache.mjs): the runs stored for this tree, gate set and version are reused; a set that
+    // passed is stored (not in ci mode, which writes nothing).
+    const tree = treeOf((a) => gitIn(where, env, a), { staged: mode === 'merge' });
+    const key = tree ? cacheKey({ tree, gatesSha: doc.gatesSha, version }) : null;
+    const hit = key && cache ? lookup(store, key, at) : null;
+    const runs = hit ? hit.runs : profile.gates.map((g) => runGate(g, { cwd: where.worktree, env }));
+    reused = hit?.at ?? null;
     doc.gates = runs.map((r) => r.gate);
     output = runs.map((r) => ({ name: r.gate.name, lines: tailLines(r.output) }));
     inv = inventoryOf(runs, context(where, env, code.rel));
+    if (key && !hit && mode !== 'ci') {
+      const report = (r) => {
+        const part = inv.parts.find((p) => p.run === r);
+        if (!part) return null;
+        const { run: _run, ...collected } = part;
+        return collected;
+      };
+      storeRuns(store, key, { tree, version, at, runs, report });
+    }
 
     const current = store.read('baseline', null);
     if (current && current.sha256 !== baselineSha(current)) {
@@ -395,7 +414,7 @@ export function evaluate({ where, names, env, id, mode, handle = null, at = now(
     store.write('verify', id, doc);
     store.write('verifyLog', id, { task: id, at, gates: output });
   }
-  return { doc, reasons: reasons.map(({ code: c, message, hint }) => ({ code: c, message, hint })), written: write, candidates, output };
+  return { doc, reasons: reasons.map(({ code: c, message, hint }) => ({ code: c, message, hint })), written: write, candidates, output, reused };
 }
 
 // On pass the baseline is this inventory; written only when its content changed, and only over the baseline this run
@@ -409,8 +428,9 @@ function grow(store, { inv, preexisting, head, at }) {
   store.update('baseline', null, (cur) => ((cur?.sha256 ?? null) === (current?.sha256 ?? null) ? { ...next, head, collectedAt: at, sha256: sha, ...pinned } : undefined));
 }
 
-// `verify <id> [--ci]`: the owner's verify writes; --ci only reports.
-export function verifyTask({ cwd, env, names, id, ci = false, at = now() }) {
+// `verify <id> [--ci] [--no-cache]`: the owner's verify writes; --ci only reports; --no-cache runs the gates whatever
+// the gate cache holds.
+export function verifyTask({ cwd, env, names, id, ci = false, cache = true, version = null, at = now() }) {
   const where = activeWhere({ cwd, env, names });
   KINDS.task.path(id);
   let handle = null;
@@ -423,5 +443,5 @@ export function verifyTask({ cwd, env, names, id, ci = false, at = now() }) {
       throw new StateError('not-owner', 'REFUSED', `${id} belongs to ${task.owner}; only its owner verifies it with writes`, { hint: `ask ${task.owner}, or check without writing: ${names.bin} verify ${id} --ci` });
     }
   }
-  return evaluate({ where, names, env, id, mode: ci ? 'ci' : 'write', handle, at });
+  return evaluate({ where, names, env, id, mode: ci ? 'ci' : 'write', handle, at, version, cache });
 }

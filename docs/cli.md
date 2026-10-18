@@ -1081,10 +1081,10 @@ Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
 Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
 ```
 
-### `caw verify <id> [--ci] [--yes] [--json]`
+### `caw verify <id> [--ci] [--no-cache] [--yes] [--json]`
 
 ```text
-usage: caw verify <id> [--ci] [--yes] [--json]
+usage: caw verify <id> [--ci] [--no-cache] [--yes] [--json]
 
 Re-run the profile gates, compare the test inventory with the baseline and record verify.json for a task.
 The gates run here (sh -c, their time limits); the report's prose never changes the result.
@@ -1093,12 +1093,15 @@ The class is re-classified from the diff against the task base and only rises; t
 evidence in its frontmatter, the route its approved review. On pass the baseline grows.
 Results: pass (0) · fail, baseline-shrunk, route-escalated, missing-artifact (1) · error (8: a gate could not run).
 Only the task's owner verifies with writes; changes files: needs a terminal or --yes (in CI: --ci --yes).
+A gate set that passed on this exact tree (clean worktree, same gates and plugin version, within 24 h) is reused from
+local/gate-cache in the state directory instead of running again; the output says "gates: reused from <time>".
 
 Arguments:
   id  task ID such as T-AB-1
 
 Options:
-  --ci  check only: write nothing (verify.json, baseline, class); no registered owner needed
+  --ci        check only: write nothing (verify.json, baseline, class); no registered owner needed
+  --no-cache  run the gates even when a passing run of this tree is stored
 
 Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
 Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV

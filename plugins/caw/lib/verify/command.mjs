@@ -30,11 +30,12 @@ const typed = (fn) => (ctx) => {
   }
 };
 
-export function renderVerify(doc) {
+// `reused`: the time of the gate runs reused from the gate cache (null: the gates ran).
+export function renderVerify(doc, reused = null) {
   const lines = [`${doc.task}: ${doc.result} (${doc.head ? `head ${doc.head.slice(0, 12)}` : 'uncommitted changes'}, class ${doc.class ?? 'none'})`];
   if (doc.gates.length) {
     const width = Math.max(...doc.gates.map((g) => g.name.length));
-    lines.push('gates:', ...doc.gates.map((g) => `  ${g.name.padEnd(width)}  ${g.result.padEnd(7)}  exit ${g.exit ?? '-'}  ${seconds(g.durationMs)}`));
+    lines.push(reused ? `gates: reused from ${reused}` : 'gates:', ...doc.gates.map((g) => `  ${g.name.padEnd(width)}  ${g.result.padEnd(7)}  exit ${g.exit ?? '-'}  ${seconds(g.durationMs)}`));
   }
   const inv = doc.inventory;
   lines.push(`tests (${inv.collector}${inv.weak ? ', weak: a test gate read by the static scan only' : ''}): ${inv.total}; added ${inv.added.length}, removed ${inv.removed.length}, newly skipped ${inv.newlySkipped.length}${inv.allowedBy.length ? `; allowed by ${inv.allowedBy.join(', ')}` : ''}`);
@@ -47,10 +48,10 @@ export function renderVerify(doc) {
   return lines;
 }
 
-export const verify = typed(({ args, flags, names, io }) => {
-  const out = verifyTask({ cwd: io.cwd, env: io.env, names, id: args.id, ci: Boolean(flags.ci) });
-  const data = { ...out.doc, written: out.written, ...(out.candidates ? { candidates: out.candidates } : {}), output: out.output };
-  const lines = [...renderVerify(out.doc), out.written ? `gate output: local/verify/${out.doc.task}.log in the state directory` : 'nothing written (--ci)'];
+export const verify = typed(({ args, flags, names, version, io }) => {
+  const out = verifyTask({ cwd: io.cwd, env: io.env, names, id: args.id, ci: Boolean(flags.ci), cache: !flags.noCache, version: version ?? null });
+  const data = { ...out.doc, written: out.written, ...(out.candidates ? { candidates: out.candidates } : {}), output: out.output, reusedFrom: out.reused };
+  const lines = [...renderVerify(out.doc, out.reused), out.written ? `gate output: local/verify/${out.doc.task}.log in the state directory` : 'nothing written (--ci)'];
   return { code: exitOf(out.doc.result), data, errors: out.reasons, text: `${forTerminal(lines.join('\n'))}\n` };
 });
 
@@ -60,8 +61,8 @@ export const taskDone = typed(({ args, names, io }) => {
   return { data: { task: r.id, status: r.task.status, changed: r.changed, head: r.head }, text: `${text}\n` };
 });
 
-export const taskMerge = typed(({ args, flags, names, io }) => {
-  const r = mergeTask({ cwd: io.cwd, env: io.env, names, id: args.id, branch: flags.branch });
+export const taskMerge = typed(({ args, flags, names, version, io }) => {
+  const r = mergeTask({ cwd: io.cwd, env: io.env, names, id: args.id, branch: flags.branch, version: version ?? null });
   const { exit, reasons, ...data } = r;
   let lines;
   if (r.merged) lines = [`merged ${r.branch} for ${r.task} as ${r.commit.slice(0, 12)}`, ...renderVerify(r.verify).slice(1)];
