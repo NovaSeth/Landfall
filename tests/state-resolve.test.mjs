@@ -173,6 +173,10 @@ test('resolve in a linked worktree: the project is the main checkout, the worktr
   }
   const main = state.resolve({ cwd: join(r, 'src', 'deep'), env, names });
   assert.deepEqual([main.repo, main.worktree, main.copy], [r, r, null], 'the main checkout itself');
+  // git's relative answers are relative to its physical directory, also through a link into the checkout
+  symlinkSync(join(r, 'src'), join(base, 'into-src'));
+  const into = state.resolve({ cwd: join(base, 'into-src', 'deep'), env, names });
+  assert.deepEqual([into.repo, into.worktree, into.copy], [r, r, null], 'through a link into a subdirectory');
   mkdirSync(join(r, names.stateDir));
   writeFileSync(join(r, names.stateDir, 'state.json'), '{}');
   assert.equal(state.resolve({ cwd: wt, env, names }).active, true, 'active from the state of the main checkout');
