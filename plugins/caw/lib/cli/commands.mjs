@@ -715,6 +715,37 @@ const ROWS = [
     mutating: true,
     load: () => import('../decisions/commands.mjs').then((m) => m.supersede),
   },
+  // External executors (spec §7.12): lib/providers.
+  {
+    name: 'providers',
+    summary: 'List the provider CLIs for external runs: found on PATH, version, auth, roles and the sandbox per role.',
+    details: [
+      'Per adapter (built-in, then the ones declared with `providers add`): PATH lookup, --version and the auth probe, 2 s each.',
+      'The result is cached for 1 h in plugin data providers.json; --refresh probes again. A provider runs a role only in the',
+      'sandbox the adapter maps it to (reviewer read-only, implementer workspace-write); no mode that lifts the sandbox exists.',
+    ],
+    args: [],
+    flags: [{ flag: '--refresh', summary: 'probe every provider again instead of reading the cache' }],
+    exits: ['OK', 'USAGE', 'REFUSED', 'ENV'],
+    load: () => import('../providers/cli.mjs').then((m) => m.providers),
+  },
+  {
+    name: 'providers add',
+    summary: 'Declare another provider CLI (generic adapter): its argv template and the sandbox mode per role.',
+    details: [
+      'The template is split on spaces (no shell); placeholders are whole words: {cwd} {sandbox} {out} {model} ({model} is',
+      'dropped when unset). The brief goes to stdin. The roles are the keys of --sandbox-map. A word or mode naming a way to',
+      'lift the sandbox or the approvals is refused (exit 2). Declaring an ID again replaces it. Kept in plugin data providers.json.',
+    ],
+    args: [{ name: 'id', required: true, summary: 'provider ID: 1-20 lowercase letters or digits, not a built-in one' }],
+    flags: [
+      { flag: '--argv', value: 'template', summary: "required: the command, such as 'mycli run --dir {cwd} --mode {sandbox} -o {out}'" },
+      { flag: '--sandbox-map', value: 'role=mode,…', summary: 'required: the mode per role, such as reviewer=read-only,implementer=workspace-write' },
+    ],
+    exits: ['OK', 'USAGE', 'REFUSED', 'ENV'],
+    mutating: true,
+    load: () => import('../providers/cli.mjs').then((m) => m.providersAdd),
+  },
 ];
 // Rows sorted by name in one place, so branches that add rows never conflict on order and help lists them sorted.
 export const COMMANDS = ROWS.slice().sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
