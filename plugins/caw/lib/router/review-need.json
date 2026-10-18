@@ -1,0 +1,5 @@
+{
+  "trivial": { "L0": "none", "L1": "none", "L2": "none", "L3": "none" },
+  "standard": { "L0": "none", "L1": "any", "L2": "any", "L3": "any" },
+  "critical": { "L0": "any", "L1": "external-if-provider", "L2": "external", "L3": "external" }
+}
