@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { delimiter, dirname, join } from 'node:path';
+import { delimiter, dirname, join, relative, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { isolateProcessEnv } from './helpers/isolated-env.mjs';
 import { parseYaml } from './lib/yaml-subset.mjs';
@@ -224,4 +224,18 @@ test('CI step: pull_request scans the commits of the pull request, push the tree
   assert.equal(r.status, 1, `push: a key in the tree: ${out(r)}`);
   r = step(pr('0'.repeat(40)));
   assert.equal(r.status, 8, `a head the clone does not have: ${out(r)}`);
+});
+
+test('this repository runs the scan: the check-secrets script, a CI step for pull requests and pushes; SEC-6 names exit 8', () => {
+  const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
+  assert.equal(pkg.scripts['check-secrets'], `node ${relative(root, LAUNCHER).split(sep).join('/')} secrets`);
+  const ci = parseYaml(readFileSync(join(root, '.github', 'workflows', 'tests.yml'), 'utf8'));
+  const { steps } = ci.jobs.tests;
+  assert.equal(steps[0].with?.['fetch-depth'], 0, 'a pull request range and the v1.5.1 tag of the differential test need the history');
+  const step = steps.find((s) => s.name === 'secrets scan');
+  assert.ok(step, 'a secrets scan step');
+  assert.deepEqual(step.env, { EVENT: '${{ github.event_name }}', BASE_SHA: '${{ github.event.pull_request.base.sha }}', HEAD_SHA: '${{ github.event.pull_request.head.sha }}' });
+  assert.ok(step.run.includes('npm run check-secrets -- --range "$BASE_SHA..$HEAD_SHA"\n') && step.run.includes('npm run check-secrets\n'), step.run);
+  const rule = spawnSync(process.execPath, [LAUNCHER, 'rule', 'SEC-6'], { encoding: 'utf8', env: process.env });
+  assert.match(rule.stdout, /exit code \(8 = /, 'the method states the exit code of the command table');
 });
