@@ -19,6 +19,8 @@ isolateProcessEnv();
 
 const state = await lib('state/index.mjs');
 const profile = await lib('profile/index.mjs');
+const verify = await lib('verify/index.mjs');
+const sched = await lib('sched/index.mjs');
 const { main } = await lib('cli/main.mjs');
 
 const IDENTITY = '[user]\n\tname = Test User\n\temail = test@example.com\n';
@@ -424,4 +426,118 @@ test('in-repo state, parallel worktrees: a verify on one branch does not count i
   const v = await p.run(['verify', b, '--yes'], other);
   assert.equal(v.code, 0, show(v));
   assert.deepEqual(v.out.data.inventory.removed, []);
+});
+
+// ---- the anchor fails closed ----
+// No path of the anchor lets verify pass where the reference is not known: with a linked state directory a store
+// baseline that does not describe the code (another line of history, or git cannot tell) refuses whatever the change
+// touches, a missing one refuses a change that touches tests, a baseline changed outside verify and a missing base
+// refuse; with in-repo state the working baseline still counts where git cannot tell and after a rewritten history.
+
+// Rewrites the store's working baseline (through lib/state) with `change` applied and its sha256 recomputed.
+function forgeBaseline(p, change) {
+  const store = verify.openStore(p.stateDir, names);
+  const doc = change(store.read('baseline', null));
+  store.write('baseline', null, { ...doc, sha256: verify.baselineSha(doc) });
+}
+const UNKNOWN_SHA = 'f'.repeat(40);
+async function linkedTask(p, title) {
+  const id = (await p.run(['task', 'new', title, '--yes'])).out.data.id;
+  await ready(p, id, p.base, 'main');
+  return id;
+}
+const editReadme = (p, dir, text) => { writeFileSync(join(dir, 'README.md'), text); git(dir, p.env, ['commit', '-q', '-am', 'docs']); };
+
+test('fail closed, linked: no store baseline and a change that touches tests is refused', async (t) => {
+  const p = await project(t, { linked: true, files: { 'calc.test.mjs': TESTS } });
+  profile.openStore(p.stateDir, names).write('profile', null, { ...profile.emptyProfile(), gates: GATES });
+  p.base = head(p.repo, p.env);
+  await ready(p, T1, p.base, 'main');
+  addTest(p, p.repo, 'first');
+  const v = await p.run(['verify', T1, '--yes']);
+  assert.equal(v.code, 1, show(v));
+  const why = v.out.errors.find((e) => e.code === 'baseline-unanchored');
+  assert.match(why?.message ?? '', /^no baseline is recorded in /, show(v));
+});
+
+test('fail closed, linked: a store baseline from another line of history refuses also a change without test files', async (t) => {
+  const p = await linkedBaseline(t);
+  const a = (await p.run(['task', 'new', 'On the branch', '--yes'], 'wt')).out.data.id;
+  await ready(p, a, p.base, 'wt');
+  addTest(p, p.wt, 'branch-only');
+  assert.equal((await p.run(['verify', a, '--yes'], 'wt')).code, 0);
+  const b = await linkedTask(p, 'Docs on main');
+  editReadme(p, p.repo, '# docs\n');
+  const v = await p.run(['verify', b, '--yes']);
+  assert.equal(v.code, 1, show(v));
+  assert.deepEqual(codes(v), ['baseline-unanchored'], show(v));
+});
+
+test('fail closed, linked: git cannot tell whether the store baseline describes the code → refused', async (t) => {
+  const p = await linkedBaseline(t);
+  forgeBaseline(p, (doc) => ({ ...doc, head: UNKNOWN_SHA }));
+  const id = await linkedTask(p, 'Docs');
+  editReadme(p, p.repo, '# docs\n');
+  const v = await p.run(['verify', id, '--yes']);
+  assert.equal(v.code, 1, show(v));
+  const why = v.out.errors.find((e) => e.code === 'baseline-unanchored');
+  assert.match(why?.message ?? '', /git cannot tell/, show(v));
+});
+
+test('fail closed, linked: a baseline changed outside verify and a missing task base are refused', async (t) => {
+  const p = await linkedBaseline(t);
+  const store = verify.openStore(p.stateDir, names);
+  const doc = store.read('baseline', null);
+  store.write('baseline', null, { ...doc, tests: doc.tests.slice(1) });
+  const id = await linkedTask(p, 'Docs');
+  editReadme(p, p.repo, '# docs\n');
+  const forged = await p.run(['verify', id, '--yes']);
+  assert.equal(forged.code, 1, show(forged));
+  assert.ok(codes(forged).includes('baseline-invalid'), show(forged));
+  store.write('baseline', null, doc);
+  assert.equal((await p.run(['task', 'set', id, 'dispatched', '--executor', 'claude', '--base', 'e'.repeat(40), '--yes'])).code, 0);
+  const based = await p.run(['verify', id, '--yes']);
+  assert.equal(based.code, 1, show(based));
+  assert.ok(codes(based).includes('base-missing'), show(based));
+});
+
+test('fail closed, in-repo: the working baseline still counts where git cannot tell, and after a rewritten history', async (t) => {
+  const p = await project(t, { files: { 'calc.test.mjs': TESTS } });
+  profile.openStore(p.stateDir, names).write('profile', null, { ...profile.emptyProfile(), gates: GATES });
+  await ready(p, T1, head(p.repo, p.env), 'main');
+  assert.equal((await p.run(['verify', T1, '--yes'])).code, 0);
+  git(p.repo, p.env, ['add', '-A']);
+  git(p.repo, p.env, ['commit', '-q', '-m', 'state with the baseline']);
+  p.base = head(p.repo, p.env);
+  // a task verified with an added test, then its commit rewritten without it: the test still counts as removed
+  const id = (await p.run(['task', 'new', 'Rewritten', '--yes'])).out.data.id;
+  await ready(p, id, p.base, 'main');
+  addTest(p, p.repo, 'added-then-dropped');
+  assert.equal((await p.run(['verify', id, '--yes'])).code, 0);
+  writeFileSync(join(p.repo, 'calc.test.mjs'), TESTS);
+  writeFileSync(join(p.repo, 'README.md'), '# rewritten\n');
+  git(p.repo, p.env, ['add', 'calc.test.mjs', 'README.md']);
+  git(p.repo, p.env, ['commit', '-q', '--amend', '--no-edit']);
+  const rewritten = await p.run(['verify', id, '--yes']);
+  assert.equal(rewritten.code, 1, show(rewritten));
+  assert.deepEqual(rewritten.out.data.inventory.removed, ['["","added-then-dropped",1]'], show(rewritten));
+  // a working baseline whose head git does not know still counts
+  forgeBaseline(p, (doc) => ({ ...doc, head: UNKNOWN_SHA }));
+  const unknown = await p.run(['verify', id, '--yes']);
+  assert.equal(unknown.code, 1, show(unknown));
+  assert.deepEqual(unknown.out.data.inventory.removed, ['["","added-then-dropped",1]'], show(unknown));
+});
+
+// ---- leases of the checkout ----
+
+test('status and brief from a worktree show the lease taken in that worktree', async (t) => {
+  const p = await project(t);
+  assert.equal((await p.run(['route', T1, '--paths', 'a.js', '--loc', '3', '--yes'], 'wt')).code, 0);
+  const CALM = { cores: 10, load1: 1, loadMeasurable: true, totalBytes: 32 * 2 ** 30, availBytes: 20 * 2 ** 30, memMethod: 'vm_stat' };
+  const got = sched.acquire('agent', { names, env: p.env, cwd: p.wt, task: T1, owner: { sessionId: 'session-1', key: 'toolu_1' }, readings: CALM });
+  assert.equal(got.ok, true, JSON.stringify(got));
+  const st = await p.run(['status'], 'wt');
+  assert.deepEqual(st.out.data.leases.map((l) => l.task), [T1], show(st));
+  const br = await p.run(['brief', T1], 'wt');
+  assert.deepEqual(br.out.data.lease, sched.leaseEnv(got.lease, names), show(br));
 });
