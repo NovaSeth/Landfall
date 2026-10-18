@@ -54,6 +54,7 @@ Commands:
   decisions supersede  Record a decision replacing an active one; the old record gets status superseded and supersededBy.
   decline              Opt out of tracking this repository; remembered in machine data by its real path, never in the repository.
   doctor               Health report: Claude Code floor, plugin and hooks, release, state, profile, flags, context cost, permissions.
+  exec                 Start an external provider run for a task and role: the record local/runs/<run>.json, one detached supervisor per run.
   flags set            Set one capability flag of this repository (off, shadow or on, as the flag has them); a flip is recorded as a decision.
   flags show           Show the capability flags: each rollout capability with its mode, its source and what it does, then the team flags.
   gen apply            Write the generated files (CI workflow, pre-push hook, PR template, CODEOWNERS and AGENTS.md blocks); edits survive.
@@ -355,6 +356,30 @@ Every row has a fix hint (--json: data.rows); a warning keeps exit 0. Exit 8: cl
 
 Read-only.
 Exit codes: 0 OK · 1 FAIL · 8 ENV
+```
+
+### `caw exec [--task <id>] [--role <role>] [--provider <id>] [--yes] [--json]`
+
+```text
+usage: caw exec [--task <id>] [--role <role>] [--provider <id>] [--yes] [--json]
+
+Start an external provider run for a task and role: the record local/runs/<run>.json, one detached supervisor per run.
+The provider is selected like the dispatch does (found, logged in, declared for the role; --provider names one). The
+record starts as {status: starting}; the supervisor (run-supervise) takes the external lease (queued while none is
+free), runs the provider in its own process group under the wall cap (reviewer 900 s, implementer 2700 s, or the env
+<PREFIX>EXTERNAL_TIMEOUT), feeds the saved brief on stdin and keeps the record current at most once a second:
+running, elapsedMs, tokens, lastLine; at the end exit, outFile, tokens and the status done, failed or timeout. On the
+cap the whole group gets SIGTERM, a grace, then SIGKILL; the lease is released only after the group is gone.
+A reviewer runs read-only in the repository checkout; the out file lives in a private temp directory (0700). Exit 1:
+no such task, no saved brief (brief <id> --write), a live run of the task and role. Implementer runs: not yet (exit 2).
+
+Options:
+  --task <id>      required: the task ID, such as T-AB-1
+  --role <role>    required: reviewer or implementer
+  --provider <id>  a declared or built-in provider instead of the selection
+
+Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
+Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
 ```
 
 ### `caw flags set <cap> <mode> [--reason <text>] [--local] [--yes] [--json]`
@@ -1162,4 +1187,19 @@ Arguments:
 
 Internal: called by generated files; an error ends with exit 0 and no output, except a guard that cannot verify a guarded command (exit 2).
 Exit codes: 0 OK
+```
+
+### `caw run-supervise <run> [--yes] [--json]`
+
+```text
+usage: caw run-supervise <run> [--yes] [--json]
+
+Supervise one external run (started by exec): lease, process group, wall cap, record updates.
+Internal: exec starts it detached, one per run. It takes the external lease, runs the provider, updates the record and releases the lease after the group is gone.
+
+Arguments:
+  run  the run ID from exec
+
+Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
+Exit codes: 0 OK · 1 FAIL · 7 REFUSED · 8 ENV
 ```

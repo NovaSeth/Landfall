@@ -909,6 +909,40 @@ const ROWS = [
     mutating: true,
     load: () => import('../providers/cli.mjs').then((m) => m.providersAdd),
   },
+  {
+    name: 'exec',
+    summary: 'Start an external provider run for a task and role: the record local/runs/<run>.json, one detached supervisor per run.',
+    details: [
+      'The provider is selected like the dispatch does (found, logged in, declared for the role; --provider names one). The',
+      'record starts as {status: starting}; the supervisor (run-supervise) takes the external lease (queued while none is',
+      'free), runs the provider in its own process group under the wall cap (reviewer 900 s, implementer 2700 s, or the env',
+      '<PREFIX>EXTERNAL_TIMEOUT), feeds the saved brief on stdin and keeps the record current at most once a second:',
+      'running, elapsedMs, tokens, lastLine; at the end exit, outFile, tokens and the status done, failed or timeout. On the',
+      'cap the whole group gets SIGTERM, a grace, then SIGKILL; the lease is released only after the group is gone.',
+      'A reviewer runs read-only in the repository checkout; the out file lives in a private temp directory (0700). Exit 1:',
+      'no such task, no saved brief (brief <id> --write), a live run of the task and role. Implementer runs: not yet (exit 2).',
+    ],
+    args: [],
+    flags: [
+      { flag: '--task', value: 'id', summary: 'required: the task ID, such as T-AB-1' },
+      { flag: '--role', value: 'role', summary: 'required: reviewer or implementer' },
+      { flag: '--provider', value: 'id', summary: 'a declared or built-in provider instead of the selection' },
+    ],
+    exits: ['OK', 'FAIL', 'USAGE', 'REFUSED', 'ENV'],
+    mutating: true,
+    load: () => import('../providers/exec.mjs').then((m) => m.exec),
+  },
+  {
+    name: 'run-supervise',
+    summary: 'Supervise one external run (started by exec): lease, process group, wall cap, record updates.',
+    details: ['Internal: exec starts it detached, one per run. It takes the external lease, runs the provider, updates the record and releases the lease after the group is gone.'],
+    args: [{ name: 'run', required: true, summary: 'the run ID from exec' }],
+    flags: [],
+    exits: ['OK', 'FAIL', 'REFUSED', 'ENV'],
+    mutating: true,
+    hidden: true,
+    load: () => import('../providers/exec.mjs').then((m) => m.runSupervise),
+  },
 ];
 // Rows sorted by name in one place, so branches that add rows never conflict on order and help lists them sorted.
 export const COMMANDS = ROWS.slice().sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
