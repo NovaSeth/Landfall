@@ -13,6 +13,10 @@
 // only with a lane. Text values are checked like state fields (limits; no control, zero-width or bidi
 // characters). Writes refuse in an inactive repository (exit 7) and check every value before the store lock;
 // reads write nothing.
+// Task texts (spec §5.1, TASK_TEXTS): Markdown files next to task.json, written whole by the task's owner
+// (writeTaskText: `brief --write` stores tasks/<id>/brief.md); the caller decides whether an existing file may be
+// replaced, under the same store lock as the write.
+import { join } from 'node:path';
 import { checkWrite } from './document.mjs';
 import { StateError, guarded } from './errors.mjs';
 import { allocateId } from './ids.mjs';
@@ -132,6 +136,37 @@ export function setTask({ cwd, env, names, id, state, options = {}, at = now() }
       return doc;
     });
     return { id, task, event };
+  });
+}
+
+// Task text files by name: tasks/<id>/<file>.
+export const TASK_TEXTS = Object.freeze({ brief: 'brief.md' });
+const TEXT_MAX = 65536;
+
+// Writes the task text `name` of task `id` for its owner, under the store lock: { file, outcome }. outcome: created ·
+// replaced (replace(current text) allowed it) · unchanged (same text, nothing written) · kept (replace refused).
+export function writeTaskText({ cwd, env, names, id, name, text, replace = () => false } = {}) {
+  return guarded(() => {
+    if (!Object.hasOwn(TASK_TEXTS, name)) throw new TypeError(`state.writeTaskText: unknown task text ${name}`);
+    const rel = KINDS.task.path(id).replace(/[^/]+$/, TASK_TEXTS[name]);
+    if (typeof text !== 'string' || Buffer.byteLength(text) > TEXT_MAX) throw usage('limit-exceeded', `tasks/${id}/${TASK_TEXTS[name]}: at most ${TEXT_MAX} bytes of text`, 'shorten it; nothing was written');
+    const { where, store } = activeStore({ cwd, env, names });
+    const by = actor(store, where, env, names);
+    let outcome = null;
+    store.locked(() => {
+      store.assertWritable();
+      const doc = store.read('task', id);
+      if (doc === null) throw unknownTask(id, where, names);
+      if (doc.owner !== by) throw new StateError('not-owner', 'FAIL', `${id} belongs to ${doc.owner}; only its owner writes its ${TASK_TEXTS[name]}`, { hint: 'ask the owner' });
+      const cur = store.readText(rel);
+      if (cur === text) outcome = 'unchanged';
+      else if (cur !== null && !replace(cur)) outcome = 'kept';
+      else {
+        store.writeText(rel, text);
+        outcome = cur === null ? 'created' : 'replaced';
+      }
+    });
+    return { file: join(where.dir, rel), outcome };
   });
 }
 

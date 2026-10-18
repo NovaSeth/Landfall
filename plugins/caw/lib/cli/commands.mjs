@@ -146,6 +146,26 @@ const ROWS = [
     mutating: (flags) => !flags.probe,
     load: () => import('../router/command.mjs').then((m) => m.route),
   },
+  {
+    name: 'brief',
+    summary: 'Render the brief of a routed task from the brief template and the state; --write saves tasks/<id>/brief.md.',
+    details: [
+      'Filled from the state: title and ID, the agent of the role, the class with the reason of its route record and the',
+      'kind, branch and base once recorded, the rule IDs of the role and the class, the profile gates, and the lease env',
+      'of a live lease the scheduler holds for the task here. Every other <…> placeholder is left to fill in.',
+      'The brief ends with a marker line holding its hash: --write replaces a saved brief while nobody edited it; one',
+      'written or edited by hand only with --force (else exit 1). Exit 1 also: no such task, the task is not routed.',
+    ],
+    args: [{ name: 'id', required: true, summary: 'task ID such as T-AB-1' }],
+    flags: [
+      { flag: '--role', value: 'role', summary: 'implementer (default) or reviewer: the agent and the rules of the role' },
+      { flag: '--write', summary: 'save it as tasks/<id>/brief.md in the state directory (the task\'s owner)' },
+      { flag: '--force', summary: 'with --write: replace a brief written or edited by hand' },
+    ],
+    exits: ['OK', 'FAIL', 'USAGE', 'REFUSED', 'ENV'],
+    mutating: (flags) => Boolean(flags.write),
+    load: () => import('./brief.mjs').then((m) => m.brief),
+  },
   // Loop (spec §7.7): lib/loop/command.mjs.
   {
     name: 'tick',

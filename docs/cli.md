@@ -42,6 +42,7 @@ usage: caw <command> [options]
 Commands:
   baseline pin         Repair the test baseline: replace it with the inventory collected now, with a gate-change or test-removal decision.
   baseline show        Print the pinned test baseline: every test with its skip flag, pinned failures, collector and last pin.
+  brief                Render the brief of a routed task from the brief template and the state; --write saves tasks/<id>/brief.md.
   deactivate           Remove the untracked state of this repository (or the link of its external state) and remember the opt-out.
   decide               Record a decision: a new D-<H>-<n> file under the state directory with what, why and cost if wrong.
   decisions check      Validate the decision records and every D-<H>-<n> cited in tracked files; exit 1 on a problem.
@@ -125,6 +126,30 @@ Print the pinned test baseline: every test with its skip flag, pinned failures, 
 Exit 1 when its sha256 does not match its content (it was edited outside verify and baseline pin). Writes nothing.
 
 Read-only.
+Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
+```
+
+### `caw brief <id> [--role <role>] [--write] [--force] [--yes] [--json]`
+
+```text
+usage: caw brief <id> [--role <role>] [--write] [--force] [--yes] [--json]
+
+Render the brief of a routed task from the brief template and the state; --write saves tasks/<id>/brief.md.
+Filled from the state: title and ID, the agent of the role, the class with the reason of its route record and the
+kind, branch and base once recorded, the rule IDs of the role and the class, the profile gates, and the lease env
+of a live lease the scheduler holds for the task here. Every other <…> placeholder is left to fill in.
+The brief ends with a marker line holding its hash: --write replaces a saved brief while nobody edited it; one
+written or edited by hand only with --force (else exit 1). Exit 1 also: no such task, the task is not routed.
+
+Arguments:
+  id  task ID such as T-AB-1
+
+Options:
+  --role <role>  implementer (default) or reviewer: the agent and the rules of the role
+  --write        save it as tasks/<id>/brief.md in the state directory (the task's owner)
+  --force        with --write: replace a brief written or edited by hand
+
+Read-only. Changes files with --write: needs a terminal or --yes, otherwise exit 7 REFUSED.
 Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
 ```
 

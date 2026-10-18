@@ -3,8 +3,8 @@
 // and whether it is linked, declined, not active) · the tier from the engine, evaluated without recording (`tier`
 // records a change; an engine turned off is a line, not a refusal) · the open tasks with the next step of the loop's
 // step table (lib/loop nextSteps: the same rows `tick` acts on) · the loop record when one exists · the scheduler
-// leases of this project (its repository path or one of its task IDs). At most 25 lines: the task rows are cut first
-// and counted. --json: data { repo, state, tier, tasks, steps, loop, leases } with every open task and step.
+// leases taken for this repository (lease project = its path; a task ID alone could be another repository's). At
+// most 25 lines: the task rows are cut first and counted. --json: data { repo, state, tier, tasks, steps, loop, leases } with every open task and step.
 // Writes nothing. Exit 0 · 1 a state file is invalid · 7 a newer state schema · 8 not a git repository, git missing.
 import { join } from 'node:path';
 import { EXIT } from '../cli/commands.mjs';
@@ -81,8 +81,7 @@ function view({ names, env, cwd }) {
   const state = stateLine(where, names.bin);
   const tier = tierOf(where, names, env);
   const t = where.active ? tasksOf(where, names, env) : { all: [], open: [], rows: [], loop: null };
-  const ids = new Set(t.all.map((x) => x.id));
-  const leases = where.dataDir ? snapshot({ names, env }).leases.filter((l) => l.project === where.repo || (l.task && ids.has(l.task))) : [];
+  const leases = where.dataDir ? snapshot({ names, env }).leases.filter((l) => l.project === where.repo) : [];
 
   const head = [where.repo, `State: ${state.text}`, `Tier: ${tier.text}`];
   const tail = [];

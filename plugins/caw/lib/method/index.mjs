@@ -76,6 +76,28 @@ export function explainUnknown(method, id) {
   return { id, range: numbers.length ? [`${prefix}-${Math.min(...numbers)}`, `${prefix}-${Math.max(...numbers)}`] : null, prefixes, legacy: method.legacy()[id] ?? null };
 }
 
+// The rule IDs a task brief cites (ORC-4), by executor role and by task class (the route's depth, spec §7.5): what the
+// role's agent follows, then what the class adds (planning depth, PRI-2; the same outcome gates, PRI-15).
+export const BRIEF_RULES = Object.freeze({
+  role: Object.freeze({
+    implementer: Object.freeze(['ORC-2', 'ORC-17', 'ORC-18', 'ORC-12', 'ORC-13', 'COD-1', 'COD-2', 'COD-3', 'COD-14', 'REV-10', 'REV-9', 'REV-18', 'ORC-7']),
+    reviewer: Object.freeze(['ORC-2', 'ORC-18', 'REV-1', 'REV-2', 'REV-3', 'REV-4', 'REV-6', 'REV-9', 'COD-2', 'COD-3', 'ORC-7']),
+  }),
+  class: Object.freeze({
+    trivial: Object.freeze(['PRI-15']),
+    standard: Object.freeze(['PRI-2', 'PRI-15', 'SPC-13', 'SPC-14']),
+    critical: Object.freeze(['PRI-2', 'PRI-15', 'PRI-6', 'SPC-1', 'SPC-3', 'SPC-13', 'SPC-14']),
+  }),
+});
+
+// The rule IDs of a brief for class `cls` and role `role`: the role's, then the class's, each once.
+export function briefRules({ cls, role }) {
+  const r = BRIEF_RULES.role[role];
+  const c = BRIEF_RULES.class[cls];
+  if (!Object.hasOwn(BRIEF_RULES.role, role) || !Object.hasOwn(BRIEF_RULES.class, cls)) throw new TypeError(`briefRules: no rules for class ${cls} and role ${role}`);
+  return [...new Set([...r, ...c])];
+}
+
 // The names `method` prints a part of the method by (spec §7.15): every pack of the index "packs" table, and every
 // section as "<topic>/<section slug>" (the topic key of the index; a slug alone repeats across topics).
 export function partNames(method) {

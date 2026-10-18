@@ -289,8 +289,8 @@ test('every rule ID the tick table cites resolves in the method (1.x: rule IDs i
   for (const id of cited) assert.ok(loop.TABLE_RULES.includes(id), `${id} is listed in TABLE_RULES`);
 });
 
-test('every command a step cites is a command row, or a spec §8.2 command of a unit not merged yet (brief)', () => {
-  const PENDING = ['brief'];
+test('every command a step cites is a command row, or a spec §8.2 command of a unit not merged yet (none left)', () => {
+  const PENDING = [];
   const src = readdirSync(join(pluginDir, 'lib', 'loop')).map((f) => readFileSync(join(pluginDir, 'lib', 'loop', f), 'utf8')).join('\n');
   const cited = [...new Set([...src.matchAll(/\$\{(?:names\.)?bin\} ([a-z]+(?: [a-z]+)?)/g)].map((m) => m[1]))].sort();
   assert.ok(cited.length >= 8, cited.join(', '));
