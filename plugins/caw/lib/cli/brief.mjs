@@ -82,7 +82,7 @@ export function brief({ args, flags, names, io, pluginRoot }) {
     return { code: EXIT.FAIL, errors: [{ code: 'task-unrouted', message: `${id} is not routed: its class decides the depth and the rules of the brief`, hint: `${bin} route ${id} --paths <p,…> --loc <n>` }] };
   }
   const gates = (openStore(where.dir, names).read('profile')?.gates ?? []).map((g) => g.cmd);
-  const held = where.dataDir ? snapshot({ names, env: io.env }).leases.find((l) => l.owner && l.status === 'live' && l.task === id && l.project === where.repo) : undefined;
+  const held = where.dataDir ? snapshot({ names, env: io.env }).leases.find((l) => l.owner && l.status === 'live' && l.task === id && l.project === where.worktree) : undefined; // a lease names the checkout it was taken in (lib/sched)
   const lease = held ? leaseEnv(held, names) : null;
   const template = readFileSync(join(pluginRoot, 'templates', 'task', 'brief.md'), 'utf8');
   const text = renderBrief({ template, task, role, gates, lease, names });

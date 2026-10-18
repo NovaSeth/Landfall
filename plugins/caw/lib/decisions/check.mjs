@@ -76,7 +76,7 @@ export function checkDecisions({ where, names, env, strict = false }) {
   const warnings = [];
   const byId = new Map(records.map((r) => [r.id, r.doc]));
 
-  const listed = git(['ls-files', '-z'], { cwd: where.repo, env });
+  const listed = git(['ls-files', '-z'], { cwd: where.worktree, env }); // the code of this checkout
   if (listed.error === 'missing') throw new StateError('git-missing', 'ENV', 'git is not on PATH', { hint: 'install git and put it on PATH' });
   if (listed.status !== 0) throw new StateError('git-failed', 'ENV', `git ls-files failed: ${listed.stderr.trim().slice(0, 200)}`, { hint: 'run it inside a git work tree' });
   const own = stateRel(where.repo, where.dir);
@@ -85,7 +85,7 @@ export function checkDecisions({ where, names, env, strict = false }) {
   let skipped = 0;
   for (const rel of listed.stdout.split('\0')) {
     if (!rel || (own && (rel === own || rel.startsWith(`${own}/`)))) continue;
-    const abs = join(where.repo, rel);
+    const abs = join(where.worktree, rel);
     const st = lstatSync(abs, { throwIfNoEntry: false });
     if (!st || !st.isFile()) continue;
     if (st.size > SCAN_MAX) { skipped++; continue; }

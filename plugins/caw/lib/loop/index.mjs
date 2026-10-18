@@ -40,7 +40,8 @@ function activeStore({ cwd, env, names }) {
   return { where, store: open(where.dir, { names, kinds: STORE_KINDS }) };
 }
 
-// { path (shown), entries } of a plan file: relative to the repository root or absolute, a regular file ≤ 1 MB.
+// { path (shown), entries } of a plan file: relative to the repository root (the worktree's: a plan is a file of the
+// checkout, as the wakeup guard checks it) or absolute, a regular file ≤ 1 MB.
 function readPlan(repo, file) {
   const abs = isAbsolute(file) ? file : join(repo, file);
   let st = null;
@@ -184,7 +185,7 @@ export function tickStore(store, { where, names, now, plan = null, probe }) {
 // plan: the plan's path as shown (relative to the repository root when inside it), or null.
 export function tick({ cwd, env, names, now = Date.now(), plan = null }) {
   const { where, store } = activeStore({ cwd, env, names });
-  const planDoc = plan === null ? null : readPlan(where.repo, plan);
+  const planDoc = plan === null ? null : readPlan(where.worktree, plan);
   return { where, plan: planDoc?.path ?? null, ...tickStore(store, { where, names, now, plan: planDoc, probe: gitProbe(where, env, names) }) };
 }
 

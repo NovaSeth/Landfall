@@ -7,7 +7,9 @@
 //      then task merge, with the gates run again on the merged tree); nothing may be unstaged or untracked; the
 //      tree is recorded (`git write-tree`). Any change to the gate set (added, removed, reordered,
 //      renamed, command or time limit changed) and any removed or changed risk path needs an active gate-change
-//      decision that the target tip does not have yet (r2 D2): gates can run any command, so none is additive.
+//      decision that the target tip does not have yet (r2 D2): gates can run any command, so none is additive. Only
+//      a state directory in the repository can come with the branch: a linked one (outside the repository) is no
+//      branch's, so there is nothing to compare (its gates change only where the profile is written).
 //   3. verify in merge mode (profile gates, the baseline committed on the target tip, report evidence, state files:
 //      SD-15's outcome gates; nothing written).
 //   4. Only on pass, while the working tree and the index still hold the recorded tree and the target has not moved:
@@ -17,10 +19,10 @@
 // A refusal before the commit undoes the merge: files the gates changed are restored from the index, then
 // `git merge --abort` (the tree was clean before the merge). A target that moved while the gates ran is never moved
 // back: the merge is left as it is (`target-moved`). An up-to-date branch merges nothing (exit 0).
-import { authorHandle, readRecords, stateRel } from '../decisions/index.mjs';
+import { authorHandle, readRecords } from '../decisions/index.mjs';
 import { emptyProfile } from '../profile/index.mjs';
 import { KINDS, StateError } from '../state/index.mjs';
-import { activeWhere, evaluate, gatesSha, gitIn, storeOf } from './run.mjs';
+import { activeWhere, evaluate, gatesSha, gitIn, stateAt, storeOf } from './run.mjs';
 
 const usage = (code, message, hint = '') => new StateError(code, 'USAGE', message, { hint });
 const fail = (code, message, hint = '') => new StateError(code, 'FAIL', message, { hint });
@@ -29,11 +31,10 @@ const firstLine = (r) => (r.stderr || r.stdout).trim().split('\n')[0] ?? '';
 // Whether `merged` changes the gate set of `target` in any way, or drops or changes one of its risk paths.
 const changesGates = (target, merged) => gatesSha(target.gates) !== gatesSha(merged.gates) || target.riskPaths.some((p) => !merged.riskPaths.includes(p));
 
-// The profile committed at `commit` (an empty one when there is none or it cannot be read).
-function profileAt(where, env, commit, rel) {
-  const r = rel ? gitIn(where, env, ['show', `${commit}:${rel}/profile.json`]) : { status: 1 };
+// The gates and risk paths of a committed profile text (empty when there is none or it cannot be read).
+function profileOf(text) {
   try {
-    const doc = r.status === 0 ? JSON.parse(r.stdout) : null;
+    const doc = text === null ? null : JSON.parse(text);
     return { gates: Array.isArray(doc?.gates) ? doc.gates : [], riskPaths: Array.isArray(doc?.riskPaths) ? doc.riskPaths : [] };
   } catch {
     return emptyProfile();
@@ -87,13 +88,13 @@ export function mergeTask({ cwd, env, names, id, branch, at = new Date().toISOSt
     const unchanged = () => gitIn(where, env, ['diff', '--quiet']).status === 0 && gitIn(where, env, ['ls-files', '--others', '--exclude-standard']).stdout.trim() === '';
     if (!unchanged()) return refused('merge-tree-changed', 'the merge left unstaged or untracked changes', 'merge by hand to see what changed them');
     tree = gitIn(where, env, ['write-tree']).stdout.trim();
-    const rel = stateRel(where.repo, where.dir);
-    if (changesGates(profileAt(where, env, tip, rel), store.read('profile', null) ?? emptyProfile())) {
-      const known = new Set(rel ? gitIn(where, env, ['ls-tree', '-r', '--name-only', tip, '--', `${rel}/decisions`]).stdout.split('\n').map((p) => p.slice(p.lastIndexOf('/') + 1)) : []);
+    const target = stateAt(where, env, tip, 'profile.json');
+    if (target.rel !== null && changesGates(profileOf(target.text), store.read('profile', null) ?? emptyProfile())) {
+      const known = new Set(gitIn(where, env, ['ls-tree', '-r', '--name-only', tip, '--', `${target.rel}/decisions`]).stdout.split('\n').map((p) => p.slice(p.lastIndexOf('/') + 1)));
       const fresh = readRecords(where.dir).records.some((r) => r.doc.status === 'active' && r.doc.kind === 'gate-change' && !known.has(r.name));
       if (!fresh) return refused('gate-change-required', `${ref} changes the target's gates or drops one of its risk paths`, 'record the change as a gate-change decision in the branch, then merge again');
     }
-    out = evaluate({ where, names, env, id, mode: 'merge', at, anchor: tip });
+    out = evaluate({ where, names, env, id, mode: 'merge', at, anchor: tip, merged: gitIn(where, env, ['rev-parse', '-q', '--verify', 'MERGE_HEAD']).stdout.trim() || null });
     const verified = { result: out.doc.result, verify: out.doc, output: out.output };
     if (out.doc.result !== 'pass') {
       undo();

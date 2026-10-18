@@ -72,7 +72,7 @@ export function status({ names, io }) {
   const state = stateLine(where, names.bin);
   const tier = tierOf(where, names, env);
   const t = where.active ? tasksOf(where, names, env) : { all: [], open: [], rows: [], loop: null };
-  const leases = where.dataDir ? snapshot({ names, env }).leases.filter((l) => l.project === where.repo) : [];
+  const leases = where.dataDir ? snapshot({ names, env }).leases.filter((l) => l.project === where.worktree) : []; // leases name their checkout (lib/sched)
 
   const head = [where.repo, `State: ${state.text}`, `Tier: ${tier.text}`];
   const tail = [];

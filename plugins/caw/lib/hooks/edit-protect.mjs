@@ -5,7 +5,9 @@
 // line counts as a change). Input read: tool_input.file_path, and for a decision record the edit itself (Write:
 // content; Edit: old_string, new_string, replace_all; MultiEdit: edits[]), to compare the status before and after.
 // The state is found through lib/state (git bounded by the budget) from the file's directory and from the session's cwd
-// (a linked state directory), after following links on the way. A state that cannot be resolved (machine data
+// (a linked state directory), after following links on the way. In a linked worktree the state is its project's, and the
+// worktree's checked-out copy of an in-repo state directory (lib/state resolve `copy`) is guarded by the same rules: a
+// write there never reaches the state. A state that cannot be resolved (machine data
 // unreadable, git missing or slow) denies an edit inside its in-repo state directory, or, when even that is unknown, of a
 // path ending in an owned file or under a segment named like the state directory (fail closed, findings-r1 C3, r2 A-I1). Not a state file, no active state, or malformed input
 // → null (the decision context runs). An edit that cannot apply (old_string not in the file) is left to Claude Code.
@@ -22,6 +24,10 @@ const deny = (reason) => ({
 });
 const clip = (s, n) => (s.length <= n ? s : `…${s.slice(s.length - n + 1)}`);
 
+// rel of `file` in the worktree copy of `where` or in its state directory, or null. The copy first: an executor's
+// worktree under local/worktrees/ of the state directory holds its own copy.
+const inState = (where, file) => [where.copy, where.dir].reduce((rel, d) => rel ?? (d ? inside(realPath(d), file) : null), null);
+
 // The state holding the real path `file`: { where, rel } (active) · { unknown, rel } (cannot be resolved) · null.
 // Candidates: the file's nearest existing directory, then the session's cwd.
 function owner(file, cwd, env, names, deadline) {
@@ -32,7 +38,7 @@ function owner(file, cwd, env, names, deadline) {
     if (!c || repos.some((r) => inside(r, realPath(c)) !== null)) continue; // a repository already resolved
     const s = stateOf(c, env, deadline);
     if (s.unknown) {
-      const rel = s.fallback ? inside(realPath(s.fallback.dir), file) : null;
+      const rel = s.fallback ? inState(s.fallback, file) : null;
       const named = !s.fallback && (ownedTail(file) || file.toLowerCase().split(sep).includes(stateDirName(names).toLowerCase()));
       if (rel !== null || named) return { unknown: s.unknown, rel: rel ?? file, where: s.fallback ?? null };
       if (s.fallback) repos.push(s.fallback.repo);
@@ -41,7 +47,7 @@ function owner(file, cwd, env, names, deadline) {
     if (!s.where) continue;
     repos.push(s.where.repo);
     if (!s.where.active) continue;
-    const rel = inside(realPath(s.where.dir), file);
+    const rel = inState(s.where, file);
     if (rel !== null) return { where: s.where, rel };
   }
   return null;
@@ -84,13 +90,13 @@ export function editProtect(input, { env = process.env, deadline = Infinity } = 
   const file = realPath(isAbsolute(raw) ? raw : join(cwd, raw));
   const hit = owner(file, cwd, env, names, deadline);
   if (hit?.unknown) {
-    const shownU = clip(hit.where ? relative(hit.where.repo, file) : file, 80);
+    const shownU = clip(hit.where ? relative(hit.where.worktree, file) : file, 80);
     return deny(`FLW-7: blocked an edit of \`${shownU}\`: the state of this repository cannot be resolved (${clip(String(hit.unknown), 40)}), `
       + `and the file is in its state directory. Instead repair it (\`${names.bin} doctor\`) and retry.`);
   }
   const owned = hit && ownedFile(hit.rel);
   if (!owned || owned.edit) return null;
-  const rel = relative(hit.where.repo, file);
+  const rel = relative(hit.where.worktree, file);
   const shown = clip(rel.startsWith('..') || isAbsolute(rel) ? file : rel, 80);
   const id = clip(owned.id ?? '<id>', 24);
   if (owned.field !== 'status') {

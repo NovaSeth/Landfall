@@ -64,7 +64,8 @@ const deny = (reason) => ({
   stdout: `${JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: clip(reason, REASON_MAX) } })}\n`,
 });
 
-// The plan of a tick prompt (the flag in any case) is one regular docs/plans/*.md file under the repository root.
+// The plan of a tick prompt (the flag in any case) is one regular docs/plans/*.md file under the repository root (the
+// worktree's top level: a plan is a file of the checkout, as for `tick --plan`).
 function planOk(prompt, root) {
   const m = /--plan\s+(\S+)/i.exec(compat(prompt));
   if (!m) return true;
@@ -90,5 +91,5 @@ export function guardWakeup(input, { env = process.env, deadline = Infinity } = 
   if (st.kind === 'ended') return loop ? deny(MSG.ended(st.exit)) : { stdout: '' };
   if (!loop) return st.kind === 'running' ? deny(MSG.contract) : { stdout: '' };
   if (!exactLoopPrompt(ti.prompt)) return deny(MSG.contract);
-  return planOk(ti.prompt, st.where.repo) ? { stdout: '' } : deny(MSG.plan);
+  return planOk(ti.prompt, st.where.worktree) ? { stdout: '' } : deny(MSG.plan);
 }

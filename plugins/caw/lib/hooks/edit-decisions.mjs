@@ -65,7 +65,7 @@ function inject(input, env, deadline) {
   if (timeoutMs <= 0) return NONE;
   try { where = resolve({ cwd: target.dir, env, names, timeoutMs }); } catch { return NONE; }
   if (!where.active) return NONE;
-  const path = inside(where.repo, target.path);
+  const path = inside(where.worktree, target.path); // decision scopes are paths of the checkout
   if (!path) return NONE;
   const store = open(where.dir, { names, kinds: { ...KINDS, ...STORE_KINDS, [SESSION.name]: SESSION }, lockTimeoutMs: LOCK_WAIT_MS });
   const records = scopeIndex(store, where.dir);

@@ -36,7 +36,7 @@ export function explainLines(r, thresholds = THRESHOLDS) {
 
 function render(r, explain, { names, where }) {
   const lines = [`Tier ${r.tier} ${r.name} (${MODE_TEXT[r.mode]})`];
-  const log = `${relative(where.repo, where.dir).split('\\').join('/') || '.'}/${SHADOW_LOG}`;
+  const log = `${relative(where.worktree, where.dir).split('\\').join('/') || '.'}/${SHADOW_LOG}`;
   if (r.change) {
     const how = !r.active ? 'not recorded: the repository is not active' : r.written === 'shadow' ? `proposed in ${log}` : `recorded as ${r.decision}`;
     lines.push(`Change: ${r.change.from} → ${r.change.to}, ${how}`);

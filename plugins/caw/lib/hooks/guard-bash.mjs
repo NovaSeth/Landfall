@@ -7,7 +7,9 @@
 // of the state directory) and its state directory (the command-owned state files, lib/guard/protect.mjs) reach the guard;
 // when it cannot be resolved (machine data unreadable, git missing or slow), the state is unknown: a command that names
 // the state directory or a state file is blocked (fail closed, GC8), any other passes; otherwise the team mode is unknown
-// (the push-to-main shapes fail closed) and only the universal tokens apply (spec §7.13). Injectable for tests:
+// (the push-to-main shapes fail closed) and only the universal tokens apply (spec §7.13). In a linked worktree the state
+// is its project's, and the worktree's checked-out copy of an in-repo state directory (lib/state resolve `copy`) is
+// guarded the same way: the guard runs once per guarded directory and the first block wins. Injectable for tests:
 // readProjectMode(), readGuardExtra(), state ({ dir, repo } | { unknown, dir, repo } | null), autoAllow ('off' | 'shadow'
 // | 'on'; else userConfig auto_allow_own_commands=false → off, else the auto-allow capability flag of lib/config, read
 // only for an own command, its default shadow when it cannot be read), shadowLog(entry), git (lib/git's git()).
@@ -45,12 +47,16 @@ export function guardExtra(where) {
   if (st.size > GUARD_EXTRA_MAX) throw refuse('too large');
   return readFileSync(file, 'utf8');
 }
-// The guard's view of the state: { dir, repo } (real paths) for an active one, { unknown, dir, repo, name } when it cannot
-// be resolved (dir: the in-repo location when git answers, else null; name: the in-repo directory name), null when there
-// is none.
-function guardState(s, names) {
-  if (s.unknown) return { unknown: s.unknown, dir: s.fallback ? realPath(s.fallback.dir) : null, repo: s.fallback?.repo ?? null, name: stateDirName(names) };
-  return s.where?.active ? { dir: realPath(s.where.dir), repo: s.where.repo } : null;
+// The guard's views of the state, one per guarded directory (the state directory, then a worktree copy): { dir, repo }
+// (real paths) for an active one, { unknown, dir, repo, name } when it cannot be resolved (dir: the in-repo location when
+// git answers, else null; name: the in-repo directory name); [null] when there is none.
+function guardStates(s, names) {
+  const copy = (w, extra) => (w?.copy ? [{ ...extra, dir: realPath(w.copy), repo: w.worktree }] : []);
+  if (s.unknown) {
+    const extra = { unknown: s.unknown, name: stateDirName(names) };
+    return [{ ...extra, dir: s.fallback ? realPath(s.fallback.dir) : null, repo: s.fallback?.repo ?? null }, ...copy(s.fallback, extra)];
+  }
+  return s.where?.active ? [{ dir: realPath(s.where.dir), repo: s.where.repo }, ...copy(s.where, {})] : [null];
 }
 
 const decision = (permissionDecision, reason) => ({
@@ -83,11 +89,15 @@ export function guardBash(input, opts = {}) {
   let resolved; // once, and only when a default reader needs it
   const s = () => (resolved ??= stateOf(cwd, env, opts.deadline ?? Infinity));
   const active = () => (s().where?.active ? s().where : null);
-  const v = evaluate(command, {
-    cwd, env, deadline: opts.deadline, git: opts.git, state: opts.state !== undefined ? opts.state : guardState(s(), names),
-    readProjectMode: opts.readProjectMode ?? (() => projectMode(active(), names)),
-    readGuardExtra: opts.readGuardExtra ?? (() => guardExtra(active())),
-  });
+  let v;
+  for (const state of opts.state !== undefined ? [opts.state] : guardStates(s(), names)) {
+    v = evaluate(command, {
+      cwd, env, deadline: opts.deadline, git: opts.git, state,
+      readProjectMode: opts.readProjectMode ?? (() => projectMode(active(), names)),
+      readGuardExtra: opts.readGuardExtra ?? (() => guardExtra(active())),
+    });
+    if (v.deny) break;
+  }
   const stderr = v.warnings.length ? `${v.warnings.join('\n')}\n` : '';
   if (v.deny) return { ...deny(v.deny), stderr };
   if (v.own) {
