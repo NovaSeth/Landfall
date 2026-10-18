@@ -1105,7 +1105,7 @@ test('heavy: one queue entry per worktree (exit 1); invalid limits and a missing
   assert.deepEqual(leaseFiles(s.data), []);
 });
 
-test('heavy: SIGTERM to the runner ends the command group and releases the lease; after SIGKILL the reaper ends the orphan', { timeout: 60000 }, async (t) => {
+test('heavy: SIGTERM to the runner ends the command group and releases the lease; after SIGKILL the reaper ends the orphan', { timeout: 120000 }, async (t) => {
   const s = sandbox(t);
   // The command reports its pid and its child's pid through a file (its output is shown only when the run ends).
   const long = `const { spawn } = require('node:child_process'); const g = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
@@ -1115,12 +1115,27 @@ test('heavy: SIGTERM to the runner ends the command group and releases the lease
     const pidFile = join(s.base, `pids-${wt}`);
     const p = spawn(process.execPath, [BIN, 'heavy', '--', process.execPath, '-e', long], { cwd: s.dir(wt), env: { ...s.env, PIDS: pidFile }, stdio: ['ignore', 'pipe', 'pipe'] });
     t.after(() => { try { p.kill('SIGKILL'); } catch { /* gone */ } });
+    let err = '';
+    p.stderr.on('data', (d) => { err += d; });
+    p.stdout.resume();
+    // Waits on what can be observed, with generous deadlines (a busy machine): the command's pids, then the lease
+    // naming the command with the store unlocked. The runner records the command after starting it, so the command
+    // can report first; a signal before the record would leave the reaper without the orphan, and a SIGKILL while
+    // the runner still holds the store lock leaves that lock stale (ESTALE by design).
     const pids = (async () => {
-      for (const until = Date.now() + 15000; !existsSync(pidFile);) {
-        if (Date.now() > until) throw new Error('the command did not report its pids within 15 s');
+      for (const until = Date.now() + 20000; !existsSync(pidFile);) {
+        if (Date.now() > until) throw new Error(`the command did not report its pids within 20 s; runner exit ${p.exitCode}, stderr: ${err}`);
         await pause(20);
       }
-      return readFileSync(pidFile, 'utf8').trim().split(' ').map(Number);
+      const [cmd, grand] = readFileSync(pidFile, 'utf8').trim().split(' ').map(Number);
+      let doc = null;
+      const storeLock = join(s.data, 'leases', 'lock');
+      for (const until = Date.now() + 20000; doc?.child?.pid !== cmd || existsSync(storeLock);) {
+        if (Date.now() > until) throw new Error(`the lease did not record the command ${cmd} within 20 s (store locked: ${existsSync(storeLock)}): ${JSON.stringify(doc)}; stderr: ${err}`);
+        await pause(20);
+        try { doc = leaseDoc(s.data, 'heavy-1'); } catch { doc = null; }
+      }
+      return [cmd, grand];
     })();
     return { p, pids, exit: new Promise((resolve) => { p.once('exit', (code, signal) => resolve({ code, signal })); }) };
   };
@@ -1131,8 +1146,8 @@ test('heavy: SIGTERM to the runner ends the command group and releases the lease
   a.p.kill('SIGTERM');
   const ended = await a.exit;
   assert.equal(ended.code, EXIT.FAIL, 'the command ended by the forwarded signal');
-  assert.equal(await gone(cmdA), true);
-  assert.equal(await gone(grandA), true, 'the whole group');
+  assert.equal(await gone(cmdA, 20000), true);
+  assert.equal(await gone(grandA, 20000), true, 'the whole group');
   assert.deepEqual(leaseFiles(s.data), []);
   const b = runner('wt-b');
   const [cmdB, grandB] = await b.pids;
@@ -1142,6 +1157,6 @@ test('heavy: SIGTERM to the runner ends the command group and releases the lease
   assert.doesNotThrow(() => process.kill(cmdB, 0), 'an orphan until reaped');
   const next = sched.acquire('heavy', s.ctx({ cwd: s.dir('wt-c') }));
   assert.equal(next.ok, true, 'the dead runner\'s lease is reaped');
-  assert.equal(await gone(cmdB), true, 'the orphan command is ended');
-  assert.equal(await gone(grandB), true, 'with its group');
+  assert.equal(await gone(cmdB, 20000), true, 'the orphan command is ended');
+  assert.equal(await gone(grandB, 20000), true, 'with its group');
 });

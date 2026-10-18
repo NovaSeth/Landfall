@@ -462,19 +462,21 @@ test('a lock whose owner is a zombie is stale (ESTALE), not held', T, async (t) 
   const f = (n) => join(dir, n);
   // sh starts the holder, then becomes `sleep`, which never reaps it: the holder exits holding the lock.
   const holder = `const fsx = await import(${JSON.stringify(FSX)}); const fs = await import('node:fs');
-fsx.withLock(${JSON.stringify(lock)}, () => { fs.writeFileSync(${JSON.stringify(f('pid'))}, String(process.pid)); process.exit(0); });`;
+fsx.withLock(${JSON.stringify(lock)}, () => { fs.writeFileSync(${JSON.stringify(f('pid.tmp'))}, String(process.pid)); fs.renameSync(${JSON.stringify(f('pid.tmp'))}, ${JSON.stringify(f('pid'))}); process.exit(0); });`;
   writeFileSync(f('holder.mjs'), holder);
   const parent = spawn('/bin/sh', ['-c', `"${process.execPath}" "${f('holder.mjs')}" & exec sleep 600`], { env: childEnv(dir), stdio: 'ignore' });
   t.after(() => parent.kill('SIGKILL'));
-  // Waits bounded by generous deadlines, not by speed (S3: loaded gates).
-  for (const end = performance.now() + 60000; performance.now() < end && !existsSync(f('pid'));) await new Promise((r) => setTimeout(r, 5));
-  const pid = Number(readFileSync(f('pid'), 'utf8'));
-  for (const end = performance.now() + 60000; performance.now() < end;) {
-    const st = spawnSync('ps', ['-o', 'stat=', '-p', String(pid)], { encoding: 'utf8' }).stdout.trim();
-    if (st.startsWith('Z')) break;
-    await new Promise((r) => setTimeout(r, 10));
+  // Waits bounded by generous deadlines, not by speed (S3: loaded gates). The holder renames its pid file into place,
+  // so a holder descheduled mid-write is never read as an empty file (pid 0).
+  for (const end = performance.now() + 60000; !existsSync(f('pid'));) {
+    if (performance.now() > end) assert.fail(`the holder did not write its pid within 60 s (files: ${readdirSync(dir).join(', ')})`);
+    await new Promise((r) => setTimeout(r, 5));
   }
-  assert.match(spawnSync('ps', ['-o', 'stat=', '-p', String(pid)], { encoding: 'utf8' }).stdout.trim(), /^Z/, 'the holder is a zombie');
+  const pid = Number(readFileSync(f('pid'), 'utf8'));
+  assert.ok(Number.isInteger(pid) && pid > 0, `the holder's pid: ${pid}`);
+  const stat = () => spawnSync('ps', ['-o', 'stat=', '-p', String(pid)], { encoding: 'utf8' }).stdout.trim();
+  for (const end = performance.now() + 60000; performance.now() < end && !stat().startsWith('Z');) await new Promise((r) => setTimeout(r, 10));
+  assert.match(stat(), /^Z/, `the holder is a zombie (pid ${pid} within 60 s)`);
   let alive = true;
   try { process.kill(pid, 0); } catch { alive = false; }
   assert.equal(alive, true, 'kill(pid, 0) still succeeds for a zombie');
