@@ -1119,8 +1119,9 @@ test('heavy: SIGTERM to the runner ends the command group and releases the lease
     p.stderr.on('data', (d) => { err += d; });
     p.stdout.resume();
     // Waits on what can be observed, with generous deadlines (a busy machine): the command's pids, then the lease
-    // naming the command. The runner records the command after starting it, so the command can report first; a
-    // signal before the record would leave the reaper without the orphan.
+    // naming the command with the store unlocked. The runner records the command after starting it, so the command
+    // can report first; a signal before the record would leave the reaper without the orphan, and a SIGKILL while
+    // the runner still holds the store lock leaves that lock stale (ESTALE by design).
     const pids = (async () => {
       for (const until = Date.now() + 20000; !existsSync(pidFile);) {
         if (Date.now() > until) throw new Error(`the command did not report its pids within 20 s; runner exit ${p.exitCode}, stderr: ${err}`);
@@ -1128,8 +1129,9 @@ test('heavy: SIGTERM to the runner ends the command group and releases the lease
       }
       const [cmd, grand] = readFileSync(pidFile, 'utf8').trim().split(' ').map(Number);
       let doc = null;
-      for (const until = Date.now() + 20000; doc?.child?.pid !== cmd;) {
-        if (Date.now() > until) throw new Error(`the lease did not record the command ${cmd} within 20 s: ${JSON.stringify(doc)}; stderr: ${err}`);
+      const storeLock = join(s.data, 'leases', 'lock');
+      for (const until = Date.now() + 20000; doc?.child?.pid !== cmd || existsSync(storeLock);) {
+        if (Date.now() > until) throw new Error(`the lease did not record the command ${cmd} within 20 s (store locked: ${existsSync(storeLock)}): ${JSON.stringify(doc)}; stderr: ${err}`);
         await pause(20);
         try { doc = leaseDoc(s.data, 'heavy-1'); } catch { doc = null; }
       }
