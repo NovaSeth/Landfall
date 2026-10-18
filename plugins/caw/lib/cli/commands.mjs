@@ -7,7 +7,9 @@
 // mutating (changes files: needs a terminal or --yes, REV-58; for a command whose forms differ, a function of the
 // parsed flags, true for a form that changes files: consent (main.mjs) and help (help.mjs) both read it through
 // mutates()) · hidden (not in --help; docs list it as internal) ·
-// failOpen (hook entry: an error ends with exit 0 and no output, GC8, except a block-if-guarded hook: exit 2) · load () => Promise<(ctx) => result>.
+// failOpen (hook entry: an error ends with exit 0 and no output, GC8, except a block-if-guarded hook: exit 2) ·
+// capability (a rollout capability of lib/config: while its flag is off the command is refused with REFUSED naming the
+// flag, before consent and before it loads; spec §14 rollback; the row must list REFUSED) · load () => Promise<(ctx) => result>.
 // A command returns { code?, data?, errors?: [{ code, message, hint }], text?, warnings?: [text], usage? } and never
 // prints: lib/cli/output.mjs writes it (S2). code defaults to FAIL when errors are present, else OK.
 
@@ -633,7 +635,7 @@ const ROWS = [
     details: [
       'Signals: loc, modules, contributors30, parallelTasks, incidents30 and the deployedToUsers fact; thresholds are data',
       '(lib/engine/thresholds.json). A tier rises when an up threshold holds today and falls only after the dwell days all',
-      'under the down threshold; at most one change per 7 days. Mode: flags.engine in state.json, shadow when absent:',
+      'under the down threshold; at most one change per 7 days. Mode: the engine flag (flags show), shadow by default:',
       'shadow logs the change as a proposed decision in local/shadow.jsonl and enforces nothing; on writes a tier decision',
       'record and sets the lanes, ci-gate, pre-push, codeowners and pr-template flags; off refuses (exit 7).',
       'An inactive repository is evaluated and nothing is written. The outcome gates are the same at every tier.',
@@ -642,7 +644,40 @@ const ROWS = [
     flags: [{ flag: '--explain', summary: 'one line per signal: its value, thresholds and dwell, and the change cadence' }],
     exits: ['OK', 'FAIL', 'USAGE', 'REFUSED', 'ENV'],
     mutating: true,
+    capability: 'engine',
     load: () => import('../engine/command.mjs').then((m) => m.tier),
+  },
+  // Rollout and configuration (spec §8.2, §14, SD-38): lib/config/commands.mjs.
+  {
+    name: 'flags show',
+    summary: 'Show the capability flags: each rollout capability with its mode, its source and what it does, then the team flags.',
+    details: [
+      'Sources, highest first: the machine config (config.json in the plugin data directory, edited by hand: rollout',
+      'capabilities only), the repository\'s config.json, the defaults of this version. A capability that is off is rolled',
+      'back: its commands are refused (exit 7) and its hooks pass through. Team flags (lanes, generated files) are set by',
+      'the engine at a tier change or by flags set; unset means the tier offers it. Writes nothing.',
+    ],
+    args: [],
+    flags: [],
+    exits: ['OK', 'FAIL', 'REFUSED', 'ENV'],
+    load: () => import('../config/commands.mjs').then((m) => m.flagsShow),
+  },
+  {
+    name: 'flags set',
+    summary: 'Set one capability flag of this repository (off, shadow or on, as the flag has them); a flip is recorded as a decision.',
+    details: [
+      'The decision (kind general) comes first, with --reason as its Why; then config.json. The same value writes nothing.',
+      'off is the rollback of a capability: its commands are refused (exit 7) and its hooks pass through. Exit 2: an unknown',
+      'flag or a mode it does not have; 7: an inactive repository. Changes files: needs a terminal or --yes.',
+    ],
+    args: [
+      { name: 'cap', required: true, summary: 'the flag, such as engine or lanes (flags show lists them)' },
+      { name: 'mode', required: true, summary: 'off, shadow or on' },
+    ],
+    flags: [{ flag: '--reason', value: 'text', summary: 'why, kept as the Why of the decision (≤ 200 characters)' }],
+    exits: ['OK', 'FAIL', 'USAGE', 'REFUSED', 'ENV'],
+    mutating: true,
+    load: () => import('../config/commands.mjs').then((m) => m.flagsSet),
   },
   // Decisions (spec §7.10): rows sorted by name.
   {

@@ -52,6 +52,8 @@ Commands:
   decisions supersede  Record a decision replacing an active one; the old record gets status superseded and supersededBy.
   decline              Opt out of tracking this repository; remembered in machine data by its real path, never in the repository.
   doctor               Health report: Claude Code floor, plugin and hooks, release, state, profile, flags, context cost, permissions.
+  flags set            Set one capability flag of this repository (off, shadow or on, as the flag has them); a flip is recorded as a decision.
+  flags show           Show the capability flags: each rollout capability with its mode, its source and what it does, then the team flags.
   gen apply            Write the generated files (CI workflow, pre-push hook, PR template, CODEOWNERS and AGENTS.md blocks); edits survive.
   gen plan             Show what gen apply would do for each generated file; writes nothing.
   heavy                Run a heavy command (full tests, build) in the machine-wide FIFO queue under a heavy lease, with time and output limits.
@@ -304,6 +306,42 @@ Every row has a fix hint (--json: data.rows); a warning keeps exit 0. Exit 8: cl
 
 Read-only.
 Exit codes: 0 OK · 1 FAIL · 8 ENV
+```
+
+### `caw flags set <cap> <mode> [--reason <text>] [--yes] [--json]`
+
+```text
+usage: caw flags set <cap> <mode> [--reason <text>] [--yes] [--json]
+
+Set one capability flag of this repository (off, shadow or on, as the flag has them); a flip is recorded as a decision.
+The decision (kind general) comes first, with --reason as its Why; then config.json. The same value writes nothing.
+off is the rollback of a capability: its commands are refused (exit 7) and its hooks pass through. Exit 2: an unknown
+flag or a mode it does not have; 7: an inactive repository. Changes files: needs a terminal or --yes.
+
+Arguments:
+  cap   the flag, such as engine or lanes (flags show lists them)
+  mode  off, shadow or on
+
+Options:
+  --reason <text>  why, kept as the Why of the decision (≤ 200 characters)
+
+Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
+Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
+```
+
+### `caw flags show [--json]`
+
+```text
+usage: caw flags show [--json]
+
+Show the capability flags: each rollout capability with its mode, its source and what it does, then the team flags.
+Sources, highest first: the machine config (config.json in the plugin data directory, edited by hand: rollout
+capabilities only), the repository's config.json, the defaults of this version. A capability that is off is rolled
+back: its commands are refused (exit 7) and its hooks pass through. Team flags (lanes, generated files) are set by
+the engine at a tier change or by flags set; unset means the tier offers it. Writes nothing.
+
+Read-only.
+Exit codes: 0 OK · 1 FAIL · 7 REFUSED · 8 ENV
 ```
 
 ### `caw gen apply [<target…>] [--dry-run] [--yes] [--json]`
@@ -883,7 +921,7 @@ usage: caw tier [--explain] [--yes] [--json]
 Evaluate the project tier (L0-L3) from git history and the state; a change is logged (shadow) or recorded (on).
 Signals: loc, modules, contributors30, parallelTasks, incidents30 and the deployedToUsers fact; thresholds are data
 (lib/engine/thresholds.json). A tier rises when an up threshold holds today and falls only after the dwell days all
-under the down threshold; at most one change per 7 days. Mode: flags.engine in state.json, shadow when absent:
+under the down threshold; at most one change per 7 days. Mode: the engine flag (flags show), shadow by default:
 shadow logs the change as a proposed decision in local/shadow.jsonl and enforces nothing; on writes a tier decision
 record and sets the lanes, ci-gate, pre-push, codeowners and pr-template flags; off refuses (exit 7).
 An inactive repository is evaluated and nothing is written. The outcome gates are the same at every tier.

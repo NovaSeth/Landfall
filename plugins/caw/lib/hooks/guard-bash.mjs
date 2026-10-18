@@ -9,10 +9,12 @@
 // the state directory or a state file is blocked (fail closed, GC8), any other passes; otherwise the team mode is unknown
 // (the push-to-main shapes fail closed) and only the universal tokens apply (spec §7.13). Injectable for tests:
 // readProjectMode(), readGuardExtra(), state ({ dir, repo } | { unknown, dir, repo } | null), autoAllow ('off' | 'shadow'
-// | 'on', default shadow; userConfig auto_allow_own_commands=false → off), shadowLog(entry), git (lib/git's git()).
+// | 'on'; else userConfig auto_allow_own_commands=false → off, else the auto-allow capability flag of lib/config, read
+// only for an own command, its default shadow when it cannot be read), shadowLog(entry), git (lib/git's git()).
 // The shadow log stays in the plugin data directory until lib/state appends to local/shadow.jsonl (ruling R72, S4).
 import { appendFileSync, lstatSync, readFileSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
+import { modeOf, readConfig, rollout } from '../config/index.mjs';
 import { evaluate } from '../guard/index.mjs';
 import { realPath } from '../guard/protect.mjs';
 import { open, stateDirName } from '../state/index.mjs';
@@ -65,9 +67,11 @@ function defaultShadowLog(env) {
     try { appendFileSync(join(dir, 'shadow.jsonl'), `${JSON.stringify(entry)}\n`); } catch { /* a log never blocks a command */ }
   };
 }
-function autoAllowMode(opts, env) {
+const AUTO_ALLOW = 'auto-allow';
+function autoAllowMode(opts, env, where, names) {
   if (opts.autoAllow) return opts.autoAllow;
-  return /^(false|0|off|no)$/i.test(env.CLAUDE_PLUGIN_OPTION_AUTO_ALLOW_OWN_COMMANDS ?? '') ? 'off' : 'shadow';
+  if (/^(false|0|off|no)$/i.test(env.CLAUDE_PLUGIN_OPTION_AUTO_ALLOW_OWN_COMMANDS ?? '')) return 'off';
+  try { return modeOf(AUTO_ALLOW, readConfig(where, { names, env })); } catch { return rollout(AUTO_ALLOW).default; }
 }
 
 export function guardBash(input, opts = {}) {
@@ -87,7 +91,7 @@ export function guardBash(input, opts = {}) {
   const stderr = v.warnings.length ? `${v.warnings.join('\n')}\n` : '';
   if (v.deny) return { ...deny(v.deny), stderr };
   if (v.own) {
-    const mode = autoAllowMode(opts, env);
+    const mode = autoAllowMode(opts, env, s().where ?? null, names);
     if (mode === 'on') return { ...decision('allow', `SD-33: own command \`${v.own}\` is on the auto-allow list.`), stderr };
     if (mode === 'shadow') {
       (opts.shadowLog ?? defaultShadowLog(env))({ at: new Date().toISOString(), capability: 'auto-allow', event: 'would-allow',
