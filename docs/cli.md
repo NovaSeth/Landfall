@@ -70,6 +70,7 @@ Commands:
   review record        Record a typed review result as the next round tasks/<id>/review-r<k>.json; the Markdown review closes nothing.
   route                Classify a task as trivial, standard or critical from its plan and print its route; the class only rises.
   rule                 Print method rules by ID; a retired ID prints its successor. --core prints the always-on rules.
+  secrets              Scan for secrets and key files: working tree and index, staged changes, a commit range or a built artifact.
   slots                Show the machine scheduler: calibration, load and free memory, leases with ports and DB names, FIFO queues.
   slots calibrate      Calibrate the scheduler: cores, RAM, memory method; save LOAD_MAX, FREE_MIN and per-kind max overrides.
   state unlock         Remove a lock left by a process that is gone (store and machine data); writes never take one over.
@@ -617,6 +618,30 @@ Options:
 
 Read-only.
 Exit codes: 0 OK · 2 USAGE
+```
+
+### `caw secrets [--range <revs>] [--staged] [--artifact <path>] [--json]`
+
+```text
+usage: caw secrets [--range <revs>] [--staged] [--artifact <path>] [--json]
+
+Scan for secrets and key files: working tree and index, staged changes, a commit range or a built artifact.
+Default: tracked files and untracked files that are not ignored, and what the index holds. --staged: the lines added
+in the index. --range: the lines every commit of the range adds (also a secret added and removed again) and the key
+and env files it adds. --artifact: every file under a built file or directory, ignored or not.
+Patterns: lib/secrets/patterns.mjs and the project's secrets-patterns.txt in the state directory (one per line, the
+syntax of guard-extra.txt). A line holding SYNTH or "check-secrets: synthetic" is a synthetic test value (SEC-11); in
+an artifact nothing is exempt. Findings print path:line (commit:path:line in a range), the pattern and the first
+characters and length of the match, never the value. Exit 8: the scan could not run (not a git repository, a git
+error, an unreadable file or pattern file, a refused pattern): the result is invalid, never clean. Run it without a pipe.
+
+Options:
+  --range <revs>     revisions as git log takes them, such as A..B or "<sha> --not --remotes" (options: --not --all --branches --remotes --tags)
+  --staged           only the lines added in the index
+  --artifact <path>  a built file or directory, relative to the current directory
+
+Read-only.
+Exit codes: 0 OK · 1 FAIL · 2 USAGE · 8 ENV
 ```
 
 ### `caw slots [--unlock-stale] [--yes] [--json]`

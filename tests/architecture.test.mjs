@@ -40,7 +40,7 @@ const OUTPUT_WRITER = 'lib/cli/output.mjs';
 
 // Units of spec §4.2; `name` is lib/name.json.
 const UNITS = new Set(['cli', 'state', 'profile', 'engine', 'router', 'verify', 'loop', 'sched', 'lanes', 'decisions', 'receipts',
-  'providers', 'gen', 'method', 'hooks', 'guard', 'ui', 'git', 'fsx', 'proc', 'import1x', 'mirror', 'text']);
+  'providers', 'gen', 'method', 'hooks', 'guard', 'ui', 'git', 'fsx', 'proc', 'import1x', 'mirror', 'text', 'secrets']);
 // §4.3: hooks import directly only these units (and Node built-ins), and never reach the HOOK_NEVER units at all.
 const HOOK_IMPORTS = new Set(['hooks', 'state', 'method', 'decisions', 'sched', 'loop', 'guard', 'text']);
 const HOOK_NEVER = new Set(['providers', 'gen', 'lanes', 'receipts']);
