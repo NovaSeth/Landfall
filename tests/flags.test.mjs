@@ -247,6 +247,10 @@ test('a committed config.json never lowers a protective capability; this machine
   assert.deepEqual(bash(p, 'git stash'), { stdout: '' }, 'off on this machine: the guard passes');
   s = await cli(['flags', 'show'], p);
   assert.deepEqual([s.out.data.flags['guard-bash'].mode, s.out.data.flags['guard-bash'].source, s.out.data.flags['guard-bash'].repo, s.out.data.flags['guard-bash'].machine], ['off', 'machine', 'off', 'off']);
+  // In a session the repository's config.json changes only through the commands (FLW-7), like state.json.
+  const owned = JSON.parse(edit(p, join(p.state, 'config.json')).stdout).hookSpecificOutput;
+  assert.equal(owned.permissionDecision, 'deny');
+  assert.match(owned.permissionDecisionReason, new RegExp(`^FLW-7: .*${BIN} flags set`));
   const team = await cli(['flags', 'set', 'lanes', 'on', '--local', '--yes'], p);
   assert.equal(team.code, 2, show(team));
   assert.equal(team.out.errors[0].code, 'team-flag');

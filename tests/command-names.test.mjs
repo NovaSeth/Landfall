@@ -31,12 +31,11 @@ const PENDING = Object.freeze([
   { name: 'exec', why: 'providers unit (spec §7.12): guard auto-allow list' },
   { name: 'wait', why: 'providers unit (spec §7.12): guard auto-allow list' },
   { name: 'runs', why: 'providers unit (spec §7.12): guard auto-allow list' },
-  { name: 'flags', why: 'rollout commands (spec §8.2 flags show|set): owned-file text of state.json' },
   { name: 'team add', why: 'team command (spec §8.2): owned-file text of team/<H>.json' },
   { name: 'decisions context', why: 'spec §8.2 name; the row that exists is `decisions find --path`: guard auto-allow list' },
   { name: 'slot list', why: 'spec §8.2 name; the row that exists is `slots`: guard auto-allow list' },
 ]);
-const PENDING_MAX = 7; // lower it with every entry removed; never raise it
+const PENDING_MAX = 6; // lower it with every entry removed; never raise it
 
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const WORDS = '([a-z][a-z0-9-]*(?: [a-z][a-z0-9-]*)*)';

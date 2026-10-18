@@ -21,7 +21,8 @@ import { BIN, base } from './tokens.mjs';
 // is owned only in its frontmatter `status` (field): its body stays editable with the Edit tool. edit: the Edit tool
 // may change it (the user's project rules), only Bash may not.
 export const OWNED = Object.freeze([
-  { re: /^state\.json$/, rule: 'FLW-7', use: (bin) => `\`${bin} init\`, \`${bin} flags\` or \`${bin} deactivate\`` },
+  { re: /^state\.json$/, rule: 'FLW-7', use: (bin) => `\`${bin} init\`, \`${bin} migrate\` or \`${bin} deactivate\`` },
+  { re: /^config\.json$/, rule: 'FLW-7', use: (bin) => `\`${bin} flags set\` or \`${bin} config set\`` },
   { re: /^team\/([^/]+)\.json$/, rule: 'FLW-7', use: (bin) => `\`${bin} init\` or \`${bin} team add\`` },
   { re: /^tasks\/([^/]+)\/task\.json$/, rule: 'FLW-7', use: (bin, id) => `\`${bin} task set ${id} <state>\`` },
   { re: /^tasks\/([^/]+)\/verify\.json$/, rule: 'FLW-7', use: (bin, id) => `\`${bin} verify ${id}\`` },
