@@ -66,6 +66,7 @@ Claude  $ caw profile set deployedToUsers true --source said \
         standard: test first, plan in the task
         RED    npm test: 1 failing, "exports report rows as CSV" (no export yet)
         GREEN  npm test: all passing; committed
+        report with RED and GREEN written to .caw/tasks/T-AB-1/ and committed
         $ caw verify T-AB-1 --yes
         pass: gates re-run, no test removed, baseline +1
         $ caw task done T-AB-1 --yes
