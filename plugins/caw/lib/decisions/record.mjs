@@ -10,9 +10,9 @@ import { PATTERNS, check, defineKind } from '../state/index.mjs';
 import { codePointName, forModel, hidden } from '../text/clean.mjs';
 
 export const STATUSES = Object.freeze(['active', 'superseded', 'retired']);
-export const DECISION_KINDS = Object.freeze(['general', 'tier', 'tier-pin', 'route-override', 'test-removal', 'gate-change', 'takeover']);
+export const DECISION_KINDS = Object.freeze(['general', 'tier', 'tier-pin', 'route-override', 'test-removal', 'gate-change', 'takeover', 'review-close']);
 // Spec §5.1 limits (title, scope) plus defaults for the fields the spec leaves open.
-export const RECORD_LIMITS = Object.freeze({ title: 120, scope: 20, glob: 120, supersedes: 100, testIds: 1000, testId: 300, signalsBytes: 4096, legacy: 40 });
+export const RECORD_LIMITS = Object.freeze({ title: 120, scope: 20, glob: 120, supersedes: 100, testIds: 1000, testId: 300, signalsBytes: 4096, legacy: 40, remaining: 200, findingId: 40 });
 export const FILE_NAME = /^(D-[A-Z]{2,4}-[1-9]\d{0,5})\.md$/;
 // SD-21: a citation anywhere in a file. A match that is not a valid ID (number 0, leading zeros, seven digits) is an unknown ID.
 export const citationPattern = () => /\bD-[A-Z]{2,4}-\d+\b/g;
@@ -40,14 +40,17 @@ export const DECISION = defineKind('decision', 1, {
     allowsTestRemoval: { t: 'arr', max: RECORD_LIMITS.testIds, of: str(RECORD_LIMITS.testId, { min: 1 }) },
     signals: { t: 'data', maxBytes: RECORD_LIMITS.signalsBytes },
     legacy: str(RECORD_LIMITS.legacy, { min: 1 }),
+    // kind review-close: the task whose review step it closes and the blocking finding IDs left open (verify/artifacts).
+    task: str(20, { re: PATTERNS.taskId }),
+    remaining: { t: 'arr', max: RECORD_LIMITS.remaining, of: str(RECORD_LIMITS.findingId, { min: 1 }) },
   },
-  opt: ['supersedes', 'supersededBy', 'scope', 'allowsTestRemoval', 'signals', 'legacy'],
+  opt: ['supersedes', 'supersededBy', 'scope', 'allowsTestRemoval', 'signals', 'legacy', 'task', 'remaining'],
 });
 
 const ORDER = Object.keys(DECISION.spec.f);
-const LISTS = new Set(['supersedes', 'scope', 'allowsTestRemoval']);
+const LISTS = new Set(['supersedes', 'scope', 'allowsTestRemoval', 'remaining']);
 // Values that are always plain (pattern-checked): written unquoted, read as text.
-const PATTERNED = new Set(['id', 'status', 'kind', 'date', 'author', 'supersededBy']);
+const PATTERNED = new Set(['id', 'status', 'kind', 'date', 'author', 'supersededBy', 'task']);
 const KEYWORD = /^(?:null|~|true|false|yes|no|on|off|y|n)$/i;
 
 // A plain YAML scalar our parser reads back unchanged: starts with a letter, `_`, `/`, `.` or `(`; no leading or
@@ -169,6 +172,7 @@ export function recordErrors(doc, fileName) {
   if (doc.status === 'superseded' && !doc.supersededBy) errors.push(at('status superseded needs supersededBy'));
   if (doc.status === 'active' && doc.supersededBy) errors.push(at(`an active decision has no supersededBy (found ${doc.supersededBy})`));
   if (doc.supersededBy === doc.id || (doc.supersedes ?? []).includes(doc.id)) errors.push(at('a decision cannot supersede itself'));
+  if (doc.kind === 'review-close' && !doc.task) errors.push(at('kind review-close needs task (the task whose review step it closes)'));
   return errors;
 }
 

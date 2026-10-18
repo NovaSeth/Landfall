@@ -47,7 +47,7 @@ const DECISION_FLAGS = [
   { flag: '--why', value: 'text', summary: 'why (required); its first sentence is shown when a file citing it is edited' },
   { flag: '--cost', value: 'text', summary: 'cost if the decision is wrong (required); its first clause is shown too' },
   { flag: '--scope', value: 'globs', summary: 'comma-separated path globs it constrains (≤ 20, ≤ 120 chars; ** * ? {a,b})' },
-  { flag: '--kind', value: 'kind', summary: 'general (default), tier, tier-pin, route-override, test-removal, gate-change or takeover' },
+  { flag: '--kind', value: 'kind', summary: 'general (default), tier, tier-pin, route-override, test-removal, gate-change, takeover or review-close' },
 ];
 
 const ROWS = [
@@ -652,6 +652,8 @@ const ROWS = [
       'The number is the next of your handle: above every local record and tombstone and every one on origin/main.',
       '--supersedes marks each listed active decision superseded by the new one (the only edit of another record).',
       '--allows-test-removal lists test IDs in allowsTestRemoval; a JSON ID such as ["file","title",1] keeps its commas.',
+      '--task with --remaining (review-close): once the latest review round reaches the loop\'s rounds cap (default 2) and',
+      'remaining lists every blocking finding ID of that round, the review step counts as approved; gates and report do not.',
       'Cite it next to the code it constrains (COD-12): "// D-<H>-<n>: <why in five words>".',
     ],
     args: [],
@@ -659,6 +661,8 @@ const ROWS = [
       ...DECISION_FLAGS,
       { flag: '--supersedes', value: 'ids', summary: 'comma-separated IDs of active decisions this one replaces' },
       { flag: '--allows-test-removal', value: 'ids', summary: 'comma-separated test IDs verify may see removed or newly skipped (as verify prints them); kind test-removal by default' },
+      { flag: '--task', value: 'id', summary: 'the task whose review step a review-close decision closes; kind review-close by default' },
+      { flag: '--remaining', value: 'ids', summary: 'comma-separated blocking finding IDs of the latest review round left open (review-close)' },
     ],
     exits: ['OK', 'FAIL', 'USAGE', 'REFUSED', 'ENV'],
     mutating: true,

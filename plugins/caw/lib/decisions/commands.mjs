@@ -85,8 +85,9 @@ function create({ flags, names, io }, supersedes) {
   const store = open(where.dir, { names });
   const handle = authorHandle({ store, where, names, env: io.env });
   const allowsTestRemoval = splitTestIds(flags.allowsTestRemoval);
-  const kind = flags.kind ?? (allowsTestRemoval.length ? 'test-removal' : undefined);
-  const input = { title: flags.title.trim(), why: flags.why, cost: flags.cost, scope: splitList(flags.scope), kind, supersedes, allowsTestRemoval };
+  const kind = flags.kind ?? (allowsTestRemoval.length ? 'test-removal' : flags.task !== undefined ? 'review-close' : undefined);
+  const review = flags.task !== undefined || flags.remaining !== undefined ? { task: flags.task, remaining: splitList(flags.remaining) } : {};
+  const input = { title: flags.title.trim(), why: flags.why, cost: flags.cost, scope: splitList(flags.scope), kind, supersedes, allowsTestRemoval, ...review };
   const result = createDecision({ store, where, names, env: io.env, handle, input });
   const lines = [`${result.id} created: ${result.file}`, ...result.supersedes.map((old) => `${old} superseded by ${result.id}`)];
   return { data: result, text: `${lines.join('\n')}\n`, warnings: result.warnings.map((w) => w.message) };
