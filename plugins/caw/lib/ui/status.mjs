@@ -4,14 +4,13 @@
 // records a change; an engine turned off is a line, not a refusal) · the open tasks with the next step of the loop's
 // step table (lib/loop nextSteps: the same rows `tick` acts on) · the loop record when one exists · the scheduler
 // leases taken for this repository (lease project = its path; a task ID alone could be another repository's). At
-// most 25 lines: the task rows are cut first and counted. --json: data { repo, state, tier, tasks, steps, loop, leases } with every open task and step.
+// most 25 lines: the task rows are cut first and counted. --json: data { repo, state, tier, tasks, steps, loop,
+// leases } with every open task and step.
 // Writes nothing. Exit 0 · 1 a state file is invalid · 7 a newer state schema · 8 not a git repository, git missing.
 import { join } from 'node:path';
-import { EXIT } from '../cli/commands.mjs';
 import { TIER_NAMES, evaluate } from '../engine/index.mjs';
 import { describe } from '../loop/command.mjs';
 import { DEFAULT_CAPS, LOOP, STORE_KINDS, nextSteps } from '../loop/index.mjs';
-import { ProfileError } from '../profile/index.mjs';
 import { readRuns } from '../receipts/index.mjs';
 import { snapshot } from '../sched/index.mjs';
 import { StateError, emailHash, gitIdentity, open, resolve } from '../state/index.mjs';
@@ -68,15 +67,7 @@ const leaseText = (l) => (l.owner
   : `  ${l.kind}-${l.slot}  ${l.status}`);
 
 export function status({ names, io }) {
-  try {
-    return view({ names, env: io.env, cwd: io.cwd });
-  } catch (err) {
-    if (err instanceof ProfileError) return { code: EXIT[err.exit], errors: [err] };
-    throw err;
-  }
-}
-
-function view({ names, env, cwd }) {
+  const { env, cwd } = io;
   const where = resolve({ cwd, env, names });
   const state = stateLine(where, names.bin);
   const tier = tierOf(where, names, env);
