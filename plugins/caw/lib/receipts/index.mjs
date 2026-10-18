@@ -189,11 +189,13 @@ export const GROUP_BY = Object.freeze(['class', 'executor']);
 
 // Totals of the work that did not end before `day` (YYYY-MM-DD, UTC), per task class or per executor, from what is
 // stored: each saved receipt (receipts/<task>.json) whose endedAt is on or after the day, and each run record
-// (local/runs) that no saved receipt lists and that did not end before the day. by class: a receipt by its class (as
-// saved; "unrouted" when null), a run by its task's class now. by executor: a receipt's byAgent rows by agent type and
-// its external runs by provider, a run by its provider (a receipt's total is the sum of both). Tasks without a saved
-// receipt count only their runs. A receipt or run record that cannot be read is left out and makes the totals
-// partial (`problems`). Groups: { key, tasks, runs, tokens, costMicroUsd }, by cost, then key. Reads only.
+// (local/runs) not counted through such a receipt that did not end before the day. A counted receipt's external run
+// takes its current run record when there is one (a run still running when the receipt was saved has its finished
+// usage there), else the saved entry. by class: a receipt by its class (as saved; "unrouted" when null), a run by its
+// task's class now. by executor: a receipt's byAgent rows by agent type and its external runs by provider, a run by
+// its provider. Tasks without a saved receipt count only their runs. A counted receipt that is partial, or a receipt
+// or run record that is invalid, makes the totals partial (`problems`; an invalid one is left out); a newer schema
+// refuses (REFUSED, GC9). Groups: { key, tasks, runs, tokens, costMicroUsd }, by cost, then key. Reads only.
 export function totalsSince(day, by, { cwd, env, names }) {
   const since = Date.parse(`${day}T00:00:00.000Z`);
   if (!/^\d{4}-\d\d-\d\d$/.test(String(day)) || Number.isNaN(since) || new Date(since).toISOString().slice(0, 10) !== day) throw usage('invalid-value', `--since ${String(day).slice(0, 40)}: expected a date YYYY-MM-DD`, 'such as 2026-10-01');
@@ -202,6 +204,7 @@ export function totalsSince(day, by, { cwd, env, names }) {
   const groups = new Map();
   const problems = [];
   const put = (key, task, tokens, cost, runs = 0) => {
+    if (key === null) return; // by executor, a receipt's own entry: its rows carry the keys
     if (!groups.has(key)) groups.set(key, { key, tasks: new Set(), runs: 0, tokens: zero(), costMicroUsd: 0 });
     const g = groups.get(key);
     g.tasks.add(task);
@@ -213,25 +216,31 @@ export function totalsSince(day, by, { cwd, env, names }) {
   let extra = [];
   if (where.active) {
     const store = open(where.dir, { names, kinds: STORE_KINDS });
+    // Only an invalid file (FAIL) is left out; a newer schema (REFUSED) and other errors stop the command.
     const unreadable = (err) => {
-      if (!(err instanceof StateError)) throw err;
+      if (!(err instanceof StateError) || err.exit !== 'FAIL') throw err;
       problems.push({ code: err.code, message: err.message, hint: 'the totals leave it out; they are a lower bound' });
     };
     for (const id of store.list(RECEIPT.name)) {
       try { receipts.push(store.read(RECEIPT.name, id)); } catch (err) { unreadable(err); }
     }
-    const listed = new Set(receipts.flatMap((r) => r.external.map((e) => e.runId)));
     receipts = receipts.filter((r) => r.endedAt && Date.parse(r.endedAt) >= since);
-    for (const r of receipts) {
-      if (by === 'class') put(r.class ?? 'unrouted', r.task, r.tokens, r.costMicroUsd, r.external.length);
-      else {
-        for (const a of r.byAgent) put(a.agentType, r.task, a.tokens, a.costMicroUsd);
-        for (const e of r.external) put(e.provider, r.task, e.tokens, e.costMicroUsd, 1);
-      }
-    }
     const runs = readRuns(join(where.local, 'runs'));
     problems.push(...runs.problems);
-    extra = runs.runs.filter((e) => !listed.has(e.runId) && !(e.endedAt && Date.parse(e.endedAt) < since));
+    const current = new Map(runs.runs.map((e) => [e.runId, e]));
+    const counted = new Set();
+    for (const r of receipts) {
+      if (r.partial) problems.push({ code: 'receipt-partial', message: `the saved receipt of ${r.task} is partial: its numbers are a lower bound`, hint: `'${names.bin} receipt --task ${r.task}' saves it again` });
+      const cls = r.class ?? 'unrouted';
+      put(by === 'class' ? cls : null, r.task, null, 0);
+      for (const a of r.byAgent) put(by === 'class' ? cls : a.agentType, r.task, a.tokens, a.costMicroUsd);
+      for (const saved of r.external) {
+        const e = current.get(saved.runId) ?? saved;
+        counted.add(saved.runId);
+        put(by === 'class' ? cls : e.provider, r.task, e.tokens, e.costMicroUsd, 1);
+      }
+    }
+    extra = runs.runs.filter((e) => !counted.has(e.runId) && !(e.endedAt && Date.parse(e.endedAt) < since));
     const classOf = (task) => {
       try { return store.read('task', task)?.class ?? 'unrouted'; } catch (err) { unreadable(err); return 'unrouted'; }
     };
