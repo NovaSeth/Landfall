@@ -69,6 +69,7 @@ Commands:
   loop status          Print the loop: ticks, wall time and cost against the caps, the stall count, and the exit once it ended.
   loop stop            End the running loop: exit DONE, so no wakeup is scheduled again; an ended loop is left as it is.
   method               Print one pack or one section of the method by name: each rule line of it, under its section heading.
+  migrate              Run the forward migrations on every state file of this repository; --dry-run lists the steps and writes nothing.
   profile gates apply  Replace the profile gates with the candidates the scan detects; only with an active gate-change decision.
   profile gates set    Add a profile gate or replace the one of that name; only with an active gate-change decision.
   profile observe      Scan the repository (manifests, files, CI, harnesses) and merge what it shows into the project profile.
@@ -603,6 +604,23 @@ Arguments:
 
 Read-only.
 Exit codes: 0 OK · 2 USAGE
+```
+
+### `caw migrate [--dry-run] [--yes] [--json]`
+
+```text
+usage: caw migrate [--dry-run] [--yes] [--json]
+
+Run the forward migrations on every state file of this repository; --dry-run lists the steps and writes nothing.
+Each original is copied to local/backup/<stamp>/ first and state.json is written last, so a run cut short is finished
+by running it again; a second run writes nothing. Reads keep working before it: an older file is upgraded in memory.
+Exit 7: a file with a newer schema (update the plugin), before any byte is written. Changes files: needs a terminal or --yes.
+
+Options:
+  --dry-run  list the steps (file, kind, schema from → to, migration IDs); write nothing
+
+Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED. Read-only with --dry-run: no consent needed.
+Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
 ```
 
 ### `caw profile gates apply [--decision <D>] [--yes] [--json]`

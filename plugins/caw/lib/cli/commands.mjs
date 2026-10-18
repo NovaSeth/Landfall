@@ -682,6 +682,20 @@ const ROWS = [
     capability: 'engine',
     load: () => import('../engine/command.mjs').then((m) => m.tier),
   },
+  {
+    name: 'migrate',
+    summary: 'Run the forward migrations on every state file of this repository; --dry-run lists the steps and writes nothing.',
+    details: [
+      'Each original is copied to local/backup/<stamp>/ first and state.json is written last, so a run cut short is finished',
+      'by running it again; a second run writes nothing. Reads keep working before it: an older file is upgraded in memory.',
+      'Exit 7: a file with a newer schema (update the plugin), before any byte is written. Changes files: needs a terminal or --yes.',
+    ],
+    args: [],
+    flags: [{ flag: '--dry-run', summary: 'list the steps (file, kind, schema from → to, migration IDs); write nothing' }],
+    exits: ['OK', 'FAIL', 'USAGE', 'REFUSED', 'ENV'],
+    mutating: (flags) => !flags.dryRun,
+    load: () => import('./migrate.mjs').then((m) => m.migrate),
+  },
   // Rollout and configuration (spec §8.2, §14, SD-38): lib/config/commands.mjs.
   {
     name: 'flags show',
