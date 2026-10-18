@@ -376,13 +376,10 @@ test('linked state: a store baseline collected on another line of history does n
   const b = (await p.run(['task', 'new', 'On main', '--yes'])).out.data.id;
   await ready(p, b, p.base, 'main');
   addTest(p, p.repo, 'main-only');
+  // the reference is measured at the base instead (T-MG-37): the branch's test is neither in it nor taken as removed
   const v = await p.run(['verify', b, '--yes']);
-  assert.equal(v.code, 1, show(v));
-  const why = v.out.errors.find((e) => e.code === 'baseline-unanchored');
-  assert.ok(why, show(v));
-  assert.ok(why.hint.includes(`${names.bin} baseline pin`), why.hint);
-  assert.match(why.message, /^the baseline in .+ was collected at [0-9a-f]{12}, not on the history of this code/, why.message);
-  assert.equal(v.out.errors.some((e) => e.code === 'baseline-shrunk'), false, 'the branch\'s test is not taken as removed');
+  assert.equal(v.code, 0, show(v));
+  assert.deepEqual([v.out.data.inventory.added, v.out.data.inventory.removed, v.out.data.inventory.total], [['["","main-only",1]'], [], 2], show(v));
 });
 
 test('linked state: task merge needs no gate-change decision (no branch carries the profile), in a worktree and in the main checkout', async (t) => {
@@ -454,10 +451,10 @@ test('fail closed, linked: no store baseline and a change that touches tests is 
   p.base = head(p.repo, p.env);
   await ready(p, T1, p.base, 'main');
   addTest(p, p.repo, 'first');
+  // the reference is measured at the base (T-MG-37): the change is growth, and a removed base test would be shrinkage
   const v = await p.run(['verify', T1, '--yes']);
-  assert.equal(v.code, 1, show(v));
-  const why = v.out.errors.find((e) => e.code === 'baseline-unanchored');
-  assert.match(why?.message ?? '', /^no baseline is recorded in /, show(v));
+  assert.equal(v.code, 0, show(v));
+  assert.deepEqual([v.out.data.inventory.added, v.out.data.inventory.total], [['["","first",1]'], 2], show(v));
 });
 
 test('fail closed, linked: a store baseline from another line of history refuses also a change without test files', async (t) => {
@@ -468,20 +465,29 @@ test('fail closed, linked: a store baseline from another line of history refuses
   assert.equal((await p.run(['verify', a, '--yes'], 'wt')).code, 0);
   const b = await linkedTask(p, 'Docs on main');
   editReadme(p, p.repo, '# docs\n');
+  // the reference is measured at the base (T-MG-37), not taken from the other line
   const v = await p.run(['verify', b, '--yes']);
-  assert.equal(v.code, 1, show(v));
-  assert.deepEqual(codes(v), ['baseline-unanchored'], show(v));
+  assert.equal(v.code, 0, show(v));
+  assert.deepEqual([v.out.data.inventory.added, v.out.data.inventory.removed, v.out.data.inventory.total], [[], [], 1], show(v));
 });
 
 test('fail closed, linked: git cannot tell whether the store baseline describes the code → refused', async (t) => {
   const p = await linkedBaseline(t);
   forgeBaseline(p, (doc) => ({ ...doc, head: UNKNOWN_SHA }));
   const id = await linkedTask(p, 'Docs');
+  // the reference is measured at the base (T-MG-37); a measurement that cannot run there is an error, never a pass
+  const gates = profile.openStore(p.stateDir, names);
+  gates.write('profile', null, { ...profile.emptyProfile(), gates: [{ name: 'test', cmd: 'sh ./gate.sh', timeoutS: 120, kind: 'test' }] });
+  put(join(p.repo, 'gate.sh'), 'node --test\n');
+  git(p.repo, p.env, ['add', 'gate.sh']);
   editReadme(p, p.repo, '# docs\n');
+  const broken = await p.run(['verify', id, '--yes']);
+  assert.equal(broken.code, 8, show(broken));
+  assert.ok(codes(broken).includes('base-gate-error'), show(broken));
+  gates.write('profile', null, { ...profile.emptyProfile(), gates: GATES });
   const v = await p.run(['verify', id, '--yes']);
-  assert.equal(v.code, 1, show(v));
-  const why = v.out.errors.find((e) => e.code === 'baseline-unanchored');
-  assert.match(why?.message ?? '', /git cannot tell/, show(v));
+  assert.equal(v.code, 0, show(v));
+  assert.deepEqual([v.out.data.inventory.added, v.out.data.inventory.removed], [[], []], show(v));
 });
 
 test('fail closed, linked: a baseline changed outside verify and a missing task base are refused', async (t) => {

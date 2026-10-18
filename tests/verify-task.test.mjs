@@ -121,7 +121,7 @@ test('verify re-runs every profile gate and writes verify.json in the §8.4 shap
   assert.deepEqual(Object.keys(doc.gates[0]), ['name', 'cmd', 'exit', 'durationMs', 'result'], 'no gate output in committed state');
   assert.ok(res.env.data.output[0].lines.some((l) => l.includes('adds')), 'the tail of the gate output, in the reply');
   assert.ok(r.vstore.read('verifyLog', r.id).gates[0].lines.some((l) => l.includes('adds')), 'and under local/');
-  assert.deepEqual(doc.inventory, { collector: 'node-test', total: 2, added: [JSON.stringify(['', 'adds', 1]), JSON.stringify(['', 'subtracts', 1])], removed: [], newlySkipped: [], allowedBy: [], weak: false });
+  assert.deepEqual(doc.inventory, { collector: 'node-test', total: 2, added: [JSON.stringify(['', 'adds', 1]), JSON.stringify(['', 'subtracts', 1])], removed: [], newlySkipped: [], allowedBy: [], weak: false, tests: ['adds', 'subtracts'].map((n) => ({ id: JSON.stringify(['', n, 1]), file: '', skipped: false })) });
   assert.deepEqual(doc.failures, { preexisting: [], new: [] });
   assert.deepEqual(doc.route, { declared: 'trivial', actual: 'trivial', escalated: false, missingSteps: [] });
   assert.deepEqual(doc.artifacts, { report: true, review: 'not-required' });

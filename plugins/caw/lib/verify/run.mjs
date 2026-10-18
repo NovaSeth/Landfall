@@ -10,17 +10,21 @@
 //      report (or there is no test gate). A test gate read only by the generic scan is weak: reported, and always
 //      refused for a critical task (review r2 D4; no decision waives it). Focused tests (.only, fit) fail.
 //   5. The reference: the accepted inventory as of the anchor (the task base; the target tip for a merge; stateAt) united
-//      with the working baseline file, which can only add. Worktrees share the state, so the working baseline is
-//      placed on the history (lineOf): it is on the line of the code verified when its head is the anchor or an
-//      ancestor of it or of the verified HEAD (in a merge: of the tip or the merged branch). In-repo state: it counts
-//      unless it lies on another live branch (a parallel worktree's verify), so where git cannot tell and after a
-//      rewritten history it still counts; the accepted inventory is the baseline committed at the anchor. A state
-//      directory outside the repository (linked), which no commit holds and no branch writes: the store's baseline is
-//      the anchor only on the line of the code; off it, or where git cannot tell, `baseline-unanchored` whatever the
-//      change touches (fail closed). Without an accepted baseline (r2 D5) the working baseline is accepted only when the
-//      change touches no test file, so the inventory still is the anchor's; else, or with a missing or malformed
-//      baseline at an anchor whose history has one, `baseline-unanchored`. Another collector cannot be compared. Removed and newly skipped tests need an allowance. A failing test gate is excused only when every failure it reports is pinned and the reporter
-//      counts no more failures than were collected; a new failure fails even when its gate exited 0.
+//      with the working baseline file, which can only add, and with the task's own last passing verify inventory
+//      (verify.json inventory.tests: a test the task verified and then removes is removed, whatever replaced the
+//      shared baseline). Worktrees share the state, so the working baseline is placed on the history (lineOf): it is
+//      on the line of the code verified when its head is the anchor or an ancestor of it or of the verified HEAD (in
+//      a merge: of the tip or the merged branch). In-repo state: it counts unless it lies on another live branch (a
+//      parallel worktree's verify), so where git cannot tell and after a rewritten history it still counts; the
+//      accepted inventory is the baseline committed at the anchor. A state directory outside the repository (linked),
+//      which no commit holds and no branch writes: the store's baseline is the anchor only on the line of the code.
+//      Where no stored baseline describes the anchor (linked: none, off the line, or git cannot tell; in-repo: none
+//      committed at the anchor and the change touches test files), the accepted inventory is measured at the anchor
+//      (base.mjs: the test gates in a temporary detached worktree); a gate that cannot run there is an error, never a
+//      pass. A missing or malformed baseline at an anchor whose history has one is `baseline-unanchored`. Another
+//      collector cannot be compared. Removed and newly skipped tests need an allowance. A failing test gate is excused
+//      only when every failure it reports is pinned and the reporter counts no more failures than were collected; a
+//      new failure fails even when its gate exited 0.
 //   6. The route re-classified from `git diff --numstat <base>` plus untracked files, the state directory left out
 //      (the lib/router ratchet: the class only rises); the report's RED/GREEN evidence; the
 //      approved review the route needs (artifacts.mjs).
@@ -47,6 +51,7 @@ import { PROFILE_KINDS, emptyProfile, listFiles, observe } from '../profile/inde
 import { MAX_PATHS, addedSteps, applyClass, classify, rank, recordedKeys, routeFor, routeTask } from '../router/index.mjs';
 import { KINDS, StateError, check, open, resolve } from '../state/index.mjs';
 import { readReport, reportHasEvidence, reviewNeed, reviewState } from './artifacts.mjs';
+import { measureAt } from './base.mjs';
 import { baselineSha, compareInventory, excusable, fingerprint, referenceOf, splitFailures } from './baseline.mjs';
 import { runGate, tailLines } from './gates.mjs';
 import { byCodeUnit, hashOf } from './inventory.mjs';
@@ -314,18 +319,21 @@ export function evaluate({ where, names, env, id, mode, handle = null, at = now(
     const working = line === 'line' || (!linked && (line === 'off' || line === 'unknown')) ? current : null;
     const anchored = anchorAt(where, env, anchorCommit, working);
     const tests = (change?.paths ?? []).filter((p) => scannerOf(p) !== null);
-    const pinHint = `merge the branch it was collected on into this one once it has landed, or pin one for this code (${names.bin} baseline pin --decision <D>), then verify again`;
+    // No stored baseline describes the anchor (linked: none, or off the line; in-repo: none committed there and the
+    // change touches tests): the reference is measured at the anchor itself.
+    const measure = !anchored.problem && anchorCommit && (linked ? line !== 'line' : !anchored.doc && tests.length > 0);
+    let measured = null;
     if (anchored.problem) {
       say('fail', 'baseline-unanchored', `the baseline at ${anchorCommit.slice(0, 12)} is ${anchored.problem}, though its history has one: there is no accepted inventory to compare with`, 'restore the baseline on the target branch (git), or pin one with a decision');
-    } else if (linked && current && line !== 'line') {
-      const why = line === 'unknown' ? `git cannot tell whether the baseline in ${stateShown} (collected at ${String(current.head).slice(0, 12)}) is on the history of this code` : `the baseline in ${stateShown} was collected at ${String(current.head).slice(0, 12)}, not on the history of this code`;
-      say('fail', 'baseline-unanchored', `${why}: there is no accepted inventory to compare with`, pinHint);
-    } else if (!anchored.doc && anchorCommit && tests.length && !linked) {
-      say('fail', 'baseline-unanchored', `no baseline is committed at ${anchorCommit.slice(0, 12)} and the change touches test files (${some(tests)}): the working baseline cannot be trusted`, `land the initial baseline in a task without test changes, or pin it on the target (${names.bin} baseline pin --decision <D>) and base the task on that commit`);
-    } else if (!anchored.doc && anchorCommit && tests.length) {
-      say('fail', 'baseline-unanchored', `no baseline is recorded in ${stateShown} and the change touches test files (${some(tests)}): there is no accepted inventory to compare with`, `land the initial baseline in a task without test changes, or pin one (${names.bin} baseline pin --decision <D>), then verify again`);
+    } else if (measure) {
+      const m = measureAt({ where, env, commit: anchorCommit, gates: profile.gates, gitIn, inventory: (runs, dir) => inventoryOf(runs, context({ ...where, worktree: dir }, env, code.rel)) });
+      if (m.error) say('error', 'base-gate-error', `${m.error}: there is no reference to compare with`, 'make the gates run at the base (install what they run), or pin a baseline (' + names.bin + ' baseline pin --decision <D>), then verify again');
+      measured = m.doc;
     }
-    const pinned = [anchored.doc, working].filter((b, k, all) => b && all.indexOf(b) === k);
+    // The task's own last passing verify: a test it verified and later removes is removed, whatever replaced the baseline.
+    const last = store.read('verify', id);
+    const own = last?.result === 'pass' && last.inventory.tests ? { collector: last.inventory.collector, tests: last.inventory.tests, failing: last.failures.preexisting } : null;
+    const pinned = [measure ? measured : anchored.doc, working, own].filter((b, k, all) => b && all.indexOf(b) === k);
     const other = pinned.find((b) => b.collector !== inv.collector);
     let reference = { tests: [], failing: [] };
     let cmp = { added: inv.tests.map((t) => t.id), removed: [], newlySkipped: [], allowedBy: [], unallowed: [] };
@@ -352,7 +360,7 @@ export function evaluate({ where, names, env, id, mode, handle = null, at = now(
       }
     }
     if (doc.failures.new.length) say('fail', 'new-failures', `new failing tests: ${some(doc.failures.new)}`, 'fix them; only failures pinned in the baseline are tolerated');
-    doc.inventory = { collector: inv.collector, total: inv.tests.length, added: cmp.added, removed: cmp.removed, newlySkipped: cmp.newlySkipped, allowedBy: [], weak: inv.weak };
+    doc.inventory = { collector: inv.collector, total: inv.tests.length, added: cmp.added, removed: cmp.removed, newlySkipped: cmp.newlySkipped, allowedBy: [], weak: inv.weak, tests: inv.tests.map(({ id: t, file, skipped }) => ({ id: t, file, skipped })) };
   }
 
   if (mode !== 'merge') {
