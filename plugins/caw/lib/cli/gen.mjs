@@ -1,6 +1,6 @@
 // `<bin> gen plan` and `<bin> gen apply [--dry-run] [<target>…]` (spec §7.14, §7.14a, §7.19, §8.2, SD-35, SD-39):
 // generated files of the repository at the current directory. Targets: the named ones, else those whose capability
-// flag is on (state.json flags; agents-md also while the profile names another harness, lib/gen targetFlags) and
+// flag is on (config.json flags; agents-md also while the profile names another harness, lib/gen targetFlags) and
 // those already generated (recorded in the manifest). Options: the gates of the project profile (lib/profile), the
 // npx spec of this plugin version (name.json repository), owners and branch from the generator defaults. `gen plan`
 // is `gen apply --dry-run`; neither needs consent (they write nothing).
@@ -54,7 +54,7 @@ function gen({ args, names, version, io }, { dryRun, command }) {
     if (invalid.length) {
       return { code: EXIT.FAIL, errors: [{ code: 'invalid-options', message: `the profile gates or the plugin version cannot go into a generated file: ${invalid[0].message}`, hint: `fix that gate in the profile (${names.bin} profile show lists the gates), then run again` }] };
     }
-    const flags = targetFlags(store.read('state', null)?.flags ?? {}, factValues(profile));
+    const flags = targetFlags(store.read('config', null)?.flags ?? {}, factValues(profile));
     const managed = new Set(Object.values(readManifest(store).files).map((e) => e.target));
     const targets = TARGETS.filter((t) => (ids.length ? ids.includes(t.id) : flags[t.capability] === 'on' || managed.has(t.id)));
     const items = targetItems({ root: where.repo, store, names, options, targets });

@@ -1,5 +1,5 @@
 // Generated targets (spec §7.14, §7.4 capabilities, §7.19 NICE 1): each target has an ID, the capability flag
-// that enables it (state.json `flags`), its template under templates/, its path in the repository and how it is
+// that enables it (config.json `flags`), its template under templates/, its path in the repository and how it is
 // owned: `file` (the whole file is generated) or `block` (only the managed block, see block.mjs). The rendered text
 // of a block target is the block content without markers. `locations` lists where an existing file is looked for,
 // in the order GitHub reads CODEOWNERS (a CODEOWNERS file elsewhere would be ignored while one of these exists).
@@ -24,8 +24,8 @@ export const TARGETS = Object.freeze([
 
 export const sideSuffix = (names) => `.${names.codename}-new`;
 
-// The capability flags that enable targets: state.json `flags`, where agents-md is on while the profile fact
-// otherHarnesses names another harness (spec §7.19, SD-39); a value set in state.json wins either way.
+// The capability flags that enable targets: config.json `flags`, where agents-md is on while the profile fact
+// otherHarnesses names another harness (spec §7.19, SD-39); a value set in config.json wins either way.
 export function targetFlags(flags, facts) {
   const harnesses = Array.isArray(facts?.otherHarnesses) ? facts.otherHarnesses : [];
   return harnesses.length ? { [AGENTS_MD]: 'on', ...flags } : { ...flags };

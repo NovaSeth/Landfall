@@ -1,24 +1,24 @@
 // Engine unit (spec §4.2, §7.4, SD-13, SD-15, SD-38): signals → tier with hysteresis → capability set, and the record
-// of a tier change. The public interface; other units import only this file. The mode is the `engine` flag of
-// state.json (off | shadow | on; absent = shadow):
+// of a tier change. The public interface; other units import only this file. The mode is the `engine` capability flag
+// (lib/config: the machine override, else config.json, else shadow):
 //   shadow  a change is logged as a proposed tier decision (status proposed, signal values, thresholds, the
-//           capability set) in local/shadow.jsonl; nothing is enforced. The current tier and the day of its last
-//           change are the last engine line of that log. Reading the log, deciding and appending happen in one
-//           section under the store lock, so concurrent evaluations log one change.
+//           capability set) in local/shadow.jsonl through store.append; nothing is enforced. The current tier and the
+//           day of its last change are the last engine line of that log. Reading the log, deciding and appending
+//           happen in one section under the store lock, so concurrent evaluations log one change.
 //   on      a change writes a decision record of kind tier (lib/decisions; title "Tier <to> from <from>", the signal
 //           values and thresholds in its Why section), then sets the engine flags whose value at the new tier is on
-//           or off (offered ones stay as the user set them). The current tier is the active tier record with the
-//           latest date.
-//   off     no evaluation: REFUSED naming the flag (spec §14 rollback).
+//           or off in config.json (offered ones stay as the user set them). The current tier is the active tier
+//           record with the latest date.
+//   off     no evaluation: REFUSED naming the flag (spec §14 rollback; the CLI refuses `tier` before it runs).
 // An inactive repository is evaluated from L0 and nothing is written (GC2).
-// Shared gaps (reported): lib/state has no append-only log kind, so the shadow log is appended with the store's
-// locked(), assertWritable(), readText() and writeText() (as lib/decisions/write.mjs does for record text);
-// createDecision takes no `signals` field and runs its own lock sections, so in on mode the values are in the
-// record body only, and two evaluations racing on one change can both record it (same day, same content).
+// Shared gap (reported): createDecision takes no `signals` field and runs its own lock sections, so in on mode the
+// values are in the record body only, and two evaluations racing on one change can both record it (same day, same
+// content).
 import { isDeepStrictEqual } from 'node:util';
 import { authorHandle, createDecision, readRecords } from '../decisions/index.mjs';
+import { modeOf, readConfig } from '../config/index.mjs';
 import { activePacks, openMethod } from '../method/index.mjs';
-import { StateError, open } from '../state/index.mjs';
+import { LOGS, StateError, open } from '../state/index.mjs';
 import { ENGINE_FLAGS, capabilities } from './capabilities.mjs';
 import { readSignals } from './signals.mjs';
 import { THRESHOLDS, TIER_NAMES, TIERS, decideTier, toggle } from './tiers.mjs';
@@ -29,7 +29,7 @@ export { THRESHOLDS, TIER_NAMES, TIERS, addDays, dayNumber, dayString, decideTie
 
 export const ENGINE_FLAG = 'engine';
 export const MODES = Object.freeze(['off', 'shadow', 'on']);
-export const SHADOW_LOG = 'local/shadow.jsonl';
+export const SHADOW_LOG = LOGS.shadow.file;
 const TITLE = /^Tier (L[0-3]) from (L[0-3])$/;
 const DATE = /^\d{4}-\d{2}-\d{2}/;
 const NONE = Object.freeze({ tier: 'L0', since: null, id: null });
@@ -91,10 +91,10 @@ function recordBody(r, thresholds) {
   return { why, cost };
 }
 
-function engineMode(store) {
-  const mode = store?.read('state', null)?.flags?.[ENGINE_FLAG] ?? 'shadow';
+function engineMode(where, names, env) {
+  const mode = modeOf(ENGINE_FLAG, readConfig(where, { names, env }));
   if (mode === 'off') {
-    throw new StateError('capability-off', 'REFUSED', `the ${ENGINE_FLAG} capability is off (flags.${ENGINE_FLAG} in state.json): no tier is evaluated`, { hint: `set flags.${ENGINE_FLAG} to shadow or on to evaluate tiers` });
+    throw new StateError('capability-off', 'REFUSED', `the ${ENGINE_FLAG} capability is off (flags.${ENGINE_FLAG}): no tier is evaluated`, { hint: `turn it back on with '${names.bin} flags set ${ENGINE_FLAG} shadow'` });
   }
   return mode;
 }
@@ -105,7 +105,7 @@ function engineMode(store) {
 // decision | null), decision (ID | null), reasons, signals, toggles, capabilities, detail }.
 export function evaluate(where, { names, env, now = new Date().toISOString(), thresholds = THRESHOLDS, record = true } = {}) {
   const store = where.active ? open(where.dir, { names }) : null;
-  const mode = engineMode(store);
+  const mode = engineMode(where, names, env);
   const s = readSignals(where, { names, env, now, thresholds });
   const toggles = {
     parallelTasks: toggle(s.series.parallelTasks, thresholds.toggles.parallelTasks),
@@ -123,18 +123,16 @@ export function evaluate(where, { names, env, now = new Date().toISOString(), th
   if (!store) return assess(NONE);
   if (mode === 'shadow' && !record) return assess(lastShadowChange(store.readText(SHADOW_LOG) ?? ''));
   if (mode === 'shadow') {
-    return store.locked(() => {
-      store.assertWritable();
-      const text = store.readText(SHADOW_LOG) ?? '';
-      const r = assess(lastShadowChange(text));
-      if (!r.change) return r;
-      const entry = {
+    let r;
+    const entry = store.append('shadow', (text) => {
+      r = assess(lastShadowChange(text));
+      if (!r.change) return undefined;
+      return {
         at: now, capability: ENGINE_FLAG, event: 'tier', status: 'proposed', kind: 'tier', from: r.change.from, to: r.change.to, head: s.head,
         signals: s.values, thresholds: thresholds.tierSignals, reasons: r.reasons, capabilities: r.capabilities,
       };
-      store.writeText(SHADOW_LOG, `${text}${text && !text.endsWith('\n') ? '\n' : ''}${JSON.stringify(entry)}\n`);
-      return { ...r, written: 'shadow' };
     });
+    return entry ? { ...r, written: 'shadow' } : r;
   }
   const r = assess(lastRecordedChange(where.dir));
   if (!r.change || !record) return r;
@@ -143,10 +141,9 @@ export function evaluate(where, { names, env, now = new Date().toISOString(), th
   const { id } = createDecision({ store, where, names, env, handle, today: s.day, input: { title: `Tier ${r.change.to} from ${r.change.from}`, why, cost, kind: 'tier', scope: [], supersedes: [] } });
   const set = {};
   for (const f of ENGINE_FLAGS) if (r.capabilities.flags[f] === 'on' || r.capabilities.flags[f] === 'off') set[f] = r.capabilities.flags[f];
-  store.update('state', null, (doc) => {
-    if (doc === null) return undefined;
-    const flags = { ...doc.flags, ...set };
-    return isDeepStrictEqual(flags, doc.flags) ? undefined : { ...doc, flags };
+  store.update('config', null, (doc) => {
+    const flags = { ...(doc?.flags ?? {}), ...set };
+    return isDeepStrictEqual(flags, doc?.flags ?? {}) ? undefined : { ...(doc ?? {}), flags };
   });
   return { ...r, written: 'decision', decision: id };
 }

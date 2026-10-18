@@ -31,7 +31,7 @@ function tierOf(where, names, env) {
   try {
     r = evaluate(where, { names, env, record: false });
   } catch (err) {
-    if (err instanceof StateError && err.code === 'capability-off') return { tier: null, text: 'engine off (flags.engine in state.json)' };
+    if (err instanceof StateError && err.code === 'capability-off') return { tier: null, text: `engine off (flags.engine; '${names.bin} flags set engine shadow' turns it back on)` };
     throw err;
   }
   const tier = r.change ? r.change.from : r.tier;
@@ -53,7 +53,7 @@ function tasksOf(where, names, env) {
   const doc = store.read(LOOP.name, null);
   const table = nextSteps({
     tasks: all, runs: readRuns(join(where.local, 'runs')).runs, handles: team.map((d) => d.handle), me: team.find((d) => d.emailSha256 === hash)?.handle ?? null,
-    plan: null, lanesOn: store.read('state', null)?.flags?.lanes === 'on', caps: doc?.caps ?? DEFAULT_CAPS, now: Date.now(), bin: names.bin, problem: null, dirty: () => [],
+    plan: null, lanesOn: store.read('config', null)?.flags?.lanes === 'on', caps: doc?.caps ?? DEFAULT_CAPS, now: Date.now(), bin: names.bin, problem: null, dirty: () => [],
   });
   return { all, open: all.filter((t) => !CLOSED.has(t.status)), rows: [...table.steps, ...table.info], loop: doc };
 }

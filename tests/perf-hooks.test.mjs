@@ -57,7 +57,7 @@ async function activate(dir) {
   const state = await import(pathToFileURL(join(pluginDir, 'lib', 'state', 'index.mjs')).href);
   const store = state.open(join(dir, names.stateDir), { names });
   const at = '2026-10-15T10:00:00.000Z';
-  store.write('state', null, { codename: names.codename, createdWith: JSON.parse(readFileSync(join(pluginDir, '.claude-plugin', 'plugin.json'), 'utf8')).version, activatedAt: at, flags: {} });
+  store.write('state', null, { codename: names.codename, createdWith: JSON.parse(readFileSync(join(pluginDir, '.claude-plugin', 'plugin.json'), 'utf8')).version, activatedAt: at });
   state.registerHandle(store, { name: 'Perf User', email: 'perf@example.com', handle: 'PU' });
   for (let n = 1; n <= 30; n++) {
     store.write('task', `T-PU-${n}`, { id: `T-PU-${n}`, kind: 'task', title: `Task ${n}`, lane: null, owner: 'PU', class: 'standard', classHistory: [], status: 'dispatched',

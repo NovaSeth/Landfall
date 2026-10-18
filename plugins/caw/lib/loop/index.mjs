@@ -90,7 +90,7 @@ function snapshot(store, where) {
       runs: readRuns(join(where.local, 'runs')).runs,
       tasks: store.list('task').map((id) => store.read('task', id)),
       team: store.list('team').map((h) => store.read('team', h)),
-      lanesOn: store.read('state', null)?.flags?.lanes === 'on',
+      lanesOn: store.read('config', null)?.flags?.lanes === 'on',
       problem: null,
     };
   } catch (err) {

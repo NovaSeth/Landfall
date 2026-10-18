@@ -272,7 +272,7 @@ function repo(t, { active = true } = {}) {
   let handle = null;
   if (active) {
     store = state.open(stateDir, { names });
-    store.write('state', null, { codename: names.codename, createdWith: '2.0.0', activatedAt: AT, flags: {} });
+    store.write('state', null, { codename: names.codename, createdWith: '2.0.0', activatedAt: AT });
     handle = state.registerHandle(store, { name: 'Test User', email: 'test@example.com', at: AT }).handle;
   }
   return { base, dir, home, env, stateDir, store, handle };

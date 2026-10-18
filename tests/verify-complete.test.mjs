@@ -69,7 +69,7 @@ function repo(t, { files = { 'calc.test.mjs': TESTS }, gates = [NODE_TEST], cls 
   const head = git('rev-parse', 'HEAD');
   const stateDir = join(dir, names.stateDir);
   const store = state.open(stateDir, { names });
-  store.write('state', null, { codename: names.codename, createdWith: '2.0.0', activatedAt: AT, flags: {} });
+  store.write('state', null, { codename: names.codename, createdWith: '2.0.0', activatedAt: AT });
   writeFileSync(join(stateDir, '.gitignore'), 'local/\n');
   const handle = state.registerHandle(store, { name: 'Test User', email: 'test@example.com', at: AT }).handle;
   profile.openStore(stateDir, names).write('profile', null, { ...profile.emptyProfile(), gates });

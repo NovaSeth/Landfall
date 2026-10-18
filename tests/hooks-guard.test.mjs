@@ -647,7 +647,7 @@ function trackedRepo() {
   const d = gitRepo('feat');
   const store = state.open(join(d, names.stateDir), { names });
   const at = '2026-10-15T10:00:00.000Z';
-  store.write('state', null, { codename: names.codename, createdWith: readJson(join(pluginDir, '.claude-plugin', 'plugin.json')).version, activatedAt: at, flags: {} });
+  store.write('state', null, { codename: names.codename, createdWith: readJson(join(pluginDir, '.claude-plugin', 'plugin.json')).version, activatedAt: at });
   state.registerHandle(store, { name: 'Dev AB', email: 'ab@example.com', handle: 'AB' });
   store.write('task', 'T-AB-1', { id: 'T-AB-1', kind: 'task', title: 'x', lane: null, owner: 'AB', class: null, classHistory: [], status: 'new', round: 0,
     events: [{ at, by: 'AB', event: 'created', data: {} }], base: null, branch: null });
@@ -915,7 +915,7 @@ test('guard team mode (readProjectMode): solo allows a plain push main → main,
 // The default readers come from lib/state (I3.2): the repository of the command's directory, resolved once per call.
 function activate(dir, handles) {
   const store = state.open(join(dir, names.stateDir), { names });
-  store.write('state', null, { codename: names.codename, createdWith: readJson(join(pluginDir, '.claude-plugin', 'plugin.json')).version, activatedAt: '2026-10-15T10:00:00.000Z', flags: {} });
+  store.write('state', null, { codename: names.codename, createdWith: readJson(join(pluginDir, '.claude-plugin', 'plugin.json')).version, activatedAt: '2026-10-15T10:00:00.000Z' });
   handles.forEach((h, k) => state.registerHandle(store, { name: `Dev ${h}`, email: `${h.toLowerCase()}${k}@example.com`, handle: h }));
   return store;
 }

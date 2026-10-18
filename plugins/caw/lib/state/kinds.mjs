@@ -4,6 +4,8 @@
 // key, the pattern that recognises such a file in the store (group 1 = the key), the document field that must
 // equal the key, and the field spec (lib/state/schema.mjs). The state.json schema is the store schema.
 // Keys are checked against their pattern before they become paths, so a key never escapes its directory.
+// Store schema 2 (spec §5.1, §14, SD-38): the capability flags moved from state.json to config.json, with threshold
+// overrides (each cites its decision) and executor role preferences; migration 001 carries an old flags map over.
 import { StateError } from './errors.mjs';
 
 // Spec §8.2 limits plus the defaults for fields the spec leaves open (counts, sizes); one source for every check.
@@ -12,6 +14,7 @@ export const LIMITS = Object.freeze({
   lane: 40, branch: 200, token: 40, actor: 80, event: 40, codename: 40, version: 40, path: 4096, idNumber: 999999,
   email: 320, decisionBytes: 65536,
   events: 10000, classHistory: 1000, flags: 100, projects: 10000, round: 1000,
+  thresholds: 200, thresholdKey: 80, thresholdValue: 1000000000, providers: 10, logEntryBytes: 16384,
 });
 
 export const PATTERNS = Object.freeze({
@@ -28,6 +31,8 @@ export const PATTERNS = Object.freeze({
   codename: /^[a-z][a-z0-9-]*$/,
   branch: /^(?!-)(?!.*\.\.)[A-Za-z0-9._/-]+$/,
   absPath: /^\/(?!.*\/\.\.?(?:\/|$))/,
+  // <unit>.<path to a number in the unit's threshold data>, such as router.trivial.maxLoc (lib/config checks the path).
+  thresholdKey: /^[a-z][a-z0-9]*(?:\.[A-Za-z0-9]+)+$/,
 });
 
 const str = (max, extra = {}) => ({ t: 'str', max, ...extra });
@@ -36,6 +41,9 @@ const token = (re, extra = {}) => str(LIMITS.token, { re, ...extra });
 const time = { t: 'time' };
 const enumOf = (of, extra = {}) => ({ t: 'enum', of, ...extra });
 const CLASSES = ['trivial', 'standard', 'critical'];
+const flagsMap = { t: 'map', key: str(LIMITS.event, { re: PATTERNS.kebab }), v: enumOf(['off', 'shadow', 'on']), max: LIMITS.flags };
+const providers = { t: 'arr', max: LIMITS.providers, of: token(PATTERNS.kebab) };
+const executors = { t: 'obj', f: { reviewer: providers, implementer: providers }, opt: ['reviewer', 'implementer'] };
 export const TASK_STATUSES = Object.freeze(['new', 'planned', 'dispatched', 'implemented', 'in-review', 'fix-round', 'verified', 'done', 'blocked', 'cancelled']);
 
 // A kind: `dir` (its directory in the store, '' for the root), `keyPattern` (null for a single file),
@@ -52,7 +60,7 @@ export function defineKind(name, version, { dir, keyPattern = null, file, match,
 }
 
 export const KINDS = Object.freeze({
-  state: defineKind('state', 1, {
+  state: defineKind('state', 2, {
     dir: '',
     file: () => 'state.json',
     match: /^state\.json$/,
@@ -60,8 +68,24 @@ export const KINDS = Object.freeze({
       codename: str(LIMITS.codename, { re: PATTERNS.codename }),
       createdWith: str(LIMITS.version, { re: PATTERNS.semver }),
       activatedAt: time,
-      flags: { t: 'map', key: str(LIMITS.event, { re: PATTERNS.kebab }), v: enumOf(['off', 'shadow', 'on']), max: LIMITS.flags },
     },
+  }),
+  // The repository's configuration (spec §5.1 config.json, SD-38): flags {capability: off|shadow|on}, thresholds
+  // {<unit>.<path>: {value, decision, at}} (an override cites the decision that allows it), executors {role: [provider…]}
+  // in order of preference. Every part is optional; lib/config adds the defaults and the machine overrides.
+  config: defineKind('config', 1, {
+    dir: '',
+    file: () => 'config.json',
+    match: /^config\.json$/,
+    fields: {
+      flags: flagsMap,
+      thresholds: {
+        t: 'map', max: LIMITS.thresholds, key: str(LIMITS.thresholdKey, { re: PATTERNS.thresholdKey }),
+        v: { t: 'obj', f: { value: { t: 'int', min: 0, max: LIMITS.thresholdValue }, decision: token(PATTERNS.decisionId), at: time } },
+      },
+      executors,
+    },
+    opt: ['flags', 'thresholds', 'executors'],
   }),
   team: defineKind('team', 1, {
     dir: 'team',
@@ -121,7 +145,9 @@ export const KINDS = Object.freeze({
 });
 
 // Machine data (spec §5.3, `${CLAUDE_PLUGIN_DATA}`): projects.json maps a repository's real path to its linked
-// state directory, a decline time and the developer's handle.
+// state directory, a decline time and the developer's handle; config.json holds this user's overrides of capability
+// flags and executor preferences (SD-38: machine overrides), edited by hand. Threshold overrides are per repository:
+// they cite its decisions.
 export const MACHINE_KINDS = Object.freeze({
   projects: defineKind('projects', 1, {
     dir: '',
@@ -134,4 +160,16 @@ export const MACHINE_KINDS = Object.freeze({
       },
     },
   }),
+  machineConfig: defineKind('machineConfig', 1, {
+    dir: '',
+    file: () => 'config.json',
+    match: /^config\.json$/,
+    fields: { flags: flagsMap, executors },
+    opt: ['flags', 'executors'],
+  }),
+});
+
+// Append-only logs of the store (spec §5.2): one JSON object per line, each at most entryBytes (store.append).
+export const LOGS = Object.freeze({
+  shadow: Object.freeze({ file: 'local/shadow.jsonl', entryBytes: LIMITS.logEntryBytes }),
 });

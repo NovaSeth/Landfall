@@ -189,7 +189,7 @@ test('SC3: installed plugin always-on cost and SessionStart injection stay withi
   const state = await lib('state/index.mjs');
   const store = state.open(join(project, names.stateDir), { names });
   const at = '2026-10-15T10:00:00.000Z';
-  store.write('state', null, { codename: names.codename, createdWith: readJson(join(pluginDir, '.claude-plugin', 'plugin.json')).version, activatedAt: at, flags: {} });
+  store.write('state', null, { codename: names.codename, createdWith: readJson(join(pluginDir, '.claude-plugin', 'plugin.json')).version, activatedAt: at });
   state.registerHandle(store, { name: 'Test User', email: 'test@example.com', handle: 'AB' });
   for (let n = 1; n <= 150; n++) {
     store.write('task', `T-AB-${n}`, { id: `T-AB-${n}`, kind: 'task', title: `${'W'.repeat(100)} ${String(n).padStart(19, '0')}`, lane: null, owner: 'AB',

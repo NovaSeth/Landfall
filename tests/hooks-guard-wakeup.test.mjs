@@ -228,7 +228,7 @@ const linkedProject = (t, exit) => {
   const f = repo(t, { active: false });
   const ext = join(f.base, 'control', 'state');
   const st = state.open(ext, { names });
-  st.write('state', null, { codename: names.codename, createdWith: VERSION, activatedAt: AT, flags: {} });
+  st.write('state', null, { codename: names.codename, createdWith: VERSION, activatedAt: AT });
   state.updateProject({ repo: f.dir, dataDir: f.env.CLAUDE_PLUGIN_DATA, names, patch: { stateDir: ext } });
   writeLoop(ext, loopDoc(exit));
   return f;

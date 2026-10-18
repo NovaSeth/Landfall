@@ -395,7 +395,7 @@ function storeDir(t) {
   const dir = join(base, 'state');
   const where = { repo: base, dir, local: join(dir, 'local'), active: true, linked: false };
   const store = state.open(dir, { names, kinds: loop.STORE_KINDS });
-  store.write('state', null, { codename: names.codename, createdWith: '1.5.2', activatedAt: at(0), flags: {} });
+  store.write('state', null, { codename: names.codename, createdWith: '1.5.2', activatedAt: at(0) });
   store.write('team', 'TU', { handle: 'TU', emailSha256: state.emailHash('test@example.com'), addedAt: at(0) });
   const probe = { heads: () => 'main 1111111', email: () => 'test@example.com', cost: () => ({ costMicroUsd: 0, partial: false }), dirty: () => [] };
   const run = (now, extra = {}) => loop.tickStore(store, { where, names, now: T0 + now * MIN, plan: null, probe: { ...probe, ...extra } });

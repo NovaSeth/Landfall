@@ -1,6 +1,6 @@
 // Capabilities by tier (spec §7.4 table, SD-15): what scales with the tier is ceremony (review depth, spec and plan,
 // scheduler, lanes, generated files, method packs); the outcome gates are the router's one frozen list for every
-// tier and task class. The engine flags are the state.json `flags` keys the engine sets on a tier change in on mode:
+// tier and task class. The engine flags are the config.json `flags` keys the engine sets on a tier change in on mode:
 // lanes (I2.2) and the generated files ci-gate, pre-push, codeowners, pr-template (I11). Values: on · off ·
 // offered (left to the user: the engine does not set it) · `contributors` (CODEOWNERS at L2 when contributors30
 // reaches codeownersContributors) · `signal` (the scheduler at L0 follows the parallelTasks toggle).

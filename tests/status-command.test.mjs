@@ -211,9 +211,9 @@ test('status: the engine evaluates without recording; an engine turned off is sh
 
   const state = await lib('state/index.mjs');
   const store = state.open(join(p.repo, names.stateDir), { names });
-  store.update('state', null, (doc) => ({ ...doc, flags: { ...doc.flags, engine: 'off' } }));
+  store.update('config', null, (doc) => ({ ...doc, flags: { ...doc?.flags, engine: 'off' } }));
   const off = await cli([], p);
   assert.equal(off.code, 0, show(off));
-  assert.match(off.out, /^Tier: engine off \(flags\.engine in state\.json\)$/m);
+  assert.match(off.out, new RegExp(`^Tier: engine off \\(flags\\.engine; '${BIN} flags set engine shadow' turns it back on\\)$`, 'm'));
   assert.equal((await cli(['status'], { ...p, json: true })).out.data.tier, null);
 });

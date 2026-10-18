@@ -178,7 +178,7 @@ const now = () => new Date(Date.UTC(2026, 9, 15, 0, 0, 0, tick++)).toISOString()
 function workspace(parent) {
   const root = mkdtempSync(join(parent, 'ws-'));
   const store = gen.openStore(join(root, names.stateDir), names);
-  store.write('state', null, { codename: names.codename, createdWith: VERSION, activatedAt: now(), flags: {} });
+  store.write('state', null, { codename: names.codename, createdWith: VERSION, activatedAt: now() });
   return { root, store };
 }
 const applyIn = (ws, items, extra = {}) => gen.applyGen({ root: ws.root, store: ws.store, names, version: VERSION, items, now, ...extra });
@@ -803,7 +803,11 @@ function gitRepo(t, { active = true, flags = {} } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'gen-cli-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   assert.equal(spawnSync('git', ['init', '-q'], { cwd: dir, env: process.env }).status, 0);
-  if (active) gen.openStore(join(dir, names.stateDir), names).write('state', null, { codename: names.codename, createdWith: VERSION, activatedAt: now(), flags });
+  if (active) {
+    const store = gen.openStore(join(dir, names.stateDir), names);
+    store.write('state', null, { codename: names.codename, createdWith: VERSION, activatedAt: now() });
+    if (Object.keys(flags).length) store.write('config', null, { flags });
+  }
   return dir;
 }
 

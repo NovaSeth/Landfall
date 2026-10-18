@@ -7,7 +7,8 @@
 import { format, validate } from './schema.mjs';
 
 export { StateError } from './errors.mjs';
-export { KINDS, LIMITS, MACHINE_KINDS, PATTERNS, TASK_STATUSES, defineKind } from './kinds.mjs';
+export { KINDS, LIMITS, LOGS, MACHINE_KINDS, PATTERNS, TASK_STATUSES, defineKind } from './kinds.mjs';
+export { readMachineConfig } from './config.mjs';
 export { MIGRATIONS } from './migrations/index.mjs';
 export { checkChain, migrate } from './migrate.mjs';
 export { allocateId, retireId } from './ids.mjs';
