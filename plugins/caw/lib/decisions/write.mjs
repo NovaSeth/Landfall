@@ -87,11 +87,12 @@ const fieldError = (errors) => {
   return new StateError(e.code, 'USAGE', e.message, { hint: 'shorten or correct the value; nothing was written' });
 };
 
-// Creates a record; input { title, why, cost, scope: [globs], kind, supersedes: [ids], allowsTestRemoval: [test ids] }.
+// Creates a record; input { title, why, cost, scope: [globs], kind, supersedes: [ids], allowsTestRemoval: [test ids],
+// task and remaining: [finding ids] (review-close) }.
 // Returns { id, file, supersedes }.
 export function createDecision({ store, where, names, env, handle, input, today = new Date().toISOString().slice(0, 10) }) {
   const allows = input.allowsTestRemoval ?? [];
-  for (const [flag, value] of [['--title', input.title], ['--why', input.why], ['--cost', input.cost], ...(input.scope ?? []).map((g) => ['--scope', g]), ...allows.map((t) => ['--allows-test-removal', t])]) {
+  for (const [flag, value] of [['--title', input.title], ['--why', input.why], ['--cost', input.cost], ...(input.scope ?? []).map((g) => ['--scope', g]), ...allows.map((t) => ['--allows-test-removal', t]), ['--task', input.task ?? ''], ...(input.remaining ?? []).map((f) => ['--remaining', f])]) {
     const h = hidden(value)[0];
     if (h) throw usage('invalid-value', `${flag} contains the hidden character ${codePointName(h.codePoint)}`, 'remove it: a record must not hold text a reader cannot see');
   }
@@ -106,9 +107,11 @@ export function createDecision({ store, where, names, env, handle, input, today 
   const doc = {
     schema: DECISION.version, id: `D-${handle}-1`, title: input.title, status: 'active', kind: input.kind ?? 'general', date: today, author: handle,
     supersedes, supersededBy: null, scope: input.scope ?? [], allowsTestRemoval: allows,
+    ...(input.task !== undefined || input.remaining !== undefined ? { task: input.task, remaining: input.remaining ?? [] } : {}),
   };
   const errors = check(DECISION, doc);
   if (errors.length) throw fieldError(errors);
+  if (doc.kind === 'review-close' && !doc.task) throw usage('missing-flag', 'kind review-close needs --task <id>', 'name the task whose review step it closes, and its open blocking findings with --remaining');
   const body = ['## What', '', input.title, '', '## Why', '', input.why.trim(), '', '## Cost if wrong', '', input.cost.trim(), '', '## Alternatives', '', 'None recorded.', ''].join('\n');
 
   const high = remoteHigh({ where, handle, env });

@@ -167,15 +167,17 @@ Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
 Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
 ```
 
-### `caw decide [--title <text>] [--why <text>] [--cost <text>] [--scope <globs>] [--kind <kind>] [--supersedes <ids>] [--allows-test-removal <ids>] [--yes] [--json]`
+### `caw decide [--title <text>] [--why <text>] [--cost <text>] [--scope <globs>] [--kind <kind>] [--supersedes <ids>] [--allows-test-removal <ids>] [--task <id>] [--remaining <ids>] [--yes] [--json]`
 
 ```text
-usage: caw decide [--title <text>] [--why <text>] [--cost <text>] [--scope <globs>] [--kind <kind>] [--supersedes <ids>] [--allows-test-removal <ids>] [--yes] [--json]
+usage: caw decide [--title <text>] [--why <text>] [--cost <text>] [--scope <globs>] [--kind <kind>] [--supersedes <ids>] [--allows-test-removal <ids>] [--task <id>] [--remaining <ids>] [--yes] [--json]
 
 Record a decision: a new D-<H>-<n> file under the state directory with what, why and cost if wrong.
 The number is the next of your handle: above every local record and tombstone and every one on origin/main.
 --supersedes marks each listed active decision superseded by the new one (the only edit of another record).
 --allows-test-removal lists test IDs in allowsTestRemoval; a JSON ID such as ["file","title",1] keeps its commas.
+--task with --remaining (review-close): once the latest review round reaches the loop's rounds cap (default 2) and
+remaining lists every blocking finding ID of that round, the review step counts as approved; gates and report do not.
 Cite it next to the code it constrains (COD-12): "// D-<H>-<n>: <why in five words>".
 
 Options:
@@ -183,9 +185,11 @@ Options:
   --why <text>                 why (required); its first sentence is shown when a file citing it is edited
   --cost <text>                cost if the decision is wrong (required); its first clause is shown too
   --scope <globs>              comma-separated path globs it constrains (≤ 20, ≤ 120 chars; ** * ? {a,b})
-  --kind <kind>                general (default), tier, tier-pin, route-override, test-removal, gate-change or takeover
+  --kind <kind>                general (default), tier, tier-pin, route-override, test-removal, gate-change, takeover or review-close
   --supersedes <ids>           comma-separated IDs of active decisions this one replaces
   --allows-test-removal <ids>  comma-separated test IDs verify may see removed or newly skipped (as verify prints them); kind test-removal by default
+  --task <id>                  the task whose review step a review-close decision closes; kind review-close by default
+  --remaining <ids>            comma-separated blocking finding IDs of the latest review round left open (review-close)
 
 Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
 Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
@@ -275,7 +279,7 @@ Options:
   --why <text>     why (required); its first sentence is shown when a file citing it is edited
   --cost <text>    cost if the decision is wrong (required); its first clause is shown too
   --scope <globs>  comma-separated path globs it constrains (≤ 20, ≤ 120 chars; ** * ? {a,b})
-  --kind <kind>    general (default), tier, tier-pin, route-override, test-removal, gate-change or takeover
+  --kind <kind>    general (default), tier, tier-pin, route-override, test-removal, gate-change, takeover or review-close
 
 Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
 Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV

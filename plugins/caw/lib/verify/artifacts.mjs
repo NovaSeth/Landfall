@@ -4,9 +4,14 @@
 //           excerpt text of at most 2 KB. The body is prose and decides nothing.
 //   review  needed when the route has a review step: the latest round (highest k of review-r<k>.json) has verdict
 //           approved, and for a cross-provider review an external reviewer. → approved | missing | not-required
+//           It is also approved by review close (reviewClosed): an active review-close decision for the task, once the
+//           latest round has reached the loop's rounds cap (default 2), listing in `remaining` every blocking finding ID of
+//           that round. It closes only the review step: the report evidence and the gates are checked as before.
 // The report is read as a plain file (never through a link) of at most 256 KB; the review through lib/state.
 import { lstatSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { readRecords } from '../decisions/records.mjs';
+import { CAP_RANGE, DEFAULT_CAPS, LOOP } from '../loop/kind.mjs';
 
 const REPORT_MAX = 256 * 1024;
 const EXCERPT_MAX = 2048;
@@ -53,5 +58,23 @@ export function reviewState(store, id, steps) {
   const keys = store.list('review').filter((k) => k.startsWith(`${id}/`)).sort((a, b) => round(a) - round(b));
   if (!keys.length) return 'missing';
   const latest = store.read('review', keys[keys.length - 1]);
-  return latest.verdict === 'approved' && (need === 'any' || latest.reviewer.kind === 'external') ? 'approved' : 'missing';
+  if (latest.verdict === 'approved' && (need === 'any' || latest.reviewer.kind === 'external')) return 'approved';
+  return reviewClosed(store, id, round(keys[keys.length - 1]), latest) ? 'approved' : 'missing';
+}
+
+// The loop's rounds cap (local/loop.json, read through the store), else the default.
+function roundsCap(store) {
+  let rounds;
+  try { rounds = JSON.parse(store.readText(LOOP.path()) ?? 'null')?.caps?.rounds; } catch { rounds = undefined; }
+  const [min, max] = CAP_RANGE.rounds;
+  return Number.isInteger(rounds) && rounds >= min && rounds <= max ? rounds : DEFAULT_CAPS.rounds;
+}
+
+// Review close: round `k` (the latest, document `latest`) is at or past the rounds cap and an active review-close
+// decision for task `id` lists every blocking finding ID of that round.
+export function reviewClosed(store, id, k, latest) {
+  if (!(k >= roundsCap(store))) return false;
+  const blocking = (latest.findings ?? []).filter((f) => f.severity === 'blocking').map((f) => f.id);
+  return readRecords(store.dir).records.some(({ doc }) => doc.status === 'active' && doc.kind === 'review-close' && doc.task === id
+    && blocking.every((f) => (doc.remaining ?? []).includes(f)));
 }
