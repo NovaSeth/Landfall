@@ -28,12 +28,13 @@ export const OWNED = Object.freeze([
   { re: /^tasks\/([^/]+)\/verify\.json$/, rule: 'FLW-7', use: (bin, id) => `\`${bin} verify ${id}\`` },
   { re: /^baseline\/tests\.json$/, rule: 'FLW-7', use: (bin) => `\`${bin} verify <task>\` or \`${bin} baseline pin --decision <D>\`` },
   { re: /^local\/loop\.json$/, rule: 'FLW-7', use: (bin) => `\`${bin} loop start|stop\` and \`${bin} tick\`` },
+  { re: /^local\/gate-cache\/([^/]+)\.json$/, rule: 'FLW-7', use: (bin) => `\`${bin} verify <task>\`, which writes the gate cache (--no-cache runs the gates again)` },
   { re: /^decisions\/([^/]+)\.md$/, rule: 'PRI-8', field: 'status', use: (bin, id) => `\`${bin} decisions supersede ${id}\` or \`${bin} decisions retire ${id}\`` },
   { re: /^guard-extra\.txt$/, rule: 'SEC-4', edit: true, use: () => 'the Edit tool, where the change is visible' },
 ]);
 // Text that names a state file wherever the state directory lives (prescan literals, lowercase).
 export const OWNED_NAMES = Object.freeze(['state.json', 'task.json', 'verify.json', 'tests.json', 'loop.json', 'guard-extra.txt', '/tasks/', '/decisions/',
-  '/baseline/', '/team/']);
+  '/baseline/', '/team/', '/gate-cache/']);
 const WORKTREES = /^local\/worktrees(\/|$)/; // separate checkouts of external executors, not state
 
 export function ownedFile(rel) {

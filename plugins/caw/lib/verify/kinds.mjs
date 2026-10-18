@@ -89,6 +89,29 @@ export const VERIFY_KINDS = Object.freeze({
       gates: many({ t: 'obj', f: { name: str(40, { min: 1 }), lines: many(str(TAIL_CHARS), TAIL_CHARS) } }, 100),
     },
   }),
+  // A passing gate set's runs for one tree (gate-cache.mjs): machine-local, read before the gates run again.
+  gateCache: defineKind('gateCache', 1, {
+    dir: 'local/gate-cache',
+    keyPattern: PATTERNS.sha256,
+    file: (k) => `local/gate-cache/${k}.json`,
+    match: /^local\/gate-cache\/([0-9a-f]{64})\.json$/,
+    fields: {
+      tree: str(64, { re: PATTERNS.sha }),
+      gatesSha: str(64, { re: PATTERNS.sha256 }),
+      collectors: str(200, { min: 1 }),
+      version: str(LIMITS.version, { null: true }),
+      at: time,
+      runs: many({
+        t: 'obj',
+        f: {
+          name: str(40, { min: 1 }), cmd: str(300, { min: 1 }), exit: { t: 'int', min: 0, max: 255, null: true }, durationMs: count,
+          result: { t: 'enum', of: GATE_RESULTS }, kind: str(40, { min: 1 }), tail: many(str(TAIL_CHARS), TAIL_CHARS),
+          report: { t: 'data', maxBytes: 8 * 1024 * 1024 },
+        },
+        opt: ['report'],
+      }, 100),
+    },
+  }),
   review: defineKind('review', 1, {
     dir: 'tasks',
     keyPattern: REVIEW_KEY,

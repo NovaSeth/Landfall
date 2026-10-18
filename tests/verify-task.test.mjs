@@ -437,7 +437,7 @@ test('verify, task done and task merge are command rows that change files; help 
     assert.equal(row(name).mutating, true, `${name}: changes files`);
     assert.deepEqual(row(name).args.map((a) => [a.name, Boolean(a.required)]), [['id', true]], name);
   }
-  assert.deepEqual(row('verify').flags.map((f) => f.flag), ['--ci']);
+  assert.deepEqual(row('verify').flags.map((f) => f.flag), ['--ci', '--no-cache']);
   assert.deepEqual(row('task merge').flags.map((f) => f.flag), ['--branch']);
   assert.deepEqual(row('verify').exits, ['OK', 'FAIL', 'USAGE', 'REFUSED', 'ENV']);
   const r = repo(t);

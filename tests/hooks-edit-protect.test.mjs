@@ -34,7 +34,7 @@ function fixture(t) {
 }
 
 test('owned state files: one list for the Bash guard and the edit hook', () => {
-  for (const [rel, rule] of [['tasks/T-AB-1/task.json', 'FLW-7'], ['tasks/T-AB-1/verify.json', 'FLW-7'], ['baseline/tests.json', 'FLW-7'], ['local/loop.json', 'FLW-7'],
+  for (const [rel, rule] of [['tasks/T-AB-1/task.json', 'FLW-7'], ['tasks/T-AB-1/verify.json', 'FLW-7'], ['baseline/tests.json', 'FLW-7'], ['local/loop.json', 'FLW-7'], [`local/gate-cache/${'a'.repeat(64)}.json`, 'FLW-7'],
     ['decisions/D-AB-1.md', 'PRI-8'], ['state.json', 'FLW-7'], ['team/AB.json', 'FLW-7'], ['guard-extra.txt', 'SEC-4']]) {
     assert.equal(ownedFile(rel)?.rule, rule, rel);
   }
@@ -48,7 +48,8 @@ test('owned state files: one list for the Bash guard and the edit hook', () => {
 test('edit hook: a direct Edit or Write of an owned state file is denied with the command to use (FLW-7)', (t) => {
   const f = fixture(t);
   const cases = [['tasks/T-AB-1/task.json', `${names.bin} task set T-AB-1`], ['tasks/T-AB-1/verify.json', `${names.bin} verify T-AB-1`],
-    ['baseline/tests.json', `${names.bin} baseline pin`], ['local/loop.json', `${names.bin} loop`], ['tasks/T-AB-7/task.json', `${names.bin} task set T-AB-7`]];
+    ['baseline/tests.json', `${names.bin} baseline pin`], ['local/loop.json', `${names.bin} loop`], ['tasks/T-AB-7/task.json', `${names.bin} task set T-AB-7`],
+    [`local/gate-cache/${'b'.repeat(64)}.json`, `${names.bin} verify`]];
   for (const [rel, use] of cases) {
     for (const [tool, input] of [['Edit', { old_string: '{', new_string: '{ ' }], ['Write', { content: '{}\n' }]]) {
       const v = edit(f, f.s(rel), input, tool);
