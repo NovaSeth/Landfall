@@ -456,3 +456,120 @@ test('one pattern source: no plugin file but lib/secrets/patterns.mjs defines a 
     assert.deepEqual(secretRegexFiles(dir), ['lib/other/a.mjs'], content);
   }
 });
+
+// Fix round 1 (review r1, F1–F5).
+const utf16 = (text, be = false) => { const le = Buffer.from(`﻿${text}`, 'utf16le'); return be ? Buffer.from(le).swap16() : le; };
+
+test('F1: a BOM-marked UTF-16 text file (LE, BE) is decoded in every mode, not skipped as binary; other binaries stay skipped', async (t) => {
+  const d = repo(t);
+  commit(d, 'README.md', 'x\n');
+  const body = `a=1\r\nTOKEN="${ghToken}"\r\n`;
+  put(d, 'win/le.txt', utf16(body));
+  put(d, 'win/be.txt', utf16(body, true));
+  put(d, 'bin.dat', Buffer.concat([Buffer.from([0, 1, 2]), Buffer.from(`\n${ghToken}\n`)]));
+  let r = await scan(d);
+  assert.equal(r.status, 1, show(r));
+  assert.deepEqual(where(r), ['win/be.txt:2', 'win/le.txt:2'], 'line numbers of the decoded text; the other binary is skipped');
+  noLeak(r, ghToken, ghToken.slice(4, 14));
+  git(d, 'add', '-A');
+  r = await scan(d, '--staged');
+  assert.deepEqual([r.status, where(r)], [1, ['win/be.txt:2', 'win/le.txt:2']], `staged: ${show(r)}`);
+  git(d, 'commit', '-qm', 'utf-16');
+  let sha = git(d, 'rev-parse', 'HEAD').slice(0, 12);
+  r = await scan(d, '--range', 'HEAD~1..HEAD');
+  assert.deepEqual([r.status, where(r)], [1, [`${sha}:win/be.txt:2`, `${sha}:win/le.txt:2`]], `range: ${show(r)}`);
+
+  const quoted = 'abcdefghijk' + 'lmnopqrstuv'; // SYNTH
+  put(d, 'win/le.txt', utf16(`${body}more=1\r\nAPI_KEY="${quoted}"\r\n`));
+  git(d, 'add', '-A');
+  r = await scan(d, '--staged');
+  assert.deepEqual([r.status, where(r)], [1, ['win/le.txt:4']], `only the line the change adds: ${show(r)}`);
+  git(d, 'commit', '-qm', 'more');
+  sha = git(d, 'rev-parse', 'HEAD').slice(0, 12);
+  r = await scan(d, '--range', 'HEAD~1..HEAD');
+  assert.deepEqual([r.status, where(r)], [1, [`${sha}:win/le.txt:4`]], show(r));
+  noLeak(r, quoted);
+
+  put(d, 'win/x.txt', utf16(`k="${ghToken}"\r\n`));
+  git(d, 'add', '-A');
+  put(d, 'win/x.txt', utf16('ok\r\n'));
+  r = await scan(d);
+  assert.deepEqual(where(r), ['win/be.txt:2', 'win/le.txt:2', 'win/le.txt:4', 'win/x.txt:1'], `a UTF-16 key staged and fixed only on disk: ${show(r)}`);
+  r = await scan(d, '--artifact', 'win');
+  assert.deepEqual(where(r), ['win/be.txt:2', 'win/le.txt:2', 'win/le.txt:4'], `artifact: ${show(r)}`);
+});
+
+test('F2: the marker is a separate word: SYNTHESIS_API_KEY or SYNTHETIC lines are findings; SYNTH, SYNTH-x and the long form exempt', async (t) => {
+  const d = repo(t);
+  commit(d, 'config.sh', `SYNTHESIS_API_KEY="${val}abcd"\nconst SYNTHETIC = "${ghToken}";\nx="${ghToken}" # SYNTHS\n`);
+  let r = await scan(d);
+  assert.equal(r.status, 1, show(r));
+  assert.deepEqual(where(r), ['config.sh:1', 'config.sh:2', 'config.sh:3']);
+  noLeak(r, val, ghToken);
+  commit(d, 'config.sh', `SYNTHESIS_API_KEY="${val}abcd" # SYNTH\nconst t = "${ghToken}"; // SYNTH-fixture\nconst u = "${ghToken}"; /* check-secrets: synthetic */\n`);
+  r = await scan(d);
+  assert.equal(r.status, 0, show(r));
+});
+
+test('F3: --range lists key and env files a merge adds in its resolution (added against every parent)', async (t) => {
+  const d = repo(t);
+  commit(d, 'a.ts', 'base\n');
+  const base = git(d, 'rev-parse', 'HEAD');
+  git(d, 'checkout', '-qb', 'side');
+  commit(d, 'side.ts', 'side\n');
+  git(d, 'checkout', '-q', 'main');
+  commit(d, 'main.ts', 'main\n');
+  git(d, 'merge', '-q', '--no-commit', 'side');
+  put(d, '.env', 'PORT=1\n');
+  put(d, 'android/release.keystore', 'x\n');
+  put(d, 'win/m.txt', utf16(`TOKEN="${ghToken}"\r\n`));
+  git(d, 'add', '-A');
+  git(d, 'commit', '-qm', 'merge with files added in the resolution');
+  const merge = git(d, 'rev-parse', 'HEAD').slice(0, 12);
+  const r = await scan(d, '--range', `${base}..HEAD`);
+  assert.equal(r.status, 1, show(r));
+  assert.deepEqual(r.env.data.findings.map((f) => [f.where, f.type]).sort(), [[`${merge}:.env`, 'key-file'], [`${merge}:android/release.keystore`, 'key-file'], [`${merge}:win/m.txt:1`, 'github-token']]);
+  // A key file a branch adds is reported at its own commit, not again at the merge that brings it.
+  const e = repo(t);
+  commit(e, 'a.ts', 'base\n');
+  const b2 = git(e, 'rev-parse', 'HEAD');
+  git(e, 'checkout', '-qb', 'side');
+  commit(e, 'side.pem', 'x\n');
+  const sidePem = git(e, 'rev-parse', 'HEAD').slice(0, 12);
+  git(e, 'checkout', '-q', 'main');
+  commit(e, 'main.ts', 'main\n');
+  git(e, 'merge', '-q', '--no-edit', 'side');
+  const s = await scan(e, '--range', `${b2}..HEAD`);
+  assert.deepEqual(where(s), [`${sidePem}:side.pem`], show(s));
+});
+
+test('F4: a project pattern that does not compile is reported by file, line and reason, never by its text', async (t) => {
+  const d = repo(t);
+  commit(d, 'a.ts', 'ok\n');
+  const literal = 'live_' + 'Q9w8E7r6T5y4'; // SYNTH
+  for (const tail of ['[A-Z', '(?<', '+++', '[[:nope:]]', '[[.a.]]', '(']) {
+    put(d, `${names.stateDir}/secrets-patterns.txt`, `# ours\n${literal}${tail}\n`);
+    const r = await scan(d, '--staged');
+    assert.equal(r.status, 8, `${tail}: ${show(r)}`);
+    assert.match(r.env.errors[0].message, /secrets-patterns\.txt:2: /, 'file and line');
+    assert.ok(!r.all.includes(literal.slice(5)) && !r.all.includes(tail.length > 2 ? tail : '\u0000'), `${tail}: the pattern text is not printed\n${r.all}`);
+  }
+});
+
+test('F5: a UTF-8 BOM in secrets-patterns.txt is stripped; another encoding of the file is refused (8)', async (t) => {
+  const d = repo(t);
+  commit(d, 'a.ts', 'ok\n');
+  const own = 'zz_' + 'A1b2C3d4E5f6G7h8I9j0K1'; // SYNTH
+  put(d, 'src.txt', `x = ${own}\n`);
+  git(d, 'add', 'src.txt');
+  const rel = `${names.stateDir}/secrets-patterns.txt`;
+  put(d, rel, Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from('zz_[A-Za-z0-9]{20,}\n')]));
+  let r = await scan(d, '--staged');
+  assert.deepEqual([r.status, r.env.data.findings.map((f) => [f.where, f.type])], [1, [['src.txt:1', 'project:1']]], `the first pattern works: ${show(r)}`);
+  for (const [why, bytes] of [['UTF-16', utf16('zz_[A-Za-z0-9]{20,}\n')], ['a NUL', Buffer.from('zz_[A-Z]{4}\0\n')], ['not UTF-8', Buffer.from([0x7a, 0x7a, 0x5f, 0xb3, 0x0a])]]) {
+    put(d, rel, bytes);
+    r = await scan(d, '--staged');
+    assert.equal(r.status, 8, `${why}: ${show(r)}`);
+    assert.match(r.env.errors[0].message, /secrets-patterns\.txt.*UTF-8/);
+  }
+});

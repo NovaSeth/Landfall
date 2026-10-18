@@ -7,8 +7,11 @@
 //             removed again, and the resolution of a merge), and key files added or renamed in them
 //   artifact  every file under a built file or directory (ignored or not, links not followed); the synthetic marker
 //             exempts nothing there, a build is no test fixture (SEC-11)
-// Text is read as bytes (latin1, see patterns.mjs); binary files (a NUL in the first 8000 bytes, as git decides) are
-// not read. Diffs come from git without colour, context, external diff drivers or text conversion.
+// Text is read as bytes (latin1, see patterns.mjs). A BOM-marked UTF-16 file (Windows tools write them) is decoded to
+// UTF-8 and scanned like any text, in every mode: git shows it as binary in a diff, so its blobs are read and the lines
+// no earlier version holds are scanned. Other binary files (a NUL in the first 8000 bytes, as git decides) are not read.
+// Diffs come from git without colour, context, external diff drivers or text conversion. A merge adds what differs
+// from every parent: its resolution lines, and key files added against every parent (`--cc --name-status`).
 // git writes diffs and logs into a private temporary directory (--output) that is read in chunks: an output captured
 // by lib/git is capped at 16 MB, and a range can hold far more (the first push of a large history). git refuses
 // --output for a combined diff, so the merges of a range are read from a captured `git log --merges --cc`: it holds
@@ -18,7 +21,7 @@
 import { closeSync, lstatSync, mkdtempSync, openSync, readFileSync, readSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, relative, resolve as resolvePath } from 'node:path';
-import { git } from '../git/index.mjs';
+import { MAX_OUTPUT, git } from '../git/index.mjs';
 import { StateError, resolve } from '../state/index.mjs';
 import { isKeyFile, isSynthetic, mask, matchLine, projectPatterns, skipsContent } from './patterns.mjs';
 
@@ -47,8 +50,8 @@ export function rangeWords(text) {
   return { words };
 }
 
-function runGit(ctx, args) {
-  const r = git(['-c', 'core.quotePath=false', ...args], { cwd: ctx.repo, env: ctx.env, timeoutMs: GIT_TIMEOUT_MS });
+function runGit(ctx, args, { raw = false } = {}) {
+  const r = git(['-c', 'core.quotePath=false', ...args], { cwd: ctx.repo, env: ctx.env, timeoutMs: GIT_TIMEOUT_MS, raw });
   if (r.error === 'missing') throw invalid('git-missing', 'git is not on PATH', 'install git and put it on PATH');
   if (r.error || r.status !== 0) {
     const said = (r.stderr.trim().split('\n')[0] ?? '').slice(0, 160);
@@ -133,11 +136,25 @@ function addedLines(eachLine, add) {
   });
 }
 
+const isUtf16 = (buf) => buf.length >= 2 && ((buf[0] === 0xff && buf[1] === 0xfe) || (buf[0] === 0xfe && buf[1] === 0xff));
+// The text of a file's bytes (latin1: one character per byte of its UTF-8), or null for a binary file. A BOM-marked
+// UTF-16 file is decoded to UTF-8 first.
+function decodeText(buf) {
+  if (isUtf16(buf)) {
+    const body = Buffer.from(buf.subarray(2, buf.length - (buf.length % 2)));
+    if (buf[0] === 0xfe) body.swap16();
+    return Buffer.from(body.toString('utf16le'), 'utf8').toString('latin1');
+  }
+  if (buf.subarray(0, BINARY_PROBE).includes(0)) return null;
+  return buf.toString('latin1');
+}
+const linesOf = (text) => { const lines = text.split('\n'); if (lines[lines.length - 1] === '') lines.pop(); return lines; };
+
 function unreadable(shown, err) {
   return invalid('file-unreadable', `cannot read ${shown} (${err.code ?? err.message})`, 'make it readable (or ignore it if it does not belong in the repository), then scan again');
 }
-// The text of a regular file (latin1), or null: gone, not a regular file (a link, a submodule), binary.
-function readText(abs, shown, st) {
+// The bytes of a regular file, or null: gone, not a regular file (a link, a submodule).
+function readBytes(abs, shown, st) {
   let s = st;
   if (!s) {
     try { s = lstatSync(abs); } catch (err) {
@@ -146,20 +163,20 @@ function readText(abs, shown, st) {
     }
   }
   if (!s.isFile()) return null;
-  let buf;
-  try { buf = readFileSync(abs); } catch (err) {
+  try { return readFileSync(abs); } catch (err) {
     if (err.code === 'ENOENT') return null;
     throw unreadable(shown, err);
   }
-  if (buf.subarray(0, BINARY_PROBE).includes(0)) return null;
-  return buf.toString('latin1');
+}
+// The text of a regular file (decodeText), or null: gone, not a regular file, binary.
+function readText(abs, shown, st) {
+  const buf = readBytes(abs, shown, st);
+  return buf === null ? null : decodeText(buf);
 }
 
 function scanText(ctx, text, path, { marker }) {
   ctx.files++;
-  const lines = text.split('\n');
-  if (lines[lines.length - 1] === '') lines.pop();
-  lines.forEach((l, k) => scanLine(ctx, l, { commit: null, path, line: k + 1 }, { marker }));
+  linesOf(text).forEach((l, k) => scanLine(ctx, l, { commit: null, path, line: k + 1 }, { marker }));
 }
 function scanLine(ctx, text, at, { marker = true } = {}) {
   ctx.lines++;
@@ -169,8 +186,58 @@ function scanLine(ctx, text, at, { marker = true } = {}) {
 }
 const keyFile = (ctx, path, commit = null) => ctx.add({ commit, path, line: null, type: 'key-file', masked: null });
 
+const literal = (path) => `:(literal)${path}`;
+// The bytes of the regular-file blob of path in rev ('' for the index), or null: no such blob there, or larger than a
+// git output may be (it is only read to look for a UTF-16 BOM).
+function blob(ctx, rev, path) {
+  let oid;
+  let size;
+  if (rev === '') {
+    const m = /^(\d+) ([0-9a-f]+) \d\t/.exec(runGit(ctx, ['ls-files', '-s', '-z', '--', literal(path)]));
+    if (!m || !m[1].startsWith('100')) return null;
+    oid = m[2];
+    size = Number(runGit(ctx, ['cat-file', '-s', oid]).trim());
+  } else {
+    const m = /^(\d+) blob ([0-9a-f]+) +(\d+)\t/.exec(runGit(ctx, ['ls-tree', '-l', '-z', rev, '--', literal(path)]));
+    if (!m || !m[1].startsWith('100')) return null;
+    oid = m[2];
+    size = Number(m[3]);
+  }
+  return size > MAX_OUTPUT ? null : runGit(ctx, ['cat-file', 'blob', oid], { raw: true });
+}
+// A file a diff shows as binary: when its new version (now()) is BOM-marked UTF-16 text, the lines that no earlier
+// version (before(): the parents, HEAD or the working tree) holds are scanned, numbered as in the new version.
+function binaryChange(ctx, { commit, path, now, before }) {
+  if (skipsContent(path)) return;
+  const buf = now();
+  if (!buf || !isUtf16(buf)) return;
+  const held = new Set(before().flatMap((b) => (b ? linesOf(decodeText(b) ?? '') : [])));
+  linesOf(decodeText(buf)).forEach((l, k) => { if (!held.has(l)) scanLine(ctx, l, { commit, path, line: k + 1 }); });
+}
+// The binary entries ("-\t-\t<path>") of `--numstat -z --no-renames`, with the commit and parents of a log's
+// --format=%x01%H %P lines: [{ commit, parents, path }].
+function binaryEntries(text) {
+  const out = [];
+  let commit = null;
+  let parents = [];
+  for (const token of text.split('\0')) {
+    const t = token.startsWith('\n') ? token.slice(1) : token;
+    if (t.charCodeAt(0) === 1) { [commit, ...parents] = t.slice(1).trim().split(' '); continue; }
+    const m = /^-\t-\t([\s\S]+)$/.exec(t);
+    if (m) out.push({ commit, parents, path: m[1] });
+  }
+  return out;
+}
+function hasHead(ctx) {
+  const r = git(['rev-parse', '--verify', '-q', 'HEAD^{commit}'], { cwd: ctx.repo, env: ctx.env, timeoutMs: GIT_TIMEOUT_MS });
+  if (r.status === 0 || r.status === 1) return r.status === 0; // 1: an unborn branch
+  return Boolean(runGit(ctx, ['rev-parse', '--verify', 'HEAD^{commit}'])); // throws the failure
+}
+
+const UTF8 = new TextDecoder('utf-8', { fatal: true });
+const isUtf8 = (buf) => { try { UTF8.decode(buf); return true; } catch { return false; } };
 // The project patterns of <state dir>/secrets-patterns.txt; none when the file is absent. Read directly (writes are
-// lib/state's), never through a link.
+// lib/state's), never through a link; UTF-8 only (a BOM is dropped), as any other encoding would garble a pattern.
 function readPatterns(where) {
   const file = join(where.dir, PATTERN_FILE);
   const rel = relative(where.repo, file);
@@ -183,9 +250,11 @@ function readPatterns(where) {
   }
   if (!st.isFile()) throw refuse(st.isSymbolicLink() ? 'a symbolic link' : 'not a regular file');
   if (st.size > PATTERN_FILE_MAX) throw refuse(`larger than ${PATTERN_FILE_MAX / 1024} KB`);
-  let text;
-  try { text = readFileSync(file, 'latin1'); } catch (err) { throw refuse(err.code ?? err.message); }
-  const { patterns, errors } = projectPatterns(text);
+  let buf;
+  try { buf = readFileSync(file); } catch (err) { throw refuse(err.code ?? err.message); }
+  if (buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf) buf = buf.subarray(3); // a UTF-8 BOM
+  if (buf.includes(0) || !isUtf8(buf)) throw refuse('not UTF-8 text (save it as UTF-8)');
+  const { patterns, errors } = projectPatterns(buf.toString('latin1'));
   if (errors.length) throw invalid('bad-pattern', `${shown}:${errors[0].line}: ${errors[0].message}`, 'fix that pattern (a JS regular expression with POSIX classes, as in guard-extra.txt) or remove the line');
   return patterns;
 }
@@ -202,12 +271,19 @@ function scanTree(ctx) {
     if (text !== null) scanText(ctx, text, p, { marker: true });
   }
   addedLines(fileLines(gitToFile(ctx, ['diff', '-R', ...DIFF, '--'])), (l, at) => { if (!skipsContent(at.path)) scanLine(ctx, l, at); });
+  for (const { path } of binaryEntries(readOutput(gitToFile(ctx, ['diff', '-R', '--numstat', '-z', '--no-renames', '--'])))) {
+    binaryChange(ctx, { commit: null, path, now: () => blob(ctx, '', path), before: () => [readBytes(join(ctx.repo, path), path)] });
+  }
 }
 
 function scanStaged(ctx) {
   const added = readOutput(gitToFile(ctx, ['diff', '--cached', '--name-only', '-z', '--diff-filter=AR', '-M', '--']));
   for (const p of added.split('\0')) if (p && isKeyFile(p)) keyFile(ctx, p);
   addedLines(fileLines(gitToFile(ctx, ['diff', '--cached', ...DIFF, '--'])), (l, at) => { if (!skipsContent(at.path)) scanLine(ctx, l, at); });
+  const head = hasHead(ctx);
+  for (const { path } of binaryEntries(readOutput(gitToFile(ctx, ['diff', '--cached', '--numstat', '-z', '--no-renames', '--'])))) {
+    binaryChange(ctx, { commit: null, path, now: () => blob(ctx, '', path), before: () => (head ? [blob(ctx, 'HEAD', path)] : []) });
+  }
 }
 
 function scanRange(ctx, revs) {
@@ -221,6 +297,25 @@ function scanRange(ctx, revs) {
   const scan = (l, at) => { if (!skipsContent(at.path)) scanLine(ctx, l, at); };
   addedLines(fileLines(gitToFile(ctx, ['log', '--no-merges', '--format=%x01%H', '-p', '--root', ...DIFF, ...revs, '--'])), scan);
   addedLines(textLines(runGit(ctx, ['log', '--merges', '--format=%x01%H', '--cc', ...DIFF, ...revs, '--'])), scan);
+  for (const e of binaryEntries(readOutput(gitToFile(ctx, ['log', '--no-merges', '--format=%x01%H %P', '--numstat', '--no-renames', '-z', '--root', ...revs, '--'])))) {
+    binaryChange(ctx, { commit: e.commit.slice(0, SHA_SHOWN), path: e.path, now: () => blob(ctx, e.commit, e.path), before: () => e.parents.map((p) => blob(ctx, p, e.path)) });
+  }
+  // What each merge changed against every parent: a status letter per parent, then the path (A in every column:
+  // added by the merge itself, such as a key file added in the resolution).
+  let merge = null;
+  let parents = [];
+  let status = null;
+  for (const token of runGit(ctx, ['log', '--merges', '--cc', '--format=%x01%H %P', '--name-status', '-z', ...revs, '--']).split('\0')) {
+    const t = token.startsWith('\n') ? token.slice(1) : token;
+    if (t.charCodeAt(0) === 1) { [merge, ...parents] = t.slice(1).trim().split(' '); status = null; continue; }
+    if (!t) continue;
+    if (status === null) { status = t; continue; }
+    const path = t;
+    const at = merge.slice(0, SHA_SHOWN);
+    if (/^A+$/.test(status) && isKeyFile(path)) keyFile(ctx, path, at);
+    if (!/^D+$/.test(status)) { const ps = parents; const m = merge; binaryChange(ctx, { commit: at, path, now: () => blob(ctx, m, path), before: () => ps.map((p) => blob(ctx, p, path)) }); }
+    status = null;
+  }
 }
 
 function scanArtifact(ctx, given) {

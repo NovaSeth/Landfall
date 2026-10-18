@@ -42,6 +42,12 @@ const OLD_PATTERNS = '.workflow/secrets-patterns.txt'; // where 1.x reads projec
 const ALLOWED = new Map([
   ['path-quoting | --staged', 'a path with a tab is C-quoted in diff headers; 1.x printed it with the quotes stripped and the escape kept (a\\tb.ts), the successor unquotes it to the real name, as git grep printed it in the tree mode'],
   ['path-quoting | --range HEAD~1..HEAD', 'the same unquoting of a quoted diff path in a range'],
+  // Deliberately stricter than 1.x (review r1):
+  ['utf-16 | (tree)', 'F1: a BOM-marked UTF-16 text file holds NULs, so 1.x skipped it as binary (git grep -I); the successor decodes it and finds the token'],
+  ['utf-16 | --staged', 'F1: git diff shows only "Binary files differ" for UTF-16; the successor reads the staged blob and scans the lines HEAD does not hold'],
+  ['utf-16 | --range HEAD~1..HEAD', 'F1: the same for a commit of the range, against its parent'],
+  ['marker-word | (tree)', 'F2: 1.x exempted a line holding SYNTH inside a word (SYNTHESIS_API_KEY="…"); the marker is now a separate word (SEC-11)'],
+  ['merge-key-file | --range base..HEAD', 'F3: 1.x listed no merge diffs, so a key or env file added in a merge resolution passed; the successor lists what a merge adds against every parent'],
 ]);
 
 // Synthetic values (SYNTH): alphanumeric runs of a given length, and the token shapes of the built-in patterns.
@@ -370,6 +376,41 @@ test('edge corpus: CRLF, other spaces, merges, renames, binary, lock, ignored an
   commit(d, 'a.ts', 'ok\n');
   await check(d, ['--range']);
   await check(d, ['--bogus']);
+  record(check);
+});
+
+const utf16 = (text) => Buffer.from(`\ufeff${text}`, 'utf16le');
+test('stricter corpus: UTF-16 text, the marker as a separate word, key files a merge adds (allowlisted)', async (t) => {
+  let check = differ(t, 'utf-16');
+  let d = repo(t);
+  commit(d, 'README.md', 'x\n');
+  put(d, 'win/le.txt', utf16(`TOKEN="${ghToken}"\r\n`));
+  await check(d);
+  git(d, 'add', '-A');
+  await check(d, ['--staged']);
+  git(d, 'commit', '-qm', 'utf-16');
+  await check(d, ['--range', 'HEAD~1..HEAD']);
+  record(check);
+
+  check = differ(t, 'marker-word');
+  d = repo(t);
+  commit(d, 'config.sh', `SYNTHESIS_API_KEY="${val}abcd"\nconst t = "${ghToken}"; // SYNTH\n`);
+  assert.deepEqual((await check(d)).now.hits, ['config.sh:1']);
+  record(check);
+
+  check = differ(t, 'merge-key-file');
+  d = repo(t);
+  commit(d, 'a.ts', 'base\n');
+  git(d, 'tag', 'base');
+  git(d, 'checkout', '-qb', 'side');
+  commit(d, 'side.ts', 'side\n');
+  git(d, 'checkout', '-q', 'main');
+  commit(d, 'main.ts', 'main\n');
+  git(d, 'merge', '-q', '--no-commit', 'side');
+  put(d, '.env', 'PORT=1\n');
+  git(d, 'add', '-A');
+  git(d, 'commit', '-qm', 'merge adds an env file');
+  await check(d, ['--range', 'base..HEAD']);
   record(check);
 });
 
