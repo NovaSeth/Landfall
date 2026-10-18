@@ -10,7 +10,8 @@ import { rangeWords, scanSecrets } from './scan.mjs';
 const usage = (code, message, hint) => ({ code: EXIT.USAGE, errors: [{ code, message, hint }] });
 const scope = (mode, flags) => ({ tree: 'the working tree and the index', staged: 'the staged changes', range: `the commits of ${flags.range}`, artifact: flags.artifact })[mode];
 
-export function secrets({ flags, names, io }) {
+// blobMax: the largest blob read from git (tests lower it; main passes none).
+export function secrets({ flags, names, io, blobMax }) {
   const modes = ['range', 'staged', 'artifact'].filter((m) => flags[m] !== undefined && flags[m] !== false);
   if (modes.length > 1) return usage('one-mode', `--${modes.join(', --')}: one mode per scan`, 'run one scan for each mode');
   const mode = modes[0] ?? 'tree';
@@ -25,24 +26,26 @@ export function secrets({ flags, names, io }) {
 
   let result;
   try {
-    result = scanSecrets({ cwd: io.cwd, env: io.env, names, mode, revs, artifact: flags.artifact });
+    result = scanSecrets({ cwd: io.cwd, env: io.env, names, mode, revs, artifact: flags.artifact, ...(blobMax ? { blobMax } : {}) });
   } catch (err) {
     if (!(err instanceof StateError)) throw err;
     return {
       code: EXIT.ENV,
-      data: { ...data, findings: [] },
+      data: { ...data, findings: [], skipped: [] },
       errors: [err, { code: 'scan-invalid', message: `the ${names.bin} secrets scan of ${scope(mode, flags)} could not run: its result is invalid, not clean`, hint: 'fix the error above, then scan again; never read this exit as clean' }],
     };
   }
-  const { findings, scanned } = result;
-  const out = { ...data, findings, scanned };
-  if (!findings.length) return { data: out, text: `secrets: clean (${scope(mode, flags)})\n` };
+  const { findings, skipped, scanned } = result;
+  const out = { ...data, findings, skipped, scanned };
+  // Never silent: every file not scanned is listed, whatever the exit.
+  const notScanned = skipped.map((x) => `not scanned (${x.reason}): ${x.commit ? `${x.commit}:` : ''}${x.path}\n`).join('');
+  if (!findings.length) return { data: out, text: `${notScanned}secrets: clean (${scope(mode, flags)}${skipped.length ? `; ${skipped.length} not scanned, listed above` : ''})\n` };
   const lines = findings.map((f) => (f.type === 'key-file' ? `${f.where}: key-file\n` : `${f.where}: ${f.type} ${f.masked}\n`));
   const n = findings.length;
   return {
     code: EXIT.FAIL,
     data: out,
-    text: lines.join(''),
+    text: `${notScanned}${lines.join('')}`,
     errors: [{
       code: 'secrets-found',
       message: `${n} finding${n === 1 ? '' : 's'} in ${scope(mode, flags)} (values masked; open each place locally)`,

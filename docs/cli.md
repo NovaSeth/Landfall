@@ -629,7 +629,8 @@ Scan for secrets and key files: working tree and index, staged changes, a commit
 Default: tracked files and untracked files that are not ignored, and what the index holds. --staged: the lines added
 in the index. --range: the lines every commit of the range adds (also a secret added and removed again) and the key
 and env files it adds (a merge: what it adds against every parent). --artifact: every file under a built file or
-directory, ignored or not. BOM-marked UTF-16 text is decoded in every mode; other binary files are skipped.
+directory, ignored or not. BOM-marked UTF-16 text is decoded in every mode; other binary files are skipped. A file over
+16 MiB in a diff is not read: it is listed as "not scanned" (data.skipped) and changes no exit.
 Patterns: lib/secrets/patterns.mjs and the project's secrets-patterns.txt in the state directory (UTF-8, one per line,
 the syntax of guard-extra.txt). A line holding the word SYNTH or "check-secrets: synthetic" is a synthetic test value
 (SEC-11); in an artifact nothing is exempt. Findings print path:line (commit:path:line in a range), the pattern and the first

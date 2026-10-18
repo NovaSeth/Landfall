@@ -187,9 +187,10 @@ function scanLine(ctx, text, at, { marker = true } = {}) {
 const keyFile = (ctx, path, commit = null) => ctx.add({ commit, path, line: null, type: 'key-file', masked: null });
 
 const literal = (path) => `:(literal)${path}`;
-// The bytes of the regular-file blob of path in rev ('' for the index), or null when there is no such blob there. A blob
-// larger than a git output may be (ctx.blobMax) cannot be read, so the scan is invalid: refused, never clean.
-function blob(ctx, rev, path) {
+// The bytes of the regular-file blob of path in rev ('' for the index), or null when there is no such blob there or it is
+// larger than a git output may be (ctx.blobMax): such a blob is not read, and tooLarge(size) is told (orchestrator
+// decision for T-MG-2: a large binary must not block a push; the file is listed as not scanned instead).
+function blob(ctx, rev, path, tooLarge = () => {}) {
   let oid;
   let size;
   if (rev === '') {
@@ -203,17 +204,16 @@ function blob(ctx, rev, path) {
     oid = m[2];
     size = Number(m[3]);
   }
-  if (size > ctx.blobMax) {
-    throw invalid('blob-too-large', `${path} (${rev || 'the index'}) is ${size} bytes, more than the ${ctx.blobMax} bytes the scan can read from git`, 'commit large binaries through Git LFS, or scan the working tree instead');
-  }
+  if (size > ctx.blobMax) { tooLarge(size); return null; }
   return runGit(ctx, ['cat-file', 'blob', oid], { raw: true });
 }
 // A file a diff shows as binary: when its new version (now()) is text (decodeText: BOM-marked UTF-16, or a file re-saved
 // as UTF-8 from UTF-16), the lines that no earlier version (before(): the parents, HEAD or the working tree) holds are
 // scanned, numbered as in the new version.
+// A new version over the cap is listed in ctx.skipped; an earlier one over it holds no line.
 function binaryChange(ctx, { commit, path, now, before }) {
   if (skipsContent(path)) return;
-  const buf = now();
+  const buf = now((size) => ctx.skip({ path, commit, size }));
   const text = buf === null ? null : decodeText(buf);
   if (text === null) return;
   const held = new Set(before().flatMap((b) => (b ? linesOf(decodeText(b) ?? '') : [])));
@@ -277,7 +277,7 @@ function scanTree(ctx) {
   }
   addedLines(fileLines(gitToFile(ctx, ['diff', '-R', ...DIFF, '--'])), (l, at) => { if (!skipsContent(at.path)) scanLine(ctx, l, at); });
   for (const { path } of binaryEntries(readOutput(gitToFile(ctx, ['diff', '-R', '--numstat', '-z', '--no-renames', '--'])))) {
-    binaryChange(ctx, { commit: null, path, now: () => blob(ctx, '', path), before: () => [readBytes(join(ctx.repo, path), path)] });
+    binaryChange(ctx, { commit: null, path, now: (big) => blob(ctx, '', path, big), before: () => [readBytes(join(ctx.repo, path), path)] });
   }
 }
 
@@ -287,7 +287,7 @@ function scanStaged(ctx) {
   addedLines(fileLines(gitToFile(ctx, ['diff', '--cached', ...DIFF, '--'])), (l, at) => { if (!skipsContent(at.path)) scanLine(ctx, l, at); });
   const head = hasHead(ctx);
   for (const { path } of binaryEntries(readOutput(gitToFile(ctx, ['diff', '--cached', '--numstat', '-z', '--no-renames', '--'])))) {
-    binaryChange(ctx, { commit: null, path, now: () => blob(ctx, '', path), before: () => (head ? [blob(ctx, 'HEAD', path)] : []) });
+    binaryChange(ctx, { commit: null, path, now: (big) => blob(ctx, '', path, big), before: () => (head ? [blob(ctx, 'HEAD', path)] : []) });
   }
 }
 
@@ -303,7 +303,7 @@ function scanRange(ctx, revs) {
   addedLines(fileLines(gitToFile(ctx, ['log', '--no-merges', '--format=%x01%H', '-p', '--root', ...DIFF, ...revs, '--'])), scan);
   addedLines(textLines(runGit(ctx, ['log', '--merges', '--format=%x01%H', '--cc', ...DIFF, ...revs, '--'])), scan);
   for (const e of binaryEntries(readOutput(gitToFile(ctx, ['log', '--no-merges', '--format=%x01%H %P', '--numstat', '--no-renames', '-z', '--root', ...revs, '--'])))) {
-    binaryChange(ctx, { commit: e.commit.slice(0, SHA_SHOWN), path: e.path, now: () => blob(ctx, e.commit, e.path), before: () => e.parents.map((p) => blob(ctx, p, e.path)) });
+    binaryChange(ctx, { commit: e.commit.slice(0, SHA_SHOWN), path: e.path, now: (big) => blob(ctx, e.commit, e.path, big), before: () => e.parents.map((p) => blob(ctx, p, e.path)) });
   }
   // What each merge changed against every parent: a status letter per parent, then the path (A in every column:
   // added by the merge itself, such as a key file added in the resolution).
@@ -318,7 +318,7 @@ function scanRange(ctx, revs) {
     const path = t;
     const at = merge.slice(0, SHA_SHOWN);
     if (/^A+$/.test(status) && isKeyFile(path)) keyFile(ctx, path, at);
-    if (!/^D+$/.test(status)) { const ps = parents; const m = merge; binaryChange(ctx, { commit: at, path, now: () => blob(ctx, m, path), before: () => ps.map((p) => blob(ctx, p, path)) }); }
+    if (!/^D+$/.test(status)) { const ps = parents; const m = merge; binaryChange(ctx, { commit: at, path, now: (big) => blob(ctx, m, path, big), before: () => ps.map((p) => blob(ctx, p, path)) }); }
     status = null;
   }
 }
@@ -352,7 +352,8 @@ function scanArtifact(ctx, given) {
 const whereOf = (f) => `${f.commit ? `${f.commit}:` : ''}${f.path}${f.line ? `:${f.line}` : ''}`;
 const byPlace = (a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : (a.line ?? 0) - (b.line ?? 0));
 
-// One scan: { mode, findings: [{ where, path, line, commit, type, masked }], scanned: { files, lines } }. opts: cwd,
+// One scan: { mode, findings: [{ where, path, line, commit, type, masked }], skipped: [{ path, commit, size, reason }]
+// (blobs over the cap, not read), scanned: { files, lines } }. opts: cwd,
 // env, names, mode (tree, staged, range, artifact), revs (the words of a range), artifact (a path relative to cwd),
 // blobMax (the largest blob read from git, default lib/git's output cap; tests lower it).
 export function scanSecrets({ cwd, env, names, mode = 'tree', revs = [], artifact, blobMax = MAX_OUTPUT } = {}) {
@@ -370,9 +371,12 @@ export function scanSecrets({ cwd, env, names, mode = 'tree', revs = [], artifac
     throw invalid('temp-unavailable', `cannot create a temporary directory (${err.code ?? err.message})`, 'check TMPDIR');
   }
   const found = new Map();
+  const skipped = new Map();
+  const cap = blobMax % (1024 * 1024) === 0 ? `${blobMax / (1024 * 1024)} MiB` : `${blobMax} bytes`;
   const ctx = {
     repo: where.repo, cwd, env, extra, tmp, blobMax, outputs: 0, files: 0, lines: 0,
     add: (f) => { const w = whereOf(f); if (!found.has(w)) found.set(w, { where: w, ...f }); },
+    skip: ({ path, commit, size }) => { const k = `${commit ?? ''}:${path}`; if (!skipped.has(k)) skipped.set(k, { path, commit, size, reason: `over ${cap}` }); },
   };
   try {
     if (mode === 'tree') scanTree(ctx);
@@ -383,5 +387,5 @@ export function scanSecrets({ cwd, env, names, mode = 'tree', revs = [], artifac
     rmSync(tmp, { recursive: true, force: true });
   }
   const findings = [...found.values()].sort(byPlace); // stable: one place in several commits keeps git log's order
-  return { mode, findings, scanned: { files: ctx.files, lines: ctx.lines } };
+  return { mode, findings, skipped: [...skipped.values()].sort(byPlace), scanned: { files: ctx.files, lines: ctx.lines } };
 }

@@ -575,21 +575,38 @@ test('F5: a UTF-8 BOM in secrets-patterns.txt is stripped; another encoding of t
 });
 
 // Fix round 2 (review r2).
-test('F1 (r2): a blob over the read cap makes the scan invalid, never clean; a blob at the cap is read', async (t) => {
+test('F1 (r2, orchestrator decision): a blob over the read cap is not read and listed as not scanned, never silently; at the cap it is read', async (t) => {
   const { scanSecrets } = await lib('secrets/index.mjs');
+  const { secrets } = await lib('secrets/command.mjs');
   const d = repo(t);
   commit(d, 'README.md', 'x\n');
   const content = utf16(`TOKEN="${ghToken}"\r\n`);
   put(d, 'win/big.txt', content);
   git(d, 'add', '-A');
   const scanWith = (mode, blobMax, revs = []) => scanSecrets({ cwd: d, env: process.env, names, mode, revs, blobMax });
-  const tooLarge = (err) => err.exit === 'ENV' && err.code === 'blob-too-large' && /win\/big\.txt/.test(err.message);
-  assert.deepEqual(scanWith('staged', content.length).findings.map((f) => f.where), ['win/big.txt:1'], 'at the cap');
-  assert.throws(() => scanWith('staged', content.length - 1), tooLarge, 'one byte over the cap');
+  let r = scanWith('staged', content.length);
+  assert.deepEqual([r.findings.map((f) => f.where), r.skipped], [['win/big.txt:1'], []], 'at the cap: read and found');
+  r = scanWith('staged', content.length - 1);
+  assert.deepEqual([r.findings, r.skipped], [[], [{ path: 'win/big.txt', commit: null, size: content.length, reason: `over ${content.length - 1} bytes` }]], 'one byte over: listed');
+  // The command prints the list, with exit 0 when nothing else was found, and keeps it in data.skipped.
+  const io = { cwd: d, env: process.env };
+  let out = secrets({ flags: { staged: true }, names, io, blobMax: content.length - 1 });
+  assert.equal(out.code ?? 0, 0);
+  assert.match(out.text, new RegExp(`^not scanned \\(over ${content.length - 1} bytes\\): win/big\\.txt$`, 'm'));
+  assert.deepEqual(out.data.skipped.map((x) => x.path), ['win/big.txt']);
+  put(d, 'b.ts', `const t = "${ghToken}";\n`);
+  git(d, 'add', 'b.ts');
+  out = secrets({ flags: { staged: true }, names, io, blobMax: content.length - 1 });
+  assert.equal(out.code, 1, 'findings elsewhere still exit 1');
+  assert.match(out.text, /^not scanned \(over \d+ bytes\): win\/big\.txt$/m, 'the list is printed with findings too');
+  assert.deepEqual((await scan(d, '--staged')).env.data.skipped, [], 'the default cap (16 MiB) reads it');
   git(d, 'commit', '-qm', 'big');
   const sha = git(d, 'rev-parse', 'HEAD').slice(0, 12);
-  assert.deepEqual(scanWith('range', content.length, ['HEAD~1..HEAD']).findings.map((f) => f.where), [`${sha}:win/big.txt:1`]);
-  assert.throws(() => scanWith('range', content.length - 1, ['HEAD~1..HEAD']), tooLarge);
+  assert.deepEqual(scanWith('range', content.length, ['HEAD~1..HEAD']).findings.map((f) => f.where).sort(), [`${sha}:b.ts:1`, `${sha}:win/big.txt:1`]);
+  r = scanWith('range', content.length - 1, ['HEAD~1..HEAD']);
+  assert.deepEqual([r.findings.map((f) => f.where), r.skipped.map((x) => [x.commit, x.path])], [[`${sha}:b.ts:1`], [[sha, 'win/big.txt']]]);
+  const { MAX_OUTPUT } = await lib('git/index.mjs');
+  assert.equal(MAX_OUTPUT, 16 * 1024 * 1024, 'the default cap is the one the text names');
 });
 
 test('F6: a file re-saved from UTF-16 to UTF-8 while a secret is added: its new lines are scanned in --staged and --range', async (t) => {
