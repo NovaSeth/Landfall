@@ -222,7 +222,7 @@ const ROWS = [
   // Receipts (spec §7.11).
   {
     name: 'receipt',
-    summary: 'Tokens and estimated cost of a task (its sessions, subagents and external runs) or of one external run.',
+    summary: 'Tokens and estimated cost of a task, one external run, the current loop, or all work since a day by class or executor.',
     details: [
       'Reads the Claude Code transcripts of this repository and its worktrees ($CLAUDE_CONFIG_DIR/projects, default',
       '~/.claude/projects) and the run records. A task gets the requests made while it was active (after a task, route,',
@@ -231,14 +231,21 @@ const ROWS = [
       'whole micro-dollars (costMicroUsd); durations in milliseconds. --task saves receipts/<task>.json in an active',
       'repository (unchanged: no write; never fewer tokens than the saved one); an inactive one only prints.',
       'Something unreadable or unpriced: exit 1 with the numbers found (data.receipt.partial).',
+      '--loop: every request and external run of the repository since the loop started (until its exit), as its cost cap',
+      'counts them; no loop record: exit 1. --since: the saved receipts that ended on or after the day (UTC) and the run',
+      'records no saved receipt lists, per task class or per executor (agent type, provider). --loop and --since write',
+      'nothing (data.partial when something could not be read).',
     ],
     args: [],
     flags: [
       { flag: '--task', value: 'id', summary: 'the task, such as T-AB-1' },
       { flag: '--run', value: 'id', summary: 'one external run, such as codex-T-AB-1-reviewer-1' },
+      { flag: '--loop', summary: 'the current loop: tokens and cost since it started' },
+      { flag: '--since', value: 'YYYY-MM-DD', summary: 'totals of the work that did not end before that day (UTC)' },
+      { flag: '--by', value: 'class|executor', summary: 'with --since: one row per task class (default) or per executor' },
     ],
     exits: ['OK', 'FAIL', 'USAGE', 'REFUSED', 'ENV'],
-    mutating: true,
+    mutating: (flags) => flags.task !== undefined || flags.run !== undefined,
     load: () => import('../receipts/command.mjs').then((m) => m.receipt),
   },
   {

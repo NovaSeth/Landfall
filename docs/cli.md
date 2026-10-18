@@ -68,7 +68,7 @@ Commands:
   profile observe      Scan the repository (manifests, files, CI, harnesses) and merge what it shows into the project profile.
   profile set          Record one profile fact with its source and evidence: the user's words (said) or a path:line (observed).
   profile show         Print the project profile: facts with source and evidence, gates, risk paths, and whether a scan is due.
-  receipt              Tokens and estimated cost of a task (its sessions, subagents and external runs) or of one external run.
+  receipt              Tokens and estimated cost of a task, one external run, the current loop, or all work since a day by class or executor.
   review record        Record a typed review result as the next round tasks/<id>/review-r<k>.json; the Markdown review closes nothing.
   route                Classify a task as trivial, standard or critical from its plan and print its route; the class only rises.
   rule                 Print method rules by ID; a retired ID prints its successor. --core prints the always-on rules.
@@ -571,12 +571,12 @@ Read-only.
 Exit codes: 0 OK · 1 FAIL · 7 REFUSED · 8 ENV
 ```
 
-### `caw receipt [--task <id>] [--run <id>] [--yes] [--json]`
+### `caw receipt [--task <id>] [--run <id>] [--loop] [--since <YYYY-MM-DD>] [--by <class|executor>] [--yes] [--json]`
 
 ```text
-usage: caw receipt [--task <id>] [--run <id>] [--yes] [--json]
+usage: caw receipt [--task <id>] [--run <id>] [--loop] [--since <YYYY-MM-DD>] [--by <class|executor>] [--yes] [--json]
 
-Tokens and estimated cost of a task (its sessions, subagents and external runs) or of one external run.
+Tokens and estimated cost of a task, one external run, the current loop, or all work since a day by class or executor.
 Reads the Claude Code transcripts of this repository and its worktrees ($CLAUDE_CONFIG_DIR/projects, default
 ~/.claude/projects) and the run records. A task gets the requests made while it was active (after a task, route,
 brief, verify or exec command naming it), the subagents whose description or name holds its ID (and the subagents
@@ -584,12 +584,19 @@ they spawn), and its external runs. Cost is an estimate from the dated price tab
 whole micro-dollars (costMicroUsd); durations in milliseconds. --task saves receipts/<task>.json in an active
 repository (unchanged: no write; never fewer tokens than the saved one); an inactive one only prints.
 Something unreadable or unpriced: exit 1 with the numbers found (data.receipt.partial).
+--loop: every request and external run of the repository since the loop started (until its exit), as its cost cap
+counts them; no loop record: exit 1. --since: the saved receipts that ended on or after the day (UTC) and the run
+records no saved receipt lists, per task class or per executor (agent type, provider). --loop and --since write
+nothing (data.partial when something could not be read).
 
 Options:
-  --task <id>  the task, such as T-AB-1
-  --run <id>   one external run, such as codex-T-AB-1-reviewer-1
+  --task <id>            the task, such as T-AB-1
+  --run <id>             one external run, such as codex-T-AB-1-reviewer-1
+  --loop                 the current loop: tokens and cost since it started
+  --since <YYYY-MM-DD>   totals of the work that did not end before that day (UTC)
+  --by <class|executor>  with --since: one row per task class (default) or per executor
 
-Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
+Read-only. Changes files with --task, --run: needs a terminal or --yes, otherwise exit 7 REFUSED.
 Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
 ```
 
