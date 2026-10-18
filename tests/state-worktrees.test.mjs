@@ -11,7 +11,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { isolatedEnv, isolateProcessEnv } from './helpers/isolated-env.mjs';
 import { hook, lib, loopDoc, names, writeLoop } from './helpers/hook-fixture.mjs';
 
@@ -208,8 +208,16 @@ test('profile observe and decisions from a worktree scan the worktree\'s files',
   assert.equal(o.out.data.files, 2, 'README.md and the worktree-only file');
   const c = await p.run(['decisions', 'check'], 'wt');
   assert.ok(c.out.errors.some((e) => e.code === 'unknown-decision' && e.message.startsWith('src/only-here.mjs:1')), show(c));
+  const d = await p.run(['decide', '--title', 'Keep x', '--why', 'One reason.', '--cost', 'low', '--scope', 'src/**', '--yes'], 'wt');
+  assert.equal(d.code, 0, show(d));
+  const record = join(p.stateDir, 'decisions', `D-${ME}-1.md`);
+  assert.equal(resolve(p.wt, d.out.data.file), record, 'the record path, as seen from the worktree');
   const f = await p.run(['decisions', 'find', '--path', join(p.wt, 'src', 'only-here.mjs')], 'wt');
   assert.equal(f.code, 0, show(f));
+  assert.deepEqual(f.out.data.decisions.map((x) => [x.id, x.file]), [[`D-${ME}-1`, record]], 'scoped to the worktree file; shown by its path');
+  const ctx = hook('decisions-context', { session_id: 's', hook_event_name: 'PreToolUse', tool_name: 'Edit',
+    tool_input: { file_path: join(p.wt, 'src', 'only-here.mjs'), old_string: 'x = 1', new_string: 'x = 2' }, cwd: p.wt }, { env: p.env });
+  assert.ok(ctx.context?.includes(`D-${ME}-1`), `the decision scoped to src/** reaches an edit in the worktree: ${ctx.stdout}`);
 });
 
 // ---- 6. activation from a worktree ----
@@ -263,6 +271,12 @@ test('edit hook from a worktree: the project state file and the worktree copy of
   assert.equal(hook('decisions-context', toolCall(p, 'Write', { file_path: join(names.stateDir, 'state.json'), content: '{}' }), { env: p.env }).decision, 'deny', 'relative to the worktree cwd');
   assert.equal(write(join(p.wt, 'src', 'a.mjs')).decision, 'allow', 'code in the worktree');
   assert.equal(write(join(p.stateDir, 'tasks', T1, 'report.md')).decision, 'allow', 'an unowned state file');
+  // an executor worktree under local/worktrees/ of the state directory (spec §5.2): its own copy is guarded
+  const exec = join(p.stateDir, 'local', 'worktrees', T1);
+  git(p.repo, p.env, ['worktree', 'add', '-q', exec, '-b', 'exec']);
+  const inExec = hook('decisions-context', toolCall(p, 'Write', { file_path: join(exec, names.stateDir, 'tasks', T1, 'task.json'), content: '{}\n' }, { cwd: exec }), { env: p.env });
+  assert.equal(inExec.decision, 'deny', 'the copy of an executor worktree');
+  assert.equal(hook('decisions-context', toolCall(p, 'Write', { file_path: join(exec, 'src', 'a.mjs'), content: 'x\n' }, { cwd: exec }), { env: p.env }).decision, 'allow', 'its code');
 });
 
 test('Bash guard from a worktree: a write into the worktree copy of the state directory is blocked, a read passes', async (t) => {
@@ -273,14 +287,21 @@ test('Bash guard from a worktree: a write into the worktree copy of the state di
   assert.equal(bash(`echo '{}' > ${join(p.stateDir, 'tasks', T1, 'task.json')}`).decision, 'deny', 'the project state file');
   assert.equal(bash(`cat ${names.stateDir}/state.json`).decision, 'allow', 'a read shape');
   assert.equal(bash('ls src').decision, 'allow');
+  const exec = join(p.stateDir, 'local', 'worktrees', T1);
+  git(p.repo, p.env, ['worktree', 'add', '-q', exec, '-b', 'exec']);
+  const inExec = hook('guard-bash', toolCall(p, 'Bash', { command: `echo '{}' > ${names.stateDir}/tasks/${T1}/task.json` }, { cwd: exec }), { env: p.env });
+  assert.equal(inExec.decision, 'deny', 'the copy of an executor worktree under local/worktrees/');
+  assert.equal(hook('guard-bash', toolCall(p, 'Bash', { command: 'echo x > src/a.mjs' }, { cwd: exec }), { env: p.env }).decision, 'allow', 'its code');
 });
 
 test('loop hooks from a worktree: the project loop is seen (an ended loop takes no wakeup); --plan is a plan of the worktree', async (t) => {
   const p = await project(t);
   const wake = (prompt) => hook('guard-wakeup', toolCall(p, 'ScheduleWakeup', { delaySeconds: 1200, prompt }), { env: p.env });
   const tick = `Run \`${names.bin} tick\` and do the listed steps.`;
-  writeLoop(p.stateDir, loopDoc(null));
   put(join(p.wt, 'docs', 'plans', 'wt.md'), '# plan\n');
+  const ticked = await p.run(['tick', '--plan', 'docs/plans/wt.md'], 'wt');
+  assert.ok(ticked.code !== 2 && !codes(ticked).includes('plan-missing'), `tick reads the plan of the worktree: ${show(ticked)}`);
+  writeLoop(p.stateDir, loopDoc(null));
   assert.equal(wake(`Run \`${names.bin} tick --plan docs/plans/wt.md\` and do the listed steps.`).decision, 'allow', 'a plan of the worktree');
   writeLoop(p.stateDir, loopDoc('DONE'));
   const v = wake(tick);
