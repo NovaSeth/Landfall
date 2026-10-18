@@ -244,7 +244,7 @@
     "SEC-3": {"topic":"security","file":"security.md","line":16,"section":"Model","pack":"core","summary":"The command guard is a seatbelt against accidental rule breaks, not a security boundary","hash":"bf4a3bcb0cc0"},
     "SEC-4": {"topic":"security","file":"security.md","line":18,"section":"Model","pack":"core","summary":"MUST NOT bypass a guard block or skip git hooks","must":true,"hash":"b52bd4430fbf"},
     "SEC-5": {"topic":"security","file":"security.md","line":21,"section":"Secrets","pack":"core","summary":"Keep secrets server-side only (env files with mode 0600, ignored by git)","must":true,"hash":"84b8fe1a73e3"},
-    "SEC-6": {"topic":"security","file":"security.md","line":22,"section":"Secrets","pack":"core","summary":"Run the secrets scan without a pipe in the mode the moment needs and check its exit code","hash":"2a360fa3605b"},
+    "SEC-6": {"topic":"security","file":"security.md","line":22,"section":"Secrets","pack":"core","summary":"Run the secrets scan without a pipe in the mode the moment needs and check its exit code","hash":"b21d9d82894f"},
     "SEC-7": {"topic":"security","file":"security.md","line":24,"section":"Secrets","pack":"core","summary":"On a leak, rotate the secret, record a decision and check the history","hash":"7ace3cbf57a6"},
     "SEC-8": {"topic":"security","file":"security.md","line":27,"section":"Code","pack":"core","summary":"Take tenant and user only from the credential","hash":"681fa8c46f9a"},
     "SEC-9": {"topic":"security","file":"security.md","line":31,"section":"Release","pack":"core","summary":"MUST NOT release with an open High or Critical finding","must":true,"hash":"592f22400b1b"},

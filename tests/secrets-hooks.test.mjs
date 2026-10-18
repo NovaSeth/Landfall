@@ -227,8 +227,14 @@ test('CI step: pull_request scans the commits of the pull request, push the tree
 });
 
 test('this repository runs the scan: the check-secrets script, a CI step for pull requests and pushes; SEC-6 names exit 8', () => {
+  // The script names no codename (SD-30): the tree holds one plugin with one launcher, which the glob finds.
   const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
-  assert.equal(pkg.scripts['check-secrets'], `node ${relative(root, LAUNCHER).split(sep).join('/')} secrets`);
+  assert.equal(pkg.scripts['check-secrets'], 'node plugins/*/bin/* secrets');
+  const expanded = spawnSync('sh', ['-c', 'printf "%s\\n" plugins/*/bin/*'], { cwd: root, encoding: 'utf8', env: process.env });
+  assert.equal(expanded.stdout, `${relative(root, LAUNCHER).split(sep).join('/')}\n`, 'the glob is the launcher');
+  const help = spawnSync('sh', ['-c', `${pkg.scripts['check-secrets']} --help`], { cwd: root, encoding: 'utf8', env: process.env });
+  assert.equal(help.status, 0, help.stderr);
+  assert.match(help.stdout, /^usage: \S+ secrets /m);
   const ci = parseYaml(readFileSync(join(root, '.github', 'workflows', 'tests.yml'), 'utf8'));
   const { steps } = ci.jobs.tests;
   assert.equal(steps[0].with?.['fetch-depth'], 0, 'a pull request range and the v1.5.1 tag of the differential test need the history');
