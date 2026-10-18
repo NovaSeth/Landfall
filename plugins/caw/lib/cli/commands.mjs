@@ -33,6 +33,9 @@ export const GLOBAL_FLAGS = [
   { flag: '--version', alias: '-V', key: 'version', summary: 'print the version' },
 ];
 
+// What the CLI runs when no command is given (spec §8.2); `--help` prints the help instead.
+export const DEFAULT_COMMAND = 'status';
+
 // The key of a parsed flag: `--state-dir` → stateDir.
 export const flagKey = (flag) => flag.replace(/^-+/, '').replace(/-([a-z0-9])/g, (_, c) => c.toUpperCase());
 // Whether the form of `row` given by its parsed flags changes files (consent per form, from I4.1).
@@ -48,6 +51,21 @@ const DECISION_FLAGS = [
 ];
 
 const ROWS = [
+  // Views (spec §8.2, §12): lib/ui.
+  {
+    name: 'status',
+    summary: 'Show this repository: activation, tier, open tasks with their next step, the loop and leases; the default command.',
+    details: [
+      'Also what the CLI prints with no command (--help prints the help). State: active (the state directory, in the',
+      'repository or linked), declined or not active. Tier: evaluated now and never recorded (`tier` records a change).',
+      'Tasks: each open task with the next step of the loop\'s step table, as `tick` would list it. Then the loop record and',
+      'the scheduler leases of this project. At most 25 lines; --json holds every task and step. Writes nothing.',
+    ],
+    args: [],
+    flags: [],
+    exits: ['OK', 'FAIL', 'REFUSED', 'ENV'],
+    load: () => import('../ui/status.mjs').then((m) => m.status),
+  },
   {
     name: 'doctor',
     summary: 'Health report: Claude Code floor, plugin and hooks, release, state, profile, flags, context cost, permissions.',
@@ -128,6 +146,26 @@ const ROWS = [
     mutating: (flags) => !flags.probe,
     load: () => import('../router/command.mjs').then((m) => m.route),
   },
+  {
+    name: 'brief',
+    summary: 'Render the brief of a routed task from the brief template and the state; --write saves tasks/<id>/brief.md.',
+    details: [
+      'Filled from the state: title and ID, the agent of the role, the class with the reason of its route record and the',
+      'kind, branch and base once recorded, the rule IDs of the role and the class, the profile gates, and the lease env',
+      'of a live lease the scheduler holds for the task here. Every other <…> placeholder is left to fill in.',
+      'The brief ends with a marker line holding its hash: --write replaces a saved brief while nobody edited it; one',
+      'written or edited by hand only with --force (else exit 1). Exit 1 also: no such task, the task is not routed.',
+    ],
+    args: [{ name: 'id', required: true, summary: 'task ID such as T-AB-1' }],
+    flags: [
+      { flag: '--role', value: 'role', summary: 'implementer (default) or reviewer: the agent and the rules of the role' },
+      { flag: '--write', summary: 'save it as tasks/<id>/brief.md in the state directory (the task\'s owner)' },
+      { flag: '--force', summary: 'with --write: replace a brief written or edited by hand' },
+    ],
+    exits: ['OK', 'FAIL', 'USAGE', 'REFUSED', 'ENV'],
+    mutating: (flags) => Boolean(flags.write),
+    load: () => import('./brief.mjs').then((m) => m.brief),
+  },
   // Loop (spec §7.7): lib/loop/command.mjs.
   {
     name: 'tick',
@@ -184,7 +222,7 @@ const ROWS = [
   // Receipts (spec §7.11).
   {
     name: 'receipt',
-    summary: 'Tokens and estimated cost of a task (its sessions, subagents and external runs) or of one external run.',
+    summary: 'Tokens and estimated cost of a task, one external run, the current loop, or all work since a day by class or executor.',
     details: [
       'Reads the Claude Code transcripts of this repository and its worktrees ($CLAUDE_CONFIG_DIR/projects, default',
       '~/.claude/projects) and the run records. A task gets the requests made while it was active (after a task, route,',
@@ -193,14 +231,21 @@ const ROWS = [
       'whole micro-dollars (costMicroUsd); durations in milliseconds. --task saves receipts/<task>.json in an active',
       'repository (unchanged: no write; never fewer tokens than the saved one); an inactive one only prints.',
       'Something unreadable or unpriced: exit 1 with the numbers found (data.receipt.partial).',
+      '--loop: every request and external run of the repository since the loop started (until its exit), as its cost cap',
+      'counts them; no loop record: exit 1. --since: the saved receipts that ended on or after the day (UTC) and the run',
+      'records no saved receipt lists, per task class or per executor (agent type, provider). --loop and --since write',
+      'nothing (data.partial when something could not be read).',
     ],
     args: [],
     flags: [
       { flag: '--task', value: 'id', summary: 'the task, such as T-AB-1' },
       { flag: '--run', value: 'id', summary: 'one external run, such as codex-T-AB-1-reviewer-1' },
+      { flag: '--loop', summary: 'the current loop: tokens and cost since it started' },
+      { flag: '--since', value: 'YYYY-MM-DD', summary: 'totals of the work that did not end before that day (UTC)' },
+      { flag: '--by', value: 'class|executor', summary: 'with --since: one row per task class (default) or per executor' },
     ],
     exits: ['OK', 'FAIL', 'USAGE', 'REFUSED', 'ENV'],
-    mutating: true,
+    mutating: (flags) => flags.task !== undefined || flags.run !== undefined,
     load: () => import('../receipts/command.mjs').then((m) => m.receipt),
   },
   {
@@ -239,6 +284,19 @@ const ROWS = [
     flags: [{ flag: '--core', summary: 'the rules tagged [always], printed before any IDs given' }],
     exits: ['OK', 'USAGE'],
     load: () => import('./rule.mjs').then((m) => m.rule),
+  },
+  {
+    name: 'method',
+    summary: 'Print one pack or one section of the method by name: each rule line of it, under its section heading.',
+    details: [
+      'A pack is a name of the packs table in method/index.json (discovery, team, …); a section is <topic>/<section slug>,',
+      'such as coding/tests-first (a slug alone repeats across topics). Reads method/index.json and the topic files; writes',
+      'nothing. An unknown name exits 2 and prints every name (--json: data.names).',
+    ],
+    args: [{ name: 'name', required: true, summary: 'a pack, or <topic>/<section slug>' }],
+    flags: [],
+    exits: ['OK', 'USAGE'],
+    load: () => import('./method.mjs').then((m) => m.method),
   },
   {
     name: 'state unlock',

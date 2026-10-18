@@ -86,7 +86,8 @@ export function tick({ flags, names, io }) {
   };
 }
 
-const describe = (l, now) => {
+// Two lines on the loop document (the status view prints them too).
+export const describe = (l, now) => {
   if (l === null) return null;
   const state = l.exit ? `ended ${l.exit} at ${l.exitAt}: ${l.reason}` : `running since ${l.startedAt}; unchanged for ${l.sameCount} tick${l.sameCount === 1 ? '' : 's'}`;
   return `loop ${l.id}: ${state}\n${usage(l, now)}; fix rounds per task ${l.caps.rounds}\n`;
