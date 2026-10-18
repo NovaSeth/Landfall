@@ -443,9 +443,10 @@ test('r2 D5: with no baseline committed at the base, a task that touches test fi
   const doc = r.vstore.read('baseline', null);
   const forged = { ...doc, tests: doc.tests.filter((x) => x.id !== N('suite > other')) };
   r.vstore.write('baseline', null, { ...forged, sha256: verify.baselineSha(forged) });
+  // the reference is measured at the base (T-MG-37): the forged working baseline does not hide the deletion
   const res = await run(r);
   assert.equal(res.code, 1, show(res));
-  assert.ok(errorCodes(res).includes('baseline-unanchored'), show(res));
+  assert.deepEqual(errorCodes(res), ['baseline-shrunk'], show(res));
 });
 
 test('r2 D5: with no baseline committed at the base, a task that touches no test file lands the first baseline', async (t) => {

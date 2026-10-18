@@ -10,17 +10,21 @@
 //      report (or there is no test gate). A test gate read only by the generic scan is weak: reported, and always
 //      refused for a critical task (review r2 D4; no decision waives it). Focused tests (.only, fit) fail.
 //   5. The reference: the accepted inventory as of the anchor (the task base; the target tip for a merge; stateAt) united
-//      with the working baseline file, which can only add. Worktrees share the state, so the working baseline is
-//      placed on the history (lineOf): it is on the line of the code verified when its head is the anchor or an
-//      ancestor of it or of the verified HEAD (in a merge: of the tip or the merged branch). In-repo state: it counts
-//      unless it lies on another live branch (a parallel worktree's verify), so where git cannot tell and after a
-//      rewritten history it still counts; the accepted inventory is the baseline committed at the anchor. A state
-//      directory outside the repository (linked), which no commit holds and no branch writes: the store's baseline is
-//      the anchor only on the line of the code; off it, or where git cannot tell, `baseline-unanchored` whatever the
-//      change touches (fail closed). Without an accepted baseline (r2 D5) the working baseline is accepted only when the
-//      change touches no test file, so the inventory still is the anchor's; else, or with a missing or malformed
-//      baseline at an anchor whose history has one, `baseline-unanchored`. Another collector cannot be compared. Removed and newly skipped tests need an allowance. A failing test gate is excused only when every failure it reports is pinned and the reporter
-//      counts no more failures than were collected; a new failure fails even when its gate exited 0.
+//      with the working baseline file, which can only add, and with the task's own last passing verify inventory
+//      (verify.json inventory.tests: a test the task verified and then removes is removed, whatever replaced the
+//      shared baseline). Worktrees share the state, so the working baseline is placed on the history (lineOf): it is
+//      on the line of the code verified when its head is the anchor or an ancestor of it or of the verified HEAD (in
+//      a merge: of the tip or the merged branch). In-repo state: it counts unless it lies on another live branch (a
+//      parallel worktree's verify), so where git cannot tell and after a rewritten history it still counts; the
+//      accepted inventory is the baseline committed at the anchor. A state directory outside the repository (linked),
+//      which no commit holds and no branch writes: the store's baseline is the anchor only on the line of the code.
+//      Where no stored baseline describes the anchor (linked: none, off the line, or git cannot tell; in-repo: none
+//      committed at the anchor and the change touches test files), the accepted inventory is measured at the anchor
+//      (base.mjs: the test gates in a temporary detached worktree); a gate that cannot run there is an error, never a
+//      pass. A missing or malformed baseline at an anchor whose history has one is `baseline-unanchored`. Another
+//      collector cannot be compared. Removed and newly skipped tests need an allowance. A failing test gate is excused
+//      only when every failure it reports is pinned and the reporter counts no more failures than were collected; a
+//      new failure fails even when its gate exited 0.
 //   6. The route re-classified from `git diff --numstat <base>` plus untracked files, the state directory left out
 //      (the lib/router ratchet: the class only rises); the report's RED/GREEN evidence; the
 //      approved review the route needs (artifacts.mjs).
