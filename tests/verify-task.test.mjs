@@ -36,7 +36,7 @@ const TESTS = "import { test } from 'node:test';\ntest('adds', () => {});\ntest(
 const GATES = [{ name: 'test', cmd: 'node --test', timeoutS: 120, kind: 'test' }, { name: 'lint', cmd: 'node -e 0', timeoutS: 60, kind: 'lint' }];
 const REPORT = '---\nred: {"command": "node --test", "exit": 1, "excerpt": "1 failing"}\ngreen: {"command": "node --test", "exit": 0, "excerpt": "2 passing"}\n---\n\n# Report\n';
 
-function repo(t, { files = { 'calc.test.mjs': TESTS }, gates = GATES, cls = 'trivial', report = REPORT } = {}) {
+function repo(t, { files = { 'calc.test.mjs': TESTS }, gates = GATES, cls = 'trivial', report = REPORT, tier = 'L2' } = {}) {
   const base = realpathSync(mkdtempSync(join(tmpdir(), 'verify-task-')));
   t.after(() => rmSync(base, { recursive: true, force: true }));
   const dir = join(base, 'repo');
@@ -59,9 +59,11 @@ function repo(t, { files = { 'calc.test.mjs': TESTS }, gates = GATES, cls = 'tri
   const head = git('rev-parse', 'HEAD');
   const stateDir = join(dir, names.stateDir);
   const store = state.open(stateDir, { names });
-  store.write('state', null, { codename: names.codename, createdWith: '2.0.0', activatedAt: AT, flags: {} });
+  store.write('state', null, { codename: names.codename, createdWith: '2.0.0', activatedAt: AT, flags: tier === 'L0' ? {} : { engine: 'on' } });
   writeFileSync(join(stateDir, '.gitignore'), 'local/\n');
   const handle = state.registerHandle(store, { name: 'Test User', email: 'test@example.com', at: AT }).handle;
+  // The applied tier (spec §7.4): L2 by default, where a standard task needs a review and a critical one an external one.
+  if (tier !== 'L0') decisions.createDecision({ store, where: state.resolve({ cwd: dir, env, names }), names, env, handle, today: AT.slice(0, 10), input: { title: `Tier ${tier} from L0`, why: 'test fixture', cost: 'none', kind: 'tier', scope: [], supersedes: [] } });
   profile.openStore(stateDir, names).write('profile', null, { ...profile.emptyProfile(), gates });
   const id = state.allocateId(store, {
     prefix: 'T', handle,

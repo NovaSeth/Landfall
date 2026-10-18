@@ -48,20 +48,23 @@ const close = (over = {}) => ({
 });
 const ROUND2 = [needsFixes([finding('F1', 'blocking')]), needsFixes([finding('F1', 'blocking'), finding('F2', 'blocking'), finding('F3', 'minor')])];
 
+// The review step is required for a standard task from tier L1 (spec §7.4); the closure is what these tests check.
+const AT_L1 = { tier: 'L1' };
+
 test('review-close: round 2 needs-fixes with every blocking ID listed is approved; one ID missing stays missing', (t) => {
-  assert.equal(verify.reviewState(fixture(t, ROUND2), TASK, ['review']), 'missing', 'no decision: the latest round needs fixes');
-  assert.equal(verify.reviewState(fixture(t, ROUND2, [close()]), TASK, ['review']), 'approved');
-  assert.equal(verify.reviewState(fixture(t, ROUND2, [close({ remaining: ['F1'] })]), TASK, ['review']), 'missing', 'F2 is not listed');
-  assert.equal(verify.reviewState(fixture(t, ROUND2, [close({ remaining: ['F1', 'F3'] })]), TASK, ['review']), 'missing', 'a minor ID does not stand for F2');
+  assert.equal(verify.reviewState(fixture(t, ROUND2), TASK, ['review'], AT_L1), 'missing', 'no decision: the latest round needs fixes');
+  assert.equal(verify.reviewState(fixture(t, ROUND2, [close()]), TASK, ['review'], AT_L1), 'approved');
+  assert.equal(verify.reviewState(fixture(t, ROUND2, [close({ remaining: ['F1'] })]), TASK, ['review'], AT_L1), 'missing', 'F2 is not listed');
+  assert.equal(verify.reviewState(fixture(t, ROUND2, [close({ remaining: ['F1', 'F3'] })]), TASK, ['review'], AT_L1), 'missing', 'a minor ID does not stand for F2');
 });
 
 test('review-close: before the rounds cap it has no effect; a loop with a lower cap closes earlier', (t) => {
   const round1 = [ROUND2[1]];
-  assert.equal(verify.reviewState(fixture(t, round1, [close()]), TASK, ['review']), 'missing', 'round 1 < the default cap 2');
+  assert.equal(verify.reviewState(fixture(t, round1, [close()]), TASK, ['review'], AT_L1), 'missing', 'round 1 < the default cap 2');
   const loop = { caps: { wallMin: 480, ticks: 200, costMicroUsd: 25000000, rounds: 1 } };
-  assert.equal(verify.reviewState(fixture(t, round1, [close()], loop), TASK, ['review']), 'approved', 'the loop caps rounds at 1');
+  assert.equal(verify.reviewState(fixture(t, round1, [close()], loop), TASK, ['review'], AT_L1), 'approved', 'the loop caps rounds at 1');
   const loop3 = { caps: { ...loop.caps, rounds: 3 } };
-  assert.equal(verify.reviewState(fixture(t, ROUND2, [close()], loop3), TASK, ['review']), 'missing', 'round 2 < the loop cap 3');
+  assert.equal(verify.reviewState(fixture(t, ROUND2, [close()], loop3), TASK, ['review'], AT_L1), 'missing', 'round 2 < the loop cap 3');
 });
 
 test('review-close: another task, a superseded or a retired decision, or another kind has no effect', (t) => {
@@ -72,7 +75,7 @@ test('review-close: another task, a superseded or a retired decision, or another
     ['kind general', { kind: 'general' }],
   ]) {
     const extra = over.supersededBy ? [close({ id: 'D-AB-2', kind: 'general', task: undefined, remaining: undefined, supersedes: ['D-AB-1'] })] : [];
-    assert.equal(verify.reviewState(fixture(t, ROUND2, [close(over), ...extra]), TASK, ['review']), 'missing', why);
+    assert.equal(verify.reviewState(fixture(t, ROUND2, [close(over), ...extra]), TASK, ['review'], AT_L1), 'missing', why);
   }
 });
 
