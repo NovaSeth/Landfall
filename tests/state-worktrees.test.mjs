@@ -541,3 +541,12 @@ test('status and brief from a worktree show the lease taken in that worktree', a
   const br = await p.run(['brief', T1], 'wt');
   assert.deepEqual(br.out.data.lease, sched.leaseEnv(got.lease, names), show(br));
 });
+
+test('linked: a store baseline collected before the first commit (head null) is on the line of every commit', async (t) => {
+  const p = await linkedBaseline(t);
+  forgeBaseline(p, (doc) => ({ ...doc, head: null }));
+  const id = await linkedTask(p, 'Docs');
+  editReadme(p, p.repo, '# docs\n');
+  const v = await p.run(['verify', id, '--yes']);
+  assert.equal(v.code, 0, show(v));
+});
