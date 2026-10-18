@@ -74,13 +74,28 @@ function gitEntryAbove(dir) {
 // The project of a worktree from git's answers for cwd (the git and the common directory, as git prints them: absolute
 // or relative to cwd, resolved here without --path-format, which older git lacks). Only a linked worktree, whose git
 // directory is not the common one, has another main checkout: the parent of a common directory named .git, as git's own
-// `worktree list` names it. A main checkout whose git directory lives elsewhere (--separate-git-dir) stays its own.
-function projectOf(worktree, cwd, gitDir, commonDir) {
+// `worktree list` names it, unless git says that repository is bare (a bare clone stored as <dir>/.git has no checkout).
+// A main checkout whose git directory lives elsewhere (--separate-git-dir) stays its own. remainingMs gives what is left
+// of the time budget (null: the default); any doubt about the bare check is git-failed, never a guess.
+function projectOf(worktree, cwd, gitDir, commonDir, env, remainingMs) {
   if (!gitDir || !commonDir) return worktree;
+  let common;
   try {
     const here = realpathSync.native(cwd); // git answers relative to its physical working directory
-    const common = resolvePath(here, commonDir);
+    common = resolvePath(here, commonDir);
     if (resolvePath(here, gitDir) === common || basename(common) !== '.git') return worktree;
+  } catch (err) {
+    throw new StateError('git-failed', 'ENV', `the main checkout of ${worktree} cannot be read (${err.code ?? err.message})`, { hint: 'check the worktrees with git worktree list' });
+  }
+  const left = remainingMs();
+  const failed = (why) => new StateError('git-failed', 'ENV', `git cannot tell whether ${common} is bare (${why})`, { hint: 'check the worktrees with git worktree list' });
+  if (left !== null && left <= 0) throw failed('timeout');
+  const bare = git(['--git-dir', common, 'rev-parse', '--is-bare-repository'], { cwd: worktree, env, ...(left !== null ? { timeoutMs: left } : {}) });
+  if (bare.error) throw failed(bare.error);
+  const said = bare.stdout.trim();
+  if (bare.status !== 0 || (said !== 'true' && said !== 'false')) throw failed(bare.signal ?? `exit ${bare.status}${said ? `: ${said.slice(0, 80)}` : ''}`);
+  if (said === 'true') return worktree;
+  try {
     return realpathSync.native(dirname(common));
   } catch (err) {
     throw new StateError('git-failed', 'ENV', `the main checkout of ${worktree} cannot be read (${err.code ?? err.message})`, { hint: 'check the worktrees with git worktree list' });
@@ -88,7 +103,7 @@ function projectOf(worktree, cwd, gitDir, commonDir) {
 }
 
 // { repo, worktree, copy, dir, local, linked, declined, active, dataDir } for the repository containing cwd. timeoutMs
-// bounds the one git call (hooks pass what is left of their time budget). "Not a repository" only from git's own answer
+// bounds the git calls (hooks pass what is left of their time budget). "Not a repository" only from git's own answer
 // for it (exit 128, "not a git repository", messages in the C locale) with no .git entry in cwd or above; any other
 // failure (no answer in time, dubious ownership, a permission error, a crash, that answer where a .git exists) is
 // git-failed (findings-r2 B2).
@@ -96,8 +111,11 @@ const NOT_A_REPO = /^fatal: not a git repository\b/m;
 export function resolve({ cwd, env, names, timeoutMs } = {}) {
   requireArg(env, 'env', 'resolve');
   requireArg(names, 'names', 'resolve');
+  const started = Date.now();
+  const remainingMs = () => (timeoutMs > 0 ? timeoutMs - (Date.now() - started) : null);
   if (typeof cwd !== 'string' || !existsSync(cwd)) throw new StateError('not-a-repo', 'ENV', `${cwd} does not exist`, { hint: 'run it inside a git repository' });
-  const top = git(['rev-parse', '--show-toplevel', '--git-dir', '--git-common-dir'], { cwd, env: { ...env, LC_ALL: 'C' }, ...(timeoutMs > 0 ? { timeoutMs } : {}) });
+  const gitEnv = { ...env, LC_ALL: 'C' };
+  const top = git(['rev-parse', '--show-toplevel', '--git-dir', '--git-common-dir'], { cwd, env: gitEnv, ...(timeoutMs > 0 ? { timeoutMs } : {}) });
   if (top.error === 'missing') throw new StateError('git-missing', 'ENV', 'git is not on PATH', { hint: 'install git and put it on PATH' });
   if (top.error) throw new StateError('git-failed', 'ENV', `git did not answer (${top.error})`, { hint: 'check that git runs in this directory' });
   if (top.status !== 0 || !top.stdout.trim()) {
@@ -109,7 +127,7 @@ export function resolve({ cwd, env, names, timeoutMs } = {}) {
   }
   const [shown, gitDir, commonDir] = top.stdout.trim().split('\n');
   const worktree = realpathSync.native(shown); // the name on disk, also on case-insensitive volumes
-  const repo = projectOf(worktree, cwd, gitDir, commonDir);
+  const repo = projectOf(worktree, cwd, gitDir, commonDir, gitEnv, remainingMs);
   const dataDir = machineDataDir(names, env);
   const entry = dataDir ? readProjects(dataDir, names).projects[repo] : undefined;
   const linked = Boolean(entry?.stateDir);
