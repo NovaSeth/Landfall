@@ -63,6 +63,7 @@ Commands:
   loop start           Start a loop with caps (defaults: wallMin=480,ticks=200,usd=25,rounds=2); a running loop is never replaced.
   loop status          Print the loop: ticks, wall time and cost against the caps, the stall count, and the exit once it ended.
   loop stop            End the running loop: exit DONE, so no wakeup is scheduled again; an ended loop is left as it is.
+  method               Print one pack or one section of the method by name: each rule line of it, under its section heading.
   profile observe      Scan the repository (manifests, files, CI, harnesses) and merge what it shows into the project profile.
   profile set          Record one profile fact with its source and evidence: the user's words (said) or a path:line (observed).
   profile show         Print the project profile: facts with source and evidence, gates, risk paths, and whether a scan is due.
@@ -478,6 +479,23 @@ End the running loop: exit DONE, so no wakeup is scheduled again; an ended loop 
 
 Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
 Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
+```
+
+### `caw method <name> [--json]`
+
+```text
+usage: caw method <name> [--json]
+
+Print one pack or one section of the method by name: each rule line of it, under its section heading.
+A pack is a name of the packs table in method/index.json (discovery, team, …); a section is <topic>/<section slug>,
+such as coding/tests-first (a slug alone repeats across topics). Reads method/index.json and the topic files; writes
+nothing. An unknown name exits 2 and prints every name (--json: data.names).
+
+Arguments:
+  name  a pack, or <topic>/<section slug>
+
+Read-only.
+Exit codes: 0 OK · 2 USAGE
 ```
 
 ### `caw profile observe [--yes] [--json]`

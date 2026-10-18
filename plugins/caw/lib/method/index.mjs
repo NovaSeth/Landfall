@@ -76,6 +76,27 @@ export function explainUnknown(method, id) {
   return { id, range: numbers.length ? [`${prefix}-${Math.min(...numbers)}`, `${prefix}-${Math.max(...numbers)}`] : null, prefixes, legacy: method.legacy()[id] ?? null };
 }
 
+// The names `method` prints a part of the method by (spec §7.15): every pack of the index "packs" table, and every
+// section as "<topic>/<section slug>" (the topic key of the index; a slug alone repeats across topics).
+export function partNames(method) {
+  const { packs, topics } = method.index;
+  return { packs: Object.keys(packs), sections: Object.entries(topics).flatMap(([topic, t]) => t.sections.map((s) => `${topic}/${s.slug}`)) };
+}
+
+// One pack or section by name, or null: { kind: pack | section, name, when (packs), sections: [{ name, topic, title,
+// section, pack, rules: [getRule()] }] }, sections and rules in index order.
+export function methodPart(method, name) {
+  const { packs, topics } = method.index;
+  const section = (topic, s) => ({ name: `${topic}/${s.slug}`, topic, title: topics[topic].title, section: s.name, pack: s.pack, rules: s.rules.map((id) => getRule(method, id)) });
+  if (Object.hasOwn(packs, name)) {
+    return { kind: 'pack', name, when: packs[name].when, sections: packs[name].topics.flatMap((topic) => topics[topic].sections.map((s) => section(topic, s))) };
+  }
+  const cut = name.lastIndexOf('/');
+  const topic = cut > 0 ? name.slice(0, cut) : null;
+  const s = topic !== null && Object.hasOwn(topics, topic) ? topics[topic].sections.find((x) => x.slug === name.slice(cut + 1)) : undefined;
+  return s ? { kind: 'section', name, when: null, sections: [section(topic, s)] } : null;
+}
+
 // The rules to print for the requested IDs, in order and without repeats: each found ID, followed by the successor
 // of a retired one. unknown: explainUnknown() for each ID the method does not hold. IDs must match RULE_ID.
 export function lookupRules(method, ids) {

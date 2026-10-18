@@ -241,6 +241,19 @@ const ROWS = [
     load: () => import('./rule.mjs').then((m) => m.rule),
   },
   {
+    name: 'method',
+    summary: 'Print one pack or one section of the method by name: each rule line of it, under its section heading.',
+    details: [
+      'A pack is a name of the packs table in method/index.json (discovery, team, …); a section is <topic>/<section slug>,',
+      'such as coding/tests-first (a slug alone repeats across topics). Reads method/index.json and the topic files; writes',
+      'nothing. An unknown name exits 2 and prints every name (--json: data.names).',
+    ],
+    args: [{ name: 'name', required: true, summary: 'a pack, or <topic>/<section slug>' }],
+    flags: [],
+    exits: ['OK', 'USAGE'],
+    load: () => import('./method.mjs').then((m) => m.method),
+  },
+  {
     name: 'state unlock',
     summary: 'Remove a lock left by a process that is gone (store and machine data); writes never take one over.',
     details: [
