@@ -15,7 +15,7 @@
     "caw": "plugins/caw/bin/caw"
   },
   "files": [
-    "plugins/caw",
+    "plugins",
     "README.md",
     "CHANGELOG.md",
     "LICENSE"
