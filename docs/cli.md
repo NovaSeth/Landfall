@@ -76,6 +76,8 @@ Commands:
   profile observe      Scan the repository (manifests, files, CI, harnesses) and merge what it shows into the project profile.
   profile set          Record one profile fact with its source and evidence: the user's words (said) or a path:line (observed).
   profile show         Print the project profile: facts with source and evidence, gates, risk paths, and whether a scan is due.
+  providers            List the provider CLIs for external runs: found on PATH, version, auth, roles and the sandbox per role.
+  providers add        Declare another provider CLI (generic adapter): its argv template and the sandbox mode per role.
   receipt              Tokens and estimated cost of a task, one external run, the current loop, or all work since a day by class or executor.
   review record        Record a typed review result as the next round tasks/<id>/review-r<k>.json; the Markdown review closes nothing.
   route                Classify a task as trivial, standard or critical from its plan and print its route; the class only rises.
@@ -729,6 +731,44 @@ A scan is due when never done, after 50 commits or 7 days, or when the last scan
 
 Read-only.
 Exit codes: 0 OK · 1 FAIL · 7 REFUSED · 8 ENV
+```
+
+### `caw providers [--refresh] [--json]`
+
+```text
+usage: caw providers [--refresh] [--json]
+
+List the provider CLIs for external runs: found on PATH, version, auth, roles and the sandbox per role.
+Per adapter (built-in, then the ones declared with `providers add`): PATH lookup, --version and the auth probe, 2 s each.
+The result is cached for 1 h in plugin data providers.json; --refresh probes again. A provider runs a role only in the
+sandbox the adapter maps it to (reviewer read-only, implementer workspace-write); no mode that lifts the sandbox exists.
+
+Options:
+  --refresh  probe every provider again instead of reading the cache
+
+Read-only.
+Exit codes: 0 OK · 2 USAGE · 7 REFUSED · 8 ENV
+```
+
+### `caw providers add <id> [--argv <template>] [--sandbox-map <role=mode,…>] [--yes] [--json]`
+
+```text
+usage: caw providers add <id> [--argv <template>] [--sandbox-map <role=mode,…>] [--yes] [--json]
+
+Declare another provider CLI (generic adapter): its argv template and the sandbox mode per role.
+The template is split on spaces (no shell); placeholders are whole words: {cwd} {sandbox} {out} {model} ({model} is
+dropped when unset). The brief goes to stdin. The roles are the keys of --sandbox-map. A word or mode naming a way to
+lift the sandbox or the approvals is refused (exit 2). Declaring an ID again replaces it. Kept in plugin data providers.json.
+
+Arguments:
+  id  provider ID: 1-20 lowercase letters or digits, not a built-in one
+
+Options:
+  --argv <template>            required: the command, such as 'mycli run --dir {cwd} --mode {sandbox} -o {out}'
+  --sandbox-map <role=mode,…>  required: the mode per role, such as reviewer=read-only,implementer=workspace-write
+
+Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
+Exit codes: 0 OK · 2 USAGE · 7 REFUSED · 8 ENV
 ```
 
 ### `caw receipt [--task <id>] [--run <id>] [--loop] [--since <YYYY-MM-DD>] [--by <class|executor>] [--yes] [--json]`
