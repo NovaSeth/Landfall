@@ -69,6 +69,8 @@ Commands:
   loop status          Print the loop: ticks, wall time and cost against the caps, the stall count, and the exit once it ended.
   loop stop            End the running loop: exit DONE, so no wakeup is scheduled again; an ended loop is left as it is.
   method               Print one pack or one section of the method by name: each rule line of it, under its section heading.
+  profile gates apply  Replace the profile gates with the candidates the scan detects; only with an active gate-change decision.
+  profile gates set    Add a profile gate or replace the one of that name; only with an active gate-change decision.
   profile observe      Scan the repository (manifests, files, CI, harnesses) and merge what it shows into the project profile.
   profile set          Record one profile fact with its source and evidence: the user's words (said) or a path:line (observed).
   profile show         Print the project profile: facts with source and evidence, gates, risk paths, and whether a scan is due.
@@ -601,6 +603,46 @@ Arguments:
 
 Read-only.
 Exit codes: 0 OK · 2 USAGE
+```
+
+### `caw profile gates apply [--decision <D>] [--yes] [--json]`
+
+```text
+usage: caw profile gates apply [--decision <D>] [--yes] [--json]
+
+Replace the profile gates with the candidates the scan detects; only with an active gate-change decision.
+After activation a gate change is a decision (a weaker gate weakens the oracle): without an active gate-change
+decision exit 1, nothing written. The candidates come from the scan of HEAD (cached), as profile observe reports them.
+Changes files: needs a terminal or --yes.
+
+Options:
+  --decision <D>  required: an active gate-change decision, such as D-AB-3
+
+Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
+Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
+```
+
+### `caw profile gates set <name> <cmd> [--kind <k>] [--timeout <s>] [--decision <D>] [--yes] [--json]`
+
+```text
+usage: caw profile gates set <name> <cmd> [--kind <k>] [--timeout <s>] [--decision <D>] [--yes] [--json]
+
+Add a profile gate or replace the one of that name; only with an active gate-change decision.
+For a gate the scan does not detect (a repository's real gate is often more than npm test). Replacing keeps the
+gate's kind and time limit unless given; a new gate is kind other with the scan's time limit unless given.
+Without an active gate-change decision exit 1, nothing written. Changes files: needs a terminal or --yes.
+
+Arguments:
+  name  gate name, kebab-case, at most 40 characters
+  cmd   the shell command verify runs (sh -c), one quoted argument of at most 300 characters
+
+Options:
+  --kind <k>      test, lint, typecheck, build, e2e or other (verify collects the tests from test gates)
+  --timeout <s>   time limit in seconds, 1 to 3600
+  --decision <D>  required: an active gate-change decision, such as D-AB-3
+
+Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
+Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
 ```
 
 ### `caw profile observe [--yes] [--json]`

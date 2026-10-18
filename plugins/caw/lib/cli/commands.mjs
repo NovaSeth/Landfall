@@ -124,6 +124,41 @@ const ROWS = [
     load: () => import('../profile/cli.mjs').then((m) => m.show),
   },
   {
+    name: 'profile gates apply',
+    summary: 'Replace the profile gates with the candidates the scan detects; only with an active gate-change decision.',
+    details: [
+      'After activation a gate change is a decision (a weaker gate weakens the oracle): without an active gate-change',
+      'decision exit 1, nothing written. The candidates come from the scan of HEAD (cached), as profile observe reports them.',
+      'Changes files: needs a terminal or --yes.',
+    ],
+    args: [],
+    flags: [{ flag: '--decision', value: 'D', summary: 'required: an active gate-change decision, such as D-AB-3' }],
+    exits: ['OK', 'FAIL', 'USAGE', 'REFUSED', 'ENV'],
+    mutating: true,
+    load: () => import('../profile/cli.mjs').then((m) => m.gatesApply),
+  },
+  {
+    name: 'profile gates set',
+    summary: 'Add a profile gate or replace the one of that name; only with an active gate-change decision.',
+    details: [
+      'For a gate the scan does not detect (a repository\'s real gate is often more than npm test). Replacing keeps the',
+      'gate\'s kind and time limit unless given; a new gate is kind other with the scan\'s time limit unless given.',
+      'Without an active gate-change decision exit 1, nothing written. Changes files: needs a terminal or --yes.',
+    ],
+    args: [
+      { name: 'name', required: true, summary: 'gate name, kebab-case, at most 40 characters' },
+      { name: 'cmd', required: true, summary: 'the shell command verify runs (sh -c), one quoted argument of at most 300 characters' },
+    ],
+    flags: [
+      { flag: '--kind', value: 'k', summary: 'test, lint, typecheck, build, e2e or other (verify collects the tests from test gates)' },
+      { flag: '--timeout', value: 's', summary: 'time limit in seconds, 1 to 3600' },
+      { flag: '--decision', value: 'D', summary: 'required: an active gate-change decision, such as D-AB-3' },
+    ],
+    exits: ['OK', 'FAIL', 'USAGE', 'REFUSED', 'ENV'],
+    mutating: true,
+    load: () => import('../profile/cli.mjs').then((m) => m.gatesSet),
+  },
+  {
     name: 'route',
     summary: 'Classify a task as trivial, standard or critical from its plan and print its route; the class only rises.',
     details: [
