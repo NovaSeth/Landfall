@@ -346,15 +346,17 @@ Read-only.
 Exit codes: 0 OK · 1 FAIL · 8 ENV
 ```
 
-### `caw flags set <cap> <mode> [--reason <text>] [--yes] [--json]`
+### `caw flags set <cap> <mode> [--reason <text>] [--local] [--yes] [--json]`
 
 ```text
-usage: caw flags set <cap> <mode> [--reason <text>] [--yes] [--json]
+usage: caw flags set <cap> <mode> [--reason <text>] [--local] [--yes] [--json]
 
 Set one capability flag of this repository (off, shadow or on, as the flag has them); a flip is recorded as a decision.
 The decision (kind general) comes first, with --reason as its Why; then config.json. The same value writes nothing.
-off is the rollback of a capability: its commands are refused (exit 7) and its hooks pass through. Exit 2: an unknown
-flag or a mode it does not have; 7: an inactive repository. Changes files: needs a terminal or --yes.
+off is the rollback of a capability: its commands are refused (exit 7) and its hooks pass through. The repository
+never lowers a protective capability (guard-bash, auto-allow, edit-retrieval): config.json arrives with a clone; that
+takes --local, this user's machine override. Exit 2: an unknown flag, a mode it does not have, a protective flag
+lowered without --local; 7: an inactive repository. Changes files: needs a terminal or --yes.
 
 Arguments:
   cap   the flag, such as engine or lanes (flags show lists them)
@@ -362,6 +364,7 @@ Arguments:
 
 Options:
   --reason <text>  why, kept as the Why of the decision (≤ 200 characters)
+  --local          set this machine's override instead (plugin data config.json; rollout capabilities; no decision)
 
 Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
 Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV

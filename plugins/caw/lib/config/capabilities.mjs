@@ -4,16 +4,23 @@
 // (lib/hooks/registry.mjs, a hook's `capability`). A machine override (plugin data config.json) wins over the
 // repository's config.json for these. The flags the engine sets by tier (lanes, the generated files) are team flags: no
 // default here (unset = what the tier offers) and no machine override.
+// Protective capabilities (`protection`: their modes from the least to the most protective) guard the user's machine
+// against the session: the repository's config.json arrives with a clone, so it may keep or raise their protection but
+// never lower it below the default; only the user's machine override lowers one (`flags set --local`).
 export const MODES = Object.freeze(['off', 'shadow', 'on']);
 
 export const ROLLOUT = Object.freeze([
-  { name: 'guard-bash', default: 'on', modes: ['off', 'on'], on: 'the Bash guard blocks guarded commands', off: 'the guard-bash hook passes every command' },
-  { name: 'auto-allow', default: 'shadow', modes: MODES, on: 'own read commands run without a permission prompt', shadow: 'would-allow decisions are logged', off: 'own commands are never auto-allowed' },
+  { name: 'guard-bash', default: 'on', modes: ['off', 'on'], protection: ['off', 'on'], on: 'the Bash guard blocks guarded commands', off: 'the guard-bash hook passes every command' },
+  { name: 'auto-allow', default: 'shadow', modes: MODES, protection: ['on', 'shadow', 'off'], on: 'own read commands run without a permission prompt', shadow: 'would-allow decisions are logged', off: 'own commands are never auto-allowed' },
   { name: 'engine', default: 'shadow', modes: MODES, on: 'tier changes are decision records and set the team flags', shadow: 'proposed tier changes are logged in local/shadow.jsonl', off: 'tier is refused' },
   { name: 'admission', default: 'shadow', modes: MODES, on: 'implementer spawns wait for a free agent slot', shadow: 'would-deny readings are reported', off: 'agent spawns are not gated' },
-  { name: 'edit-retrieval', default: 'on', modes: ['off', 'on'], on: 'decisions are shown before a file is edited', off: 'no decisions are shown at edit time' },
+  { name: 'edit-retrieval', default: 'on', modes: ['off', 'on'], protection: ['off', 'on'], on: 'decisions are shown before a file is edited', off: 'no decisions are shown at edit time' },
   { name: 'headroom', default: 'shadow', modes: MODES, on: 'context headroom warnings are injected', shadow: 'warnings it would inject are logged', off: 'no headroom warnings' },
   { name: 'executor-ui', default: 'off', modes: ['off', 'on'], on: 'external executors show as agent panel rows', off: 'no agent panel rows for external executors' },
 ].map((c) => Object.freeze(c)));
 
 export const rollout = (name) => ROLLOUT.find((c) => c.name === name) ?? null;
+
+// Whether the repository's config may set `mode` for capability `c`: any mode of an ordinary capability; for a protective
+// one only a mode at least as protective as its default.
+export const repoMaySet = (c, mode) => !c?.protection || c.protection.indexOf(mode) >= c.protection.indexOf(c.default);

@@ -4,6 +4,9 @@
 //                generated files: set by the engine at a tier change or here; unset = what the tier offers).
 //   flags set    one flag of an active repository, to a mode it has; a flip is recorded first as a decision (kind
 //                general, the user's --reason as its Why), then written to config.json. The same value writes nothing.
+//                The repository's config never lowers a protective capability (it arrives with a clone): that is
+//                refused with the hint to use --local, which writes this user's machine override instead (plugin data
+//                config.json; rollout capabilities only; no decision: it is no team record).
 //   config show  the threshold overrides with their default and decision, the executor preferences with their source,
 //                the flags that differ from their default.
 //   config set   thresholds.<unit>.<path> <integer|default> --decision <D>: an override of a number of the unit's
@@ -18,8 +21,8 @@ import { authorHandle, createDecision, requireDecision } from '../decisions/inde
 import { ENGINE_FLAGS, THRESHOLDS as ENGINE_THRESHOLDS } from '../engine/index.mjs';
 import { TARGETS } from '../gen/index.mjs';
 import { THRESHOLDS as ROUTER_THRESHOLDS } from '../router/index.mjs';
-import { LIMITS, PATTERNS, StateError, machineDataDir, open, resolve } from '../state/index.mjs';
-import { ROLES, ROLLOUT, executorsOf, flagsOf, readConfig, rollout, thresholdKeys, thresholdsOf } from './index.mjs';
+import { LIMITS, PATTERNS, StateError, machineDataDir, open, resolve, updateMachineConfig } from '../state/index.mjs';
+import { ROLES, ROLLOUT, executorsOf, flagsOf, readConfig, repoMaySet, rollout, thresholdKeys, thresholdsOf } from './index.mjs';
 
 const usage = (code, message, hint = '') => new StateError(code, 'USAGE', message, { hint });
 const guarded = (fn) => (ctx) => {
@@ -39,7 +42,7 @@ const TEAM_MODES = Object.freeze(['off', 'on']);
 // { kind: rollout | team, modes, default, describe(mode) } of a flag name, or null.
 function flagSpec(name) {
   const r = rollout(name);
-  if (r) return { kind: 'rollout', modes: r.modes, default: r.default, describe: (mode) => r[mode] ?? '' };
+  if (r) return { kind: 'rollout', modes: r.modes, default: r.default, protective: Boolean(r.protection), repoMay: (mode) => repoMaySet(r, mode), describe: (mode) => r[mode] ?? '' };
   if (TEAM_FLAGS.includes(name)) return { kind: 'team', modes: TEAM_MODES, default: null, describe: (mode) => (mode === 'on' ? 'enabled for the team' : 'disabled for the team') };
   return null;
 }
@@ -52,13 +55,14 @@ const machineFile = (where, names, env) => {
 export const flagsShow = guarded(({ io, names }) => {
   const where = here({ io, names });
   const configs = readConfig(where, { names, env: io.env });
-  const { flags, ignored } = flagsOf(configs);
+  const { flags, ignored, lowered } = flagsOf(configs);
   const rows = {};
   for (const c of ROLLOUT) rows[c.name] = { ...flags[c.name], kind: 'rollout', default: c.default, modes: [...c.modes], effect: c[flags[c.name].mode] ?? '' };
   for (const name of TEAM_FLAGS) rows[name] = { mode: flags[name]?.mode ?? null, source: flags[name] ? 'repo' : null, kind: 'team', default: null, modes: [...TEAM_MODES], effect: '' };
   for (const [name, f] of Object.entries(flags)) if (!rows[name]) rows[name] = { ...f, kind: 'unknown', default: null, modes: [], effect: 'not a flag of this plugin version' };
   const width = Math.max(...Object.keys(rows).map((k) => k.length)) + 2;
-  const line = (name, r) => `  ${name.padEnd(width)}${(r.mode ?? 'unset').padEnd(8)}${(r.source ?? '').padEnd(9)}${r.effect || (r.mode === null ? 'the tier offers it' : '')}`.trimEnd();
+  const held = (r) => [r.repo !== undefined && r.source !== 'repo' ? `repo ${r.repo}` : null, r.machine !== undefined && r.source !== 'machine' ? `machine ${r.machine}` : null].filter(Boolean);
+  const line = (name, r) => `  ${name.padEnd(width)}${(r.mode ?? 'unset').padEnd(8)}${(r.source ?? '').padEnd(9)}${r.effect || (r.mode === null ? 'the tier offers it' : '')}${held(r).length ? ` (${held(r).join(', ')})` : ''}`.trimEnd();
   const file = machineFile(where, names, io.env);
   const lines = [
     `Capability flags of ${where.repo} (${where.active ? 'config.json' : 'not active: defaults'}; machine overrides: ${file ?? 'no plugin data directory'})`,
@@ -66,8 +70,9 @@ export const flagsShow = guarded(({ io, names }) => {
     'Team flags (set by the engine at a tier change, or here):',
     ...Object.entries(rows).filter(([, r]) => r.kind !== 'rollout').map(([n, r]) => line(n, r)),
     ...ignored.map((n) => `  ${n}: ignored in the machine config (only rollout capabilities are overridden per machine)`),
+    ...lowered.map((l) => `  ${l.name}: the repository's ${l.mode} is ignored: a committed file never lowers a protective capability; '${names.bin} flags set ${l.name} ${l.mode} --local' does it on this machine`),
   ];
-  return { data: { repo: where.repo, active: where.active, flags: rows, ignored, machineConfig: file }, text: `${lines.join('\n')}\n` };
+  return { data: { repo: where.repo, active: where.active, flags: rows, ignored, lowered, machineConfig: file }, text: `${lines.join('\n')}\n` };
 });
 
 export const flagsSet = guarded(({ args, flags: opts, io, names }) => {
@@ -77,7 +82,11 @@ export const flagsSet = guarded(({ args, flags: opts, io, names }) => {
   if (!spec) throw usage('unknown-capability', `unknown flag: ${name.slice(0, 40)}`, `flags: ${[...ROLLOUT.map((c) => c.name), ...TEAM_FLAGS].join(', ')}`);
   if (!spec.modes.includes(mode)) throw usage('invalid-mode', `${name} has no mode ${JSON.stringify(mode.slice(0, 20))}`, `${name} takes ${spec.modes.join(' or ')}`);
   const where = here({ io, names });
-  if (!where.active) throw new StateError('inactive', 'REFUSED', `${where.repo} is not active: flags are recorded only in an active repository`, { hint: `activate it first (${names.bin} init); a machine override goes in ${machineFile(where, names, io.env) ?? 'the plugin data directory'}/config.json` });
+  if (opts.local) return setLocal({ name, mode, spec, where, io, names });
+  if (spec.protective && !spec.repoMay(mode)) {
+    throw usage('protective-flag', `${name} ${mode} lowers a protective capability; the repository's config.json (it arrives with a clone) never does that`, `set it for this machine only: '${names.bin} flags set ${name} ${mode} --local'`);
+  }
+  if (!where.active) throw new StateError('inactive', 'REFUSED', `${where.repo} is not active: flags are recorded only in an active repository`, { hint: `activate it first (${names.bin} init), or set this machine's override with --local` });
   const store = open(where.dir, { names });
   const cur = store.read('config', null)?.flags?.[name] ?? null;
   const machine = flagsOf(readConfig(where, { names, env: io.env })).flags[name];
@@ -105,6 +114,16 @@ export const flagsSet = guarded(({ args, flags: opts, io, names }) => {
     warnings,
   };
 });
+
+// `flags set --local`: this user's machine override of a rollout capability (plugin data config.json), any of its modes.
+function setLocal({ name, mode, spec, where, io, names }) {
+  if (spec.kind !== 'rollout') throw usage('team-flag', `${name} is a team flag: the repository sets it, a machine override would be ignored`, `set it without --local: '${names.bin} flags set ${name} ${mode}'`);
+  const dataDir = where?.dataDir ?? machineDataDir(names, io.env);
+  const before = readConfig(where, { names, env: io.env }).machine?.flags?.[name] ?? null;
+  if (before === mode) return { data: { flag: name, mode, previous: before, decision: null, local: true }, text: `${name} is already ${mode} on this machine; nothing written\n` };
+  updateMachineConfig(dataDir, names, (cur) => ({ ...(cur ?? {}), flags: { ...(cur?.flags ?? {}), [name]: mode } }));
+  return { data: { flag: name, mode, previous: before, decision: null, local: true, file: machineFile(where, names, io.env) }, text: `${name}: ${before ?? 'not overridden'} → ${mode} on this machine (${machineFile(where, names, io.env)})\n` };
+}
 
 // The threshold data a key may override, per unit (the data each unit ships).
 const THRESHOLD_DATA = Object.freeze({ router: ROUTER_THRESHOLDS, engine: ENGINE_THRESHOLDS });

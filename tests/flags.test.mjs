@@ -174,15 +174,15 @@ test('engine off: tier returns REFUSED naming the flag (the dispatcher, before c
   }
 });
 
-test('a capability that is off: its hooks pass through (guard-bash, edit-retrieval), the state-file protection stays', async (t) => {
+test('a capability that is off: its hooks pass through (guard-bash, edit-retrieval, set off on this machine), the state-file protection stays', async (t) => {
   const p = await repository(t);
   assert.equal(JSON.parse(bash(p, 'git stash').stdout).hookSpecificOutput.permissionDecision, 'deny', 'on: the guard blocks');
   await p.ok(['decide', '--title', 'Keep big.js flat', '--why', 'Readers grep it.', '--cost', 'Slower edits.', '--scope', 'src/**']);
   const file = join(p.repo, 'src', 'a', 'big.js');
   assert.match(edit(p, file).stdout, /additionalContext/, 'on: the decision is shown before the edit');
-  await p.ok(['flags', 'set', 'guard-bash', 'off']);
+  await p.ok(['flags', 'set', 'guard-bash', 'off', '--local']);
   assert.deepEqual(bash(p, 'git stash'), { stdout: '' }, 'off: the guard hook passes every command');
-  await p.ok(['flags', 'set', 'edit-retrieval', 'off']);
+  await p.ok(['flags', 'set', 'edit-retrieval', 'off', '--local']);
   assert.equal(edit(p, file).stdout, '', 'off: no decision context');
   const owned = JSON.parse(edit(p, join(p.state, 'state.json')).stdout).hookSpecificOutput;
   assert.equal(owned.permissionDecision, 'deny', 'the state-file protection is not part of edit-retrieval');
@@ -192,7 +192,8 @@ test('a capability that is off: its hooks pass through (guard-bash, edit-retriev
   assert.equal(byName['decisions-context'], 'edit-retrieval');
   for (const h of HOOKS.filter((x) => x.capability)) assert.ok(ROLLOUT.some((c) => c.name === h.capability), h.name);
   // A config that cannot be read keeps the default: the guard stays on (a broken file never turns a guard off).
-  await p.ok(['flags', 'set', 'guard-bash', 'on']);
+  await p.ok(['flags', 'set', 'guard-bash', 'on', '--local']);
+  await p.ok(['flags', 'set', 'engine', 'on']);
   writeFileSync(join(p.state, 'config.json'), '{ not json');
   assert.equal(JSON.parse(bash(p, 'git stash').stdout).hookSpecificOutput.permissionDecision, 'deny');
 });
@@ -205,10 +206,48 @@ test('auto-allow follows its flag: on allows an own read command, off logs nothi
     { deadline: Infinity, env: { ...p.env, CLAUDE_PROJECT_DIR: p.repo, ...env }, shadowLog: (e) => log.push(e) });
   assert.equal(hook().stdout, '', 'shadow (default): no decision');
   assert.equal(log.length, 1, 'shadow: logged');
-  await p.ok(['flags', 'set', 'auto-allow', 'on']);
+  await p.ok(['flags', 'set', 'auto-allow', 'on', '--local']);
   assert.equal(JSON.parse(hook().stdout).hookSpecificOutput.permissionDecision, 'allow');
   assert.equal(hook({ CLAUDE_PLUGIN_OPTION_AUTO_ALLOW_OWN_COMMANDS: 'false' }).stdout, '', 'the user option off wins');
-  await p.ok(['flags', 'set', 'auto-allow', 'off']);
+  await p.ok(['flags', 'set', 'auto-allow', 'off', '--local']);
   assert.equal(hook().stdout, '');
   assert.equal(log.length, 1, 'off: nothing logged');
+});
+
+test('a committed config.json never lowers a protective capability; this machine\'s override does; flags show reports both values (acceptance 8)', async (t) => {
+  const p = await repository(t);
+  // What a clone of someone else's repository can carry: protective capabilities lowered, the engine off.
+  writeFileSync(join(p.state, 'config.json'), JSON.stringify({ schema: 1, flags: { 'guard-bash': 'off', 'auto-allow': 'on', 'edit-retrieval': 'off', engine: 'off' } }));
+  assert.equal(JSON.parse(bash(p, 'git stash').stdout).hookSpecificOutput.permissionDecision, 'deny', 'the guard still blocks');
+  const log = [];
+  const own = runHook('guard-bash', JSON.stringify({ session_id: 's1', hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: `${BIN} status` }, cwd: p.repo }),
+    { deadline: Infinity, env: { ...p.env, CLAUDE_PROJECT_DIR: p.repo }, shadowLog: (e) => log.push(e) });
+  assert.equal(own.stdout, '', 'auto-allow stays at its default (shadow): no allow without a prompt');
+  assert.equal(log.length, 1);
+  await p.ok(['decide', '--title', 'Keep big.js flat', '--why', 'Readers grep it.', '--cost', 'Slower edits.', '--scope', 'src/**']);
+  assert.match(edit(p, join(p.repo, 'src', 'a', 'big.js')).stdout, /additionalContext/, 'decisions are still shown');
+  assert.equal((await cli(['tier'], p)).code, 7, 'an ordinary capability follows the repository');
+  let s = await cli(['flags', 'show'], p);
+  assert.deepEqual(s.out.data.flags['guard-bash'], { ...s.out.data.flags['guard-bash'], mode: 'on', source: 'default', repo: 'off' });
+  assert.deepEqual(s.out.data.lowered.map((l) => [l.name, l.mode]), [['guard-bash', 'off'], ['auto-allow', 'on'], ['edit-retrieval', 'off']]);
+  const text = await cli(['flags', 'show'], { ...p, json: false });
+  assert.match(text.out, /guard-bash: the repository's off is ignored: a committed file never lowers a protective capability/);
+  // flags set refuses to write such a value into the repository; raising is fine.
+  const lower = await cli(['flags', 'set', 'guard-bash', 'off', '--yes'], p);
+  assert.equal(lower.code, 2, show(lower));
+  assert.equal(lower.out.errors[0].code, 'protective-flag');
+  assert.match(lower.out.errors[0].hint, /--local/);
+  await p.ok(['flags', 'set', 'auto-allow', 'off']);
+  // The user's own machine override lowers it, with consent; flags show reports both values.
+  const noConsent = await cli(['flags', 'set', 'guard-bash', 'off', '--local'], p);
+  assert.equal(noConsent.code, 7, show(noConsent));
+  const local = await p.ok(['flags', 'set', 'guard-bash', 'off', '--local']);
+  assert.deepEqual([local.out.data.local, local.out.data.decision], [true, null]);
+  assert.deepEqual(JSON.parse(readFileSync(join(p.data, 'config.json'), 'utf8')).flags, { 'guard-bash': 'off' });
+  assert.deepEqual(bash(p, 'git stash'), { stdout: '' }, 'off on this machine: the guard passes');
+  s = await cli(['flags', 'show'], p);
+  assert.deepEqual([s.out.data.flags['guard-bash'].mode, s.out.data.flags['guard-bash'].source, s.out.data.flags['guard-bash'].repo, s.out.data.flags['guard-bash'].machine], ['off', 'machine', 'off', 'off']);
+  const team = await cli(['flags', 'set', 'lanes', 'on', '--local', '--yes'], p);
+  assert.equal(team.code, 2, show(team));
+  assert.equal(team.out.errors[0].code, 'team-flag');
 });

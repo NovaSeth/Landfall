@@ -6,9 +6,9 @@
 //   repo      <state>/config.json (lib/state, with the flags an old state.json still carries): flags, thresholds, executors
 //   default   spec §14 for the rollout capabilities (capabilities.mjs); the unit's own data for thresholds
 import { machineDataDir, open, readMachineConfig, resolve } from '../state/index.mjs';
-import { ROLLOUT, rollout } from './capabilities.mjs';
+import { ROLLOUT, repoMaySet, rollout } from './capabilities.mjs';
 
-export { MODES, ROLLOUT, rollout } from './capabilities.mjs';
+export { MODES, ROLLOUT, repoMaySet, rollout } from './capabilities.mjs';
 export const ROLES = Object.freeze(['reviewer', 'implementer']);
 
 // The repository's and the machine's config documents (null when absent). where: a lib/state resolve() result, or
@@ -19,20 +19,25 @@ export function readConfig(where, { names, env }) {
   return { repo, machine };
 }
 
-// { flags: { name: { mode, source } }, ignored: [names] }: every rollout capability (machine, then repo, then its
-// default), then each other flag the repository sets. A machine entry for a flag that is no rollout capability is
-// ignored (team flags are the repository's) and listed.
+// { flags: { name: { mode, source, repo?, machine? } }, ignored: [names], lowered: [{ name, mode }] }: every rollout
+// capability (machine, then repo, then its default), then each other flag the repository sets; `repo` and `machine` are
+// the values each source holds. A machine entry for a flag that is no rollout capability is ignored (team flags are the
+// repository's) and listed in `ignored`; a repository value that would lower a protective capability is not applied
+// (the default holds) and listed in `lowered` (capabilities.mjs repoMaySet).
 export function flagsOf({ repo = null, machine = null } = {}) {
   const r = repo?.flags ?? {};
   const m = machine?.flags ?? {};
   const flags = {};
+  const lowered = [];
   for (const c of ROLLOUT) {
-    if (Object.hasOwn(m, c.name)) flags[c.name] = { mode: m[c.name], source: 'machine' };
-    else if (Object.hasOwn(r, c.name)) flags[c.name] = { mode: r[c.name], source: 'repo' };
-    else flags[c.name] = { mode: c.default, source: 'default' };
+    const held = { ...(Object.hasOwn(r, c.name) ? { repo: r[c.name] } : {}), ...(Object.hasOwn(m, c.name) ? { machine: m[c.name] } : {}) };
+    if (Object.hasOwn(m, c.name)) flags[c.name] = { mode: m[c.name], source: 'machine', ...held };
+    else if (Object.hasOwn(r, c.name) && repoMaySet(c, r[c.name])) flags[c.name] = { mode: r[c.name], source: 'repo', ...held };
+    else flags[c.name] = { mode: c.default, source: 'default', ...held };
+    if (Object.hasOwn(r, c.name) && !repoMaySet(c, r[c.name])) lowered.push({ name: c.name, mode: r[c.name] });
   }
-  for (const name of Object.keys(r).sort()) if (!flags[name]) flags[name] = { mode: r[name], source: 'repo' };
-  return { flags, ignored: Object.keys(m).filter((name) => !rollout(name)).sort() };
+  for (const name of Object.keys(r).sort()) if (!flags[name]) flags[name] = { mode: r[name], source: 'repo', repo: r[name] };
+  return { flags, ignored: Object.keys(m).filter((name) => !rollout(name)).sort(), lowered };
 }
 
 // The mode of one flag (off | shadow | on), or null for a team flag nobody set.

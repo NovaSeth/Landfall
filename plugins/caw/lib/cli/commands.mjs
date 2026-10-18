@@ -667,14 +667,19 @@ const ROWS = [
     summary: 'Set one capability flag of this repository (off, shadow or on, as the flag has them); a flip is recorded as a decision.',
     details: [
       'The decision (kind general) comes first, with --reason as its Why; then config.json. The same value writes nothing.',
-      'off is the rollback of a capability: its commands are refused (exit 7) and its hooks pass through. Exit 2: an unknown',
-      'flag or a mode it does not have; 7: an inactive repository. Changes files: needs a terminal or --yes.',
+      'off is the rollback of a capability: its commands are refused (exit 7) and its hooks pass through. The repository',
+      'never lowers a protective capability (guard-bash, auto-allow, edit-retrieval): config.json arrives with a clone; that',
+      'takes --local, this user\'s machine override. Exit 2: an unknown flag, a mode it does not have, a protective flag',
+      'lowered without --local; 7: an inactive repository. Changes files: needs a terminal or --yes.',
     ],
     args: [
       { name: 'cap', required: true, summary: 'the flag, such as engine or lanes (flags show lists them)' },
       { name: 'mode', required: true, summary: 'off, shadow or on' },
     ],
-    flags: [{ flag: '--reason', value: 'text', summary: 'why, kept as the Why of the decision (≤ 200 characters)' }],
+    flags: [
+      { flag: '--reason', value: 'text', summary: 'why, kept as the Why of the decision (≤ 200 characters)' },
+      { flag: '--local', summary: 'set this machine\'s override instead (plugin data config.json; rollout capabilities; no decision)' },
+    ],
     exits: ['OK', 'FAIL', 'USAGE', 'REFUSED', 'ENV'],
     mutating: true,
     load: () => import('../config/commands.mjs').then((m) => m.flagsSet),

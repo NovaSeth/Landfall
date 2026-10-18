@@ -12,7 +12,7 @@
 //   state        state.json schema vs this plugin: newer or invalid → fail (writes are refused)
 //   profile      profile freshness (lib/profile scanDue): a scan due → warn
 //   flags        the capability flags (lib/config: machine overrides, config.json, defaults); a machine entry that is
-//                no rollout capability → warn
+//                no rollout capability, or a repository value that would lower a protective capability (ignored) → warn
 //   providers    provider table: no provider detection in this version → skip "not available"
 //   scheduler    leases and stale reaps: no scheduler in this version → skip
 //   context      the always-on cost from the one `claude plugin details` call the hooks check reads: over the SC3
@@ -164,9 +164,10 @@ const SCAN_DUE = {
 };
 
 // "<flag> <mode>" per flag, the source in parentheses unless the repository set it, and the ignored machine entries.
-function flagList({ flags, ignored }) {
+function flagList({ flags, ignored, lowered }) {
   const set = Object.entries(flags).map(([k, f]) => `${k} ${f.mode}${f.source === 'repo' ? '' : ` (${f.source})`}`);
-  return [...set, ...ignored.map((k) => `${k} ignored (machine config: not a rollout capability)`)].join(', ');
+  return [...set, ...ignored.map((k) => `${k} ignored (machine config: not a rollout capability)`),
+    ...lowered.map((l) => `${l.name} ${l.mode} in config.json ignored (a committed file never lowers a protective capability; flags set --local does)`)].join(', ');
 }
 
 // The state, profile and flags rows of the repository at cwd. A StateError is a failed row (and an error) except
@@ -224,7 +225,7 @@ function repoRows({ names, io, id, errors }) {
   if (state !== null) {
     try {
       const f = flagsOf(readConfig(where, { names, env: io.env }));
-      flagsRow = row('flags', f.ignored.length ? 'warn' : 'ok', flagList(f), `${names.bin} flags show explains each flag (off | shadow | on); ${names.bin} tier --explain shows what the tier sets`);
+      flagsRow = row('flags', f.ignored.length || f.lowered.length ? 'warn' : 'ok', flagList(f), `${names.bin} flags show explains each flag (off | shadow | on); ${names.bin} tier --explain shows what the tier sets`);
     } catch (err) {
       flagsRow = failed('flags', err);
     }
