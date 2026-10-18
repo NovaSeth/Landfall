@@ -82,7 +82,7 @@ test('resolve: the repository of the target, its in-repo state directory, inacti
   // The test process runs in another repository: resolution must not use it.
   const got = state.resolve({ cwd: join(r, 'src', 'deep'), env, names });
   assert.deepEqual(got, {
-    repo: r, dir: join(r, names.stateDir), local: join(r, names.stateDir, 'local'), linked: false, declined: false, active: false,
+    repo: r, worktree: r, copy: null, dir: join(r, names.stateDir), local: join(r, names.stateDir, 'local'), linked: false, declined: false, active: false,
     dataDir: join(env.HOME, '.claude', 'plugins', 'data', DATA_ID),
   });
   // Through a symlink: the same real path.
@@ -142,6 +142,69 @@ test('zero footprint: resolving creates nothing in the repository, in machine da
   assert.deepEqual({ repo: snapshot(r), home: snapshot(home) }, before);
   const st = spawnSync('git', ['status', '--porcelain', '--ignored'], { cwd: r, encoding: 'utf8', env });
   assert.equal(st.stdout, '?? src/\n', 'only the fixture file is untracked');
+});
+
+// Two roots (T-MG-1): `repo` is the project — the main checkout, whose state every linked worktree shares — and
+// `worktree` the git top level of the target, where the code is; `copy` is a worktree's checked-out copy of the in-repo
+// state directory, which is no state. Without a main checkout (a bare repository with worktrees, a submodule) and in a
+// main checkout whose git directory lives elsewhere, the project is the top level itself, as before.
+const gitIn = (cwd, env, ...args) => {
+  const r = spawnSync('git', args, { cwd, env, encoding: 'utf8' });
+  assert.equal(r.status, 0, `git ${args.join(' ')}: ${r.stderr}`);
+  return r.stdout;
+};
+function committed(base, env, name = 'repo') {
+  const dir = repo(base, name);
+  gitIn(dir, env, 'add', '-A');
+  gitIn(dir, env, '-c', 'user.name=T', '-c', 'user.email=t@example.com', 'commit', '-q', '-m', 'base');
+  return dir;
+}
+
+test('resolve in a linked worktree: the project is the main checkout, the worktree the top level of the target', (t) => {
+  const { base, env } = scratch(t);
+  const r = committed(base, env);
+  const wt = join(base, 'wt');
+  gitIn(r, env, 'worktree', 'add', '-q', wt, '-b', 'feature');
+  const nested = join(r, '.claude', 'worktrees', 'n');
+  gitIn(r, env, 'worktree', 'add', '-q', nested, '-b', 'nested');
+  for (const [cwd, top] of [[wt, wt], [join(wt, 'src'), wt], [nested, nested], [join(nested, 'src'), nested]]) {
+    const got = state.resolve({ cwd, env, names });
+    assert.deepEqual([got.repo, got.worktree, got.dir, got.local, got.copy, got.linked, got.active], [r, top, join(r, names.stateDir), join(r, names.stateDir, 'local'), join(top, names.stateDir), false, false], cwd);
+  }
+  const main = state.resolve({ cwd: join(r, 'src', 'deep'), env, names });
+  assert.deepEqual([main.repo, main.worktree, main.copy], [r, r, null], 'the main checkout itself');
+  mkdirSync(join(r, names.stateDir));
+  writeFileSync(join(r, names.stateDir, 'state.json'), '{}');
+  assert.equal(state.resolve({ cwd: wt, env, names }).active, true, 'active from the state of the main checkout');
+  const via = join(base, 'wt-link');
+  symlinkSync(wt, via);
+  const linkedPath = state.resolve({ cwd: join(via, 'src'), env, names });
+  assert.deepEqual([linkedPath.repo, linkedPath.worktree], [r, wt], 'real paths through a link');
+  // linked state: keyed by the main checkout's real path; a worktree has no copy of an external directory
+  const external = join(base, 'control', 'state');
+  state.updateProject({ repo: r, dataDir: state.machineDataDir(names, env), names, patch: { stateDir: external } });
+  const linked = state.resolve({ cwd: wt, env, names });
+  assert.deepEqual([linked.repo, linked.worktree, linked.dir, linked.linked, linked.copy], [r, wt, external, true, null]);
+});
+
+test('resolve without a main checkout: a bare repository with worktrees, a submodule, a separate git directory keep the top level as the project', (t) => {
+  const { base, env } = scratch(t);
+  const r = committed(base, env);
+  const bare = join(base, 'bare.git');
+  gitIn(base, env, 'clone', '-q', '--bare', r, bare);
+  const bw = join(base, 'bare-wt');
+  gitIn(bare, env, 'worktree', 'add', '-q', bw, 'main');
+  const sup = committed(base, env, 'super');
+  gitIn(sup, env, '-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', r, 'sm');
+  const sm = join(sup, 'sm');
+  // a main checkout whose git directory is named .git but lives elsewhere: still its own project
+  mkdirSync(join(base, 'sep'));
+  const sp = join(base, 'sp');
+  gitIn(base, env, 'init', '-q', `--separate-git-dir=${join(base, 'sep', '.git')}`, sp);
+  for (const [cwd, top] of [[bw, bw], [join(bw, 'src'), bw], [sm, sm], [join(sm, 'src'), sm], [sp, sp]]) {
+    const got = state.resolve({ cwd, env, names });
+    assert.deepEqual([got.repo, got.worktree, got.dir, got.copy], [top, top, join(top, names.stateDir), null], cwd);
+  }
 });
 
 test('linked state directory: recorded in projects.json by real path; resolution follows it; the repository stays clean', (t) => {
