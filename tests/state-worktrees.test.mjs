@@ -308,3 +308,119 @@ test('loop hooks from a worktree: the project loop is seen (an ended loop takes 
   assert.equal(v.decision, 'deny', 'the loop of the project ended');
   assert.match(v.reason, /^FLW-5: blocked the wakeup: the .* loop ended \(DONE\)/);
 });
+
+// ---- 9, 10. a linked state directory: task merge and the baseline anchor read the store ----
+// No commit holds a linked state directory: a branch cannot carry its profile or baseline. task merge compares no
+// branch profile with the target's, and verify anchors the test inventory in the store's baseline when that baseline
+// describes the code verified (its head is the anchor, an ancestor of it, or an ancestor of the verified HEAD; in task
+// merge, of the target tip or the merged branch); otherwise a change touching tests is refused with the pin hint.
+
+const ADDED = (name) => `test('${name}', () => {});\n`;
+// Dispatch `id` on `base`, classify it trivial and give it its report (in the store).
+async function ready(p, id, base, where) {
+  assert.equal((await p.run(['task', 'set', id, 'dispatched', '--executor', 'claude', '--base', base, '--yes'], where)).code, 0);
+  assert.equal((await p.run(['route', id, '--paths', 'calc.test.mjs', '--loc', '1', '--yes'], where)).code, 0);
+  put(join(p.stateDir, 'tasks', id, 'report.md'), REPORT);
+}
+// A linked project whose first task verified in the main checkout: the store's baseline was collected at its HEAD.
+async function linkedBaseline(t) {
+  const p = await project(t, { linked: true, files: { 'calc.test.mjs': TESTS } });
+  profile.openStore(p.stateDir, names).write('profile', null, { ...profile.emptyProfile(), gates: GATES });
+  p.base = head(p.repo, p.env);
+  await ready(p, T1, p.base, 'main');
+  const v = await p.run(['verify', T1, '--yes']);
+  assert.equal(v.code, 0, show(v));
+  assert.equal(JSON.parse(readFileSync(join(p.stateDir, 'baseline', 'tests.json'), 'utf8')).head, p.base);
+  assert.equal(porcelain(p.repo, p.env), '');
+  return p;
+}
+const addTest = (p, dir, name) => {
+  writeFileSync(join(dir, 'calc.test.mjs'), `${readFileSync(join(dir, 'calc.test.mjs'), 'utf8')}${ADDED(name)}`);
+  git(dir, p.env, ['commit', '-q', '-am', `test ${name}`]);
+  return head(dir, p.env);
+};
+
+test('linked state, main checkout: verify anchors a change that touches tests in the store\'s baseline (was baseline-unanchored)', async (t) => {
+  const p = await linkedBaseline(t);
+  const { out } = await p.run(['task', 'new', 'Second task', '--yes']);
+  await ready(p, out.data.id, p.base, 'main');
+  addTest(p, p.repo, 'second');
+  const v = await p.run(['verify', out.data.id, '--yes']);
+  assert.equal(v.code, 0, show(v));
+  assert.deepEqual([v.out.data.inventory.added, v.out.data.inventory.total], [['["","second",1]'], 2]);
+});
+
+test('linked state, worktree: verify, a new commit, verify again (the store baseline is an ancestor of HEAD), task done', async (t) => {
+  const p = await linkedBaseline(t);
+  const { out } = await p.run(['task', 'new', 'Worktree task', '--yes'], 'wt');
+  await ready(p, out.data.id, p.base, 'wt');
+  addTest(p, p.wt, 'one');
+  const first = await p.run(['verify', out.data.id, '--yes'], 'wt');
+  assert.equal(first.code, 0, show(first));
+  addTest(p, p.wt, 'two');
+  const again = await p.run(['verify', out.data.id, '--yes'], 'wt');
+  assert.equal(again.code, 0, show(again));
+  assert.equal(again.out.data.inventory.total, 3);
+  const done = await p.run(['task', 'done', out.data.id, '--yes'], 'wt');
+  assert.equal(done.code, 0, show(done));
+});
+
+test('linked state: a store baseline collected on another line of history does not anchor a change that touches tests', async (t) => {
+  const p = await linkedBaseline(t);
+  const a = (await p.run(['task', 'new', 'On the branch', '--yes'], 'wt')).out.data.id;
+  await ready(p, a, p.base, 'wt');
+  addTest(p, p.wt, 'branch-only');
+  assert.equal((await p.run(['verify', a, '--yes'], 'wt')).code, 0, 'the branch grows the store baseline');
+  const b = (await p.run(['task', 'new', 'On main', '--yes'])).out.data.id;
+  await ready(p, b, p.base, 'main');
+  addTest(p, p.repo, 'main-only');
+  const v = await p.run(['verify', b, '--yes']);
+  assert.equal(v.code, 1, show(v));
+  const why = v.out.errors.find((e) => e.code === 'baseline-unanchored');
+  assert.ok(why, show(v));
+  assert.ok(why.hint.includes(`${names.bin} baseline pin`), why.hint);
+  assert.equal(v.out.errors.some((e) => e.code === 'baseline-shrunk'), false, 'the branch\'s test is not taken as removed');
+});
+
+test('linked state: task merge needs no gate-change decision (no branch carries the profile), in a worktree and in the main checkout', async (t) => {
+  const p = await linkedBaseline(t);
+  const id = (await p.run(['task', 'new', 'Merged task', '--yes'], 'wt')).out.data.id;
+  await ready(p, id, p.base, 'wt');
+  addTest(p, p.wt, 'merged');
+  assert.equal((await p.run(['verify', id, '--yes'], 'wt')).code, 0);
+  assert.equal((await p.run(['task', 'done', id, '--yes'], 'wt')).code, 0);
+  // an integration worktree merges the branch first
+  const int = join(dirname(p.repo), 'int');
+  git(p.repo, p.env, ['worktree', 'add', '-q', int, '-b', 'integration']);
+  const there = await p.run(['task', 'merge', id, '--branch', 'feature', '--yes'], int);
+  assert.equal(there.code, 0, show(there));
+  assert.equal(there.out.data.merged, true);
+  assert.equal(porcelain(int, p.env), '');
+  const here = await p.run(['task', 'merge', id, '--branch', 'feature', '--yes']);
+  assert.equal(here.code, 0, show(here));
+  assert.deepEqual([here.out.data.merged, here.out.data.result], [true, 'pass']);
+  assert.equal(porcelain(p.repo, p.env), '');
+});
+
+test('in-repo state, parallel worktrees: a verify on one branch does not count its tests as removed on another', async (t) => {
+  const p = await project(t, { files: { 'calc.test.mjs': TESTS } });
+  profile.openStore(p.stateDir, names).write('profile', null, { ...profile.emptyProfile(), gates: GATES });
+  await ready(p, T1, head(p.repo, p.env), 'main');
+  assert.equal((await p.run(['verify', T1, '--yes'])).code, 0);
+  git(p.repo, p.env, ['add', '-A']);
+  git(p.repo, p.env, ['commit', '-q', '-m', 'state with the baseline']);
+  const base = head(p.repo, p.env);
+  const other = join(dirname(p.repo), 'other');
+  git(p.repo, p.env, ['worktree', 'add', '-q', other, '-b', 'other']);
+  git(p.wt, p.env, ['merge', '-q', '--ff-only', 'main']);
+  const a = (await p.run(['task', 'new', 'Branch A', '--yes'], 'wt')).out.data.id;
+  await ready(p, a, base, 'wt');
+  addTest(p, p.wt, 'only-in-a');
+  assert.equal((await p.run(['verify', a, '--yes'], 'wt')).code, 0, 'A grows the shared working baseline');
+  const b = (await p.run(['task', 'new', 'Branch B', '--yes'], other)).out.data.id;
+  await ready(p, b, base, other);
+  addTest(p, other, 'only-in-b');
+  const v = await p.run(['verify', b, '--yes'], other);
+  assert.equal(v.code, 0, show(v));
+  assert.deepEqual(v.out.data.inventory.removed, []);
+});
