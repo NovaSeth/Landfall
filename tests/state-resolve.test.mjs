@@ -198,6 +198,11 @@ test('resolve without a main checkout: a bare repository with worktrees, a submo
   gitIn(base, env, 'clone', '-q', '--bare', r, bare);
   const bw = join(base, 'bare-wt');
   gitIn(bare, env, 'worktree', 'add', '-q', bw, 'main');
+  // a bare repository stored as <dir>/.git (review-r1 F2): its common directory is named .git, yet <dir> is no checkout
+  mkdirSync(join(base, 'held'));
+  gitIn(base, env, 'clone', '-q', '--bare', r, join(base, 'held', '.git'));
+  const hw = join(base, 'held-wt');
+  gitIn(join(base, 'held', '.git'), env, 'worktree', 'add', '-q', hw, 'main');
   const sup = committed(base, env, 'super');
   gitIn(sup, env, '-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', r, 'sm');
   const sm = join(sup, 'sm');
@@ -205,7 +210,7 @@ test('resolve without a main checkout: a bare repository with worktrees, a submo
   mkdirSync(join(base, 'sep'));
   const sp = join(base, 'sp');
   gitIn(base, env, 'init', '-q', `--separate-git-dir=${join(base, 'sep', '.git')}`, sp);
-  for (const [cwd, top] of [[bw, bw], [join(bw, 'src'), bw], [sm, sm], [join(sm, 'src'), sm], [sp, sp]]) {
+  for (const [cwd, top] of [[bw, bw], [join(bw, 'src'), bw], [hw, hw], [join(hw, 'src'), hw], [sm, sm], [join(sm, 'src'), sm], [sp, sp]]) {
     const got = state.resolve({ cwd, env, names });
     assert.deepEqual([got.repo, got.worktree, got.dir, got.copy], [top, top, join(top, names.stateDir), null], cwd);
   }
