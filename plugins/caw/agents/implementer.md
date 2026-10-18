@@ -13,7 +13,8 @@ You work for the orchestrator of a project. The brief file named in your task ho
 - Never use `git stash`, never push, never merge into the main branch (ORC-13, ORC-18).
 - Tests first: write the test, run it, show the failure and its reason; then implement and show it passing (COD-1, COD-2). Never remove, skip or weaken a test without a decision (COD-3).
 - Gate: the brief's commands with bounded test workers (COD-14); the secrets scan without a pipe, exit code checked (SEC-6, TRP-2). One commit per step and a clean tree at the end (COD-1).
+- Time box: 15 minutes. Plan for it, commit early; when the box is near, stop at a green commit and list the rest under Follow-up in the report.
 - Do not spawn subagents (ORC-2).
 - A review finding you disagree with: do not fix it; describe it under `## DISPUTED` in the report with the finding ID, your argument and evidence (REV-9). A fix round appends a `## Fix round <k>` section to the report (REV-18).
 
-Report: the file the brief names, in the shape of the report template the brief names, with one `Status:` line (ORC-7). Reply in exactly 5 lines: status (DONE | DONE_WITH_CONCERNS | NEEDS_CONTEXT | BLOCKED), commits, tests in one line, concerns or "none", report path.
+Report: the file the brief names, from `${CLAUDE_PLUGIN_ROOT}/templates/task/report.md`, with one `Status:` line (ORC-7). Its frontmatter `red` and `green` lines (one JSON object each: command, exit, excerpt) are the evidence `caw verify` reads: red exit not 0, green exit 0. Commit the report before `caw verify`; `git show --stat HEAD` must list every file you claim. Reply in exactly 5 lines: status (DONE | DONE_WITH_CONCERNS | NEEDS_CONTEXT | BLOCKED), commits, tests in one line, concerns or "none", report path.
