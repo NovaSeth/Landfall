@@ -187,8 +187,8 @@ function scanLine(ctx, text, at, { marker = true } = {}) {
 const keyFile = (ctx, path, commit = null) => ctx.add({ commit, path, line: null, type: 'key-file', masked: null });
 
 const literal = (path) => `:(literal)${path}`;
-// The bytes of the regular-file blob of path in rev ('' for the index), or null: no such blob there, or larger than a
-// git output may be (it is only read to look for a UTF-16 BOM).
+// The bytes of the regular-file blob of path in rev ('' for the index), or null when there is no such blob there. A blob
+// larger than a git output may be (ctx.blobMax) cannot be read, so the scan is invalid: refused, never clean.
 function blob(ctx, rev, path) {
   let oid;
   let size;
@@ -203,16 +203,21 @@ function blob(ctx, rev, path) {
     oid = m[2];
     size = Number(m[3]);
   }
-  return size > MAX_OUTPUT ? null : runGit(ctx, ['cat-file', 'blob', oid], { raw: true });
+  if (size > ctx.blobMax) {
+    throw invalid('blob-too-large', `${path} (${rev || 'the index'}) is ${size} bytes, more than the ${ctx.blobMax} bytes the scan can read from git`, 'commit large binaries through Git LFS, or scan the working tree instead');
+  }
+  return runGit(ctx, ['cat-file', 'blob', oid], { raw: true });
 }
-// A file a diff shows as binary: when its new version (now()) is BOM-marked UTF-16 text, the lines that no earlier
-// version (before(): the parents, HEAD or the working tree) holds are scanned, numbered as in the new version.
+// A file a diff shows as binary: when its new version (now()) is text (decodeText: BOM-marked UTF-16, or a file re-saved
+// as UTF-8 from UTF-16), the lines that no earlier version (before(): the parents, HEAD or the working tree) holds are
+// scanned, numbered as in the new version.
 function binaryChange(ctx, { commit, path, now, before }) {
   if (skipsContent(path)) return;
   const buf = now();
-  if (!buf || !isUtf16(buf)) return;
+  const text = buf === null ? null : decodeText(buf);
+  if (text === null) return;
   const held = new Set(before().flatMap((b) => (b ? linesOf(decodeText(b) ?? '') : [])));
-  linesOf(decodeText(buf)).forEach((l, k) => { if (!held.has(l)) scanLine(ctx, l, { commit, path, line: k + 1 }); });
+  linesOf(text).forEach((l, k) => { if (!held.has(l)) scanLine(ctx, l, { commit, path, line: k + 1 }); });
 }
 // The binary entries ("-\t-\t<path>") of `--numstat -z --no-renames`, with the commit and parents of a log's
 // --format=%x01%H %P lines: [{ commit, parents, path }].
@@ -348,8 +353,9 @@ const whereOf = (f) => `${f.commit ? `${f.commit}:` : ''}${f.path}${f.line ? `:$
 const byPlace = (a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : (a.line ?? 0) - (b.line ?? 0));
 
 // One scan: { mode, findings: [{ where, path, line, commit, type, masked }], scanned: { files, lines } }. opts: cwd,
-// env, names, mode (tree, staged, range, artifact), revs (the words of a range), artifact (a path relative to cwd).
-export function scanSecrets({ cwd, env, names, mode = 'tree', revs = [], artifact } = {}) {
+// env, names, mode (tree, staged, range, artifact), revs (the words of a range), artifact (a path relative to cwd),
+// blobMax (the largest blob read from git, default lib/git's output cap; tests lower it).
+export function scanSecrets({ cwd, env, names, mode = 'tree', revs = [], artifact, blobMax = MAX_OUTPUT } = {}) {
   if (!MODES.includes(mode)) throw new Error(`unknown scan mode ${mode}`);
   let where;
   try {
@@ -365,7 +371,7 @@ export function scanSecrets({ cwd, env, names, mode = 'tree', revs = [], artifac
   }
   const found = new Map();
   const ctx = {
-    repo: where.repo, cwd, env, extra, tmp, outputs: 0, files: 0, lines: 0,
+    repo: where.repo, cwd, env, extra, tmp, blobMax, outputs: 0, files: 0, lines: 0,
     add: (f) => { const w = whereOf(f); if (!found.has(w)) found.set(w, { where: w, ...f }); },
   };
   try {

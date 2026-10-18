@@ -573,3 +573,35 @@ test('F5: a UTF-8 BOM in secrets-patterns.txt is stripped; another encoding of t
     assert.match(r.env.errors[0].message, /secrets-patterns\.txt.*UTF-8/);
   }
 });
+
+// Fix round 2 (review r2).
+test('F1 (r2): a blob over the read cap makes the scan invalid, never clean; a blob at the cap is read', async (t) => {
+  const { scanSecrets } = await lib('secrets/index.mjs');
+  const d = repo(t);
+  commit(d, 'README.md', 'x\n');
+  const content = utf16(`TOKEN="${ghToken}"\r\n`);
+  put(d, 'win/big.txt', content);
+  git(d, 'add', '-A');
+  const scanWith = (mode, blobMax, revs = []) => scanSecrets({ cwd: d, env: process.env, names, mode, revs, blobMax });
+  const tooLarge = (err) => err.exit === 'ENV' && err.code === 'blob-too-large' && /win\/big\.txt/.test(err.message);
+  assert.deepEqual(scanWith('staged', content.length).findings.map((f) => f.where), ['win/big.txt:1'], 'at the cap');
+  assert.throws(() => scanWith('staged', content.length - 1), tooLarge, 'one byte over the cap');
+  git(d, 'commit', '-qm', 'big');
+  const sha = git(d, 'rev-parse', 'HEAD').slice(0, 12);
+  assert.deepEqual(scanWith('range', content.length, ['HEAD~1..HEAD']).findings.map((f) => f.where), [`${sha}:win/big.txt:1`]);
+  assert.throws(() => scanWith('range', content.length - 1, ['HEAD~1..HEAD']), tooLarge);
+});
+
+test('F6: a file re-saved from UTF-16 to UTF-8 while a secret is added: its new lines are scanned in --staged and --range', async (t) => {
+  const d = repo(t);
+  commit(d, 'win/notes.txt', utf16('a=1\r\nb=2\r\n'));
+  put(d, 'win/notes.txt', Buffer.from(`a=1\r\nb=2\r\nTOKEN="${ghToken}"\r\n`));
+  git(d, 'add', '-A');
+  let r = await scan(d, '--staged');
+  assert.deepEqual([r.status, where(r)], [1, ['win/notes.txt:3']], `the lines the UTF-16 version held are not new: ${show(r)}`);
+  git(d, 'commit', '-qm', 'utf-8 now');
+  const sha = git(d, 'rev-parse', 'HEAD').slice(0, 12);
+  r = await scan(d, '--range', 'HEAD~1..HEAD');
+  assert.deepEqual([r.status, where(r)], [1, [`${sha}:win/notes.txt:3`]], show(r));
+  noLeak(r, ghToken);
+});
