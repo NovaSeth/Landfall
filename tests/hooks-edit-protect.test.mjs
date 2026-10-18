@@ -170,3 +170,18 @@ test('edit hook: a repository state that cannot be resolved blocks an edit insid
     assert.equal(edit(g, join(f.dir, 'src', 'a.js'), { content: 'x' }, 'Write').decision, 'allow', `${name}: a source file`);
   }
 });
+
+test('owned state files: every committed lib/state kind is owned, and an Edit names its command (FLW-7)', async (t) => {
+  const { KINDS } = await lib('state/kinds.mjs');
+  const keys = { team: 'AB', task: 'T-AB-1', tombstone: 'D-AB-3', counter: 'T-AB' };
+  const f = fixture(t);
+  for (const kind of Object.values(KINDS)) {
+    const rel = kind.path(kind.keyPattern ? keys[kind.name] : undefined);
+    assert.ok(!kind.keyPattern || keys[kind.name], `${kind.name}: add a sample key to this test`);
+    assert.equal(ownedFile(rel)?.rule, 'FLW-7', `${kind.name}: ${rel}`);
+    const v = edit(f, f.s(rel), { old_string: '{', new_string: '{ ' });
+    assert.equal(v.decision, 'deny', rel);
+    assert.match(v.reason, /^FLW-7: blocked a direct edit of /, rel);
+    assert.ok(v.reason.includes(`${names.bin} `), `${rel}: ${v.reason}`);
+  }
+});
