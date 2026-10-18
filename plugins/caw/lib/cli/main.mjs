@@ -3,6 +3,8 @@
 // writer: one JSON envelope line (--json) or text. No command (only --json, if anything) runs the default command,
 // `status` (spec §8.2); --help prints the help.
 // A StateError the command throws becomes its result here (typedResult), so no command maps them itself.
+// A row with a `capability` (spec §14 rollback) is refused here while that capability's flag is off (lib/config: the
+// machine override, config.json, the default), naming the flag, before consent and before the command loads.
 // main() returns the exit code; the launcher sets it. Names come from lib/name.json, the version from
 // .claude-plugin/plugin.json.
 import { readFileSync } from 'node:fs';
@@ -117,6 +119,18 @@ export async function main(argv, { commands = COMMANDS, io = processIo() } = {})
       return say({ data: { usage: text }, text });
     }
     const { args, flags } = parseRow(row, tokens.slice(row.name.split(' ').length), bin);
+    if (row.capability) {
+      const { capabilityMode } = await import('../config/index.mjs');
+      let mode;
+      try {
+        mode = capabilityMode(row.capability, { cwd: io.cwd, env: io.env, names });
+      } catch (err) {
+        return say(await typedResult(err));
+      }
+      if (mode === 'off') {
+        return say({ code: EXIT.REFUSED, errors: [{ code: 'capability-off', message: `the ${row.capability} capability is off (flags.${row.capability}): ${row.name} is refused`, hint: `turn it back on with '${bin} flags set ${row.capability} <mode>' ('${bin} flags show' lists the modes)` }] });
+      }
+    }
     if (mutates(row, flags) && !globals.yes && !io.stdinIsTTY) {
       return say({ code: EXIT.REFUSED, errors: [{ code: 'consent-required', message: `${row.name} changes files and no terminal is attached to confirm`, hint: `rerun with --yes to consent, or run it in a terminal` }] });
     }

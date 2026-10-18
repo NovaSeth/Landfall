@@ -64,7 +64,7 @@ function repo(t, { active = true, files = {} } = {}) {
   git(dir, '-c', 'init.defaultBranch=main', 'init', '-q');
   const store = join(dir, names.stateDir);
   if (active) {
-    put(store, 'state.json', { schema: KINDS.state.version, codename: names.codename, createdWith: '2.0.0', activatedAt: AT, flags: {} });
+    put(store, 'state.json', { schema: KINDS.state.version, codename: names.codename, createdWith: '2.0.0', activatedAt: AT });
     put(store, '.gitignore', 'local/\n');
   }
   for (const [rel, content] of Object.entries(files)) put(dir, rel, content);

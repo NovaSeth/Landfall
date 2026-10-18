@@ -168,7 +168,7 @@ test('init: consent required; activation writes state.json, .gitignore and team/
   assert.deepEqual([res.out.data.activated, res.out.data.handle, res.out.data.dir, res.out.data.linked], [true, USER.handle, r.store, false]);
   assert.deepEqual(filesUnder(r.store), ['.gitignore', 'state.json', `team/${USER.handle}.json`], 'exactly the activation files');
   const doc = JSON.parse(readFileSync(join(r.store, 'state.json'), 'utf8'));
-  assert.deepEqual({ ...doc, activatedAt: 'x' }, { schema: state.KINDS.state.version, codename: names.codename, createdWith: VERSION, activatedAt: 'x', flags: {} });
+  assert.deepEqual({ ...doc, activatedAt: 'x' }, { schema: state.KINDS.state.version, codename: names.codename, createdWith: VERSION, activatedAt: 'x' });
   assert.match(doc.activatedAt, ISO_TIME);
   const team = JSON.parse(readFileSync(join(r.store, 'team', `${USER.handle}.json`), 'utf8'));
   assert.equal(team.emailSha256, createHash('sha256').update(USER.email).digest('hex'));

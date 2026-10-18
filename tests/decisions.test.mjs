@@ -60,7 +60,7 @@ function fixture(t, { active = true } = {}) {
   const dir = join(repo, names.stateDir);
   if (active) {
     const store = state.open(dir, { names });
-    store.write('state', null, { codename: names.codename, createdWith: VERSION, activatedAt: AT, flags: {} });
+    store.write('state', null, { codename: names.codename, createdWith: VERSION, activatedAt: AT });
     state.registerHandle(store, { name: IDENTITY.name, email: IDENTITY.email, handle: 'AB' });
   }
   const cli = async (args, { tty = false, extraEnv = {} } = {}) => {

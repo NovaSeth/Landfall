@@ -68,7 +68,7 @@ function commitAt(dir, when, files, { who = ANN, message = 'change' } = {}) {
   git(dir, env, 'commit', '-q', '--allow-empty', '-m', message);
   return git(dir, {}, 'rev-parse', 'HEAD');
 }
-// A throwaway repository; active: state.json (with `flags`), .gitignore and the handle TU of the test identity.
+// A throwaway repository; active: state.json, config.json with `flags` (when any), .gitignore and the handle TU of the test identity.
 function repo(t, { active = true, flags = {} } = {}) {
   const base = realpathSync(mkdtempSync(join(tmpdir(), 'engine-')));
   t.after(() => rmSync(base, { recursive: true, force: true }));
@@ -79,7 +79,8 @@ function repo(t, { active = true, flags = {} } = {}) {
   git(dir, {}, 'config', 'user.email', 'test@example.com');
   const store = join(dir, names.stateDir);
   if (active) {
-    put(store, 'state.json', { schema: KINDS.state.version, codename: names.codename, createdWith: '2.0.0', activatedAt: isoAt(400), flags });
+    put(store, 'state.json', { schema: KINDS.state.version, codename: names.codename, createdWith: '2.0.0', activatedAt: isoAt(400) });
+    if (Object.keys(flags).length) put(store, 'config.json', { schema: KINDS.config.version, flags });
     put(store, '.gitignore', 'local/\n');
     put(store, 'team/TU.json', { schema: KINDS.team.version, handle: 'TU', emailSha256: emailHash('test@example.com'), addedAt: isoAt(400) });
   }
@@ -92,7 +93,7 @@ const shadowLines = (store) => {
   return existsSync(file) ? readFileSync(file, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)) : [];
 };
 const tierRecords = (store) => readRecords(store).records.filter((r) => r.doc.kind === 'tier');
-const stateFlags = (store) => JSON.parse(readFileSync(join(store, 'state.json'), 'utf8')).flags;
+const stateFlags = (store) => (existsSync(join(store, 'config.json')) ? JSON.parse(readFileSync(join(store, 'config.json'), 'utf8')).flags : {});
 function snapshot(dir) {
   const out = [];
   const walk = (d, rel) => {
@@ -296,7 +297,7 @@ test('SC11: 1,000 seeded sequences oscillating ±10% around a threshold change t
 
 // ---- capabilities ----
 
-test('capability table per tier (spec §7.4); the engine flags are the state.json keys of lanes and generated files', () => {
+test('capability table per tier (spec §7.4); the engine flags are the config.json keys of lanes and generated files', () => {
   assert.deepEqual(engine.ENGINE_FLAGS, ['lanes', 'ci-gate', 'pre-push', 'codeowners', 'pr-template']);
   const cap = (tier, o = {}) => engine.capabilities(tier, { scheduler: false, contributors30: 0, packs: [], ...o });
   const row = (tier) => {

@@ -11,7 +11,8 @@
 //   bin-path     the first <bin> on PATH is this launcher (Claude Code puts the plugin's bin/ on the Bash tool PATH)
 //   state        state.json schema vs this plugin: newer or invalid → fail (writes are refused)
 //   profile      profile freshness (lib/profile scanDue): a scan due → warn
-//   flags        the capability flags of state.json
+//   flags        the capability flags (lib/config: machine overrides, config.json, defaults); a machine entry that is
+//                no rollout capability, or a repository value that would lower a protective capability (ignored) → warn
 //   providers    provider table: no provider detection in this version → skip "not available"
 //   scheduler    leases and stale reaps: no scheduler in this version → skip
 //   context      the always-on cost from the one `claude plugin details` call the hooks check reads: over the SC3
@@ -22,7 +23,7 @@
 // Exit 0 healthy · 1 a check or row failed · 8 claude or git missing or not runnable (the report is still listed).
 import { accessSync, constants, readFileSync, realpathSync, statSync } from 'node:fs';
 import { delimiter, isAbsolute, join } from 'node:path';
-import { ENGINE_FLAG } from '../engine/index.mjs';
+import { flagsOf, readConfig } from '../config/index.mjs';
 import { trackedSideFiles } from '../gen/index.mjs';
 import { git } from '../git/index.mjs';
 import { HOOKS } from '../hooks/registry.mjs';
@@ -162,9 +163,11 @@ const SCAN_DUE = {
   days: (s) => `${s.days} days since the last scan`,
 };
 
-function flagList(flags = {}) {
-  const set = Object.keys(flags).sort().map((k) => `${k} ${flags[k]}`);
-  return [...(Object.hasOwn(flags, ENGINE_FLAG) ? [] : [`${ENGINE_FLAG} shadow (default)`]), ...set].join(', ');
+// "<flag> <mode>" per flag, the source in parentheses unless the repository set it, and the ignored machine entries.
+function flagList({ flags, ignored, lowered }) {
+  const set = Object.entries(flags).map(([k, f]) => `${k} ${f.mode}${f.source === 'repo' ? '' : ` (${f.source})`}`);
+  return [...set, ...ignored.map((k) => `${k} ignored (machine config: not a rollout capability)`),
+    ...lowered.map((l) => `${l.name} ${l.mode} in config.json ignored (a committed file never lowers a protective capability; flags set --local does)`)].join(', ');
 }
 
 // The state, profile and flags rows of the repository at cwd. A StateError is a failed row (and an error) except
@@ -218,9 +221,15 @@ function repoRows({ names, io, id, errors }) {
     profileRow = failed('profile', err);
   }
 
-  const flagsRow = state === null
-    ? row('flags', 'skip', 'state.json not readable', 'fix the state row first')
-    : row('flags', 'ok', flagList(state.flags), `flags are the flags map of state.json (off | shadow | on); ${names.bin} tier --explain shows what the tier sets`);
+  let flagsRow = row('flags', 'skip', 'state.json not readable', 'fix the state row first');
+  if (state !== null) {
+    try {
+      const f = flagsOf(readConfig(where, { names, env: io.env }));
+      flagsRow = row('flags', f.ignored.length || f.lowered.length ? 'warn' : 'ok', flagList(f), `${names.bin} flags show explains each flag (off | shadow | on); ${names.bin} tier --explain shows what the tier sets`);
+    } catch (err) {
+      flagsRow = failed('flags', err);
+    }
+  }
   return { rows: [stateRow, profileRow, flagsRow], repo: where.repo, worktree: where.worktree, env: null };
 }
 

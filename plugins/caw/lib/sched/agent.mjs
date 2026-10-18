@@ -1,11 +1,12 @@
 // Agent admission (spec §7.8 admission points, §14 capability `admission`): a PreToolUse `Agent` event for the
 // implementer subagent of this plugin asks for an `agent` lease keyed by its tool_use_id. Every other agent type,
-// an inactive repository, the capability off and malformed input pass. Mode from the repository's state.json
-// flags.admission (default shadow): shadow allows and returns the would-deny record with the readings; on denies
-// with "machine busy: <reasons>; run `<bin> tick` later". A scheduler error never blocks a spawn (allow + record).
+// an inactive repository, the capability off and malformed input pass. Mode from the `admission` capability flag
+// (lib/config: machine override, config.json, default shadow): shadow allows and returns the would-deny record with
+// the readings; on denies with "machine busy: <reasons>; run `<bin> tick` later". A scheduler error never blocks a spawn (allow + record).
 // The caller (the admit-agent hook) emits the decision and logs the shadow record.
 import { isAbsolute } from 'node:path';
-import { open, resolve } from '../state/index.mjs';
+import { modeOf as flagMode, readConfig } from '../config/index.mjs';
+import { resolve } from '../state/index.mjs';
 import { acquire } from './leases.mjs';
 import { freePct, readings } from './machine.mjs';
 
@@ -14,8 +15,7 @@ const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 function modeOf(cwd, names, env) {
   const where = resolve({ cwd, env, names });
   if (!where.active) return 'off';
-  const mode = open(where.dir, { names }).read('state', null)?.flags?.admission ?? 'shadow';
-  return ['off', 'shadow', 'on'].includes(mode) ? mode : 'shadow';
+  return flagMode('admission', readConfig(where, { names, env }));
 }
 
 // { action: 'pass' } · { action: 'allow', lease (null without a free slot), env, shadow: record | null } ·

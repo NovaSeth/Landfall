@@ -5,4 +5,5 @@ export { CONTEXT_BUDGET, READ_MAX, citedIn, contextLine, globMatch, inside, real
 export { SCAN_MAX, checkDecisions, stateRel } from './check.mjs';
 export { DECISION, DECISION_KINDS, FILE_NAME, RECORD_LIMITS, STATUSES, citationPattern, formatRecord, parseRecord, recordErrors, sections } from './record.mjs';
 export { INDEX, STORE_KINDS, readRecords, scopeIndex, summarize } from './records.mjs';
+export { requireDecision } from './require.mjs';
 export { authorHandle, createDecision, retireDecision } from './write.mjs';

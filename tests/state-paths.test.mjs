@@ -34,7 +34,7 @@ const AT = '2026-10-15T05:42:00.000Z';
 const json = (v) => `${JSON.stringify(v, null, 2)}\n`;
 const task = (id, extra = {}) => ({ schema: KINDS.task.version, id, kind: 'task', title: `Task ${id}`, lane: null, owner: id.split('-')[1], class: null, classHistory: [], status: 'new', round: 0, events: [], base: null, branch: null, ...extra });
 const FILES = {
-  'state.json': { schema: KINDS.state.version, codename: names.codename, createdWith: '2.0.0', activatedAt: AT, flags: {} },
+  'state.json': { schema: KINDS.state.version, codename: names.codename, createdWith: '2.0.0', activatedAt: AT },
   'team/AB.json': { schema: KINDS.team.version, handle: 'AB', emailSha256: state.emailHash('ab@example.com'), addedAt: AT },
   'tasks/T-AB-1/task.json': task('T-AB-1'),
   'tombstones/T-AB-9.json': { schema: KINDS.tombstone.version, id: 'T-AB-9', retiredAt: AT, by: 'AB', reason: 'x' },

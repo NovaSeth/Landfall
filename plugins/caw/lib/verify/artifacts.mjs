@@ -63,7 +63,7 @@ export function reviewNeed(cls, tier, providerAvailable = false) {
 }
 
 // The tier the engine applies: the latest active tier decision when the engine flag is on, else L0.
-export const appliedTier = (store) => ((store.read('state', null)?.flags?.[ENGINE_FLAG] ?? 'shadow') === 'on' ? lastRecordedChange(store.dir).tier : 'L0');
+export const appliedTier = (store) => ((store.read('config', null)?.flags?.[ENGINE_FLAG] ?? 'shadow') === 'on' ? lastRecordedChange(store.dir).tier : 'L0');
 
 const classOf = (steps) => (steps.includes('cross-provider-review') ? 'critical' : steps.includes('review') ? 'standard' : 'trivial');
 

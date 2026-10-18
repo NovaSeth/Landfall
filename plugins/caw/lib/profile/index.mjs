@@ -2,12 +2,16 @@
 // file. profile.json and local/scan-cache.json are written only through lib/state (kind.mjs), and only in an
 // active repository: an inactive one is observed read-only (GC2, zero footprint). The code observed is the worktree's
 // (lib/state resolve: the git top level of the current directory), its HEAD the scan head; the profile is the project's.
+// Gate changes after activation are decisions (spec §7.3, §7.6, GC3: a weaker gate weakens the oracle): applyGates
+// (the observed candidates) and setGate (one gate by name) need an active gate-change decision (lib/decisions
+// requireDecision: exit 1 otherwise, nothing written).
 import { relative, isAbsolute } from 'node:path';
-import { StateError } from '../state/index.mjs';
-import { ProfileError, parseValue, requireFactKey, CONFIDENCE_OF } from './keys.mjs';
+import { requireDecision } from '../decisions/index.mjs';
+import { PATTERNS, StateError } from '../state/index.mjs';
+import { GATE_KINDS, LIMITS, ProfileError, hasForbidden, parseValue, requireFactKey, CONFIDENCE_OF } from './keys.mjs';
 import { emptyProfile, openStore } from './kind.mjs';
 import { merge, sameValue } from './merge.mjs';
-import { SCANNER, observe } from './observe.mjs';
+import { GATE_TIMEOUT_S, SCANNER, observe } from './observe.mjs';
 import { commitsSince, headOf, scanDue } from './triggers.mjs';
 
 export { CONFIDENCE, CONFIDENCE_OF, FACT_KEYS, GATE_KINDS, KEYS, LIMITS, ProfileError, SOURCES, STRUCTURED_KEYS, parseValue, validValue } from './keys.mjs';
@@ -99,4 +103,57 @@ export function setFact(where, { names, key, raw, source, evidence, now = nowIso
     return doc;
   });
   return { fact, previous };
+}
+
+const GATE_DECISION = Object.freeze(['gate-change']);
+const badGate = (message, hint) => new ProfileError('invalid-value', 'USAGE', message, { hint });
+
+function gateStore(where, names) {
+  const store = openStore(where.dir, names);
+  if (!store.active) throw new ProfileError('inactive', 'REFUSED', `${where.repo} is not active: the gates are written only after activation`, { hint: `start tracking first (/${names.plugin}:start); nothing was written` });
+  return store;
+}
+
+// Replaces the gates with the candidates the observation scan detects (cached by HEAD, else a fresh read-only scan).
+// Returns { gates, previous, changed, decision }.
+export function applyGates(where, { names, env, decision }) {
+  const store = gateStore(where, names);
+  const record = requireDecision({ dir: where.dir, id: decision, kinds: GATE_DECISION, names, what: 'a gate change' });
+  const head = headOf(where.worktree, { env });
+  const cache = head ? cacheOp(() => store.read('scanCache')) : null;
+  const observation = cache && cache.head === head && cache.scanner === SCANNER ? cache.observation : observe(where.worktree, { env, exclude: insideRepo(where) });
+  if (observation.gates.length === 0) throw new ProfileError('no-candidates', 'FAIL', `the scan of ${where.repo} detects no gate candidates; nothing was written`, { hint: `add one with '${names.bin} profile gates set <name> <cmd> --decision ${record.id}'` });
+  let previous = [];
+  let changed = false;
+  store.update('profile', null, (cur) => {
+    const doc = cur ?? emptyProfile();
+    previous = doc.gates;
+    changed = JSON.stringify(doc.gates) !== JSON.stringify(observation.gates);
+    return changed ? { ...doc, gates: structuredClone(observation.gates) } : undefined;
+  });
+  return { gates: observation.gates, previous, changed, decision: record.id };
+}
+
+// Adds the gate `name` or replaces it in place: cmd, kind (default: the replaced gate's, else other) and timeoutS
+// (default: the replaced gate's, else the scan's). Returns { gate, previous (the replaced gate or null), decision }.
+export function setGate(where, { names, name, cmd, kind, timeout, decision }) {
+  if (typeof name !== 'string' || !PATTERNS.kebab.test(name) || name.length > LIMITS.gateName) throw badGate(`gate name ${JSON.stringify(String(name).slice(0, 40))} is not a kebab-case name of at most ${LIMITS.gateName} characters`, 'such as unit or e2e-smoke');
+  if (typeof cmd !== 'string' || cmd.trim() === '' || [...cmd].length > LIMITS.gateCmd || hasForbidden(cmd)) throw badGate(`the gate command must be 1 to ${LIMITS.gateCmd} characters without control, zero-width or bidi characters`, 'quote it as one argument');
+  if (kind !== undefined && !GATE_KINDS.includes(kind)) throw badGate(`--kind ${JSON.stringify(String(kind).slice(0, 20))} is not one of ${GATE_KINDS.join(', ')}`, 'a test gate is the one verify collects the tests from');
+  const seconds = timeout === undefined ? undefined : /^[1-9]\d{0,4}$/.test(String(timeout)) ? Number(timeout) : NaN;
+  if (Number.isNaN(seconds) || seconds > LIMITS.timeoutS) throw badGate(`--timeout must be a whole number of seconds from 1 to ${LIMITS.timeoutS}`, `the scan uses ${GATE_TIMEOUT_S}`);
+  const store = gateStore(where, names);
+  const record = requireDecision({ dir: where.dir, id: decision, kinds: GATE_DECISION, names, what: 'a gate change' });
+  let previous = null;
+  let gate = null;
+  store.update('profile', null, (cur) => {
+    const doc = cur ?? emptyProfile();
+    const at = doc.gates.findIndex((g) => g.name === name);
+    previous = at < 0 ? null : doc.gates[at];
+    gate = { name, cmd, timeoutS: seconds ?? previous?.timeoutS ?? GATE_TIMEOUT_S, kind: kind ?? previous?.kind ?? 'other' };
+    const gates = [...doc.gates];
+    if (at < 0) gates.push(gate); else gates[at] = gate;
+    return { ...doc, gates };
+  });
+  return { gate, previous, decision: record.id };
 }

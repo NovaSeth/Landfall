@@ -19,7 +19,7 @@ export const SCANNER = 2; // bump when detection changes, so cached observations
 // The fact keys this scan observes; an observed fact of another key (set by an agent) is never dropped by a scan.
 export const SCANNED_KEYS = Object.freeze(['stack', 'ui', 'backend', 'ci', 'otherHarnesses']);
 const MAX_READ = 256 * 1024;
-const GATE_TIMEOUT_S = 1800;
+export const GATE_TIMEOUT_S = 1800;
 
 const MANIFESTS = [
   [/^package\.json$/, 'node'], [/^tsconfig\.json$/, 'typescript'], [/^(?:pyproject\.toml|setup\.py|requirements\.txt)$/, 'python'],

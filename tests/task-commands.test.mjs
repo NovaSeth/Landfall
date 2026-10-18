@@ -280,9 +280,9 @@ test('1.x: team mode needs --pas → with the lanes capability on, a task is dis
   await r.run(['task', 'new', 'No lane']);
   await r.run(['task', 'new', 'Lane from new', '--lane', 'cart']);
   const dispatch = (id, ...extra) => r.run(['task', 'set', id, 'dispatched', '--executor', 'claude:implementer', '--base', 'abc1234', ...extra]);
-  store.update('state', null, (doc) => ({ ...doc, flags: { lanes: 'shadow' } }));
+  store.update('config', null, (doc) => ({ ...doc, flags: { lanes: 'shadow' } }));
   assert.equal((await dispatch(`T-${ME}-1`)).code, 0, 'shadow: not enforced');
-  store.update('state', null, (doc) => ({ ...doc, flags: { lanes: 'on' } }));
+  store.update('config', null, (doc) => ({ ...doc, flags: { lanes: 'on' } }));
   await r.run(['task', 'new', 'Another without lane']);
   const before = r.raw(`T-${ME}-3`);
   const res = await dispatch(`T-${ME}-3`);

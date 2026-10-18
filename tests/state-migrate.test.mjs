@@ -53,7 +53,7 @@ function snapshot(dir, { skip = () => false } = {}) {
   return out;
 }
 const put = (dir, rel, value) => { mkdirSync(dirname(join(dir, rel)), { recursive: true }); writeFileSync(join(dir, rel), typeof value === 'string' ? value : `${JSON.stringify(value, null, 2)}\n`); };
-const stateDoc = (extra = {}) => ({ schema: KINDS.state.version, codename: names.codename, createdWith: '2.0.0', activatedAt: AT, flags: {}, ...extra });
+const stateDoc = (extra = {}) => ({ schema: KINDS.state.version, codename: names.codename, createdWith: '2.0.0', activatedAt: AT, ...extra });
 const task = (id) => ({ schema: KINDS.task.version, id, kind: 'task', title: `Task ${id}`, lane: null, owner: id.split('-')[1], class: null, classHistory: [], status: 'new', round: 0, events: [], base: null, branch: null });
 function rng(seed) {
   let a = seed >>> 0;
@@ -263,7 +263,8 @@ test('the migration registry matches its directory; every kind has a complete ch
 
 test('checkChain finds every planted chain defect (REV-45)', () => {
   const { item, steps } = chain(rng(3), 4);
-  const kinds = { ...KINDS, item };
+  // The generated kind alone: the plugin's own kinds have their own chain (checked against MIGRATIONS above).
+  const kinds = { item };
   const plain = steps.map(({ fields, ...s }) => s);
   assert.deepEqual(state.checkChain(kinds, plain), []);
   const defects = [
@@ -276,6 +277,9 @@ test('checkChain finds every planted chain defect (REV-45)', () => {
     ['bad id', plain.map((s) => (s.from === 1 ? { ...s, id: 'one' } : s))],
     ['beyond the kind version', [...plain, { id: '004-item-late', kind: 'item', from: 4, to: 5, up: (d) => d }]],
     ['no up function', plain.map((s) => (s.from === 1 ? { ...s, up: null } : s))],
+    ['carry to an unknown kind', plain.map((s) => (s.from === 1 ? { ...s, carry: { kind: 'ghost', into: () => undefined } } : s))],
+    ['carry from or to a keyed kind', plain.map((s) => (s.from === 1 ? { ...s, carry: { kind: 'item', into: () => undefined } } : s))],
+    ['carry without into', plain.map((s) => (s.from === 1 ? { ...s, carry: { kind: 'item' } } : s))],
   ];
   for (const [label, migrations] of defects) assert.ok(state.checkChain(kinds, migrations).length >= 1, label);
 });

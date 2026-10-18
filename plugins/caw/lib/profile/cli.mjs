@@ -1,12 +1,13 @@
 // `<bin> profile show|observe|set` (spec §7.3, §8.2): the command implementations behind the command table rows.
 // show: the profile and whether a scan is due (read-only) · observe: the observation scan, merged into the
-// profile in an active repository (read-only preview otherwise) · set: one said or observed fact.
+// profile in an active repository (read-only preview otherwise) · set: one said or observed fact · gates apply|set:
+// a gate change with an active gate-change decision (exit 1 without one, nothing written).
 // Exit 1 a said fact outranks the observed value, or a state file is invalid · 2 bad key, value, source or
 // evidence · 7 inactive repository (set), newer schema, no consent · 8 not a git repository, git missing.
 import { StateError, resolve } from '../state/index.mjs';
 import { EXIT } from '../cli/commands.mjs';
 import { FACT_KEYS, ProfileError } from './keys.mjs';
-import { readProfile, runObserve, setFact } from './index.mjs';
+import { applyGates, readProfile, runObserve, setFact, setGate } from './index.mjs';
 
 const fail = (err) => {
   if (err instanceof StateError || err instanceof ProfileError) return { code: EXIT[err.exit], errors: [err] };
@@ -70,6 +71,26 @@ export function set(ctx) {
     const w = where(ctx);
     const { fact, previous } = setFact(w, { names: ctx.names, key: ctx.args.key, raw: ctx.args.value, source: ctx.flags.source, evidence: ctx.flags.evidence });
     return { data: { key: ctx.args.key, fact, previous }, text: `Recorded ${ctx.args.key} = ${shown(fact.value)} (${fact.source}: ${quote(fact.evidence)}).\n` };
+  } catch (err) {
+    return fail(err);
+  }
+}
+
+const gateLine = (g) => `${g.name}: ${g.cmd} (${g.kind}, ${g.timeoutS} s)`;
+
+export function gatesApply(ctx) {
+  try {
+    const r = applyGates(where(ctx), { names: ctx.names, env: ctx.io.env, decision: ctx.flags.decision });
+    return { data: r, text: `${r.changed ? 'Gates replaced' : 'Gates unchanged'} (${r.decision}):\n${r.gates.map((g) => `  ${gateLine(g)}`).join('\n')}\n` };
+  } catch (err) {
+    return fail(err);
+  }
+}
+
+export function gatesSet(ctx) {
+  try {
+    const r = setGate(where(ctx), { names: ctx.names, name: ctx.args.name, cmd: ctx.args.cmd, kind: ctx.flags.kind, timeout: ctx.flags.timeout, decision: ctx.flags.decision });
+    return { data: r, text: `${r.previous ? 'Gate replaced' : 'Gate added'} (${r.decision}): ${gateLine(r.gate)}\n` };
   } catch (err) {
     return fail(err);
   }

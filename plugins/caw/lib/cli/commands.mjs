@@ -7,7 +7,9 @@
 // mutating (changes files: needs a terminal or --yes, REV-58; for a command whose forms differ, a function of the
 // parsed flags, true for a form that changes files: consent (main.mjs) and help (help.mjs) both read it through
 // mutates()) · hidden (not in --help; docs list it as internal) ·
-// failOpen (hook entry: an error ends with exit 0 and no output, GC8, except a block-if-guarded hook: exit 2) · load () => Promise<(ctx) => result>.
+// failOpen (hook entry: an error ends with exit 0 and no output, GC8, except a block-if-guarded hook: exit 2) ·
+// capability (a rollout capability of lib/config: while its flag is off the command is refused with REFUSED naming the
+// flag, before consent and before it loads; spec §14 rollback; the row must list REFUSED) · load () => Promise<(ctx) => result>.
 // A command returns { code?, data?, errors?: [{ code, message, hint }], text?, warnings?: [text], usage? } and never
 // prints: lib/cli/output.mjs writes it (S2). code defaults to FAIL when errors are present, else OK.
 
@@ -120,6 +122,41 @@ const ROWS = [
     flags: [],
     exits: ['OK', 'FAIL', 'REFUSED', 'ENV'],
     load: () => import('../profile/cli.mjs').then((m) => m.show),
+  },
+  {
+    name: 'profile gates apply',
+    summary: 'Replace the profile gates with the candidates the scan detects; only with an active gate-change decision.',
+    details: [
+      'After activation a gate change is a decision (a weaker gate weakens the oracle): without an active gate-change',
+      'decision exit 1, nothing written. The candidates come from the scan of HEAD (cached), as profile observe reports them.',
+      'Changes files: needs a terminal or --yes.',
+    ],
+    args: [],
+    flags: [{ flag: '--decision', value: 'D', summary: 'required: an active gate-change decision, such as D-AB-3' }],
+    exits: ['OK', 'FAIL', 'USAGE', 'REFUSED', 'ENV'],
+    mutating: true,
+    load: () => import('../profile/cli.mjs').then((m) => m.gatesApply),
+  },
+  {
+    name: 'profile gates set',
+    summary: 'Add a profile gate or replace the one of that name; only with an active gate-change decision.',
+    details: [
+      'For a gate the scan does not detect (a repository\'s real gate is often more than npm test). Replacing keeps the',
+      'gate\'s kind and time limit unless given; a new gate is kind other with the scan\'s time limit unless given.',
+      'Without an active gate-change decision exit 1, nothing written. Changes files: needs a terminal or --yes.',
+    ],
+    args: [
+      { name: 'name', required: true, summary: 'gate name, kebab-case, at most 40 characters' },
+      { name: 'cmd', required: true, summary: 'the shell command verify runs (sh -c), one quoted argument of at most 300 characters' },
+    ],
+    flags: [
+      { flag: '--kind', value: 'k', summary: 'test, lint, typecheck, build, e2e or other (verify collects the tests from test gates)' },
+      { flag: '--timeout', value: 's', summary: 'time limit in seconds, 1 to 3600' },
+      { flag: '--decision', value: 'D', summary: 'required: an active gate-change decision, such as D-AB-3' },
+    ],
+    exits: ['OK', 'FAIL', 'USAGE', 'REFUSED', 'ENV'],
+    mutating: true,
+    load: () => import('../profile/cli.mjs').then((m) => m.gatesSet),
   },
   {
     name: 'route',
@@ -658,7 +695,7 @@ const ROWS = [
     details: [
       'Signals: loc, modules, contributors30, parallelTasks, incidents30 and the deployedToUsers fact; thresholds are data',
       '(lib/engine/thresholds.json). A tier rises when an up threshold holds today and falls only after the dwell days all',
-      'under the down threshold; at most one change per 7 days. Mode: flags.engine in state.json, shadow when absent:',
+      'under the down threshold; at most one change per 7 days. Mode: the engine flag (flags show), shadow by default:',
       'shadow logs the change as a proposed decision in local/shadow.jsonl and enforces nothing; on writes a tier decision',
       'record and sets the lanes, ci-gate, pre-push, codeowners and pr-template flags; off refuses (exit 7).',
       'An inactive repository is evaluated and nothing is written. The outcome gates are the same at every tier.',
@@ -667,7 +704,104 @@ const ROWS = [
     flags: [{ flag: '--explain', summary: 'one line per signal: its value, thresholds and dwell, and the change cadence' }],
     exits: ['OK', 'FAIL', 'USAGE', 'REFUSED', 'ENV'],
     mutating: true,
+    capability: 'engine',
     load: () => import('../engine/command.mjs').then((m) => m.tier),
+  },
+  {
+    name: 'install',
+    summary: 'Install the plugin for an agent without it (npx channel): run the SD-3 commands with claude, or print them.',
+    details: [
+      'Runs `claude plugin install <plugin> --marketplace <owner>/<repo>`; when it exits non-zero, `claude plugin marketplace',
+      'add <owner>/<repo>` and `claude plugin install <plugin>@<marketplace>`; then checks `claude plugin list --json` for the',
+      'plugin enabled (else exit 1). Without claude on PATH it prints the commands and exits 0. Writes no file itself:',
+      'Claude Code keeps its own records; nothing lands in a project. The one manual step is /reload-plugins.',
+    ],
+    args: [],
+    flags: [],
+    exits: ['OK', 'FAIL'],
+    load: () => import('./install.mjs').then((m) => m.install),
+  },
+  {
+    name: 'migrate',
+    summary: 'Run the forward migrations on every state file of this repository; --dry-run lists the steps and writes nothing.',
+    details: [
+      'Each original is copied to local/backup/<stamp>/ first and state.json is written last, so a run cut short is finished',
+      'by running it again; a second run writes nothing. Reads keep working before it: an older file is upgraded in memory.',
+      'Exit 7: a file with a newer schema (update the plugin), before any byte is written. Changes files: needs a terminal or --yes.',
+    ],
+    args: [],
+    flags: [{ flag: '--dry-run', summary: 'list the steps (file, kind, schema from → to, migration IDs); write nothing' }],
+    exits: ['OK', 'FAIL', 'USAGE', 'REFUSED', 'ENV'],
+    mutating: (flags) => !flags.dryRun,
+    load: () => import('./migrate.mjs').then((m) => m.migrate),
+  },
+  // Rollout and configuration (spec §8.2, §14, SD-38): lib/config/commands.mjs.
+  {
+    name: 'flags show',
+    summary: 'Show the capability flags: each rollout capability with its mode, its source and what it does, then the team flags.',
+    details: [
+      'Sources, highest first: the machine config (config.json in the plugin data directory, edited by hand: rollout',
+      'capabilities only), the repository\'s config.json, the defaults of this version. A capability that is off is rolled',
+      'back: its commands are refused (exit 7) and its hooks pass through. Team flags (lanes, generated files) are set by',
+      'the engine at a tier change or by flags set; unset means the tier offers it. Writes nothing.',
+    ],
+    args: [],
+    flags: [],
+    exits: ['OK', 'FAIL', 'REFUSED', 'ENV'],
+    load: () => import('../config/commands.mjs').then((m) => m.flagsShow),
+  },
+  {
+    name: 'flags set',
+    summary: 'Set one capability flag of this repository (off, shadow or on, as the flag has them); a flip is recorded as a decision.',
+    details: [
+      'The decision (kind general) comes first, with --reason as its Why; then config.json. The same value writes nothing.',
+      'off is the rollback of a capability: its commands are refused (exit 7) and its hooks pass through. The repository',
+      'never lowers a protective capability (guard-bash, auto-allow, edit-retrieval): config.json arrives with a clone; that',
+      'takes --local, this user\'s machine override. Exit 2: an unknown flag, a mode it does not have, a protective flag',
+      'lowered without --local; 7: an inactive repository. Changes files: needs a terminal or --yes.',
+    ],
+    args: [
+      { name: 'cap', required: true, summary: 'the flag, such as engine or lanes (flags show lists them)' },
+      { name: 'mode', required: true, summary: 'off, shadow or on' },
+    ],
+    flags: [
+      { flag: '--reason', value: 'text', summary: 'why, kept as the Why of the decision (≤ 200 characters)' },
+      { flag: '--local', summary: 'set this machine\'s override instead (plugin data config.json; rollout capabilities; no decision)' },
+    ],
+    exits: ['OK', 'FAIL', 'USAGE', 'REFUSED', 'ENV'],
+    mutating: true,
+    load: () => import('../config/commands.mjs').then((m) => m.flagsSet),
+  },
+  {
+    name: 'config show',
+    summary: 'Show the configuration: threshold overrides with their default and decision, executor preferences, changed flags.',
+    details: [
+      'Sources: the repository\'s config.json and the machine config (config.json in the plugin data directory, edited by',
+      'hand: flags of rollout capabilities and executor preferences). Writes nothing.',
+    ],
+    args: [],
+    flags: [],
+    exits: ['OK', 'FAIL', 'REFUSED', 'ENV'],
+    load: () => import('../config/commands.mjs').then((m) => m.configShow),
+  },
+  {
+    name: 'config set',
+    summary: 'Set one config value: a threshold override (only with an active decision) or the providers of an executor role.',
+    details: [
+      'Keys: thresholds.<unit>.<path> (a whole number of lib/router or lib/engine thresholds.json, such as',
+      'thresholds.router.trivial.maxLoc) and executors.reviewer|implementer (providers in order, comma-separated).',
+      'A threshold override needs --decision with an active decision (else exit 1, nothing written); config.json keeps',
+      'the decision with the value. The value default removes an override or a preference. Flags: use flags set.',
+      'Changes files: needs a terminal or --yes.',
+    ],
+    args: [
+      { name: 'key', required: true, summary: 'thresholds.<unit>.<path> or executors.<role>' },
+      { name: 'value', required: true, summary: 'a whole number, a comma-separated provider list, or default' },
+    ],
+    flags: [{ flag: '--decision', value: 'D', summary: 'required for a threshold override: an active decision, such as D-AB-3' }],
+    exits: ['OK', 'FAIL', 'USAGE', 'REFUSED', 'ENV'],
+    mutating: true,
+    load: () => import('../config/commands.mjs').then((m) => m.configSet),
   },
   // Decisions (spec §7.10): rows sorted by name.
   {

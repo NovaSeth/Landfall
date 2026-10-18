@@ -59,7 +59,8 @@ function repo(t, { files = { 'calc.test.mjs': TESTS }, gates = GATES, cls = 'tri
   const head = git('rev-parse', 'HEAD');
   const stateDir = join(dir, names.stateDir);
   const store = state.open(stateDir, { names });
-  store.write('state', null, { codename: names.codename, createdWith: '2.0.0', activatedAt: AT, flags: tier === 'L0' ? {} : { engine: 'on' } });
+  store.write('state', null, { codename: names.codename, createdWith: '2.0.0', activatedAt: AT });
+  if (tier !== 'L0') store.write('config', null, { flags: { engine: 'on' } });
   writeFileSync(join(stateDir, '.gitignore'), 'local/\n');
   const handle = state.registerHandle(store, { name: 'Test User', email: 'test@example.com', at: AT }).handle;
   // The applied tier (spec §7.4): L2 by default, where a standard task needs a review and a critical one an external one.

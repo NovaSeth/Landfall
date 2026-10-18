@@ -51,7 +51,7 @@ function snapshot(dir) {
   return out;
 }
 const put = (dir, rel, value) => { mkdirSync(dirname(join(dir, rel)), { recursive: true }); writeFileSync(join(dir, rel), typeof value === 'string' ? value : `${JSON.stringify(value, null, 2)}\n`); };
-const stateDoc = (extra = {}) => ({ schema: KINDS.state.version, codename: names.codename, createdWith: '2.0.0', activatedAt: AT, flags: {}, ...extra });
+const stateDoc = (extra = {}) => ({ schema: KINDS.state.version, codename: names.codename, createdWith: '2.0.0', activatedAt: AT, ...extra });
 const taskFor = (id, title = `Task ${id}`) => ({ id, kind: 'task', title, lane: null, owner: id.split('-')[1], class: null, classHistory: [], status: 'new', round: 0, events: [], base: null, branch: null });
 const sha = (email) => createHash('sha256').update(email.trim().toLowerCase()).digest('hex');
 function store(dir, handles = ['AB']) {

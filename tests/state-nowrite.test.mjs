@@ -72,7 +72,7 @@ process.stdout.write(JSON.stringify({ result: result === undefined ? null : resu
   return JSON.parse(r.stdout);
 }
 
-const stateDoc = (extra = {}) => ({ schema: KINDS.state.version, codename: names.codename, createdWith: '2.0.0', activatedAt: AT, flags: {}, ...extra });
+const stateDoc = (extra = {}) => ({ schema: KINDS.state.version, codename: names.codename, createdWith: '2.0.0', activatedAt: AT, ...extra });
 const team = (h, email = `${h}@example.com`) => ({ schema: KINDS.team.version, handle: h, emailSha256: state.emailHash(email), addedAt: AT });
 const task = (id, extra = {}) => ({ schema: KINDS.task.version, id, kind: 'task', title: `Task ${id}`, lane: null, owner: id.split('-')[1], class: null, classHistory: [], status: 'new', round: 0, events: [], base: null, branch: null, ...extra });
 const json = (v) => `${JSON.stringify(v, null, 2)}\n`;
@@ -139,7 +139,7 @@ const WRITE_APIS = [
   ['write new', `${open} s.write('task', 'T-AB-9', ${T('T-AB-9')});`],
   ['update', `${open} s.update('task', 'T-AB-1', (d) => ({ ...d, round: 1 }));`],
   ['create', `${open} return s.create('task', 'T-AB-8', ${T('T-AB-8')});`],
-  ['write state', `${open} s.write('state', null, { codename: names.codename, createdWith: '2.0.0', activatedAt: '${AT}', flags: {} });`],
+  ['write state', `${open} s.write('state', null, { codename: names.codename, createdWith: '2.0.0', activatedAt: '${AT}' });`],
   ['allocate T', `${open} return state.allocateId(s, { prefix: 'T', handle: 'AB', build: (id) => (${T('T-AB-1').replace("id: 'T-AB-1'", 'id')}) });`],
   ['allocate D', `${open} return state.allocateId(s, { prefix: 'D', handle: 'AB', build: () => '# D' });`],
   ['retire', `${open} return state.retireId(s, 'T-AB-1', { by: 'AB', reason: 'x', at: '${AT}' });`],

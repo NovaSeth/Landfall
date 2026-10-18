@@ -328,7 +328,7 @@ test('state, profile and flags of an active repository; read-only; a newer or br
 
   const stateFile = join(project, names.stateDir, 'state.json');
   const doc = readJson(stateFile);
-  writeFileSync(stateFile, JSON.stringify({ ...doc, flags: { engine: 'on', lanes: 'on' } }, null, 2));
+  writeFileSync(join(project, names.stateDir, 'config.json'), JSON.stringify({ schema: 1, flags: { engine: 'on', lanes: 'on' } }, null, 2));
   d = doctor(s, { cwd: project });
   assert.equal(d.row('flags').status, 'ok');
   assert.match(d.row('flags').detail, /engine on/);

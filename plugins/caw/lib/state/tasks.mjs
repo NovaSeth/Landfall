@@ -9,7 +9,7 @@
 //   fix-round --round <k> --addressed <n> --open <n>       → fix-round (round k)
 //   self-verified [--round <k>] · status-request           → status unchanged (round default: the task's, ≥ 1)
 // --note <t> fits every state. A task is never set done here (GC3: done needs a passing verify); a done or
-// cancelled task is closed. With the lanes capability on (state.json flags.lanes = on), a task is dispatched
+// cancelled task is closed. With the lanes capability on (config.json flags.lanes = on), a task is dispatched
 // only with a lane. Text values are checked like state fields (limits; no control, zero-width or bidi
 // characters). Writes refuse in an inactive repository (exit 7) and check every value before the store lock;
 // reads write nothing.
@@ -95,7 +95,7 @@ function actor(store, where, env, names) {
 }
 
 const unknownTask = (id, where, names) => usage('task-unknown', `no task ${id} in ${where.dir}`, `'${names.bin} task list' lists the tasks`);
-const lanesOn = (store) => store.read('state', null)?.flags?.lanes === 'on';
+const lanesOn = (store) => store.read('config', null)?.flags?.lanes === 'on';
 
 // `task new`: { id, task }.
 export function createTask({ cwd, env, names, title, kind = 'task', lane = null, at = now() } = {}) {

@@ -101,7 +101,7 @@ test('edit hook: other files, an inactive repository, a linked state directory a
   const external = join(mkdtempSync(join(tmpdir(), 'external-')), 'state');
   state.updateProject({ repo: linked.dir, dataDir: state.machineDataDir(names, linked.env), names, patch: { stateDir: external } });
   const store = state.open(external, { names });
-  store.write('state', null, { codename: names.codename, createdWith: '2.0.0', activatedAt: '2026-10-15T10:00:00.000Z', flags: {} });
+  store.write('state', null, { codename: names.codename, createdWith: '2.0.0', activatedAt: '2026-10-15T10:00:00.000Z' });
   task(store, 3);
   const v = edit(linked, join(external, 'tasks/T-AB-3/task.json'), { content: '{}' }, 'Write');
   assert.equal(v.decision, 'deny', 'linked state'); assert.match(v.reason, /^FLW-7: /);

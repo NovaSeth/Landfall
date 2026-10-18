@@ -12,6 +12,11 @@
 // file of the target's kind (a newer one → exit 7), the target itself. A refusal under the lock writes nothing
 // but the lock, which is removed before returning (local/ too when the lock created it). Writes are atomic
 // (lib/fsx); temporary files of dead writers in the written directory are swept.
+// Carried data (store schema 2): a migration step may carry data its new schema cannot hold to another single-file
+// kind (lib/state/migrations/index.mjs); read() and update() of that kind add it while the source file is still at a
+// schema the step has to upgrade, so nothing is lost before `migrate` writes it (and reads still write nothing).
+// Logs (LOGS, spec §5.2 local/shadow.jsonl): append() adds one JSON line under the store lock, rewriting the file
+// atomically; it refuses in an inactive store before anything is created.
 // Accepted residual (findings-r3): path checks and the file operation that follows are separate system calls
 // (Node has no openat or O_NOFOLLOW for directories), so a process that can already write the store could swap
 // a checked directory for a link in between. Locks never write through links, and that process could write the
@@ -21,9 +26,9 @@ import { dirname, isAbsolute, join } from 'node:path';
 import { createExclusive, makeDirs, removeEmptyDirs, sweepTemps, unlockStale as fsxUnlockStale, withLock, writeAtomic } from '../fsx/index.mjs';
 import { checkWrite, invalidState, parseDoc, requireArg } from './document.mjs';
 import { StateError, newerSchema } from './errors.mjs';
-import { KINDS } from './kinds.mjs';
+import { KINDS, LOGS } from './kinds.mjs';
 import { MIGRATIONS } from './migrations/index.mjs';
-import { format } from './schema.mjs';
+import { format, validate } from './schema.mjs';
 import { upgradeDoc } from './upgrade.mjs';
 
 const natural = (a, b) => a.localeCompare(b, 'en', { numeric: true });
@@ -72,7 +77,7 @@ function caseAlias(cur, onDisk, st) {
 
 export const unsafe = (path, why) => new StateError('state-invalid', 'FAIL', `${path} ${why}; the state never follows links or case aliases`, { hint: 'replace it with a plain directory or file of exactly that name' });
 
-// Public: active, read, list, write, create, update. The other methods are internal to lib/state.
+// Public: active, read, list, write, create, update, append. The other methods are internal to lib/state.
 export class Store {
   constructor(dir, { names, kinds, migrations, lockTimeoutMs }) {
     this.dir = dir;
@@ -233,6 +238,30 @@ export class Store {
     }
   }
 
+  // The document of a single-file kind with the data that older documents of other kinds still carry for it (each
+  // migration step whose carry targets the kind, while its source file is at the step's schema or older).
+  carried(kind, doc) {
+    if (kind.keyPattern || (doc !== null && doc.schema > kind.version)) return doc;
+    let out = doc;
+    for (const m of this.migrations) {
+      if (m.carry?.kind !== kind.name) continue;
+      const source = Object.values(this.kinds).find((k) => k.name === m.kind && !k.keyPattern);
+      const text = source ? this.readText(source.path()) : null;
+      if (text === null) continue;
+      const where = this.abs(source.path());
+      let raw;
+      try { raw = JSON.parse(text); } catch { throw invalidState(where, 'not valid JSON'); }
+      if (raw === null || typeof raw !== 'object' || Array.isArray(raw) || !Number.isInteger(raw.schema) || raw.schema < 1) throw invalidState(where, 'no integer schema field');
+      if (raw.schema > m.from) continue;
+      const next = m.carry.into(out === null ? null : structuredClone(out), upgradeDoc(source, raw, this.migrations, where, m.from));
+      if (next === undefined) continue;
+      const errors = validate(kind.spec, next);
+      if (errors.length) throw invalidState(this.abs(kind.path()), `with what ${m.id} carries from ${source.path()}: ${errors[0].message}`, errors);
+      out = next;
+    }
+    return out;
+  }
+
   stamp(kind, doc) {
     return doc !== null && typeof doc === 'object' && !Array.isArray(doc) && doc.schema === undefined ? { ...doc, schema: kind.version } : doc;
   }
@@ -244,7 +273,7 @@ export class Store {
     const kind = this.kind(name);
     const rel = kind.path(key);
     const text = this.readText(rel);
-    return text === null ? null : this.parse(kind, rel, text, { key });
+    return this.carried(kind, text === null ? null : this.parse(kind, rel, text, { key }));
   }
 
   // Keys of the kind's existing files, in natural order ([null] for a single-file kind that exists).
@@ -301,13 +330,31 @@ export class Store {
     return this.locked(() => {
       this.checks(kind, rel);
       const text = this.readText(rel);
-      const cur = text === null ? null : this.parse(kind, rel, text, { write: true, key });
+      const cur = this.carried(kind, text === null ? null : this.parse(kind, rel, text, { write: true, key }));
       const out = fn(cur === null ? null : structuredClone(cur));
       if (out === undefined) return cur;
       const next = this.stamp(kind, out);
       checkWrite(kind, next, { where: this.abs(rel), key });
       this.writeText(rel, format(kind.spec, next));
       return next;
+    });
+  }
+
+  // Appends `make` (a JSON object, or a function of the log's text returning one, or undefined for nothing) as one line
+  // to the log `name`; returns the entry or null. The read, the decision and the write share one lock section.
+  append(name, make) {
+    if (!Object.hasOwn(LOGS, name)) throw new TypeError(`state: unknown log ${name}`);
+    const log = LOGS[name];
+    if (!this.active) throw new StateError('inactive', 'REFUSED', `${this.dir} holds no active state: nothing is logged`, { hint: `activate the repository first (${this.names.bin} init)` });
+    return this.locked(() => {
+      this.assertWritable();
+      const text = this.readText(log.file) ?? '';
+      const entry = typeof make === 'function' ? make(text) : make;
+      if (entry === undefined) return null;
+      const errors = validate({ t: 'data', maxBytes: log.entryBytes }, entry);
+      if (errors.length) throw new StateError(errors[0].code, 'USAGE', `${this.abs(log.file)}: ${errors[0].message}`, { hint: 'nothing was logged', details: errors });
+      this.writeText(log.file, `${text}${text && !text.endsWith('\n') ? '\n' : ''}${JSON.stringify(entry)}\n`);
+      return entry;
     });
   }
 }

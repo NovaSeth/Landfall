@@ -68,7 +68,7 @@ export function activate({ cwd, env, names, version, options = {}, at = now() } 
     if (dir !== where.dir && where.active) throw new StateError('already-active', 'FAIL', `${where.repo} is already active with its state in ${where.dir}`, { hint: `run '${names.bin} deactivate' first to move it` });
     const store = open(dir, { names });
     const kind = store.kind('state');
-    const doc = { schema: kind.version, codename: names.codename, createdWith: version, activatedAt: at, flags: {} };
+    const doc = { schema: kind.version, codename: names.codename, createdWith: version, activatedAt: at };
     checkWrite(kind, doc, { where: join(dir, kind.path()) });
     store.assertWritable();
     if (dir !== where.dir) updateProject({ repo: where.repo, dataDir: where.dataDir, names, patch: { stateDir: dir === inRepo(where, names) ? null : dir } });

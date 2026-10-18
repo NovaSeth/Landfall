@@ -43,6 +43,8 @@ Commands:
   baseline pin         Repair the test baseline: replace it with the inventory collected now, with a gate-change or test-removal decision.
   baseline show        Print the pinned test baseline: every test with its skip flag, pinned failures, collector and last pin.
   brief                Render the brief of a routed task from the brief template and the state; --write saves tasks/<id>/brief.md.
+  config set           Set one config value: a threshold override (only with an active decision) or the providers of an executor role.
+  config show          Show the configuration: threshold overrides with their default and decision, executor preferences, changed flags.
   deactivate           Remove the untracked state of this repository (or the link of its external state) and remember the opt-out.
   decide               Record a decision: a new D-<H>-<n> file under the state directory with what, why and cost if wrong.
   decisions check      Validate the decision records and every D-<H>-<n> cited in tracked files; exit 1 on a problem.
@@ -52,10 +54,13 @@ Commands:
   decisions supersede  Record a decision replacing an active one; the old record gets status superseded and supersededBy.
   decline              Opt out of tracking this repository; remembered in machine data by its real path, never in the repository.
   doctor               Health report: Claude Code floor, plugin and hooks, release, state, profile, flags, context cost, permissions.
+  flags set            Set one capability flag of this repository (off, shadow or on, as the flag has them); a flip is recorded as a decision.
+  flags show           Show the capability flags: each rollout capability with its mode, its source and what it does, then the team flags.
   gen apply            Write the generated files (CI workflow, pre-push hook, PR template, CODEOWNERS and AGENTS.md blocks); edits survive.
   gen plan             Show what gen apply would do for each generated file; writes nothing.
   heavy                Run a heavy command (full tests, build) in the machine-wide FIFO queue under a heavy lease, with time and output limits.
   init                 Activate tracking in this repository: state.json, .gitignore and your handle in team/<H>.json.
+  install              Install the plugin for an agent without it (npx channel): run the SD-3 commands with claude, or print them.
   lane claim           Claim a lane on origin for 7 days: free → yours, yours → renewed, another's past expiry + 24 h → taken over.
   lane list            List the lane claims on origin: lane, owner, expiry, and whether it is live, expired or open for takeover.
   lane release         Release your lane: its claim on origin is deleted only while it is still the one you hold (lease).
@@ -65,6 +70,9 @@ Commands:
   loop status          Print the loop: ticks, wall time and cost against the caps, the stall count, and the exit once it ended.
   loop stop            End the running loop: exit DONE, so no wakeup is scheduled again; an ended loop is left as it is.
   method               Print one pack or one section of the method by name: each rule line of it, under its section heading.
+  migrate              Run the forward migrations on every state file of this repository; --dry-run lists the steps and writes nothing.
+  profile gates apply  Replace the profile gates with the candidates the scan detects; only with an active gate-change decision.
+  profile gates set    Add a profile gate or replace the one of that name; only with an active gate-change decision.
   profile observe      Scan the repository (manifests, files, CI, harnesses) and merge what it shows into the project profile.
   profile set          Record one profile fact with its source and evidence: the user's words (said) or a path:line (observed).
   profile show         Print the project profile: facts with source and evidence, gates, risk paths, and whether a scan is due.
@@ -152,6 +160,42 @@ Options:
 
 Read-only. Changes files with --write: needs a terminal or --yes, otherwise exit 7 REFUSED.
 Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
+```
+
+### `caw config set <key> <value> [--decision <D>] [--yes] [--json]`
+
+```text
+usage: caw config set <key> <value> [--decision <D>] [--yes] [--json]
+
+Set one config value: a threshold override (only with an active decision) or the providers of an executor role.
+Keys: thresholds.<unit>.<path> (a whole number of lib/router or lib/engine thresholds.json, such as
+thresholds.router.trivial.maxLoc) and executors.reviewer|implementer (providers in order, comma-separated).
+A threshold override needs --decision with an active decision (else exit 1, nothing written); config.json keeps
+the decision with the value. The value default removes an override or a preference. Flags: use flags set.
+Changes files: needs a terminal or --yes.
+
+Arguments:
+  key    thresholds.<unit>.<path> or executors.<role>
+  value  a whole number, a comma-separated provider list, or default
+
+Options:
+  --decision <D>  required for a threshold override: an active decision, such as D-AB-3
+
+Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
+Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
+```
+
+### `caw config show [--json]`
+
+```text
+usage: caw config show [--json]
+
+Show the configuration: threshold overrides with their default and decision, executor preferences, changed flags.
+Sources: the repository's config.json and the machine config (config.json in the plugin data directory, edited by
+hand: flags of rollout capabilities and executor preferences). Writes nothing.
+
+Read-only.
+Exit codes: 0 OK · 1 FAIL · 7 REFUSED · 8 ENV
 ```
 
 ### `caw deactivate [--yes] [--json]`
@@ -311,6 +355,45 @@ Read-only.
 Exit codes: 0 OK · 1 FAIL · 8 ENV
 ```
 
+### `caw flags set <cap> <mode> [--reason <text>] [--local] [--yes] [--json]`
+
+```text
+usage: caw flags set <cap> <mode> [--reason <text>] [--local] [--yes] [--json]
+
+Set one capability flag of this repository (off, shadow or on, as the flag has them); a flip is recorded as a decision.
+The decision (kind general) comes first, with --reason as its Why; then config.json. The same value writes nothing.
+off is the rollback of a capability: its commands are refused (exit 7) and its hooks pass through. The repository
+never lowers a protective capability (guard-bash, auto-allow, edit-retrieval): config.json arrives with a clone; that
+takes --local, this user's machine override. Exit 2: an unknown flag, a mode it does not have, a protective flag
+lowered without --local; 7: an inactive repository. Changes files: needs a terminal or --yes.
+
+Arguments:
+  cap   the flag, such as engine or lanes (flags show lists them)
+  mode  off, shadow or on
+
+Options:
+  --reason <text>  why, kept as the Why of the decision (≤ 200 characters)
+  --local          set this machine's override instead (plugin data config.json; rollout capabilities; no decision)
+
+Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
+Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
+```
+
+### `caw flags show [--json]`
+
+```text
+usage: caw flags show [--json]
+
+Show the capability flags: each rollout capability with its mode, its source and what it does, then the team flags.
+Sources, highest first: the machine config (config.json in the plugin data directory, edited by hand: rollout
+capabilities only), the repository's config.json, the defaults of this version. A capability that is off is rolled
+back: its commands are refused (exit 7) and its hooks pass through. Team flags (lanes, generated files) are set by
+the engine at a tier change or by flags set; unset means the tier offers it. Writes nothing.
+
+Read-only.
+Exit codes: 0 OK · 1 FAIL · 7 REFUSED · 8 ENV
+```
+
 ### `caw gen apply [<target…>] [--dry-run] [--yes] [--json]`
 
 ```text
@@ -391,6 +474,21 @@ Options:
 
 Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
 Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
+```
+
+### `caw install [--json]`
+
+```text
+usage: caw install [--json]
+
+Install the plugin for an agent without it (npx channel): run the SD-3 commands with claude, or print them.
+Runs `claude plugin install <plugin> --marketplace <owner>/<repo>`; when it exits non-zero, `claude plugin marketplace
+add <owner>/<repo>` and `claude plugin install <plugin>@<marketplace>`; then checks `claude plugin list --json` for the
+plugin enabled (else exit 1). Without claude on PATH it prints the commands and exits 0. Writes no file itself:
+Claude Code keeps its own records; nothing lands in a project. The one manual step is /reload-plugins.
+
+Read-only.
+Exit codes: 0 OK · 1 FAIL
 ```
 
 ### `caw lane claim <lane> [--yes] [--json]`
@@ -527,6 +625,63 @@ Arguments:
 
 Read-only.
 Exit codes: 0 OK · 2 USAGE
+```
+
+### `caw migrate [--dry-run] [--yes] [--json]`
+
+```text
+usage: caw migrate [--dry-run] [--yes] [--json]
+
+Run the forward migrations on every state file of this repository; --dry-run lists the steps and writes nothing.
+Each original is copied to local/backup/<stamp>/ first and state.json is written last, so a run cut short is finished
+by running it again; a second run writes nothing. Reads keep working before it: an older file is upgraded in memory.
+Exit 7: a file with a newer schema (update the plugin), before any byte is written. Changes files: needs a terminal or --yes.
+
+Options:
+  --dry-run  list the steps (file, kind, schema from → to, migration IDs); write nothing
+
+Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED. Read-only with --dry-run: no consent needed.
+Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
+```
+
+### `caw profile gates apply [--decision <D>] [--yes] [--json]`
+
+```text
+usage: caw profile gates apply [--decision <D>] [--yes] [--json]
+
+Replace the profile gates with the candidates the scan detects; only with an active gate-change decision.
+After activation a gate change is a decision (a weaker gate weakens the oracle): without an active gate-change
+decision exit 1, nothing written. The candidates come from the scan of HEAD (cached), as profile observe reports them.
+Changes files: needs a terminal or --yes.
+
+Options:
+  --decision <D>  required: an active gate-change decision, such as D-AB-3
+
+Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
+Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
+```
+
+### `caw profile gates set <name> <cmd> [--kind <k>] [--timeout <s>] [--decision <D>] [--yes] [--json]`
+
+```text
+usage: caw profile gates set <name> <cmd> [--kind <k>] [--timeout <s>] [--decision <D>] [--yes] [--json]
+
+Add a profile gate or replace the one of that name; only with an active gate-change decision.
+For a gate the scan does not detect (a repository's real gate is often more than npm test). Replacing keeps the
+gate's kind and time limit unless given; a new gate is kind other with the scan's time limit unless given.
+Without an active gate-change decision exit 1, nothing written. Changes files: needs a terminal or --yes.
+
+Arguments:
+  name  gate name, kebab-case, at most 40 characters
+  cmd   the shell command verify runs (sh -c), one quoted argument of at most 300 characters
+
+Options:
+  --kind <k>      test, lint, typecheck, build, e2e or other (verify collects the tests from test gates)
+  --timeout <s>   time limit in seconds, 1 to 3600
+  --decision <D>  required: an active gate-change decision, such as D-AB-3
+
+Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
+Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
 ```
 
 ### `caw profile observe [--yes] [--json]`
@@ -914,7 +1069,7 @@ usage: caw tier [--explain] [--yes] [--json]
 Evaluate the project tier (L0-L3) from git history and the state; a change is logged (shadow) or recorded (on).
 Signals: loc, modules, contributors30, parallelTasks, incidents30 and the deployedToUsers fact; thresholds are data
 (lib/engine/thresholds.json). A tier rises when an up threshold holds today and falls only after the dwell days all
-under the down threshold; at most one change per 7 days. Mode: flags.engine in state.json, shadow when absent:
+under the down threshold; at most one change per 7 days. Mode: the engine flag (flags show), shadow by default:
 shadow logs the change as a proposed decision in local/shadow.jsonl and enforces nothing; on writes a tier decision
 record and sets the lanes, ci-gate, pre-push, codeowners and pr-template flags; off refuses (exit 7).
 An inactive repository is evaluated and nothing is written. The outcome gates are the same at every tier.
