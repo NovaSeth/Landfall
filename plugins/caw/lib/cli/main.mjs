@@ -10,7 +10,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { COMMANDS, DEFAULT_COMMAND, EXIT, EXIT_CODES, GLOBAL_FLAGS, flagKey, mutates } from './commands.mjs';
-import { commandUsage, generalUsage, renderCommandHelp, renderHelp } from './help.mjs';
+import { commandUsage, generalUsage, groupUsage, renderCommandHelp, renderHelp } from './help.mjs';
 import { processIo, writeHook, writeResult } from './output.mjs';
 
 const PLUGIN_ROOT = fileURLToPath(new URL('../../', import.meta.url));
@@ -108,6 +108,8 @@ export async function main(argv, { commands = COMMANDS, io = processIo() } = {})
     if (globals.version && !failOpen) return say({ data: { name: bin, version }, text: `${bin} ${version}\n` });
     if (!row) {
       const general = { usage: generalUsage(bin), hint: `run '${bin} --help' for the command list` };
+      const subs = words.length === 1 ? commands.filter((r) => !r.hidden && r.name.startsWith(`${words[0]} `)).map((r) => r.name) : [];
+      if (subs.length) throw new Usage('missing-subcommand', `${words[0]} needs a subcommand: ${subs.join(', ')}`, { usage: groupUsage(bin, words[0]), hint: `run '${bin} ${subs[0]} --help'` });
       if (words.length) throw new Usage('unknown-command', `unknown command: ${words[0]}`, general);
       const stray = tokens.find((t) => t.startsWith('-'));
       if (stray) throw new Usage('unknown-flag', `unknown flag: ${stray}`, general);

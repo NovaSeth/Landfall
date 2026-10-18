@@ -7,7 +7,7 @@ import { parse } from './tokenizer.mjs';
 import { BIN } from './tokens.mjs';
 
 export const OWN_COMMANDS = Object.freeze(['status', 'tick', 'verify', 'exec', 'wait', 'runs', 'rule', 'method', 'receipt', 'doctor',
-  'profile show', 'decisions check', 'decisions context', 'slot list']);
+  'profile show', 'decisions check', 'decisions find', 'slots']);
 
 // The allowlisted subcommand of a command, or null.
 export function ownCommand(command) {
