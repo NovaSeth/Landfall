@@ -379,6 +379,7 @@ test('linked state: a store baseline collected on another line of history does n
   const why = v.out.errors.find((e) => e.code === 'baseline-unanchored');
   assert.ok(why, show(v));
   assert.ok(why.hint.includes(`${names.bin} baseline pin`), why.hint);
+  assert.match(why.message, /^the baseline in .+ was collected at [0-9a-f]{12}, not on the history of this code/, why.message);
   assert.equal(v.out.errors.some((e) => e.code === 'baseline-shrunk'), false, 'the branch\'s test is not taken as removed');
 });
 

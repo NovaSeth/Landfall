@@ -168,11 +168,11 @@ function describes(where, env, doc, commits) {
 
 // The accepted inventory as of `commit`: { doc, problem }. In-repo state: the baseline committed there, problem
 // 'missing' or 'malformed' when the commit's history has a baseline but the commit has no valid one (review r1 #3).
-// Linked state: the store's baseline `working` when it describes the code (`commits`), else none.
-function anchorAt(where, env, commit, { working, commits }) {
+// Linked state: `working`, the store's baseline when it describes the code verified (else null).
+function anchorAt(where, env, commit, working) {
   if (!commit) return { doc: null, problem: null };
   const at = stateAt(where, env, commit, VERIFY_KINDS.baseline.path());
-  if (at.rel === null) return { doc: describes(where, env, working, commits) ? working : null, problem: null };
+  if (at.rel === null) return { doc: working, problem: null };
   if (at.text !== null) {
     try {
       const doc = JSON.parse(at.text);
@@ -298,7 +298,7 @@ export function evaluate({ where, names, env, id, mode, handle = null, at = now(
     // the code verified descends from the anchor and HEAD (a merge: the tip and the merged branch)
     const commits = [anchorCommit, mode === 'merge' ? merged : code.head];
     const working = describes(where, env, current, commits) ? current : null;
-    const anchored = anchorAt(where, env, anchorCommit, { working, commits });
+    const anchored = anchorAt(where, env, anchorCommit, working);
     const tests = (change?.paths ?? []).filter((p) => scannerOf(p) !== null);
     if (anchored.problem) {
       say('fail', 'baseline-unanchored', `the baseline at ${anchorCommit.slice(0, 12)} is ${anchored.problem}, though its history has one: there is no accepted inventory to compare with`, 'restore the baseline on the target branch (git), or pin one with a decision');
