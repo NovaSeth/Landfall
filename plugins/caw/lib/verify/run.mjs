@@ -312,7 +312,7 @@ export function evaluate({ where, names, env, id, mode, handle = null, at = now(
     // passed is stored (not in ci mode, which writes nothing).
     const tree = treeOf((a) => gitIn(where, env, a), { staged: mode === 'merge' });
     const key = tree ? cacheKey({ tree, gatesSha: doc.gatesSha, version }) : null;
-    const hit = key && cache ? lookup(store, key, at) : null;
+    const hit = key && cache ? lookup(store, { key, tree, gatesSha: doc.gatesSha, version, gates: profile.gates, at }) : null;
     const runs = hit ? hit.runs : profile.gates.map((g) => runGate(g, { cwd: where.worktree, env }));
     reused = hit?.at ?? null;
     doc.gates = runs.map((r) => r.gate);
@@ -325,7 +325,7 @@ export function evaluate({ where, names, env, id, mode, handle = null, at = now(
         const { run: _run, ...collected } = part;
         return collected;
       };
-      storeRuns(store, key, { tree, version, at, runs, report });
+      storeRuns(store, key, { tree, gatesSha: doc.gatesSha, version, at, runs, report });
     }
 
     const current = store.read('baseline', null);

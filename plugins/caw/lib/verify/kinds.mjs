@@ -97,6 +97,8 @@ export const VERIFY_KINDS = Object.freeze({
     match: /^local\/gate-cache\/([0-9a-f]{64})\.json$/,
     fields: {
       tree: str(64, { re: PATTERNS.sha }),
+      gatesSha: str(64, { re: PATTERNS.sha256 }),
+      collectors: str(200, { min: 1 }),
       version: str(LIMITS.version, { null: true }),
       at: time,
       runs: many({

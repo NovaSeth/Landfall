@@ -22,27 +22,39 @@ export function treeOf(gitIn, { staged = false } = {}) {
   return t.status === 0 && /^[0-9a-f]{40,64}$/.test(t.stdout.trim()) ? t.stdout.trim() : null;
 }
 
-export const cacheKey = ({ tree, gatesSha, version }) => hashOf(JSON.stringify([tree, gatesSha, REPORTERS.join('+'), version ?? null]));
+// The collectors that read gate output: a reporter added or changed reads the same output differently.
+export const COLLECTORS = REPORTERS.join('+');
+export const cacheKey = ({ tree, gatesSha, version }) => hashOf(JSON.stringify([tree, gatesSha, COLLECTORS, version ?? null]));
 
-// The stored runs for `key` as runGate results ({ gate, output, kind, report }), with `at`; null without a usable entry.
-export function lookup(store, key, at) {
+// The stored gate list is the current one: the same gates in the same order, by name, command and kind.
+const sameGates = (runs, gates) => runs.length === gates.length && gates.every((g, k) => runs[k].name === g.name && runs[k].cmd === g.cmd && runs[k].kind === g.kind);
+
+// The stored runs for `key` as runGate results ({ gate, output, kind, report }), with `at`; null without a usable
+// entry. An entry is usable only when its content repeats the key (tree, gatesSha, collectors, version: the key
+// recomputed from the file equals the file's name), lists exactly the current gates, holds passes only and is at most
+// MAX_AGE_MS old; a file that does not parse or fails its schema is no entry. A mismatch is a miss, never a pass.
+export function lookup(st, { key, tree, gatesSha, version, gates, at }) {
   let doc;
   try {
-    doc = store.read('gateCache', key);
+    doc = st.read('gateCache', key);
   } catch (err) {
     if (err instanceof StateError) return null; // a corrupt entry is no entry
     throw err;
   }
-  if (!doc || Date.parse(at) - Date.parse(doc.at) > MAX_AGE_MS) return null;
+  if (!doc) return null;
+  const fits = doc.tree === tree && doc.gatesSha === gatesSha && doc.collectors === COLLECTORS && (doc.version ?? null) === (version ?? null)
+    && cacheKey(doc) === key && sameGates(doc.runs, gates) && doc.runs.every((r) => r.result === 'pass');
+  if (!fits || !(Date.parse(at) - Date.parse(doc.at) <= MAX_AGE_MS)) return null;
   return { at: doc.at, runs: doc.runs.map(({ kind, tail, report = null, ...gate }) => ({ gate, kind, output: tail.join('\n'), report })) };
 }
 
 // Stores the runs under `key` when every gate passed; `report(run)` gives a test run's collected inventory (null when
-// its output is no report). Returns whether an entry was written.
-export function store(st, key, { tree, version, at, runs, report }) {
+// its output is no report). The key fields are stored with the runs, so a read can check them. Returns whether an
+// entry was written.
+export function store(st, key, { tree, gatesSha, version, at, runs, report }) {
   if (runs.length === 0 || runs.some((r) => r.gate.result !== 'pass')) return false;
   const doc = {
-    tree, version: version ?? null, at,
+    tree, gatesSha, collectors: COLLECTORS, version: version ?? null, at,
     runs: runs.map((r) => {
       const collected = r.kind === 'test' ? report(r) : null;
       return { ...r.gate, kind: r.kind, tail: tailLines(r.output), ...(collected ? { report: collected } : {}) };
