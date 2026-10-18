@@ -103,7 +103,7 @@ export function sessionStart(input, { env = process.env, deadline = Infinity } =
   const r = readLoop(where.dir);
   const loop = r.error ? { error: r.error } : { doc: r.doc, exit: loopExit(r.doc) };
   const { tasks, more } = activeTasks(store, deadline);
-  const rel = relative(where.repo, where.dir);
+  const rel = relative(where.worktree, where.dir); // from a linked worktree: the main checkout's state, by its path
   const text = renderContext({ bin: names.bin, where: `state in ${rel && !rel.startsWith('..') && !isAbsolute(rel) ? rel : where.dir}`, tasks, more, loop, rules: alwaysRules() });
   return { stdout: `${JSON.stringify({ hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: forModel(text) } })}\n` };
 }

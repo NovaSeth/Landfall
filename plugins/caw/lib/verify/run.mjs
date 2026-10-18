@@ -9,11 +9,17 @@
 //   4. The inventory: each test gate's output through the reporter collectors; the generic scan when an output is no
 //      report (or there is no test gate). A test gate read only by the generic scan is weak: reported, and always
 //      refused for a critical task (review r2 D4; no decision waives it). Focused tests (.only, fit) fail.
-//   5. The reference: the baseline committed in git at the anchor (the task base; the target tip for a merge) united
-//      with the working baseline file, which can only add. Without a committed baseline there (r2 D5) the working
-//      baseline is accepted only when the change touches no test file, so the inventory still is the anchor's; else,
-//      or with a missing or malformed baseline at an anchor whose history has one, `baseline-unanchored`. Another
-//      collector cannot be compared. Removed and newly skipped tests need an allowance. A failing test gate is excused only when every failure it reports is pinned and the reporter
+//   5. The reference: the accepted inventory as of the anchor (the task base; the target tip for a merge; stateAt) united
+//      with the working baseline file, which can only add. Worktrees share the state, so the working baseline is
+//      placed on the history (lineOf): it is on the line of the code verified when its head is the anchor or an
+//      ancestor of it or of the verified HEAD (in a merge: of the tip or the merged branch). In-repo state: it counts
+//      unless it lies on another live branch (a parallel worktree's verify), so where git cannot tell and after a
+//      rewritten history it still counts; the accepted inventory is the baseline committed at the anchor. A state
+//      directory outside the repository (linked), which no commit holds and no branch writes: the store's baseline is
+//      the anchor only on the line of the code; off it, or where git cannot tell, `baseline-unanchored` whatever the
+//      change touches (fail closed). Without an accepted baseline (r2 D5) the working baseline is accepted only when the
+//      change touches no test file, so the inventory still is the anchor's; else, or with a missing or malformed
+//      baseline at an anchor whose history has one, `baseline-unanchored`. Another collector cannot be compared. Removed and newly skipped tests need an allowance. A failing test gate is excused only when every failure it reports is pinned and the reporter
 //      counts no more failures than were collected; a new failure fails even when its gate exited 0.
 //   6. The route re-classified from `git diff --numstat <base>` plus untracked files, the state directory left out
 //      (the lib/router ratchet: the class only rises); the report's RED/GREEN evidence; the
@@ -29,8 +35,10 @@
 // instead (class, baselineSha, the latest review round).
 // Modes: write (default; the task's owner only) · ci (--ci: nothing written, no owner needed) · merge (task merge:
 // the outcome gates against the target tip, without route and review; nothing written).
-// Known limit: with an external state directory there is no git anchor, so a change touching test files is always
-// unanchored there.
+// The code is the worktree's (lib/state resolve: `worktree`, the git top level of the current directory): the gates run
+// there, its HEAD is verified and its change against the base classified; the state is the project's (a linked worktree
+// shares the state of its main checkout). State paths in git pathspecs are tree paths (relative to the project root,
+// the same in every checkout); state paths in messages are shown relative to the worktree, or absolute outside it.
 import { lstatSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { authorHandle, readRecords, stateRel } from '../decisions/index.mjs';
@@ -72,9 +80,9 @@ export function activeWhere({ cwd, env, names }) {
   return where;
 }
 
-// git in the repository; git missing or failing to start is an environment problem.
+// git in the worktree (the code); git missing or failing to start is an environment problem.
 export function gitIn(where, env, args) {
-  const r = git(args, { cwd: where.repo, env });
+  const r = git(args, { cwd: where.worktree, env });
   if (r.error) throw envError('git-failed', `git ${args[0]} could not run (${r.error})`, 'install git and put it on PATH');
   return r;
 }
@@ -95,7 +103,7 @@ export function codeState(where, env) {
   const routeScope = ['--', '.', ...(rel ? [`:(exclude)${rel}`] : [])];
   const h = gitIn(where, env, ['rev-parse', '--verify', '-q', 'HEAD']);
   const st = gitIn(where, env, ['status', '--porcelain', '--untracked-files=all', ...scope]);
-  if (st.status !== 0) throw envError('git-failed', `git status failed in ${where.repo}`, 'check that the repository is readable');
+  if (st.status !== 0) throw envError('git-failed', `git status failed in ${where.worktree}`, 'check that the repository is readable');
   return { rel, scope, routeScope, head: h.status === 0 ? h.stdout.trim() : null, dirty: st.stdout.trim() !== '' };
 }
 
@@ -104,19 +112,19 @@ export function codeState(where, env) {
 export function context(where, env, rel) {
   let files = null;
   let known = null;
-  const list = () => (files ??= listFiles(where.repo, { env, exclude: rel }).filter((f) => !SKIP_DIRS.test(f)));
+  const list = () => (files ??= listFiles(where.worktree, { env, exclude: rel }).filter((f) => !SKIP_DIRS.test(f)));
   const read = (path) => {
     known ??= new Set(list());
     if (!known.has(path)) return null;
     try {
-      const file = join(where.repo, path);
+      const file = join(where.worktree, path);
       const st = lstatSync(file);
       return st.isFile() && st.size <= SOURCE_MAX ? readFileSync(file, 'utf8') : null;
     } catch {
       return null;
     }
   };
-  return { repo: where.repo, files: list, read };
+  return { repo: where.worktree, files: list, read };
 }
 
 export function inventoryOf(runs, ctx) {
@@ -141,20 +149,51 @@ export function inventoryOf(runs, ctx) {
   return { collector, tests: [...byId.values()].sort((a, b) => byCodeUnit(a.id, b.id)), parts, weak };
 }
 
-// The accepted inventory committed at `commit`: { doc, problem } with problem 'missing' or 'malformed' when the
-// commit's history has a baseline but the commit has no valid one (review r1 #3).
-function anchorAt(where, env, commit, rel) {
-  if (!commit || !rel) return { doc: null, problem: null };
-  const path = `${rel}/${VERIFY_KINDS.baseline.path()}`;
-  const shown = gitIn(where, env, ['show', `${commit}:${path}`]);
-  if (shown.status === 0) {
+// A state file as of commit `commit` (`path` relative to the state directory): with the state directory in the
+// repository, as committed there: { rel (its tree path), path, text (null: the commit has none) }; with a state
+// directory outside the repository (linked) no commit holds state and no branch writes it: { rel: null } — the store's
+// document stands for every commit.
+export function stateAt(where, env, commit, path) {
+  const rel = stateRel(where.repo, where.dir);
+  if (!rel) return { rel: null };
+  const shown = gitIn(where, env, ['show', `${commit}:${rel}/${path}`]);
+  return { rel, path: `${rel}/${path}`, text: shown.status === 0 ? shown.stdout : null };
+}
+
+// Where the baseline `doc` lies relative to code that descends from `commits`: 'none' (no baseline) · 'line' (its head
+// is one of them or an ancestor of one; head null, a baseline collected before the first commit, precedes every
+// commit) · 'branch' (off the line, on another local branch) · 'off' (off the line and on no branch: a rewritten
+// history) · 'unknown' (git cannot tell: the head is no commit here, or git fails). git that cannot run throws (ENV).
+function lineOf(where, env, doc, commits) {
+  if (!doc) return 'none';
+  if (doc.head === null) return 'line';
+  let unknown = false;
+  for (const c of commits.filter(Boolean)) {
+    const r = gitIn(where, env, ['merge-base', '--is-ancestor', doc.head, c]);
+    if (r.status === 0) return 'line';
+    if (r.status !== 1) unknown = true;
+  }
+  if (unknown) return 'unknown';
+  const branches = gitIn(where, env, ['for-each-ref', '--count=1', '--contains', doc.head, '--format=%(refname)', 'refs/heads']);
+  if (branches.status !== 0) return 'unknown';
+  return branches.stdout.trim() ? 'branch' : 'off';
+}
+
+// The accepted inventory as of `commit`: { doc, problem }. In-repo state: the baseline committed there, problem
+// 'missing' or 'malformed' when the commit's history has a baseline but the commit has no valid one (review r1 #3).
+// Linked state: `working`, the store's baseline when it describes the code verified (else null).
+function anchorAt(where, env, commit, working) {
+  if (!commit) return { doc: null, problem: null };
+  const at = stateAt(where, env, commit, VERIFY_KINDS.baseline.path());
+  if (at.rel === null) return { doc: working, problem: null };
+  if (at.text !== null) {
     try {
-      const doc = JSON.parse(shown.stdout);
+      const doc = JSON.parse(at.text);
       if (doc?.schema === VERIFY_KINDS.baseline.version && check(VERIFY_KINDS.baseline, doc).length === 0 && doc.sha256 === baselineSha(doc)) return { doc, problem: null };
     } catch { /* malformed */ }
     return { doc: null, problem: 'malformed' };
   }
-  const history = gitIn(where, env, ['log', '-1', '--format=%H', commit, '--', path]);
+  const history = gitIn(where, env, ['log', '-1', '--format=%H', commit, '--', at.path]);
   return { doc: null, problem: history.status === 0 && history.stdout.trim() !== '' ? 'missing' : null };
 }
 
@@ -189,7 +228,7 @@ function changeSince(where, env, base, scope) {
   for (const p of u.status === 0 ? u.stdout.split('\0').filter(Boolean) : []) {
     if (paths.has(p)) continue;
     paths.add(p);
-    loc += lineCount(join(where.repo, p));
+    loc += lineCount(join(where.worktree, p));
   }
   return { paths: [...paths].filter((p) => !UNSAFE_PATH.test(p)).slice(0, MAX_PATHS), loc };
 }
@@ -219,8 +258,9 @@ function reroute({ store, task, id, write, handle, riskPaths, change, at }) {
 }
 
 // The evaluation of task `id` in a resolved, active repository: { doc (verify.json), reasons, written, candidates,
-// output }. `anchor`: the commit whose baseline is the accepted inventory (merge mode: the target tip).
-export function evaluate({ where, names, env, id, mode, handle = null, at = now(), anchor = null }) {
+// output }. `anchor`: the commit whose baseline is the accepted inventory (merge mode: the target tip); `merged`: the
+// commit a merge brings onto it (merge mode).
+export function evaluate({ where, names, env, id, mode, handle = null, at = now(), anchor = null, merged = null }) {
   const started = Date.now();
   const write = mode === 'write';
   const store = storeOf(where, names);
@@ -228,7 +268,7 @@ export function evaluate({ where, names, env, id, mode, handle = null, at = now(
   if (task === null) throw unknownTask(id, where, names);
   const profile = store.read('profile', null) ?? emptyProfile();
   const code = codeState(where, env);
-  const stateShown = code.rel ?? where.dir;
+  const stateShown = stateRel(where.worktree, where.dir) ?? where.dir;
   const reasons = [];
   const say = (level, c, message, hint = '') => reasons.push({ level, code: c, message, hint });
   const active = readRecords(where.dir).records.map((r) => r.doc).filter((d) => d.status === 'active');
@@ -252,14 +292,14 @@ export function evaluate({ where, names, env, id, mode, handle = null, at = now(
   if (baseOk && change === null && mode !== 'merge') say('fail', 'base-missing', `git cannot compare the work with the base ${task.base.slice(0, 12)}`, 'fetch the base commit, then verify again');
 
   if (profile.gates.length === 0) {
-    candidates = observe(where.repo, { env, exclude: code.rel }).gates;
+    candidates = observe(where.worktree, { env, exclude: code.rel }).gates;
     say('fail', 'no-gates', `the profile has no gates, so nothing can verify ${id}`, candidates.length ? `detected: ${some(candidates.map((g) => g.cmd))}; changing gates is a gate-change decision` : 'add a gate of kind test to the profile');
   } else {
     if (!profile.gates.some((g) => g.kind === 'test')) {
       if (gateChange) allowedBy.add(gateChange.id);
       else say('fail', 'no-test-gate', 'the profile has no gate of kind test', 'add one, or record a gate-change decision that waives it (a docs-only repository)');
     }
-    const runs = profile.gates.map((g) => runGate(g, { cwd: where.repo, env }));
+    const runs = profile.gates.map((g) => runGate(g, { cwd: where.worktree, env }));
     doc.gates = runs.map((r) => r.gate);
     output = runs.map((r) => ({ name: r.gate.name, lines: tailLines(r.output) }));
     inv = inventoryOf(runs, context(where, env, code.rel));
@@ -268,14 +308,24 @@ export function evaluate({ where, names, env, id, mode, handle = null, at = now(
     if (current && current.sha256 !== baselineSha(current)) {
       say('fail', 'baseline-invalid', `${stateShown}/${VERIFY_KINDS.baseline.path()} does not match its sha256: it was changed outside verify`, 'restore it from git; a new baseline needs a decision');
     }
-    const anchored = anchorAt(where, env, anchorCommit, code.rel);
+    // the code verified descends from the anchor and HEAD (a merge: the tip and the merged branch)
+    const line = lineOf(where, env, current, [anchorCommit, mode === 'merge' ? merged : code.head]);
+    const linked = code.rel === null;
+    const working = line === 'line' || (!linked && (line === 'off' || line === 'unknown')) ? current : null;
+    const anchored = anchorAt(where, env, anchorCommit, working);
     const tests = (change?.paths ?? []).filter((p) => scannerOf(p) !== null);
+    const pinHint = `merge the branch it was collected on into this one once it has landed, or pin one for this code (${names.bin} baseline pin --decision <D>), then verify again`;
     if (anchored.problem) {
       say('fail', 'baseline-unanchored', `the baseline at ${anchorCommit.slice(0, 12)} is ${anchored.problem}, though its history has one: there is no accepted inventory to compare with`, 'restore the baseline on the target branch (git), or pin one with a decision');
-    } else if (!anchored.doc && anchorCommit && tests.length) {
+    } else if (linked && current && line !== 'line') {
+      const why = line === 'unknown' ? `git cannot tell whether the baseline in ${stateShown} (collected at ${String(current.head).slice(0, 12)}) is on the history of this code` : `the baseline in ${stateShown} was collected at ${String(current.head).slice(0, 12)}, not on the history of this code`;
+      say('fail', 'baseline-unanchored', `${why}: there is no accepted inventory to compare with`, pinHint);
+    } else if (!anchored.doc && anchorCommit && tests.length && !linked) {
       say('fail', 'baseline-unanchored', `no baseline is committed at ${anchorCommit.slice(0, 12)} and the change touches test files (${some(tests)}): the working baseline cannot be trusted`, `land the initial baseline in a task without test changes, or pin it on the target (${names.bin} baseline pin --decision <D>) and base the task on that commit`);
+    } else if (!anchored.doc && anchorCommit && tests.length) {
+      say('fail', 'baseline-unanchored', `no baseline is recorded in ${stateShown} and the change touches test files (${some(tests)}): there is no accepted inventory to compare with`, `land the initial baseline in a task without test changes, or pin one (${names.bin} baseline pin --decision <D>), then verify again`);
     }
-    const pinned = [anchored.doc, current].filter(Boolean);
+    const pinned = [anchored.doc, working].filter((b, k, all) => b && all.indexOf(b) === k);
     const other = pinned.find((b) => b.collector !== inv.collector);
     let reference = { tests: [], failing: [] };
     let cmp = { added: inv.tests.map((t) => t.id), removed: [], newlySkipped: [], allowedBy: [], unallowed: [] };

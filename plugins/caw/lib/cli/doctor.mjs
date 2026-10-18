@@ -183,7 +183,7 @@ function repoRows({ names, io, id, errors }) {
     return { rows: [row('state', 'fail', err.message, err.hint), ...skipAll('the machine data is not readable', 'fix the state row first').slice(1)], repo: null, env: null };
   }
   const inactive = skipAll(`not active in ${where.repo}`, `start tracking with /${names.plugin}:start (${names.bin} init)`);
-  if (!where.active) return { rows: inactive, repo: where.repo, env: null };
+  if (!where.active) return { rows: inactive, repo: where.repo, worktree: where.worktree, env: null };
   const failed = (x, err) => {
     if (!(err instanceof StateError)) throw err;
     errors.push(err);
@@ -195,7 +195,7 @@ function repoRows({ names, io, id, errors }) {
   let stateRow;
   try {
     state = openStore(where.dir, { names }).read('state');
-    if (state === null) return { rows: inactive, repo: where.repo, env: null };
+    if (state === null) return { rows: inactive, repo: where.repo, worktree: where.worktree, env: null };
     if (state.schema > KINDS.state.version) {
       const message = `state.json has schema ${state.schema}; this plugin knows schema ${KINDS.state.version} and refuses to write`;
       errors.push({ code: 'schema-newer', message, hint: update });
@@ -221,7 +221,7 @@ function repoRows({ names, io, id, errors }) {
   const flagsRow = state === null
     ? row('flags', 'skip', 'state.json not readable', 'fix the state row first')
     : row('flags', 'ok', flagList(state.flags), `flags are the flags map of state.json (off | shadow | on); ${names.bin} tier --explain shows what the tier sets`);
-  return { rows: [stateRow, profileRow, flagsRow], repo: where.repo, env: null };
+  return { rows: [stateRow, profileRow, flagsRow], repo: where.repo, worktree: where.worktree, env: null };
 }
 
 function contextRow(info) {
@@ -344,7 +344,7 @@ export function doctor({ names, io, version, pluginRoot }) {
     row('providers', 'skip', 'not available: no provider detection in this version', 'nothing to fix in this version'),
     row('scheduler', 'skip', 'not checked: leases and stale reaps need the scheduler, not in this version', 'nothing to fix in this version'),
     contextRow(info),
-    permissionsRow({ names, io, repo: repo.repo }),
+    permissionsRow({ names, io, repo: repo.worktree ?? null }), // the project settings of the checkout Claude Code runs in
     row('protection', 'skip', `${names.claimRefPrefix}* not checked: it needs gh, which this version does not run`,
       `with lanes on, check that the server's branch protection does not block ${names.claimRefPrefix}* (claims are pushed there)`),
   ];

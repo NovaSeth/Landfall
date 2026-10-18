@@ -23,8 +23,9 @@ const guarded = (fn) => (ctx) => {
 };
 const usage = (code, message, hint = '') => ({ code: EXIT.USAGE, errors: [{ code, message, hint }] });
 const here = ({ io, names }) => resolve({ cwd: io.cwd, env: io.env, names });
+// A record's path as shown: relative to the worktree when the state directory is inside it, else absolute.
 const fileOf = (where, id) => {
-  const own = stateRel(where.repo, where.dir);
+  const own = stateRel(where.worktree, where.dir);
   return own ? `${own}/${DECISION.path(id)}` : join(where.dir, DECISION.path(id));
 };
 
@@ -142,8 +143,8 @@ export const find = guarded(({ args, flags, names, io }) => {
   let picked = (where.active ? readRecords(where.dir).records : []).map((r) => ({ r, s: summarize(r) }));
   if (flags.path !== undefined) {
     const target = realTarget(isAbsolute(flags.path) ? flags.path : join(io.cwd, flags.path));
-    const rel = target && inside(where.repo, target.path);
-    if (!rel) return usage('outside-repository', `${flags.path} is not inside the repository ${where.repo}`, 'give a path inside the repository');
+    const rel = target && inside(where.worktree, target.path);
+    if (!rel) return usage('outside-repository', `${flags.path} is not inside the repository ${where.worktree}`, 'give a path inside the repository');
     const byId = new Map(picked.map((p) => [p.s.id, p]));
     picked = relevantDecisions(picked.map((p) => p.s), { path: rel, cited: citedIn(target.path) }).map((s) => byId.get(s.id));
   }

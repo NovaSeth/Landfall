@@ -51,7 +51,7 @@ export function observe(ctx) {
     const w = where(ctx);
     const r = runObserve(w, { names: ctx.names, env: ctx.io.env });
     const o = r.observation;
-    const lines = [`Observed ${o.files} files${r.cached ? ' (cached for this HEAD)' : ''} in ${w.repo}`, ...Object.entries(o.facts).map(([k, f]) => `  ${k}: ${shown(f.value)} (${f.evidence})`)];
+    const lines = [`Observed ${o.files} files${r.cached ? ' (cached for this HEAD)' : ''} in ${w.worktree}`, ...Object.entries(o.facts).map(([k, f]) => `  ${k}: ${shown(f.value)} (${f.evidence})`)];
     lines.push(`  gate candidates: ${o.gates.length ? o.gates.map((g) => g.cmd).join(' · ') : '(none)'}`);
     if (!r.active) lines.push(`Not active: nothing written (start with /${ctx.names.plugin}:start).`);
     else {

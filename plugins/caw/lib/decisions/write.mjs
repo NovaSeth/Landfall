@@ -116,7 +116,7 @@ export function createDecision({ store, where, names, env, handle, input, today 
   if (high > 0) store.update('counter', `D-${handle}`, (cur) => ((cur?.high ?? 0) >= high ? undefined : { high }));
   const id = allocateId(store, { prefix: 'D', handle, build: (next) => formatRecord({ ...doc, id: next }, body) });
   for (const old of supersedes) rewrite(store, old, { status: 'superseded', supersededBy: id }, { active: true, by: id });
-  return { id, file: relative(where.repo, join(where.dir, DECISION.path(id))).split(sep).join('/'), supersedes, warnings };
+  return { id, file: relative(where.worktree, join(where.dir, DECISION.path(id))).split(sep).join('/'), supersedes, warnings };
 }
 
 // Retires a decision: tombstone, then status retired. Returns { id, tombstone (created now), changed (record) }.
