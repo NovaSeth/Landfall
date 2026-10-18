@@ -42,6 +42,7 @@ usage: caw <command> [options]
 Commands:
   baseline pin         Repair the test baseline: replace it with the inventory collected now, with a gate-change or test-removal decision.
   baseline show        Print the pinned test baseline: every test with its skip flag, pinned failures, collector and last pin.
+  brief                Render the brief of a routed task from the brief template and the state; --write saves tasks/<id>/brief.md.
   deactivate           Remove the untracked state of this repository (or the link of its external state) and remember the opt-out.
   decide               Record a decision: a new D-<H>-<n> file under the state directory with what, why and cost if wrong.
   decisions check      Validate the decision records and every D-<H>-<n> cited in tracked files; exit 1 on a problem.
@@ -63,16 +64,18 @@ Commands:
   loop start           Start a loop with caps (defaults: wallMin=480,ticks=200,usd=25,rounds=2); a running loop is never replaced.
   loop status          Print the loop: ticks, wall time and cost against the caps, the stall count, and the exit once it ended.
   loop stop            End the running loop: exit DONE, so no wakeup is scheduled again; an ended loop is left as it is.
+  method               Print one pack or one section of the method by name: each rule line of it, under its section heading.
   profile observe      Scan the repository (manifests, files, CI, harnesses) and merge what it shows into the project profile.
   profile set          Record one profile fact with its source and evidence: the user's words (said) or a path:line (observed).
   profile show         Print the project profile: facts with source and evidence, gates, risk paths, and whether a scan is due.
-  receipt              Tokens and estimated cost of a task (its sessions, subagents and external runs) or of one external run.
+  receipt              Tokens and estimated cost of a task, one external run, the current loop, or all work since a day by class or executor.
   review record        Record a typed review result as the next round tasks/<id>/review-r<k>.json; the Markdown review closes nothing.
   route                Classify a task as trivial, standard or critical from its plan and print its route; the class only rises.
   rule                 Print method rules by ID; a retired ID prints its successor. --core prints the always-on rules.
   slots                Show the machine scheduler: calibration, load and free memory, leases with ports and DB names, FIFO queues.
   slots calibrate      Calibrate the scheduler: cores, RAM, memory method; save LOAD_MAX, FREE_MIN and per-kind max overrides.
   state unlock         Remove a lock left by a process that is gone (store and machine data); writes never take one over.
+  status               Show this repository: activation, tier, open tasks with their next step, the loop and leases; the default command.
   task done            Mark your task done; only after a passing verify for the code at HEAD (the only way to status done).
   task list            List the tasks of this repository: ID, status, kind, lane, title.
   task merge           Merge a task branch with --no-ff --no-commit, run the outcome gates on the merged tree, commit only on pass.
@@ -123,6 +126,30 @@ Print the pinned test baseline: every test with its skip flag, pinned failures, 
 Exit 1 when its sha256 does not match its content (it was edited outside verify and baseline pin). Writes nothing.
 
 Read-only.
+Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
+```
+
+### `caw brief <id> [--role <role>] [--write] [--force] [--yes] [--json]`
+
+```text
+usage: caw brief <id> [--role <role>] [--write] [--force] [--yes] [--json]
+
+Render the brief of a routed task from the brief template and the state; --write saves tasks/<id>/brief.md.
+Filled from the state: title and ID, the agent of the role, the class with the reason of its route record and the
+kind, branch and base once recorded, the rule IDs of the role and the class, the profile gates, and the lease env
+of a live lease the scheduler holds for the task here. Every other <…> placeholder is left to fill in.
+The brief ends with a marker line holding its hash: --write replaces a saved brief while nobody edited it; one
+written or edited by hand only with --force (else exit 1). Exit 1 also: no such task, the task is not routed.
+
+Arguments:
+  id  task ID such as T-AB-1
+
+Options:
+  --role <role>  implementer (default) or reviewer: the agent and the rules of the role
+  --write        save it as tasks/<id>/brief.md in the state directory (the task's owner)
+  --force        with --write: replace a brief written or edited by hand
+
+Read-only. Changes files with --write: needs a terminal or --yes, otherwise exit 7 REFUSED.
 Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
 ```
 
@@ -480,6 +507,23 @@ Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
 Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
 ```
 
+### `caw method <name> [--json]`
+
+```text
+usage: caw method <name> [--json]
+
+Print one pack or one section of the method by name: each rule line of it, under its section heading.
+A pack is a name of the packs table in method/index.json (discovery, team, …); a section is <topic>/<section slug>,
+such as coding/tests-first (a slug alone repeats across topics). Reads method/index.json and the topic files; writes
+nothing. An unknown name exits 2 and prints every name (--json: data.names).
+
+Arguments:
+  name  a pack, or <topic>/<section slug>
+
+Read-only.
+Exit codes: 0 OK · 2 USAGE
+```
+
 ### `caw profile observe [--yes] [--json]`
 
 ```text
@@ -527,12 +571,12 @@ Read-only.
 Exit codes: 0 OK · 1 FAIL · 7 REFUSED · 8 ENV
 ```
 
-### `caw receipt [--task <id>] [--run <id>] [--yes] [--json]`
+### `caw receipt [--task <id>] [--run <id>] [--loop] [--since <YYYY-MM-DD>] [--by <class|executor>] [--yes] [--json]`
 
 ```text
-usage: caw receipt [--task <id>] [--run <id>] [--yes] [--json]
+usage: caw receipt [--task <id>] [--run <id>] [--loop] [--since <YYYY-MM-DD>] [--by <class|executor>] [--yes] [--json]
 
-Tokens and estimated cost of a task (its sessions, subagents and external runs) or of one external run.
+Tokens and estimated cost of a task, one external run, the current loop, or all work since a day by class or executor.
 Reads the Claude Code transcripts of this repository and its worktrees ($CLAUDE_CONFIG_DIR/projects, default
 ~/.claude/projects) and the run records. A task gets the requests made while it was active (after a task, route,
 brief, verify or exec command naming it), the subagents whose description or name holds its ID (and the subagents
@@ -540,12 +584,19 @@ they spawn), and its external runs. Cost is an estimate from the dated price tab
 whole micro-dollars (costMicroUsd); durations in milliseconds. --task saves receipts/<task>.json in an active
 repository (unchanged: no write; never fewer tokens than the saved one); an inactive one only prints.
 Something unreadable or unpriced: exit 1 with the numbers found (data.receipt.partial).
+--loop: every request and external run of the repository since the loop started (until its exit), as its cost cap
+counts them; no loop record: exit 1. --since: the saved receipts that ended on or after the day (UTC) and the run
+records no saved receipt lists, per task class or per executor (agent type, provider). --loop and --since write
+nothing (data.partial when something could not be read).
 
 Options:
-  --task <id>  the task, such as T-AB-1
-  --run <id>   one external run, such as codex-T-AB-1-reviewer-1
+  --task <id>            the task, such as T-AB-1
+  --run <id>             one external run, such as codex-T-AB-1-reviewer-1
+  --loop                 the current loop: tokens and cost since it started
+  --since <YYYY-MM-DD>   totals of the work that did not end before that day (UTC)
+  --by <class|executor>  with --since: one row per task class (default) or per executor
 
-Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
+Read-only. Changes files with --task, --run: needs a terminal or --yes, otherwise exit 7 REFUSED.
 Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
 ```
 
@@ -672,6 +723,21 @@ Options:
 
 Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
 Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
+```
+
+### `caw status [--json]`
+
+```text
+usage: caw status [--json]
+
+Show this repository: activation, tier, open tasks with their next step, the loop and leases; the default command.
+Also what the CLI prints with no command (--help prints the help). State: active (the state directory, in the
+repository or linked), declined or not active. Tier: evaluated now and never recorded (`tier` records a change).
+Tasks: each open task with the next step of the loop's step table, as `tick` would list it. Then the loop record and
+the scheduler leases of this project. At most 25 lines; --json holds every task and step. Writes nothing.
+
+Read-only.
+Exit codes: 0 OK · 1 FAIL · 7 REFUSED · 8 ENV
 ```
 
 ### `caw task done <id> [--yes] [--json]`

@@ -5,8 +5,10 @@
 //   saveReceipt(receipt, { where, names }) → { saved, kept, file }: receipts/<task>.json through lib/state
 //   runReceipt(id, ctx)  → { run }; reads only
 //   totals({ task } | { run }, ctx) → { task | run, tokens, costMicroUsd, partial }: for the loop's budget caps; reads only
-//   costSince(startedAt, ctx) → { costMicroUsd, partial, unmeasurable, problems }: the repository's spending since a
-//     time (the loop's cost cap, spec §7.7); reads only
+//   costSince(startedAt, ctx) → { costMicroUsd, tokens, partial, unmeasurable, problems }: the repository's spending
+//     since a time, up to ctx.until when given (the loop's cost cap, spec §7.7; `receipt --loop`); reads only
+//   totalsSince(day, by, ctx) → { where, since, by, groups, total, receipts, runs, partial, problems }: totals per task
+//     class or executor from the saved receipts and the run records (`receipt --since`); reads only
 //   readRuns(dir) (runs.mjs) → { runs, problems }: the run records, also for the loop's live-run check
 // ctx = { cwd, env, names }. A task's tokens: its requests (attributed in sessions.mjs) and its external runs; its
 // cost: each request priced by prices.json (rounded to a whole micro-dollar) plus the runs' own costs. `partial` is
@@ -144,13 +146,16 @@ export function totals(scope, ctx) {
 // every request of the repository's transcripts made at or after it, of any task or none, priced like a receipt, plus
 // the full cost of every external run live at that time or started later (only a run that ended before it is left
 // out: counting a run that overlaps the start in full is the safe side of a cap). Whole micro-dollars. A
-// request without a time is left out. `partial`: a source is missing or something could not be read or priced, so the
-// cost is a lower bound (`problems` says what); `unmeasurable`: no transcript was found or none could be read, so the
-// cost is not measured at all (never a complete zero). `where` (resolve()) may be passed to spare a second git call.
-// Writes nothing.
-export function costSince(startedAt, { cwd, env, names, where = null }) {
+// request without a time is left out. `until` (an ISO time, an ended loop's exit) also leaves out the requests made
+// after it and the runs started after it. `tokens`: the same requests' and runs' tokens (an unpriced model's count).
+// `partial`: a source is missing or something could not be read or priced, so the cost is a lower bound (`problems`
+// says what); `unmeasurable`: no transcript was found or none could be read, so the cost is not measured at all
+// (never a complete zero). `where` (resolve()) may be passed to spare a second git call. Writes nothing.
+export function costSince(startedAt, { cwd, env, names, where = null, until = null }) {
   const since = typeof startedAt === 'string' ? Date.parse(startedAt) : NaN;
   if (Number.isNaN(since)) throw new TypeError('receipts.costSince: startedAt must be an ISO time');
+  const end = until === null ? Infinity : typeof until === 'string' ? Date.parse(until) : NaN;
+  if (Number.isNaN(end)) throw new TypeError('receipts.costSince: until must be an ISO time or null');
   const at = where ?? resolve({ cwd, env, names });
   const ledger = readLedger({ repo: at.repo, env, bin: names.bin });
   const dir = join(at.local, 'runs');
@@ -161,15 +166,79 @@ export function costSince(startedAt, { cwd, env, names, where = null }) {
   const problems = [...ledger.problems, ...runs.problems];
   if (!ledger.found) problems.unshift({ code: 'no-transcripts', message: `no Claude Code transcripts found for ${at.repo} or its worktrees: their cost is not counted`, hint: 'transcripts live in $CLAUDE_CONFIG_DIR/projects (default ~/.claude/projects)' });
   const unpriced = new Set();
+  const tokens = zero();
   let cost = 0;
   for (const r of ledger.requests) {
-    if (!r.at || Date.parse(r.at) < since) continue;
+    if (!r.at || Date.parse(r.at) < since || Date.parse(r.at) > end) continue;
     const c = requestMicroUsd(r.model, r.tokens);
     if (c === null) unpriced.add(label(r.model));
     else cost += c;
+    add(tokens, collapse(r.tokens));
   }
   for (const m of unpriced) problems.push({ code: 'model-unpriced', message: `model ${m} is not in the price table of ${PRICES.date}; its tokens count, its cost does not`, hint: 'add the model to lib/receipts/prices.json' });
-  for (const e of runs.runs) if (!(e.endedAt && Date.parse(e.endedAt) < since)) cost += e.costMicroUsd ?? 0;
+  for (const e of runs.runs) {
+    if ((e.endedAt && Date.parse(e.endedAt) < since) || (e.startedAt && Date.parse(e.startedAt) > end)) continue;
+    cost += e.costMicroUsd ?? 0;
+    if (e.tokens) add(tokens, e.tokens);
+  }
   const unmeasurable = !ledger.found || (ledger.requests.length === 0 && ledger.problems.length > 0);
-  return { costMicroUsd: cost, partial: problems.length > 0, unmeasurable, problems };
+  return { costMicroUsd: cost, tokens, partial: problems.length > 0, unmeasurable, problems };
+}
+
+export const GROUP_BY = Object.freeze(['class', 'executor']);
+
+// Totals of the work that did not end before `day` (YYYY-MM-DD, UTC), per task class or per executor, from what is
+// stored: each saved receipt (receipts/<task>.json) whose endedAt is on or after the day, and each run record
+// (local/runs) that no saved receipt lists and that did not end before the day. by class: a receipt by its class (as
+// saved; "unrouted" when null), a run by its task's class now. by executor: a receipt's byAgent rows by agent type and
+// its external runs by provider, a run by its provider (a receipt's total is the sum of both). Tasks without a saved
+// receipt count only their runs. A receipt or run record that cannot be read is left out and makes the totals
+// partial (`problems`). Groups: { key, tasks, runs, tokens, costMicroUsd }, by cost, then key. Reads only.
+export function totalsSince(day, by, { cwd, env, names }) {
+  const since = Date.parse(`${day}T00:00:00.000Z`);
+  if (!/^\d{4}-\d\d-\d\d$/.test(String(day)) || Number.isNaN(since) || new Date(since).toISOString().slice(0, 10) !== day) throw usage('invalid-value', `--since ${String(day).slice(0, 40)}: expected a date YYYY-MM-DD`, 'such as 2026-10-01');
+  if (!GROUP_BY.includes(by)) throw usage('invalid-value', `--by ${String(by).slice(0, 40)}: expected ${GROUP_BY.join(' or ')}`, 'class (the default) or executor');
+  const where = resolve({ cwd, env, names });
+  const groups = new Map();
+  const problems = [];
+  const put = (key, task, tokens, cost, runs = 0) => {
+    if (!groups.has(key)) groups.set(key, { key, tasks: new Set(), runs: 0, tokens: zero(), costMicroUsd: 0 });
+    const g = groups.get(key);
+    g.tasks.add(task);
+    g.runs += runs;
+    if (tokens) add(g.tokens, tokens);
+    g.costMicroUsd += cost ?? 0;
+  };
+  let receipts = [];
+  let extra = [];
+  if (where.active) {
+    const store = open(where.dir, { names, kinds: STORE_KINDS });
+    const unreadable = (err) => {
+      if (!(err instanceof StateError)) throw err;
+      problems.push({ code: err.code, message: err.message, hint: 'the totals leave it out; they are a lower bound' });
+    };
+    for (const id of store.list(RECEIPT.name)) {
+      try { receipts.push(store.read(RECEIPT.name, id)); } catch (err) { unreadable(err); }
+    }
+    const listed = new Set(receipts.flatMap((r) => r.external.map((e) => e.runId)));
+    receipts = receipts.filter((r) => r.endedAt && Date.parse(r.endedAt) >= since);
+    for (const r of receipts) {
+      if (by === 'class') put(r.class ?? 'unrouted', r.task, r.tokens, r.costMicroUsd, r.external.length);
+      else {
+        for (const a of r.byAgent) put(a.agentType, r.task, a.tokens, a.costMicroUsd);
+        for (const e of r.external) put(e.provider, r.task, e.tokens, e.costMicroUsd, 1);
+      }
+    }
+    const runs = readRuns(join(where.local, 'runs'));
+    problems.push(...runs.problems);
+    extra = runs.runs.filter((e) => !listed.has(e.runId) && !(e.endedAt && Date.parse(e.endedAt) < since));
+    const classOf = (task) => {
+      try { return store.read('task', task)?.class ?? 'unrouted'; } catch (err) { unreadable(err); return 'unrouted'; }
+    };
+    for (const e of extra) put(by === 'class' ? classOf(e.task) : e.provider, e.task, e.tokens, e.costMicroUsd, 1);
+  }
+  const list = [...groups.values()].map((g) => ({ ...g, tasks: [...g.tasks].sort() }))
+    .sort((a, b) => b.costMicroUsd - a.costMicroUsd || a.key.localeCompare(b.key, 'en'));
+  const total = { tokens: list.reduce((sum, g) => add(sum, g.tokens), zero()), costMicroUsd: list.reduce((sum, g) => sum + g.costMicroUsd, 0) };
+  return { where, since: day, by, groups: list, total, receipts: receipts.length, runs: extra.length, partial: problems.length > 0, problems };
 }
