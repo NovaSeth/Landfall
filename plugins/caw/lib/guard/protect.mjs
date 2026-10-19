@@ -13,7 +13,7 @@
 // Tracked = a top-level directory in HEAD's tree.
 import { existsSync, readdirSync, realpathSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
-import { KINDS } from '../state/kinds.mjs';
+import { KINDS } from '../state/index.mjs';
 import { MSG } from './messages.mjs';
 import { why } from './tokenizer.mjs';
 import { BIN, base } from './tokens.mjs';

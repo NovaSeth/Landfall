@@ -185,3 +185,16 @@ test('owned state files: every committed lib/state kind is owned, and an Edit na
     assert.ok(v.reason.includes(`${names.bin} `), `${rel}: ${v.reason}`);
   }
 });
+
+test('owned state files: nothing the previous hand-written list protected is allowed now (T-MG-39)', (t) => {
+  const f = fixture(t);
+  const before = [['state.json', 'FLW-7'], ['config.json', 'FLW-7'], ['team/AB.json', 'FLW-7'], ['tasks/T-AB-1/task.json', 'FLW-7'], ['tasks/T-AB-1/verify.json', 'FLW-7'],
+    ['baseline/tests.json', 'FLW-7'], ['local/loop.json', 'FLW-7'], ['decisions/D-AB-1.md', 'PRI-8'], ['tombstones/D-AB-3.json', 'FLW-7']];
+  for (const [rel, rule] of before) assert.equal(ownedFile(rel)?.rule, rule, rel);
+  for (const rel of before.filter(([r]) => r !== 'decisions/D-AB-1.md').map(([r]) => r)) {
+    for (const [tool, input] of [['Edit', { old_string: '{', new_string: '{ ' }], ['Write', { content: '{}\n' }]]) assert.equal(edit(f, f.s(rel), input, tool).decision, 'deny', `${tool} ${rel}`);
+  }
+  // user-owned: the project rules stay editable with the Edit tool; unknown files stay allowed
+  assert.equal(edit(f, f.s('guard-extra.txt'), { content: 'x\n' }, 'Write').decision, 'allow');
+  assert.equal(ownedFile('secrets-patterns.txt'), null);
+});

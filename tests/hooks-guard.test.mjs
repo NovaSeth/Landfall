@@ -444,6 +444,9 @@ const NEW_BLOCK = [
   ['rm -rf src/*', 'PRI-17', 'tracked'],
   // C4 / M3: state.json, the team files and the project rules are not written from Bash
   ['rm @STATE@/state.json', 'FLW-7', 'tracked'], ['mv @STATE@/state.json /tmp/s', 'FLW-7', 'tracked'], ['echo x > @STATE@/state.json', 'FLW-7', 'tracked'],
+  // every file of the owned list stays denied (T-MG-39: the list derives from the lib/state kinds)
+  ['echo x > @STATE@/config.json', 'FLW-7', 'tracked'], ['echo x > @STATE@/baseline/tests.json', 'FLW-7', 'tracked'], ['echo x > @STATE@/local/loop.json', 'FLW-7', 'tracked'],
+  ['echo x > @STATE@/tombstones/D-AB-3.json', 'FLW-7', 'tracked'], ['echo x > @STATE@/local/ids/T-AB.json', 'FLW-7', 'tracked'], ['echo x > @STATE@/tasks/T-AB-1/verify.json', 'FLW-7', 'tracked'],
   ['cp x @STATE@/team/AB.json', 'FLW-7', 'tracked'], ['rm -rf @STATE@/team', 'FLW-7', 'tracked'], ['echo "" > @STATE@/guard-extra.txt', 'SEC-4', 'tracked'],
   // I1 / F5 / F7: >& and glued option values are writes
   ['echo x >& @STATE@/tasks/T-AB-1/task.json', 'FLW-7', 'tracked'], ['echo x >&@STATE@/tasks/T-AB-1/task.json', 'FLW-7', 'tracked'], ['echo x 1>&@STATE@/tasks/T-AB-1/task.json', 'FLW-7', 'tracked'], ['echo x 2>&@STATE@/tasks/T-AB-1/task.json', 'FLW-7', 'tracked'],
