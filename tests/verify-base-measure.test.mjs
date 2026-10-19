@@ -101,8 +101,9 @@ for (const linked of [true, false]) {
     p.noTempWorktree();
   });
 
+  // The gate exits 127 itself when its script is absent (a missing script gives 127 under bash and 2 under dash).
   test(`${mode}: a gate that cannot run at the base is a verify error, never a pass`, async (t) => {
-    const p = await fresh(t, { linked, gates: [{ name: 'test', cmd: 'sh ./gate.sh', timeoutS: 60, kind: 'test' }] });
+    const p = await fresh(t, { linked, gates: [{ name: 'test', cmd: 'test -f gate.sh || exit 127; sh ./gate.sh', timeoutS: 60, kind: 'test' }] });
     const id = await p.task('Gate script');
     p.commit('main', 'gate.sh', 'node --test\n');
     p.commit('main', 'calc.test.mjs', `${HEADER}${TEST('adds')}`);

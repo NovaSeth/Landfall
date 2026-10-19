@@ -477,7 +477,7 @@ test('fail closed, linked: git cannot tell whether the store baseline describes 
   const id = await linkedTask(p, 'Docs');
   // the reference is measured at the base (T-MG-37); a measurement that cannot run there is an error, never a pass
   const gates = profile.openStore(p.stateDir, names);
-  gates.write('profile', null, { ...profile.emptyProfile(), gates: [{ name: 'test', cmd: 'sh ./gate.sh', timeoutS: 120, kind: 'test' }] });
+  gates.write('profile', null, { ...profile.emptyProfile(), gates: [{ name: 'test', cmd: 'test -f gate.sh || exit 127; sh ./gate.sh', timeoutS: 120, kind: 'test' }] });
   put(join(p.repo, 'gate.sh'), 'node --test\n');
   git(p.repo, p.env, ['add', 'gate.sh']);
   editReadme(p, p.repo, '# docs\n');
