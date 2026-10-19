@@ -86,7 +86,7 @@ The table lists what each tool documents (public READMEs as read on 2026-10-19; 
 
 ## Measured
 
-With/without evaluation on the plugin's own suite (10 small tasks with hidden tests, 5 runs per arm, 2026-10-19): quality delta **0** (49/50 complete in both arms), cost **+29 %** with the plugin, and two of three trivial cases over the suite's overhead limits. The plugin does not improve these small tasks and costs more on them; details and the reading in [docs/evaluation.md](docs/evaluation.md). Cutting that overhead is the next release's first item.
+With/without evaluation on the plugin's own suite (10 small tasks with hidden tests, 5 runs per arm, 2026-10-19): quality delta **0** (49/50 complete in both arms), cost **+29 %** with the plugin, and two of three trivial cases over the suite's overhead limits. The plugin does not improve these small tasks and costs more on them. After a skill change the same day, the token overhead of two of the three trivial cases is at or near the limit; the remaining extra time is the test run the plugin asks for after every change. Details and the reading in [docs/evaluation.md](docs/evaluation.md).
 
 ## Commands at a glance
 

@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.0.1
+
+- Skills: an obviously trivial request is classed from the request and runs no plugin command; `work` and `dispatch` run `landfall secrets` before the report; when the CLI is not on PATH the skills call `${CLAUDE_PLUGIN_ROOT}/bin/landfall`.
+- Docs: the with/without evaluation is published (quality delta 0, cost +29 %, small-task overhead over the limits), with the caveat that the eval sandbox had no plugin CLI on PATH, and the re-measurement after the skill change.
+
 ## 2.0.0
 
 Landfall (renamed from `caw`): plugin `landfall`, command `landfall`, state directory `.landfall/`, environment prefix `LANDFALL_`, marketplace `landfall-plugins`, repository NovaSeth/Landfall. Existing `.caw/` state and machine data move to the new names by layout migration `002-rename-state-dir` (`landfall migrate`).
