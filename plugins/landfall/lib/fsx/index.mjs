@@ -19,7 +19,7 @@
 // Acquiring a lock this process already holds (under any spelling of its path) fails with EREENTRANT: a nested
 // critical section is a programming error.
 import { randomBytes } from 'node:crypto';
-import { closeSync, fsyncSync, linkSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmSync, rmdirSync, writeFileSync } from 'node:fs';
+import { closeSync, constants, fstatSync, fsyncSync, linkSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmSync, rmdirSync, writeFileSync, writeSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { performance } from 'node:perf_hooks';
@@ -328,4 +328,19 @@ export function unlockStale(lock, { ttlMs = LOCK_TTL_MS, quietMs = 2000 } = {}) 
     if (entry.startsWith(name) && m && !isAlive(Number(m[1]))) rmSync(join(dir, entry), { recursive: true, force: true });
   }
   return { removed, owner: removed ? first.owner : null };
+}
+
+// One write() on a descriptor opened with O_APPEND: the kernel places the bytes at the end of the file as it is then,
+// so a line written by another process is never overwritten. The file is opened without following a link and must
+// be a regular file. `before` runs between the open and the write (test hooks).
+export function appendLine(file, bytes, { mode = 0o644, before } = {}) {
+  mkdirSync(dirname(file), { recursive: true });
+  const fd = openSync(file, constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | constants.O_NOFOLLOW, mode);
+  try {
+    if (!fstatSync(fd).isFile()) { const e = new Error(`${file} is not a regular file`); e.code = 'ENOTREGULAR'; throw e; }
+    if (before) before();
+    writeSync(fd, bytes);
+  } finally {
+    closeSync(fd);
+  }
 }

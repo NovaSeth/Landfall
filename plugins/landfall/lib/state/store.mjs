@@ -21,9 +21,9 @@
 // (Node has no openat or O_NOFOLLOW for directories), so a process that can already write the store could swap
 // a checked directory for a link in between. Locks never write through links, and that process could write the
 // store directly anyway; this window is not closed.
-import { closeSync, constants, existsSync, fstatSync, writeFileSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, writeSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
 import { dirname, isAbsolute, join } from 'node:path';
-import { createExclusive, makeDirs, removeEmptyDirs, sweepTemps, unlockStale as fsxUnlockStale, withLock, writeAtomic } from '../fsx/index.mjs';
+import { appendLine, createExclusive, makeDirs, removeEmptyDirs, sweepTemps, unlockStale as fsxUnlockStale, withLock, writeAtomic } from '../fsx/index.mjs';
 import { checkWrite, invalidState, parseDoc, requireArg } from './document.mjs';
 import { StateError, newerSchema } from './errors.mjs';
 import { KINDS, LOGS } from './kinds.mjs';
@@ -35,7 +35,7 @@ import { upgradeDoc } from './upgrade.mjs';
 const APPEND_MAX = 4096;
 // Test hook: creates <dir>/paused, then waits (at most 10 s) until <dir>/go exists.
 function pauseUntilSignalled(dir) {
-  writeFileSync(join(dir, 'paused'), '');
+  writeAtomic(join(dir, 'paused'), '');
   const nap = new Int32Array(new SharedArrayBuffer(4));
   for (let i = 0; i < 2000 && !existsSync(join(dir, 'go')); i++) Atomics.wait(nap, 0, 0, 5);
 }
@@ -355,16 +355,12 @@ export class Store {
     const bytes = Buffer.from(line);
     if (bytes.length > APPEND_MAX) throw new StateError('limit-exceeded', 'USAGE', `${this.abs(rel)}: a log line is ${bytes.length} bytes, the limit is ${APPEND_MAX}`, { hint: 'nothing was logged' });
     const file = this.abs(rel);
-    mkdirSync(dirname(file), { recursive: true });
-    // The log is opened without following a link and must be a regular file (a link planted at its path is refused).
-    const fd = openSync(file, constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | constants.O_NOFOLLOW, 0o644);
-    if (!fstatSync(fd).isFile()) { closeSync(fd); throw new StateError('state-invalid', 'FAIL', `${file} is not a regular file`, { hint: 'remove it; the plugin recreates the log' }); }
+    const pause = process.env[`${this.names.envPrefix}TEST_APPEND_PAUSE`];
     try {
-      const pause = process.env[`${this.names.envPrefix}TEST_APPEND_PAUSE`];
-      if (pause) pauseUntilSignalled(pause);
-      writeSync(fd, bytes);
-    } finally {
-      closeSync(fd);
+      appendLine(file, bytes, { before: pause ? () => pauseUntilSignalled(pause) : undefined });
+    } catch (err) {
+      if (err?.code === 'ENOTREGULAR' || err?.code === 'ELOOP') throw new StateError('state-invalid', 'FAIL', `${file} is not a regular file`, { hint: 'remove it; the plugin recreates the log' });
+      throw err;
     }
   }
 

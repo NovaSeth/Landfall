@@ -355,7 +355,10 @@ export function evaluate({ where, names, env, id, mode, handle = null, at = now(
     const last = store.read('verify', id);
     const own = last?.result === 'pass' && last.inventory.tests ? { collector: last.inventory.collector, tests: last.inventory.tests, failing: last.failures.preexisting } : null;
     const pinned = [measure ? measured : anchored.doc, working, own].filter((b, k, all) => b && all.indexOf(b) === k);
-    const other = pinned.find((b) => b.collector !== inv.collector);
+    // A reference that collected nothing (the base of a first task has no tests yet: the generic collector saw no
+    // runner output) is an empty inventory, not a change of collector.
+    const empty = (b) => b.collector === 'generic' && (b.tests?.length ?? 0) === 0 && (b.failing?.length ?? 0) === 0;
+    const other = pinned.find((b) => b.collector !== inv.collector && !empty(b));
     let reference = { tests: [], failing: [] };
     let cmp = { added: inv.tests.map((t) => t.id), removed: [], newlySkipped: [], allowedBy: [], unallowed: [] };
     if (other) {
