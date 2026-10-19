@@ -21,7 +21,7 @@
 // (Node has no openat or O_NOFOLLOW for directories), so a process that can already write the store could swap
 // a checked directory for a link in between. Locks never write through links, and that process could write the
 // store directly anyway; this window is not closed.
-import { lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
+import { closeSync, existsSync, writeFileSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, writeSync } from 'node:fs';
 import { dirname, isAbsolute, join } from 'node:path';
 import { createExclusive, makeDirs, removeEmptyDirs, sweepTemps, unlockStale as fsxUnlockStale, withLock, writeAtomic } from '../fsx/index.mjs';
 import { checkWrite, invalidState, parseDoc, requireArg } from './document.mjs';
@@ -31,6 +31,14 @@ import { MIGRATIONS } from './migrations/index.mjs';
 import { format, validate } from './schema.mjs';
 import { upgradeDoc } from './upgrade.mjs';
 
+// The most bytes of one appended line (PIPE_BUF on Linux): one write() of this size is never split.
+const APPEND_MAX = 4096;
+// Test hook: creates <dir>/paused, then waits (at most 10 s) until <dir>/go exists.
+function pauseUntilSignalled(dir) {
+  writeFileSync(join(dir, 'paused'), '');
+  const nap = new Int32Array(new SharedArrayBuffer(4));
+  for (let i = 0; i < 2000 && !existsSync(join(dir, 'go')); i++) Atomics.wait(nap, 0, 0, 5);
+}
 const natural = (a, b) => a.localeCompare(b, 'en', { numeric: true });
 const missing = (err) => err.code === 'ENOENT' || err.code === 'ENOTDIR';
 
@@ -340,6 +348,24 @@ export class Store {
     });
   }
 
+  // One write() on a descriptor opened with O_APPEND: the kernel places the line at the end of the file as it is
+  // then, so a line written by a process outside the store lock is never overwritten. Longer than APPEND_MAX
+  // bytes is refused before anything is touched. The pause hook is for tests only (a signal-file handshake).
+  appendLine(rel, line) {
+    const bytes = Buffer.from(line);
+    if (bytes.length > APPEND_MAX) throw new StateError('limit-exceeded', 'USAGE', `${this.abs(rel)}: a log line is ${bytes.length} bytes, the limit is ${APPEND_MAX}`, { hint: 'nothing was logged' });
+    const file = this.abs(rel);
+    mkdirSync(dirname(file), { recursive: true });
+    const fd = openSync(file, 'a', 0o644);
+    try {
+      const pause = process.env[`${this.names.envPrefix ?? 'LANDFALL_'}TEST_APPEND_PAUSE`];
+      if (pause) pauseUntilSignalled(pause);
+      writeSync(fd, bytes);
+    } finally {
+      closeSync(fd);
+    }
+  }
+
   // Appends `make` (a JSON object, or a function of the log's text returning one, or undefined for nothing) as one line
   // to the log `name`; returns the entry or null. The read, the decision and the write share one lock section.
   append(name, make) {
@@ -353,7 +379,7 @@ export class Store {
       if (entry === undefined) return null;
       const errors = validate({ t: 'data', maxBytes: log.entryBytes }, entry);
       if (errors.length) throw new StateError(errors[0].code, 'USAGE', `${this.abs(log.file)}: ${errors[0].message}`, { hint: 'nothing was logged', details: errors });
-      this.writeText(log.file, `${text}${text && !text.endsWith('\n') ? '\n' : ''}${JSON.stringify(entry)}\n`);
+      this.appendLine(log.file, `${text && !text.endsWith('\n') ? '\n' : ''}${JSON.stringify(entry)}\n`);
       return entry;
     });
   }
