@@ -82,7 +82,11 @@ Claude  $ landfall profile set deployedToUsers true --source said \
 | External provider runs | — | — | — | — | ✓ | ✓ |
 | Agent cockpit or IDE integration | — | — | — | — | ✓ | — |
 
-The table lists what each tool documents (public READMEs as read on 2026-10-19; corrections are welcome as issues), not how well it works. Landfall adds a layer to Claude Code sessions; it does not replace an editor or a cockpit. A comparison with these tools will run under the pre-registered rules in [docs/benchmark.md](docs/benchmark.md); until it is published this README makes no claim about speed, cost or quality.
+The table lists what each tool documents (public READMEs as read on 2026-10-19; corrections are welcome as issues), not how well it works. Landfall adds a layer to Claude Code sessions; it does not replace an editor or a cockpit. A comparison with these tools will run under the pre-registered rules in [docs/benchmark.md](docs/benchmark.md).
+
+## Measured
+
+With/without evaluation on the plugin's own suite (10 small tasks with hidden tests, 5 runs per arm, 2026-10-19): quality delta **0** (49/50 complete in both arms), cost **+29 %** with the plugin, and two of three trivial cases over the suite's overhead limits. The plugin does not improve these small tasks and costs more on them; details and the reading in [docs/evaluation.md](docs/evaluation.md). Cutting that overhead is the next release's first item.
 
 ## Commands at a glance
 
