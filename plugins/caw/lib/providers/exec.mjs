@@ -140,14 +140,18 @@ export async function runSupervise({ args, names, io }) {
   const timer = setInterval(flush, FLUSH_MS);
   try {
     patch((cur) => ({ ...cur, status: 'running', startedAt: new Date().toISOString(), lease: `external-${got.lease.slot}`, lastLine: null }));
-    const done = supervise(child, { timeoutMs: rec.capS * 1000, idleMs: rec.capS * 1000, graceMs: GRACE_MS, out, err: out });
+    const abort = new AbortController();
+    const onStop = () => abort.abort();
+    process.once('SIGTERM', onStop);
+    process.once('SIGINT', onStop);
+    const done = supervise(child, { timeoutMs: rec.capS * 1000, idleMs: rec.capS * 1000, graceMs: GRACE_MS, out, err: out, signal: abort.signal });
     if (Number.isInteger(child.pid)) attachChild(got.lease, child.pid, opts);
-    const result = await done;
+    const result = await done.finally(() => { process.off('SIGTERM', onStop); process.off('SIGINT', onStop); });
     if (rest.trim()) onLine(rest);
     clearInterval(timer);
     flush();
-    const status = result.ended === 'timeout' || result.ended === 'idle' ? 'timeout' : result.status === 0 ? 'done' : 'failed';
-    const error = result.error ? `could not start: ${result.error}` : status === 'failed' ? (result.signal ? `ended by ${result.signal}` : `exited with ${result.status}`) : status === 'timeout' ? `wall cap ${rec.capS} s reached; the process group was stopped` : null;
+    const status = result.ended === 'aborted' ? 'stopped' : result.ended === 'timeout' || result.ended === 'idle' ? 'timeout' : result.status === 0 ? 'done' : 'failed';
+    const error = result.error ? `could not start: ${result.error}` : status === 'failed' ? (result.signal ? `ended by ${result.signal}` : `exited with ${result.status}`) : status === 'timeout' ? `wall cap ${rec.capS} s reached; the process group was stopped` : status === 'stopped' ? 'stopped by runs stop' : null;
     patch((cur) => ({ ...cur, status, exit: result.status, endedAt: new Date().toISOString(), elapsedMs: Date.now() - began, tokensReason: cur.tokens ? null : 'not reported', error }));
     return { data: { runId, status, exit: result.status } };
   } finally {
