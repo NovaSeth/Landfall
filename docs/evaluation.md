@@ -29,6 +29,10 @@ Claude Code 2.1.302; agent model claude-opus-5-5; judge harness default (haiku);
 | small-bug | 1.75× (over 1.15×) | 1.33× (over 1.25×) |
 | typo-fix | 1.04× (within 1.15×) | 1.00× (within 1.25×) |
 
+## Caveat found after the run
+
+In the eval sandbox the plugin's `bin/` was not on the agent's PATH: the traces show `landfall status --json` answered "command not found", so the with-plugin arm measured the skill guidance (and the extra exploration it caused) without the plugin's commands, gates or state. In a Claude Code session the plugin's `bin/` is on PATH (checked on 2026-10-19 with a fresh session). The skills now fall back to `${CLAUDE_PLUGIN_ROOT}/bin/landfall` when the name is not found, and the suite will be re-run.
+
 ## Reading
 
 On these ten small, single-session tasks the plugin changes the outcome of none of them: both arms complete 49 of 50 runs, and the one incomplete run per arm is the same case (`auth-change`, a secret left in a test file in one run each). The plugin costs about 29 % more and takes longer, and two of the three trivial cases exceed the overhead limits the suite fixes in advance. This is published as measured. The mechanisms the plugin adds (gates re-run by code, a test baseline, decisions, a loop that ends) are not exercised by ten tasks of this size; whether they pay off on larger, multi-step or cheat-prone work is the question of the pre-registered benchmark in [benchmark.md](benchmark.md). Cutting the overhead on small tasks is the first item of the next release.

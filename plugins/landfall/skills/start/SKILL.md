@@ -7,6 +7,8 @@ disable-model-invocation: true
 
 # Start
 
+Command not on PATH: prefix it with `${CLAUDE_PLUGIN_ROOT}/bin/`.
+
 The user asked to activate process tracking in this repository.
 
 the plugin keeps outcome gates in code: `landfall verify` re-runs the project's gates and compares the tests with a baseline. Its state is `.landfall/` in this repository. Work is sized first; a trivial change writes nothing. Decisions get IDs. Only files under `.landfall/` are written, and only after this step.
