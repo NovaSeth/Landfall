@@ -666,5 +666,11 @@
   ["echo x > @STATE@/tasks/T-AB-1/task.json","nogit"],
   ["mv .c* /tmp/","corrupt"],
   ["echo done > @STATE@/tasks/T-AB-1/report.md","tracked"],
-  ["rm -f @STATE@/tasks/T-AB-1/*.md","tracked"]
+  ["rm -f @STATE@/tasks/T-AB-1/*.md","tracked"],
+  ["echo x > .caw/config.json","tracked"],
+  ["echo x > .caw/baseline/tests.json","tracked"],
+  ["echo x > .caw/local/loop.json","tracked"],
+  ["echo x > .caw/tombstones/D-AB-3.json","tracked"],
+  ["echo x > .caw/local/ids/T-AB.json","tracked"],
+  ["echo x > .caw/tasks/T-AB-1/verify.json","tracked"]
 ]

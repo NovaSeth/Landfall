@@ -171,3 +171,31 @@ test('edit hook: a repository state that cannot be resolved blocks an edit insid
     assert.equal(edit(g, join(f.dir, 'src', 'a.js'), { content: 'x' }, 'Write').decision, 'allow', `${name}: a source file`);
   }
 });
+
+test('owned state files: every committed lib/state kind is owned, and an Edit names its command (FLW-7)', async (t) => {
+  const { KINDS } = await lib('state/kinds.mjs');
+  const keys = { team: 'AB', task: 'T-AB-1', tombstone: 'D-AB-3', counter: 'T-AB' };
+  const f = fixture(t);
+  for (const kind of Object.values(KINDS)) {
+    const rel = kind.path(kind.keyPattern ? keys[kind.name] : undefined);
+    assert.ok(!kind.keyPattern || keys[kind.name], `${kind.name}: add a sample key to this test`);
+    assert.equal(ownedFile(rel)?.rule, 'FLW-7', `${kind.name}: ${rel}`);
+    const v = edit(f, f.s(rel), { old_string: '{', new_string: '{ ' });
+    assert.equal(v.decision, 'deny', rel);
+    assert.match(v.reason, /^FLW-7: blocked a direct edit of /, rel);
+    assert.ok(v.reason.includes(`${names.bin} `), `${rel}: ${v.reason}`);
+  }
+});
+
+test('owned state files: nothing the previous hand-written list protected is allowed now (T-MG-39)', (t) => {
+  const f = fixture(t);
+  const before = [['state.json', 'FLW-7'], ['config.json', 'FLW-7'], ['team/AB.json', 'FLW-7'], ['tasks/T-AB-1/task.json', 'FLW-7'], ['tasks/T-AB-1/verify.json', 'FLW-7'],
+    ['baseline/tests.json', 'FLW-7'], ['local/loop.json', 'FLW-7'], ['decisions/D-AB-1.md', 'PRI-8'], ['tombstones/D-AB-3.json', 'FLW-7']];
+  for (const [rel, rule] of before) assert.equal(ownedFile(rel)?.rule, rule, rel);
+  for (const rel of before.filter(([r]) => r !== 'decisions/D-AB-1.md').map(([r]) => r)) {
+    for (const [tool, input] of [['Edit', { old_string: '{', new_string: '{ ' }], ['Write', { content: '{}\n' }]]) assert.equal(edit(f, f.s(rel), input, tool).decision, 'deny', `${tool} ${rel}`);
+  }
+  // user-owned: the project rules stay editable with the Edit tool; unknown files stay allowed
+  assert.equal(edit(f, f.s('guard-extra.txt'), { content: 'x\n' }, 'Write').decision, 'allow');
+  assert.equal(ownedFile('secrets-patterns.txt'), null);
+});

@@ -13,6 +13,7 @@
 // Tracked = a top-level directory in HEAD's tree.
 import { existsSync, readdirSync, realpathSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
+import { KINDS } from '../state/index.mjs';
 import { MSG } from './messages.mjs';
 import { why } from './tokenizer.mjs';
 import { BIN, base } from './tokens.mjs';
@@ -20,11 +21,22 @@ import { BIN, base } from './tokens.mjs';
 // Command-owned files, relative to the state directory. use(bin, id): the command that writes it. A decision record
 // is owned only in its frontmatter `status` (field): its body stays editable with the Edit tool. edit: the Edit tool
 // may change it (the user's project rules), only Bash may not.
+// The kinds of lib/state (one source) are all owned; KIND_USE names the command that writes each. A kind without an
+// entry fails at load, so a new kind cannot be left unprotected.
+const KIND_USE = {
+  state: (bin) => `\`${bin} init\`, \`${bin} migrate\` or \`${bin} deactivate\``,
+  config: (bin) => `\`${bin} flags set\` or \`${bin} config set\``,
+  team: (bin) => `\`${bin} init\` or \`${bin} team add\``,
+  task: (bin, id) => `\`${bin} task set ${id} <state>\``,
+  tombstone: (bin, id) => `\`${bin} decisions retire ${id}\``,
+  counter: (bin) => `\`${bin} task new\` or \`${bin} decisions propose\``,
+};
+const KIND_OWNED = Object.values(KINDS).map((k) => {
+  if (!KIND_USE[k.name]) throw new Error(`guard: state kind ${k.name} has no owning command in KIND_USE`);
+  return { re: k.match, rule: 'FLW-7', use: KIND_USE[k.name] };
+});
 export const OWNED = Object.freeze([
-  { re: /^state\.json$/, rule: 'FLW-7', use: (bin) => `\`${bin} init\`, \`${bin} migrate\` or \`${bin} deactivate\`` },
-  { re: /^config\.json$/, rule: 'FLW-7', use: (bin) => `\`${bin} flags set\` or \`${bin} config set\`` },
-  { re: /^team\/([^/]+)\.json$/, rule: 'FLW-7', use: (bin) => `\`${bin} init\` or \`${bin} team add\`` },
-  { re: /^tasks\/([^/]+)\/task\.json$/, rule: 'FLW-7', use: (bin, id) => `\`${bin} task set ${id} <state>\`` },
+  ...KIND_OWNED,
   { re: /^tasks\/([^/]+)\/verify\.json$/, rule: 'FLW-7', use: (bin, id) => `\`${bin} verify ${id}\`` },
   { re: /^baseline\/tests\.json$/, rule: 'FLW-7', use: (bin) => `\`${bin} verify <task>\` or \`${bin} baseline pin --decision <D>\`` },
   { re: /^local\/loop\.json$/, rule: 'FLW-7', use: (bin) => `\`${bin} loop start|stop\` and \`${bin} tick\`` },
@@ -34,7 +46,7 @@ export const OWNED = Object.freeze([
   { re: /^guard-extra\.txt$/, rule: 'SEC-4', edit: true, use: () => 'the Edit tool, where the change is visible' },
 ]);
 // Text that names a state file wherever the state directory lives (prescan literals, lowercase).
-export const OWNED_NAMES = Object.freeze(['state.json', 'task.json', 'verify.json', 'tests.json', 'loop.json', 'guard-extra.txt', '/tasks/', '/decisions/',
+export const OWNED_NAMES = Object.freeze(['state.json', 'task.json', 'verify.json', 'tests.json', 'loop.json', 'guard-extra.txt', '/tombstones/', '/local/ids/', '/tasks/', '/decisions/',
   '/baseline/', '/team/', '/gate-cache/', '/runs/']);
 const WORKTREES = /^local\/worktrees(\/|$)/; // separate checkouts of external executors, not state
 
