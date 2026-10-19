@@ -199,7 +199,7 @@ test('--json: version, help, doctor and every usage error print exactly one enve
   const cases = [
     [['--version', '--json'], 0, 'version'],
     [['--json', '--help'], 0, 'help'],
-    [['--json'], 0, 'help'],
+    [['--json'], 0, 'status'], // no command: the default command (spec §8.2)
     [['doctor', '--json'], 1, 'doctor'], // hooks not registered in the fake
     [['--json', 'doctor'], 1, 'doctor'],
     [['no-such-command', '--json'], 2, 'no-such-command'],
@@ -219,6 +219,21 @@ test('--json: version, help, doctor and every usage error print exactly one enve
   assert.equal(envelopeOf(cli(['doctor', 'extra-arg', '--json'], { env })).errors[0].code, 'unexpected-argument');
 });
 
+test('a command group without a subcommand lists the group subcommands and exits 2, with or without --help', (t) => {
+  const { env } = scratch(t);
+  for (const [group, subs] of [['task', ['task list', 'task new', 'task set']], ['lane', ['lane claim', 'lane list', 'lane release']]]) {
+    for (const extra of [[], ['--help']]) {
+      const r = cli([group, ...extra, '--json'], { env });
+      assert.equal(r.status, 2, `${group} ${extra}\n${out(r)}`);
+      const e = envelopeOf(r);
+      assert.equal(e.errors[0].code, 'missing-subcommand', JSON.stringify(e));
+      assert.doesNotMatch(e.errors[0].message, /unknown command/);
+      for (const s of subs) assert.ok(e.errors[0].message.includes(s), `${group}: lists ${s}\n${e.errors[0].message}`);
+    }
+  }
+  assert.equal(envelopeOf(cli(['task', 'no-such', '--json'], { env })).errors[0].code, 'unknown-command');
+});
+
 test('human mode: help lists public commands only, version line, usage errors on stderr with exit 2', (t) => {
   const { env } = scratch(t);
   const help = cli(['--help'], { env });
@@ -227,7 +242,10 @@ test('human mode: help lists public commands only, version line, usage errors on
   assert.match(help.stdout, /^ {2}doctor {2,}\S/m, 'doctor listed');
   assert.doesNotMatch(help.stdout, /^ {2}hook\b/m, 'internal hook command hidden from help');
   for (const [code, name] of SPEC_EXIT_CODES) assert.ok(help.stdout.includes(`${code} ${name}`), `help shows exit ${code} ${name}`);
-  assert.equal(cli([], { env }).stdout, help.stdout, 'no command prints the help');
+  const none = cli([], { env });
+  assert.equal(none.status, 0, out(none));
+  assert.match(none.stdout, /^State: /m, 'no command prints the status (spec §8.2), not the help');
+  assert.notEqual(none.stdout, help.stdout);
   assert.equal(cli(['-h'], { env }).stdout, help.stdout);
 
   for (const flag of ['--version', '-V']) {

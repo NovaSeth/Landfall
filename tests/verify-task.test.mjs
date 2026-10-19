@@ -36,7 +36,7 @@ const TESTS = "import { test } from 'node:test';\ntest('adds', () => {});\ntest(
 const GATES = [{ name: 'test', cmd: 'node --test', timeoutS: 120, kind: 'test' }, { name: 'lint', cmd: 'node -e 0', timeoutS: 60, kind: 'lint' }];
 const REPORT = '---\nred: {"command": "node --test", "exit": 1, "excerpt": "1 failing"}\ngreen: {"command": "node --test", "exit": 0, "excerpt": "2 passing"}\n---\n\n# Report\n';
 
-function repo(t, { files = { 'calc.test.mjs': TESTS }, gates = GATES, cls = 'trivial', report = REPORT } = {}) {
+function repo(t, { files = { 'calc.test.mjs': TESTS }, gates = GATES, cls = 'trivial', report = REPORT, tier = 'L2' } = {}) {
   const base = realpathSync(mkdtempSync(join(tmpdir(), 'verify-task-')));
   t.after(() => rmSync(base, { recursive: true, force: true }));
   const dir = join(base, 'repo');
@@ -59,9 +59,12 @@ function repo(t, { files = { 'calc.test.mjs': TESTS }, gates = GATES, cls = 'tri
   const head = git('rev-parse', 'HEAD');
   const stateDir = join(dir, names.stateDir);
   const store = state.open(stateDir, { names });
-  store.write('state', null, { codename: names.codename, createdWith: '2.0.0', activatedAt: AT, flags: {} });
+  store.write('state', null, { codename: names.codename, createdWith: '2.0.0', activatedAt: AT });
+  if (tier !== 'L0') store.write('config', null, { flags: { engine: 'on' } });
   writeFileSync(join(stateDir, '.gitignore'), 'local/\n');
   const handle = state.registerHandle(store, { name: 'Test User', email: 'test@example.com', at: AT }).handle;
+  // The applied tier (spec §7.4): L2 by default, where a standard task needs a review and a critical one an external one.
+  if (tier !== 'L0') decisions.createDecision({ store, where: state.resolve({ cwd: dir, env, names }), names, env, handle, today: AT.slice(0, 10), input: { title: `Tier ${tier} from L0`, why: 'test fixture', cost: 'none', kind: 'tier', scope: [], supersedes: [] } });
   profile.openStore(stateDir, names).write('profile', null, { ...profile.emptyProfile(), gates });
   const id = state.allocateId(store, {
     prefix: 'T', handle,
@@ -119,7 +122,7 @@ test('verify re-runs every profile gate and writes verify.json in the §8.4 shap
   assert.deepEqual(Object.keys(doc.gates[0]), ['name', 'cmd', 'exit', 'durationMs', 'result'], 'no gate output in committed state');
   assert.ok(res.env.data.output[0].lines.some((l) => l.includes('adds')), 'the tail of the gate output, in the reply');
   assert.ok(r.vstore.read('verifyLog', r.id).gates[0].lines.some((l) => l.includes('adds')), 'and under local/');
-  assert.deepEqual(doc.inventory, { collector: 'node-test', total: 2, added: [JSON.stringify(['', 'adds', 1]), JSON.stringify(['', 'subtracts', 1])], removed: [], newlySkipped: [], allowedBy: [], weak: false });
+  assert.deepEqual(doc.inventory, { collector: 'node-test', total: 2, added: [JSON.stringify(['', 'adds', 1]), JSON.stringify(['', 'subtracts', 1])], removed: [], newlySkipped: [], allowedBy: [], weak: false, tests: ['adds', 'subtracts'].map((n) => ({ id: JSON.stringify(['', n, 1]), file: '', skipped: false })) });
   assert.deepEqual(doc.failures, { preexisting: [], new: [] });
   assert.deepEqual(doc.route, { declared: 'trivial', actual: 'trivial', escalated: false, missingSteps: [] });
   assert.deepEqual(doc.artifacts, { report: true, review: 'not-required' });
@@ -212,6 +215,8 @@ test('review: a standard task needs an approved typed review; a critical one an 
   assert.equal((await run(r)).env.data.artifacts.review, 'missing', 'the latest round (10 after 2) counts');
 
   const c = repo(t, { cls: 'critical' });
+  res = await run(c);
+  assert.match(res.env.errors.find((e) => e.code === 'missing-artifact').message, /needs an approved cross-provider review/, 'critical at L2 names the cross-provider review');
   review(c, 1, 'approved', 'claude');
   res = await run(c);
   assert.deepEqual([res.code, res.env.data.artifacts.review], [1, 'missing']);
@@ -434,7 +439,7 @@ test('verify, task done and task merge are command rows that change files; help 
     assert.equal(row(name).mutating, true, `${name}: changes files`);
     assert.deepEqual(row(name).args.map((a) => [a.name, Boolean(a.required)]), [['id', true]], name);
   }
-  assert.deepEqual(row('verify').flags.map((f) => f.flag), ['--ci']);
+  assert.deepEqual(row('verify').flags.map((f) => f.flag), ['--ci', '--no-cache']);
   assert.deepEqual(row('task merge').flags.map((f) => f.flag), ['--branch']);
   assert.deepEqual(row('verify').exits, ['OK', 'FAIL', 'USAGE', 'REFUSED', 'ENV']);
   const r = repo(t);

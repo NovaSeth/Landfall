@@ -59,7 +59,7 @@ const PINNED_RULES = {
   'SEC-3': ['not a security boundary', 'blocked when state cannot be read'],
   'SEC-4': ['MUST NOT bypass a guard block', '--no-verify'],
   'SEC-5': ['MUST NOT put them in', 'never the value'],
-  'SEC-6': ['without a pipe', '2 = error, not clean'],
+  'SEC-6': ['without a pipe', '8 = error, not clean'], // the exit code of the command table (1.x: 2)
   'SEC-7': ['rotate the secret', 'does not close the case'],
   'SEC-8': ['only from the credential', 'returns 404, not 403'],
   'SEC-9': ['MUST NOT release with an open High or Critical finding'],

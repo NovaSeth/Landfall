@@ -1,0 +1,7 @@
+{"type":"thread.started","thread_id":"01a15131-eec0-7313-8217-63c55dc271bc"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"I’ll run `ls` once, then return the requested review.\n"}}
+{"type":"item.started","item":{"id":"item_1","type":"command_execution","command":"/bin/zsh -lc ls","aggregated_output":"","exit_code":null,"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_1","type":"command_execution","command":"/bin/zsh -lc ls","aggregated_output":"a.txt\nevents.jsonl\nstderr.txt\n","exit_code":0,"status":"completed"}}
+{"type":"item.completed","item":{"id":"item_2","type":"agent_message","text":"{\"verdict\":\"approved\",\"reviewer\":{\"kind\":\"external\",\"id\":\"codex\"},\"findings\":[]}"}}
+{"type":"turn.completed","usage":{"input_tokens":49557,"cached_input_tokens":24576,"cache_write_input_tokens":0,"output_tokens":81,"reasoning_output_tokens":0}}

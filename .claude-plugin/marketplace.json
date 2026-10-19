@@ -1,14 +1,14 @@
 {
-  "name": "caw-plugins",
-  "description": "CodingAgentsWorkflow plugin marketplace.",
+  "name": "landfall-plugins",
+  "description": "Landfall plugin marketplace.",
   "owner": {
     "name": "NovaSeth",
     "url": "https://github.com/NovaSeth"
   },
   "plugins": [
     {
-      "name": "caw",
-      "source": "./plugins/caw",
+      "name": "landfall",
+      "source": "./plugins/landfall",
       "description": "Process for building software with a team of AI coding agents: specs, plans, briefs, reviews and outcome gates."
     }
   ]

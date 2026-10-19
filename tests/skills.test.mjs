@@ -30,7 +30,9 @@ const index = readJson(join(pluginDir, 'method', 'index.json'));
 // (external is added with the provider adapters).
 const MODEL_SKILLS = ['decide', 'dispatch', 'loop', 'plan', 'review', 'work'];
 const USER_SKILLS = ['doctor', 'start', 'status'];
-const AGENTS = ['designer', 'implementer', 'reviewer'];
+const AGENTS = ['designer', 'external', 'implementer', 'reviewer'];
+// Commands of a unit not merged yet that a shipped text already names (shrink-only; also on command-names PENDING).
+const PENDING_COMMANDS = [];
 const TASK_TEMPLATES = ['brief', 'findings', 'report', 'rereview', 'review'];
 // SC3 budget per component (spec §7.15): 4 chars ≈ 1 token.
 const CHARS_PER_TOKEN = 4;
@@ -40,6 +42,8 @@ const SKILL_BODY_CHARS = 1600; // short bodies: rule IDs and commands, not metho
 const AGENT_BODY_CHARS = 2600;
 const SKILL_KEYS = { model: ['name', 'description'], user: ['name', 'description', 'disable-model-invocation'] };
 const AGENT_KEYS = ['name', 'description', 'model', 'effort'];
+// The wrapper that runs one external provider call in the background (agent panel row).
+const EXTERNAL_KEYS = [...AGENT_KEYS, 'background', 'tools', 'maxTurns'];
 const MODELS = ['sonnet', 'opus', 'haiku', 'inherit'];
 const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 // Persuasion prose (NO 5): pressure phrases and shouting instead of triggers and rules. Shouting is matched
@@ -59,7 +63,7 @@ function parseDoc(text, file) {
   const comments = [];
   for (const line of text.slice(4, end).split('\n')) {
     if (line.startsWith('# ')) { comments.push(line); continue; }
-    const m = line.match(/^([a-z][a-z-]*): (.+)$/);
+    const m = line.match(/^([a-zA-Z][a-zA-Z-]*): (.+)$/);
     assert.ok(m, `${file}: frontmatter line "${line}"`);
     assert.ok(!(m[1] in meta), `${file}: ${m[1]} twice`);
     meta[m[1]] = m[2] === 'true' ? true : m[2] === 'false' ? false : m[2];
@@ -73,7 +77,7 @@ const shipped = () => [...[...MODEL_SKILLS, ...USER_SKILLS].map(skillFile), ...A
 const PREFIXES = new Set(Object.values(index.topics).map((t) => t.prefix));
 const ruleRefs = (text) => [...new Set([...text.matchAll(/\b([A-Z]{3})-\d+\b/g)].filter((m) => PREFIXES.has(m[1])).map((m) => m[0]))];
 
-test('inventory: 6 model-invoked skills, 3 user-only skills and 3 agents ship, each from a template source', () => {
+test('inventory: 6 model-invoked skills, 3 user-only skills and 4 agents ship, each from a template source', () => {
   const skills = readdirSync(join(pluginDir, 'skills')).filter((d) => statSync(join(pluginDir, 'skills', d)).isDirectory()).sort();
   assert.deepEqual(skills, [...MODEL_SKILLS, ...USER_SKILLS].sort());
   for (const s of skills) assert.deepEqual(readdirSync(join(pluginDir, 'skills', s)), ['SKILL.md'], `skills/${s}: only SKILL.md`);
@@ -107,7 +111,7 @@ test('agent frontmatter: name = file, description within 70 tok, model and effor
   for (const name of AGENTS) {
     const file = agentFile(name);
     const { meta, comments } = parseDoc(read(file), file);
-    assert.deepEqual(Object.keys(meta).sort(), [...AGENT_KEYS].sort(), `${file}: frontmatter keys`);
+    assert.deepEqual(Object.keys(meta).sort(), [...(name === 'external' ? EXTERNAL_KEYS : AGENT_KEYS)].sort(), `${file}: frontmatter keys`);
     assert.equal(meta.name, name);
     assert.ok(meta.description.length >= 20 && meta.description.length <= AGENT_DESCRIPTION_TOKENS * CHARS_PER_TOKEN, `${file}: description length ${meta.description.length}`);
     assert.ok(!persuasive(meta.description), `${file}: no persuasion prose`);
@@ -116,6 +120,8 @@ test('agent frontmatter: name = file, description within 70 tok, model and effor
     assert.deepEqual(comments, [`# Generated from templates/agents/${name}.md by scripts/gen-names.mjs; do not edit.`], `${file}: generated marker`);
   }
   assert.equal(parseDoc(read(agentFile('designer')), 'designer').meta.model, 'opus', 'designer: strongest model');
+  const ext = parseDoc(read(agentFile('external')), 'external').meta;
+  assert.deepEqual([ext.model, ext.effort, ext.background, ext.tools, ext.maxTurns], ['haiku', 'low', true, 'Bash, Read', '40'], 'external: cheap background wrapper');
 });
 
 test('bodies: short, no persuasion prose, no process references, English only', () => {
@@ -155,6 +161,7 @@ test('CLI references in skills and agents name commands and flags of the command
     for (const [, span] of read(file).matchAll(new RegExp(`\`(${names.bin}(?: [^\`]*)?)\``, 'g'))) {
       const words = span.split(/\s+/).slice(1);
       const plain = words.filter((w) => !w.startsWith('-'));
+      if (PENDING_COMMANDS.includes(plain[0])) continue;
       const row = COMMANDS.filter((r) => !r.hidden && r.name.split(' ').every((p, k) => plain[k] === p)).sort((a, b) => b.name.length - a.name.length)[0];
       const flags = words.filter((w) => w.startsWith('-'));
       const known = new Set([...GLOBAL_FLAGS.flatMap((f) => [f.flag, f.alias]), ...(row?.flags ?? []).flatMap((f) => [f.flag, f.alias])].filter(Boolean));

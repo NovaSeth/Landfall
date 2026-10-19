@@ -30,7 +30,7 @@ const names = JSON.parse(readFileSync(join(pluginDir, 'lib', 'name.json'), 'utf8
 const STATE = pathToFileURL(join(pluginDir, 'lib', 'state', 'index.mjs')).href;
 const state = await import(STATE);
 const { EXIT } = await import(pathToFileURL(join(pluginDir, 'lib', 'cli', 'commands.mjs')).href);
-const { KINDS, MACHINE_KINDS, MIGRATIONS } = state;
+const { KINDS, LAYOUTS, MACHINE_KINDS, MIGRATIONS } = state;
 const AT = '2026-10-15T05:42:00.000Z';
 const is = (code, exit) => (e) => e instanceof state.StateError && e.code === code && e.exit === exit;
 
@@ -53,7 +53,7 @@ function snapshot(dir, { skip = () => false } = {}) {
   return out;
 }
 const put = (dir, rel, value) => { mkdirSync(dirname(join(dir, rel)), { recursive: true }); writeFileSync(join(dir, rel), typeof value === 'string' ? value : `${JSON.stringify(value, null, 2)}\n`); };
-const stateDoc = (extra = {}) => ({ schema: KINDS.state.version, codename: names.codename, createdWith: '2.0.0', activatedAt: AT, flags: {}, ...extra });
+const stateDoc = (extra = {}) => ({ schema: KINDS.state.version, codename: names.codename, createdWith: '2.0.0', activatedAt: AT, ...extra });
 const task = (id) => ({ schema: KINDS.task.version, id, kind: 'task', title: `Task ${id}`, lane: null, owner: id.split('-')[1], class: null, classHistory: [], status: 'new', round: 0, events: [], base: null, branch: null });
 function rng(seed) {
   let a = seed >>> 0;
@@ -253,17 +253,22 @@ test('the migration registry matches its directory; every kind has a complete ch
   const dir = join(pluginDir, 'lib', 'state', 'migrations');
   const files = readdirSync(dir).filter((f) => f !== 'index.mjs').sort();
   for (const f of files) assert.match(f, /^\d{3}-[a-z][a-z0-9]*-[a-z0-9-]+\.mjs$/, f);
-  assert.deepEqual(MIGRATIONS.map((m) => `${m.id}.mjs`), files, 'index.mjs lists every step module, in order');
+  // Document steps (MIGRATIONS, in order) and layout steps (LAYOUTS: directory moves) together name every module.
+  const listed = [...MIGRATIONS, ...LAYOUTS].map((m) => `${m.id}.mjs`);
+  assert.deepEqual([...listed].sort(), files, 'index.mjs lists every step module');
+  assert.deepEqual(MIGRATIONS.map((m) => `${m.id}.mjs`), files.filter((f) => !LAYOUTS.some((l) => `${l.id}.mjs` === f)), 'document steps in order');
   for (const f of files) {
     const mod = await import(pathToFileURL(join(dir, f)).href);
-    assert.equal(MIGRATIONS.find((m) => `${m.id}.mjs` === f), mod.default, `${f}: the listed step is the module's default export`);
+    assert.equal([...MIGRATIONS, ...LAYOUTS].find((m) => `${m.id}.mjs` === f), mod.default, `${f}: the listed step is the module's default export`);
   }
+  for (const l of LAYOUTS) assert.deepEqual([typeof l.plan, typeof l.run], ['function', 'function'], `${l.id}: a layout step plans and runs`);
   assert.deepEqual(state.checkChain({ ...KINDS, ...MACHINE_KINDS }, MIGRATIONS), []);
 });
 
 test('checkChain finds every planted chain defect (REV-45)', () => {
   const { item, steps } = chain(rng(3), 4);
-  const kinds = { ...KINDS, item };
+  // The generated kind alone: the plugin's own kinds have their own chain (checked against MIGRATIONS above).
+  const kinds = { item };
   const plain = steps.map(({ fields, ...s }) => s);
   assert.deepEqual(state.checkChain(kinds, plain), []);
   const defects = [
@@ -276,6 +281,9 @@ test('checkChain finds every planted chain defect (REV-45)', () => {
     ['bad id', plain.map((s) => (s.from === 1 ? { ...s, id: 'one' } : s))],
     ['beyond the kind version', [...plain, { id: '004-item-late', kind: 'item', from: 4, to: 5, up: (d) => d }]],
     ['no up function', plain.map((s) => (s.from === 1 ? { ...s, up: null } : s))],
+    ['carry to an unknown kind', plain.map((s) => (s.from === 1 ? { ...s, carry: { kind: 'ghost', into: () => undefined } } : s))],
+    ['carry from or to a keyed kind', plain.map((s) => (s.from === 1 ? { ...s, carry: { kind: 'item', into: () => undefined } } : s))],
+    ['carry without into', plain.map((s) => (s.from === 1 ? { ...s, carry: { kind: 'item' } } : s))],
   ];
   for (const [label, migrations] of defects) assert.ok(state.checkChain(kinds, migrations).length >= 1, label);
 });

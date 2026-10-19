@@ -146,9 +146,12 @@ test('full report: the v0 checks stay as pinned, one row per item with a status 
     assert.ok(typeof x.hint === 'string' && x.hint.length > 0 && x.hint.length <= 200, `${x.id}: fix hint ≤ 200: ${x.hint}`);
   }
   // Items whose source is not in this version, or not reachable here.
-  assert.deepEqual(['heartbeat', 'providers', 'scheduler', 'protection'].map((id) => row(id).status), ['skip', 'skip', 'skip', 'skip']);
+  assert.deepEqual(['heartbeat', 'protection'].map((id) => row(id).status), ['skip', 'skip']);
   assert.match(row('heartbeat').detail, /not recorded/);
-  assert.match(row('providers').detail, /not available/);
+  assert.ok(['ok', 'warn'].includes(row('providers').status), row('providers').detail);
+  assert.doesNotMatch(row('providers').detail, /not available/);
+  assert.ok(['ok', 'warn'].includes(row('scheduler').status), row('scheduler').detail);
+  assert.match(row('scheduler').detail, /calibrat/);
   assert.ok(row('protection').detail.includes(`${names.claimRefPrefix}*`), row('protection').detail);
   assert.equal(row('release').status, 'skip');
   assert.match(row('release').detail, /unknown/);
@@ -328,7 +331,7 @@ test('state, profile and flags of an active repository; read-only; a newer or br
 
   const stateFile = join(project, names.stateDir, 'state.json');
   const doc = readJson(stateFile);
-  writeFileSync(stateFile, JSON.stringify({ ...doc, flags: { engine: 'on', lanes: 'on' } }, null, 2));
+  writeFileSync(join(project, names.stateDir, 'config.json'), JSON.stringify({ schema: 1, flags: { engine: 'on', lanes: 'on' } }, null, 2));
   d = doctor(s, { cwd: project });
   assert.equal(d.row('flags').status, 'ok');
   assert.match(d.row('flags').detail, /engine on/);

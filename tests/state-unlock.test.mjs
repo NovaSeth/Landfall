@@ -39,7 +39,7 @@ function repo(t) {
   assert.equal(spawnSync('git', ['-c', 'init.defaultBranch=main', 'init', '-q', dir], { env: ISO.env }).status, 0);
   const store = join(dir, names.stateDir);
   mkdirSync(join(store, 'local'), { recursive: true });
-  writeFileSync(join(store, 'state.json'), `${JSON.stringify({ schema: KINDS.state.version, codename: names.codename, createdWith: '2.0.0', activatedAt: AT, flags: {} }, null, 2)}\n`);
+  writeFileSync(join(store, 'state.json'), `${JSON.stringify({ schema: KINDS.state.version, codename: names.codename, createdWith: '2.0.0', activatedAt: AT }, null, 2)}\n`);
   const env = { ...ISO.env, HOME: join(base, 'home') };
   return { base, dir, store, env };
 }

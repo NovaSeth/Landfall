@@ -1,0 +1,5 @@
+{"type":"thread.started","thread_id":"00000000-0000-0000-0000-000000000000"}
+{"type":"turn.started"}
+{"type":"item.started","item":{"id":"item_0","type":"reasoning","text":""}}
+{"type":"error","message":"stream disconnected before completion: rate limit reached"}
+{"type":"turn.failed","error":{"message":"stream disconnected before completion: rate limit reached"}}

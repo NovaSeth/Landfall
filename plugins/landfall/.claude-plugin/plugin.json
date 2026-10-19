@@ -1,0 +1,10 @@
+{
+  "name": "landfall",
+  "version": "2.0.0",
+  "description": "Process for building software with a team of AI coding agents: specs, plans, briefs, reviews and outcome gates.",
+  "author": {
+    "name": "NovaSeth",
+    "url": "https://github.com/NovaSeth"
+  },
+  "license": "MIT"
+}

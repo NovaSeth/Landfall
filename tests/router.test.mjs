@@ -25,6 +25,7 @@ const pluginDir = (() => {
 const lib = (rel) => import(pathToFileURL(join(pluginDir, 'lib', rel)).href);
 const router = await lib('router/index.mjs');
 const state = await lib('state/index.mjs');
+const decisions = await lib('decisions/index.mjs');
 const { main } = await lib('cli/main.mjs');
 const { COMMANDS } = await lib('cli/commands.mjs');
 const names = JSON.parse(readFileSync(join(pluginDir, 'lib', 'name.json'), 'utf8'));
@@ -272,7 +273,7 @@ function repo(t, { active = true } = {}) {
   let handle = null;
   if (active) {
     store = state.open(stateDir, { names });
-    store.write('state', null, { codename: names.codename, createdWith: '2.0.0', activatedAt: AT, flags: {} });
+    store.write('state', null, { codename: names.codename, createdWith: '2.0.0', activatedAt: AT });
     handle = state.registerHandle(store, { name: 'Test User', email: 'test@example.com', at: AT }).handle;
   }
   return { base, dir, home, env, stateDir, store, handle };
@@ -779,4 +780,69 @@ test('route row: listed in help, changes files, and its --flags help names exact
   const listed = /: (.+)$/.exec(row.flags.find((f) => f.flag === '--flags').summary)[1].split(', ');
   assert.deepEqual(listed, [...router.FLAGS]);
   assert.deepEqual(/: (.+)$/.exec(row.flags.find((f) => f.flag === '--override').summary)[1].split(', '), [...router.CLASSES]);
+});
+
+// ---- the review need (spec §7.4): route prints it, from class x applied tier ----
+
+function atTier(r, tier) {
+  r.store.write('config', null, { flags: { engine: 'on' } });
+  decisions.createDecision({ store: r.store, where: state.resolve({ cwd: r.dir, env: r.env, names }), names, env: r.env, handle: r.handle, today: AT.slice(0, 10), input: { title: `Tier ${tier} from L0`, why: 'test fixture', cost: 'none', kind: 'tier', scope: [], supersedes: [] } });
+}
+
+test('route: the review need is in the data and the text (critical: cross-provider at L2; trivial: none; shadow mode: any reviewer)', async (t) => {
+  const r = repo(t);
+  const crit = ['--paths', 'src/auth/a.js', '--loc', '5', '--yes'];
+  const a = newTask(r.store, r.handle);
+  const shadow = await cli(['route', a, ...crit], r);
+  assert.deepEqual([shadow.env.data.review.need, shadow.env.data.review.text], ['any', 'any reviewer'], shadow.text);
+  const probe = await cli(['route', '--probe', '--paths', 'src/a.js', '--loc', '1'], r);
+  assert.deepEqual(probe.env.data.review, { need: 'none', text: 'none' });
+  atTier(r, 'L2');
+  const j = await cli(['route', '--probe', '--paths', 'src/auth/a.js', '--loc', '5'], r);
+  assert.deepEqual(j.env.data.review, { need: 'external', text: 'cross-provider' });
+  const text = await cli(['route', '--probe', '--paths', 'src/auth/a.js', '--loc', '5'], { ...r, json: false });
+  assert.match(text.text, /^review: cross-provider$/m);
+});
+
+// ---- threshold overrides from config.json (T-MG-40) ----
+
+const decisionText = (id, status) => `---\nschema: 1\nid: ${id}\ntitle: Larger changes\nstatus: ${status}\nkind: general\ndate: 2026-10-15\nauthor: TU\nsupersedes: []\nsupersededBy: null\nscope: []\nallowsTestRemoval: []\n---\n\n## What\n\nLarger changes.\n\n## Why\n\nLong modules.\n\n## Cost if wrong\n\nlow\n`;
+function override(r, decision, status = 'active', value = 800) {
+  if (status) {
+    mkdirSync(decisionsDir(r), { recursive: true });
+    writeFileSync(join(decisionsDir(r), `${decision}.md`), decisionText(decision, status));
+  }
+  r.store.write('config', null, { schema: 1, thresholds: { 'router.critical.overLoc': { value, decision, at: AT } } });
+}
+const probe500 = ['route', '--probe', '--paths', 'src/a.js', '--loc', '500', '--yes'];
+
+test('route --probe and the ratchet read router threshold overrides from config.json; defaults hold without them', async (t) => {
+  const r = repo(t);
+  assert.equal((await cli(probe500, r)).env.data.class, 'critical', 'default: 500 LOC > 400');
+  override(r, 'D-TU-1');
+  assert.equal((await cli(probe500, r)).env.data.class, 'standard', 'override 800: 500 LOC is standard');
+  const id = newTask(r.store, r.handle);
+  assert.equal(router.routeTask(r.store, id, { paths: ['src/a.js'], loc: 500, handle: r.handle, at: AT }).class, 'standard');
+  const outside = repo(t, { active: false });
+  assert.equal((await cli(probe500, outside)).env.data.class, 'critical', 'no repository state: defaults');
+});
+
+test('an override whose decision is missing or not active changes nothing; an unreadable config gives the defaults', async (t) => {
+  const r = repo(t);
+  override(r, 'D-TU-1', null);
+  assert.equal((await cli(probe500, r)).env.data.class, 'critical', 'no record of the cited decision');
+  override(r, 'D-TU-2', 'retired');
+  assert.equal((await cli(probe500, r)).env.data.class, 'critical', 'retired decision');
+  writeFileSync(join(r.stateDir, 'config.json'), '{ not json');
+  assert.equal((await cli(probe500, r)).env.data.class, 'critical', 'unreadable config: shipped defaults');
+});
+
+test('a raised critical.overLoc after a task was routed critical keeps it critical (the ratchet only rises)', (t) => {
+  const r = repo(t);
+  const id = newTask(r.store, r.handle);
+  assert.equal(router.routeTask(r.store, id, { paths: ['src/a.js'], loc: 500, handle: r.handle, at: AT }).class, 'critical');
+  override(r, 'D-TU-1');
+  const again = router.routeTask(r.store, id, { paths: ['src/a.js'], loc: 500, handle: r.handle, at: AT });
+  assert.equal(again.class, 'critical');
+  assert.equal(r.store.read('task', id).class, 'critical');
 });

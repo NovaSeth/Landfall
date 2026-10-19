@@ -47,12 +47,14 @@ test('session context: every active task status has a next step; a terminal or u
   assert.match(start(f).context, /Loop: state cannot be read \(not JSON\)/);
 });
 
-test('session context: tier when known (pure renderer); no tier line until the engine provides one', (t) => {
+test('session context: tier when known (pure renderer); the hook prints the engine tier line within the budget', (t) => {
   const method = openMethod();
   const text = renderContext({ bin: names.bin, where: `state in ${names.stateDir}`, tier: 'L2', tasks: [], loop: { exit: null, doc: null }, rules: [] });
   assert.match(text, /^Tier: L2\.$/m);
   const f = repo(t);
-  assert.doesNotMatch(start(f).context, /^Tier:/m);
+  const c = start(f).context;
+  assert.match(c, /^Tier: L\d\.$/m);
+  assert.ok(c.length <= CONTEXT_MAX);
   assert.ok(method.index.always.length <= 8);
 });
 

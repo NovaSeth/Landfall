@@ -127,7 +127,7 @@ for (const mode of ['git', 'plain']) {
     for (const p of ['package.json', '.claude-plugin', pluginRel]) cpSync(join(root, p), join(fixture, p), { recursive: true });
     const pkgBefore = readJson(join(fixture, 'package.json'));
     if (mode === 'git') { git(fixture, ['init', '-q']); git(fixture, ['add', '-A']); git(fixture, ['commit', '-qm', 'base']); }
-    const fresh = { codename: 'zzq', displayName: 'Zzq', plugin: 'zzq', marketplace: 'zzq-plugins', bin: 'zzq', stateDir: '.zzq', envPrefix: 'ZZQ_', claimRefPrefix: 'zzq/claim/', repository: old.repository };
+    const fresh = { codename: 'zzq', displayName: 'Zzq', plugin: 'zzq', marketplace: 'zzq-plugins', bin: 'zzq', stateDir: '.zzq', envPrefix: 'ZZQ_', claimRefPrefix: 'zzq/claim/', repository: 'github:NovaSeth/Zzq' };
     writeFileSync(join(fixture, pluginRel, 'lib', 'name.json'), JSON.stringify(fresh, null, 2) + '\n');
 
     const stale = gen(['--check', '--root', fixture]);
@@ -165,6 +165,11 @@ for (const mode of ['git', 'plain']) {
   });
 }
 
+test('settings.json is generated: the agent panel rows run through the launcher', () => {
+  const { pluginRel, names } = locate(root);
+  assert.deepEqual(readJson(join(root, pluginRel, 'settings.json')), { subagentStatusLine: { type: 'command', command: `\${CLAUDE_PLUGIN_ROOT}/bin/${names.bin} ui rows` } });
+});
+
 test('gen-names: invalid name.json and unknown flags exit 2', () => {
   const { pluginRel } = locate(root);
   const fixture = mkdtempSync(join(tmpdir(), 'names-bad-'));
@@ -183,13 +188,13 @@ test('occurrence counter: the literal in any case, never inside another word', (
   assert.equal(occurrences('macazzq zzq ZZQ_X zzq-y xzzq zzqx "zzq/claim/"', 'zzq'), 4);
 });
 
-const USER_DOCS = /^(README|CHANGELOG|CLAUDE)\.md$|^docs\/known-limitations\.md$/;
+const USER_DOCS = /^(README|CHANGELOG|CLAUDE)\.md$|^docs\/(known-limitations|getting-started|benchmark)\.md$/;
 
 test('the codename literal appears only in name.json and generated files (SD-30)', () => {
   const { pluginRel, nameRel, names } = locate(root);
   // Skills and agents are rendered from templates/{skills,agents} (gen-names --check above proves each is exactly
   // the generator's output, and a file there without a source is an error).
-  const whollyGenerated = new Set([nameRel, '.claude-plugin/marketplace.json', `${pluginRel}/.claude-plugin/plugin.json`, `${pluginRel}/hooks/hooks.json`, 'docs/cli.md',
+  const whollyGenerated = new Set([nameRel, '.claude-plugin/marketplace.json', `${pluginRel}/.claude-plugin/plugin.json`, `${pluginRel}/hooks/hooks.json`, `${pluginRel}/settings.json`, 'docs/cli.md',
     ...generatedComponents(root, pluginRel)]);
   const found = [];
   let legacy = 0;

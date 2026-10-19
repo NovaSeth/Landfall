@@ -1,6 +1,6 @@
 {
   "name": "coding-agents-workflow",
-  "version": "2.0.0-beta.1",
+  "version": "2.0.0",
   "private": true,
   "description": "Claude Code plugin that sizes the process to each coding task and checks outcomes in code: verify, decisions, a loop that always ends.",
   "license": "MIT",
@@ -9,10 +9,11 @@
     "node": ">=18"
   },
   "scripts": {
-    "test": "node --test tests/*.test.mjs tests/e2e/*.test.mjs"
+    "test": "node --test tests/*.test.mjs tests/e2e/*.test.mjs",
+    "check-secrets": "node plugins/*/bin/* secrets"
   },
   "bin": {
-    "caw": "plugins/caw/bin/caw"
+    "landfall": "plugins/landfall/bin/landfall"
   },
   "files": [
     "plugins",

@@ -193,7 +193,7 @@ function workspace(t) {
   const parent = realpathSync(mkdtempSync(join(tmpdir(), 'gen-agents-')));
   t.after(() => rmSync(parent, { recursive: true, force: true }));
   const store = gen.openStore(join(parent, names.stateDir), names);
-  store.write('state', null, { codename: names.codename, createdWith: VERSION, activatedAt: now(), flags: {} });
+  store.write('state', null, { codename: names.codename, createdWith: VERSION, activatedAt: now() });
   return { root: parent, store };
 }
 const OPTS = (gates, pkg) => ({ ...gen.DEFAULT_OPTIONS, gates, ...(pkg ? { package: pkg } : {}) });
@@ -282,7 +282,9 @@ function repo(t, { flags = {}, files = {} } = {}) {
     mkdirSync(dirname(join(base, rel)), { recursive: true });
     writeFileSync(join(base, rel), text);
   }
-  gen.openStore(join(base, names.stateDir), names).write('state', null, { codename: names.codename, createdWith: VERSION, activatedAt: now(), flags });
+  const store = gen.openStore(join(base, names.stateDir), names);
+  store.write('state', null, { codename: names.codename, createdWith: VERSION, activatedAt: now() });
+  if (Object.keys(flags).length) store.write('config', null, { flags });
   git(base, 'add', '-A');
   git(base, 'commit', '-qm', 'base');
   return base;

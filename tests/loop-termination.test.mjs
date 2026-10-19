@@ -95,7 +95,7 @@ function sequence(seed, base, { real = false } = {}) {
   const store = real ? state.open(dir, { names, kinds: loop.STORE_KINDS })
     : new PlainStore(dir, { names, kinds: loop.STORE_KINDS, migrations: state.MIGRATIONS, lockTimeoutMs: 10000 });
   const file = join(dir, 'local', 'loop.json');
-  store.write('state', null, { codename: names.codename, createdWith: '1.5.2', activatedAt: iso(T0), flags: {} });
+  store.write('state', null, { codename: names.codename, createdWith: '1.5.2', activatedAt: iso(T0) });
   store.write('team', 'TU', { handle: 'TU', emailSha256: state.emailHash('test@example.com'), addedAt: iso(T0) });
   const statuses = ['new', 'planned', 'dispatched', 'implemented', 'in-review', 'fix-round', 'verified', 'blocked', 'done', 'cancelled'];
   const n = r.int(0, 4);

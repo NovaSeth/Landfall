@@ -57,7 +57,7 @@ export function repo(t, { active = true, handles = ['AB'], files = { 'README.md'
   let store = null;
   if (active) {
     store = state.open(stateDir, { names });
-    store.write('state', null, { codename: names.codename, createdWith: VERSION, activatedAt: AT, flags: {} });
+    store.write('state', null, { codename: names.codename, createdWith: VERSION, activatedAt: AT });
     handles.forEach((h, k) => state.registerHandle(store, { name: `Dev ${h}`, email: `${h.toLowerCase()}${k}@example.com`, handle: h }));
   }
   return { base, dir, stateDir, env, store };

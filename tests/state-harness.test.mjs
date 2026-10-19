@@ -244,7 +244,7 @@ async function runSeed(t, seed) {
   mkdirSync(logs);
   mkdirSync(join(base, 'home'));
   const put = (rel, v) => { mkdirSync(dirname(join(dir, rel)), { recursive: true }); writeFileSync(join(dir, rel), typeof v === 'string' ? v : json(v)); };
-  put('state.json', { schema: KINDS.state.version, codename: names.codename, createdWith: '2.0.0', activatedAt: AT, flags: {} });
+  put('state.json', { schema: KINDS.state.version, codename: names.codename, createdWith: '2.0.0', activatedAt: AT });
   for (const h of ['AB', 'CD']) put(`team/${h}.json`, { schema: KINDS.team.version, handle: h, emailSha256: state.emailHash(`${h}@example.com`), addedAt: AT });
   for (const id of ITEMS) put(`items/${id}.json`, { schema: 1, id, n: 0 });
   for (const id of ['T-AB-1000', 'T-CD-1000']) put(`tasks/${id}/task.json`, { schema: KINDS.task.version, id, kind: 'task', title: 'counter', lane: null, owner: id.split('-')[1], class: null, classHistory: [], status: 'new', round: 0, events: [], base: null, branch: null });

@@ -33,7 +33,10 @@ const lib = (rel) => import(pathToFileURL(join(pluginDir, 'lib', rel)).href);
 const { runHook } = await lib('hooks/registry.mjs');
 const state = await lib('state/index.mjs');
 // Corpus rows spell the plugin's own command as @BIN@ and its state directory as @STATE@ (both from name.json).
-const withBin = (s) => s.split('@BIN@').join(names.bin).split('@STATE@').join(names.stateDir);
+// @STATEGLOB@ and @STATECLASS@ are globs that reach the state directory (bypass rows): its first two characters + '*', and its
+// second character in a bracket class; @STATEQ@, @STATEBR@ and @STATEBRACE@: last character as '?', last character bracketed,
+// third character in a brace list.
+const withBin = (s) => s.split('@BIN@').join(names.bin).split('@STATEGLOB@').join(`${names.stateDir.slice(0, 2)}*`).split('@STATECLASS@').join(`.[${names.stateDir[1]}]${names.stateDir.slice(2)}`).split('@STATEQ@').join(`${names.stateDir.slice(0, -1)}?`).split('@STATEBR@').join(`${names.stateDir.slice(0, -1)}[${names.stateDir.slice(-1)}]`).split('@STATEBRACE@').join(`${names.stateDir.slice(0, 2)}{${names.stateDir[2]},b}${names.stateDir.slice(3)}`).split('@STATE@').join(names.stateDir);
 
 // ---------- corpus context ----------
 // Row: [command, rule ID or phrase in the reason (blocks only), context]. Context = the command's directory: 'none'
@@ -430,7 +433,7 @@ const NEW_BLOCK = [
   ['cd -P - && rm -rf src', UNV, 'tracked'], ['cd -L -; rm -rf docs', UNV, 'tracked'], ['cd /nonexistent_dir_zz; rm -rf src', UNV, 'tracked'],
   ['cd nope_zz || rm -rf src', UNV, 'tracked'], ['cd nope_zz || cp x @STATE@/tasks/T-AB-1/task.json', UNV, 'tracked'], ['false && cd /tmp; rm -rf src', UNV, 'tracked'],
   ['cd /tmp | cat; rm -rf src', UNV, 'tracked'], ['cd src || cd /tmp; rm -rf src', UNV, 'tracked'], ['cd /etc/passwd; rm -rf src', UNV, 'tracked'],
-  ['cd ~ && rm -rf src', UNV, 'tracked'], ['cd .c*; cp x tasks/T-AB-1/task.json', UNV, 'tracked'],
+  ['cd ~ && rm -rf src', UNV, 'tracked'], ['cd @STATEGLOB@; cp x tasks/T-AB-1/task.json', UNV, 'tracked'],
   // C2 / F2 / F3: operators without spaces, find without a start path, find with any filter, find -exec rm, busybox
   ['true|rm -rf src', 'PRI-17', 'tracked'], ['echo ok|rm -rf src', 'PRI-17', 'tracked'], ['echo ok |rm -rf src', 'PRI-17', 'tracked'], ['true||rm -rf src', 'PRI-17', 'tracked'],
   ['true;rm -rf src', 'PRI-17', 'tracked'], ['true &&rm -rf src', 'PRI-17', 'tracked'], ['echo|find src -delete', 'PRI-17', 'tracked'], ['true|find src -delete', 'PRI-17', 'tracked'],
@@ -444,6 +447,9 @@ const NEW_BLOCK = [
   ['rm -rf src/*', 'PRI-17', 'tracked'],
   // C4 / M3: state.json, the team files and the project rules are not written from Bash
   ['rm @STATE@/state.json', 'FLW-7', 'tracked'], ['mv @STATE@/state.json /tmp/s', 'FLW-7', 'tracked'], ['echo x > @STATE@/state.json', 'FLW-7', 'tracked'],
+  // every file of the owned list stays denied (T-MG-39: the list derives from the lib/state kinds)
+  ['echo x > @STATE@/config.json', 'FLW-7', 'tracked'], ['echo x > @STATE@/baseline/tests.json', 'FLW-7', 'tracked'], ['echo x > @STATE@/local/loop.json', 'FLW-7', 'tracked'],
+  ['echo x > @STATE@/tombstones/D-AB-3.json', 'FLW-7', 'tracked'], ['echo x > @STATE@/local/ids/T-AB.json', 'FLW-7', 'tracked'], ['echo x > @STATE@/tasks/T-AB-1/verify.json', 'FLW-7', 'tracked'],
   ['cp x @STATE@/team/AB.json', 'FLW-7', 'tracked'], ['rm -rf @STATE@/team', 'FLW-7', 'tracked'], ['echo "" > @STATE@/guard-extra.txt', 'SEC-4', 'tracked'],
   // I1 / F5 / F7: >& and glued option values are writes
   ['echo x >& @STATE@/tasks/T-AB-1/task.json', 'FLW-7', 'tracked'], ['echo x >&@STATE@/tasks/T-AB-1/task.json', 'FLW-7', 'tracked'], ['echo x 1>&@STATE@/tasks/T-AB-1/task.json', 'FLW-7', 'tracked'], ['echo x 2>&@STATE@/tasks/T-AB-1/task.json', 'FLW-7', 'tracked'],
@@ -456,19 +462,19 @@ const NEW_BLOCK = [
   ['sed -n 1,5p @STATE@/decisions/D-AB-1.md', 'PRI-8', 'tracked'], ['find @STATE@ -name "*.json"', 'FLW-7', 'tracked'], ['cat @STATE@/tasks/T-AB-1/task.json > /tmp/t.json', 'FLW-7', 'tracked'],
   ['rg --pre sh x @STATE@/tasks/T-AB-1/task.json', 'FLW-7', 'tracked'], ['file -C -m @STATE@/tasks/T-AB-1/task.json', 'FLW-7', 'tracked'], ['git diff --output=@STATE@/tasks/T-AB-1/task.json', 'FLW-7', 'tracked'],
   // I3 / F7: globs, braces and expansions that reach the state directory
-  ['cp x .c*/tasks/T-AB-1/task.json', 'FLW-7', 'tracked'], ['rm -f .c*/tasks/*/task.json', 'FLW-7', 'tracked'], ['rm -f .[c]aw/tasks/T-AB-1/task.json', 'FLW-7', 'tracked'],
-  ['cp x */tasks/T-AB-1/task.json', 'FLW-7', 'tracked'], ['cp x **/task.json', 'FLW-7', 'tracked'], ['echo x > .ca?/tasks/T-AB-1/task.json', 'FLW-7', 'tracked'],
-  ['cp x .c{a,b}w/tasks/T-AB-1/task.json', UNV, 'tracked'], ['X=.c; cp x ${X}aw/tasks/T-AB-1/task.json', UNV, 'tracked'], ['cp x .$(echo c)aw/tasks/T-AB-1/task.json', UNV, 'tracked'],
-  ['cp x .c$(:)aw/tasks/T-AB-1/task.json', UNV, 'tracked'], ['echo x > .ca[w]/tasks/T-AB-1/task.json', 'FLW-7', 'tracked'], ['echo x > @STATE@/tasks/T-AB-1/task.j*', 'FLW-7', 'tracked'],
-  ['mv .c* /tmp/', 'FLW-7', 'tracked'], ['mv .c{a,b}w /tmp/', UNV, 'tracked'],
+  ['cp x @STATEGLOB@/tasks/T-AB-1/task.json', 'FLW-7', 'tracked'], ['rm -f @STATEGLOB@/tasks/*/task.json', 'FLW-7', 'tracked'], ['rm -f @STATECLASS@/tasks/T-AB-1/task.json', 'FLW-7', 'tracked'],
+  ['cp x */tasks/T-AB-1/task.json', 'FLW-7', 'tracked'], ['cp x **/task.json', 'FLW-7', 'tracked'], ['echo x > @STATEQ@/tasks/T-AB-1/task.json', 'FLW-7', 'tracked'],
+  ['cp x @STATEBRACE@/tasks/T-AB-1/task.json', UNV, 'tracked'], ['X=.c; cp x ${X}aw/tasks/T-AB-1/task.json', UNV, 'tracked'], ['cp x .$(echo c)aw/tasks/T-AB-1/task.json', UNV, 'tracked'],
+  ['cp x .c$(:)aw/tasks/T-AB-1/task.json', UNV, 'tracked'], ['echo x > @STATEBR@/tasks/T-AB-1/task.json', 'FLW-7', 'tracked'], ['echo x > @STATE@/tasks/T-AB-1/task.j*', 'FLW-7', 'tracked'],
+  ['mv @STATEGLOB@ /tmp/', 'FLW-7', 'tracked'], ['mv @STATEBRACE@ /tmp/', UNV, 'tracked'],
   // I4 / F9: git rewriting state paths (also through a pathspec that contains the state directory)
   ['git checkout -- @STATE@/tasks/T-AB-1/task.json', 'FLW-7', 'tracked'], ['git checkout HEAD -- @STATE@', 'FLW-7', 'tracked'], ['git restore @STATE@/tasks/T-AB-1/task.json', 'FLW-7', 'tracked'],
   ['git restore --source=HEAD~1 @STATE@', 'FLW-7', 'tracked'], ['git clean -fdx @STATE@', 'FLW-7', 'tracked'], ['git clean -fdx', 'FLW-7', 'tracked'], ['git clean -fd', 'FLW-7', 'tracked'],
   ['git update-index --assume-unchanged @STATE@/tasks/T-AB-1/task.json', 'FLW-7', 'tracked'], ['git rm -rf .', 'FLW-7', 'tracked'], ['git checkout .', 'FLW-7', 'tracked'],
-  ["git checkout -- '.c*'", 'FLW-7', 'tracked'], ['git mv @STATE@/tasks /tmp/t', 'FLW-7', 'tracked'], ['git rm -r --cached @STATE@', 'FLW-7', 'tracked'],
+  ["git checkout -- '@STATEGLOB@'", 'FLW-7', 'tracked'], ['git mv @STATE@/tasks /tmp/t', 'FLW-7', 'tracked'], ['git rm -r --cached @STATE@', 'FLW-7', 'tracked'],
   // C3 / F4: a state that cannot be resolved (corrupt or newer machine data, git missing) blocks a command that names it
   ['echo x > @STATE@/tasks/T-AB-1/task.json', 'cannot be resolved', 'corrupt'], ['rm @STATE@/state.json', 'cannot be resolved', 'corrupt'], ['cp x @STATE@/tasks/T-AB-1/verify.json', 'cannot be resolved', 'corrupt'],
-  ['echo x > @STATE@/tasks/T-AB-1/task.json', 'cannot be resolved', 'newer'], ['echo x > @STATE@/tasks/T-AB-1/task.json', 'cannot be resolved', 'nogit'], ['mv .c* /tmp/', 'cannot be resolved', 'corrupt'],
+  ['echo x > @STATE@/tasks/T-AB-1/task.json', 'cannot be resolved', 'newer'], ['echo x > @STATE@/tasks/T-AB-1/task.json', 'cannot be resolved', 'nogit'], ['mv @STATEGLOB@ /tmp/', 'cannot be resolved', 'corrupt'],
 ];
 const NEW_ALLOW = [
   // gate commands without a pipe, or with the output in a file
@@ -647,7 +653,7 @@ function trackedRepo() {
   const d = gitRepo('feat');
   const store = state.open(join(d, names.stateDir), { names });
   const at = '2026-10-15T10:00:00.000Z';
-  store.write('state', null, { codename: names.codename, createdWith: readJson(join(pluginDir, '.claude-plugin', 'plugin.json')).version, activatedAt: at, flags: {} });
+  store.write('state', null, { codename: names.codename, createdWith: readJson(join(pluginDir, '.claude-plugin', 'plugin.json')).version, activatedAt: at });
   state.registerHandle(store, { name: 'Dev AB', email: 'ab@example.com', handle: 'AB' });
   store.write('task', 'T-AB-1', { id: 'T-AB-1', kind: 'task', title: 'x', lane: null, owner: 'AB', class: null, classHistory: [], status: 'new', round: 0,
     events: [{ at, by: 'AB', event: 'created', data: {} }], base: null, branch: null });
@@ -915,7 +921,7 @@ test('guard team mode (readProjectMode): solo allows a plain push main → main,
 // The default readers come from lib/state (I3.2): the repository of the command's directory, resolved once per call.
 function activate(dir, handles) {
   const store = state.open(join(dir, names.stateDir), { names });
-  store.write('state', null, { codename: names.codename, createdWith: readJson(join(pluginDir, '.claude-plugin', 'plugin.json')).version, activatedAt: '2026-10-15T10:00:00.000Z', flags: {} });
+  store.write('state', null, { codename: names.codename, createdWith: readJson(join(pluginDir, '.claude-plugin', 'plugin.json')).version, activatedAt: '2026-10-15T10:00:00.000Z' });
   handles.forEach((h, k) => state.registerHandle(store, { name: `Dev ${h}`, email: `${h.toLowerCase()}${k}@example.com`, handle: h }));
   return store;
 }
@@ -1159,13 +1165,12 @@ test('guard input over 16 MiB: always blocked for the Bash guard ("command too l
 });
 
 // ---------- own-command auto-allow (SD-33), shadow ----------
-const OWN = ['@BIN@ status', '@BIN@ tick', '@BIN@ verify T-AB-1', '@BIN@ exec --task T-AB-1 --role reviewer', '@BIN@ wait r-1 --timeout 300', '@BIN@ runs',
-  '@BIN@ rule SEC-3 TRP-2', '@BIN@ method coding', '@BIN@ receipt T-AB-1', '@BIN@ doctor --json', '@BIN@ profile show', '@BIN@ decisions check',
-  '@BIN@ decisions context src/a.ts', '@BIN@ slot list', '@BIN@ --json status', '@BIN@ runs show r-1'].map(withBin);
+const OWN = ['@BIN@ status', '@BIN@ tick', '@BIN@ rule SEC-3 TRP-2', '@BIN@ method coding', '@BIN@ doctor --json', '@BIN@ profile show', '@BIN@ decisions check',
+  '@BIN@ decisions find --path src/a.ts', '@BIN@ --json status'].map(withBin);
 const NOT_OWN = ['@BIN@ status; rm -rf x', '@BIN@ status && ls', '@BIN@ status | cat', '@BIN@ status > out.txt', '@BIN@ rule "$X"', '@BIN@ $(echo status)',
   '@BIN@ init --yes', '@BIN@ profile set x y', '@BIN@ decisions list', '@BIN@ slot acquire agent', '@BIN@ task done T-AB-1', '@BIN@ heavy -- npm test',
   'X=1 @BIN@ status', '/tmp/@BIN@ status', '@BIN@', '@BIN@ status\nls', 'echo @BIN@ status', '@BIN@ secrets', '@BIN@ status &', '@BIN@ tick <<< x',
-  '@BIN@ `id`', '@BIN@ st"atus"x', '@BIN@ hook guard-bash', '@BIN@ profile', '@BIN@ --help status'].map(withBin);
+  '@BIN@ `id`', '@BIN@ st"atus"x', '@BIN@ hook guard-bash', '@BIN@ profile', '@BIN@ --help status', '@BIN@ verify T-AB-1', '@BIN@ receipt --task T-AB-1', '@BIN@ slots --unlock-stale', '@BIN@ exec --task T-AB-1', '@BIN@ runs'].map(withBin);
 
 test('own-command auto-allow (SD-33) in shadow: an allowlisted single simple command is logged as would-allow; nothing else changes', () => {
   for (const cmd of OWN) {

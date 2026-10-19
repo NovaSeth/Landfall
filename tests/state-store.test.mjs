@@ -8,7 +8,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -51,7 +51,7 @@ function snapshot(dir) {
   return out;
 }
 const put = (dir, rel, value) => { mkdirSync(dirname(join(dir, rel)), { recursive: true }); writeFileSync(join(dir, rel), typeof value === 'string' ? value : `${JSON.stringify(value, null, 2)}\n`); };
-const stateDoc = (extra = {}) => ({ schema: KINDS.state.version, codename: names.codename, createdWith: '2.0.0', activatedAt: AT, flags: {}, ...extra });
+const stateDoc = (extra = {}) => ({ schema: KINDS.state.version, codename: names.codename, createdWith: '2.0.0', activatedAt: AT, ...extra });
 const team = (h) => ({ schema: KINDS.team.version, handle: h, emailSha256: 'b'.repeat(64), addedAt: AT });
 const task = (id, extra = {}) => ({ schema: KINDS.task.version, id, kind: 'task', title: `Task ${id}`, lane: null, owner: id.split('-')[1], class: null, classHistory: [], status: 'new', round: 0, events: [], base: null, branch: null, ...extra });
 // An active store: state.json, one handle, two tasks.
@@ -430,4 +430,44 @@ test('a migration inside an update callback fails closed: no migration, no write
     assert.throws(() => s.update('task', 'T-AB-1', (d) => { state.migrate(newer); return { ...d, title: 'downgraded' }; }), (e) => e instanceof state.StateError && e.exit === 'INTERNAL', label);
     assert.deepEqual(snapshot(dir), before, `${label}: nothing migrated, nothing written`);
   }
+});
+
+// ---- store.append is a true append (T-MG-32) ----
+
+// Process A is paused between opening the log and writing; a writer outside the store lock adds its line
+// meanwhile. A true O_APPEND write puts A's line after it: both lines survive.
+test('append: a line written by another appender while one is paused is not lost', { timeout: 60000 }, async (t) => {
+  const { base, dir } = scratch(t);
+  const s = active(dir);
+  s.append('shadow', { at: AT, n: 0 });
+  const sig = join(base, 'sig');
+  mkdirSync(sig);
+  const log = join(dir, 'local', 'shadow.jsonl');
+  const code = `const state = await import(${JSON.stringify(STATE)});
+state.open(${JSON.stringify(dir)}, { names: ${JSON.stringify(names)} }).append('shadow', { at: ${JSON.stringify(AT)}, n: 1 });`;
+  const child = spawn(process.execPath, ['--input-type=module', '-e', code], { stdio: ['ignore', 'ignore', 'pipe'], env: { ...process.env, [`${names.envPrefix}TEST_APPEND_PAUSE`]: sig } });
+  let err = '';
+  child.stderr.on('data', (d) => { err += d; });
+  t.after(() => child.kill('SIGKILL'));
+  const exited = new Promise((res) => child.on('exit', res));
+  const deadline = Date.now() + 10000;
+  while (!existsSync(join(sig, 'paused'))) {
+    assert.ok(Date.now() < deadline, `appender never reached the pause point: ${err}`);
+    await new Promise((r) => setTimeout(r, 5));
+  }
+  appendFileSync(log, `${JSON.stringify({ at: AT, n: 2 })}\n`);
+  writeFileSync(join(sig, 'go'), '');
+  assert.equal(await exited, 0, err);
+  const lines = readFileSync(log, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l).n);
+  assert.deepEqual([...lines].sort(), [0, 1, 2]);
+});
+
+test('append: a line over the limit is a typed error and the file is unchanged', (t) => {
+  const { dir } = scratch(t);
+  const s = active(dir);
+  s.append('shadow', { at: AT, n: 0 });
+  const log = join(dir, 'local', 'shadow.jsonl');
+  const before = readFileSync(log, 'utf8');
+  assert.throws(() => s.append('shadow', { at: AT, big: 'x'.repeat(5000) }), is('limit-exceeded', 'USAGE'));
+  assert.equal(readFileSync(log, 'utf8'), before);
 });

@@ -27,7 +27,8 @@ function rng(seed) {
 }
 const AT = '2026-10-15T05:42:00.000Z';
 const examples = {
-  state: () => ({ schema: KINDS.state.version, codename: 'zzq', createdWith: '2.0.0', activatedAt: AT, flags: { scheduler: 'shadow', lanes: 'off' } }),
+  state: () => ({ schema: KINDS.state.version, codename: 'zzq', createdWith: '2.0.0', activatedAt: AT }),
+  config: () => ({ schema: KINDS.config.version, flags: { scheduler: 'shadow', lanes: 'off' }, thresholds: { 'router.trivial.maxLoc': { value: 50, decision: 'D-MG-3', at: AT } }, executors: { reviewer: ['codex'] } }),
   team: () => ({ schema: KINDS.team.version, handle: 'MG', emailSha256: 'a'.repeat(64), addedAt: AT }),
   task: () => ({
     schema: KINDS.task.version, id: 'T-MG-1', kind: 'task', title: 'Add the state core', lane: 'state', owner: 'MG', class: 'critical',
@@ -36,6 +37,7 @@ const examples = {
   }),
   tombstone: () => ({ schema: KINDS.tombstone.version, id: 'T-MG-7', retiredAt: AT, by: 'MG', reason: 'created by mistake' }),
   projects: () => ({ schema: MACHINE_KINDS.projects.version, projects: { '/work/repo': { stateDir: '/work/state' }, '/work/other': { declinedAt: AT, handle: 'MG' } } }),
+  machineConfig: () => ({ schema: MACHINE_KINDS.machineConfig.version, flags: { 'guard-bash': 'on' }, executors: { implementer: ['claude'] } }),
 };
 const kindOf = (name) => KINDS[name] ?? MACHINE_KINDS[name];
 const errorsAt = (name, doc) => check(kindOf(name), doc);
@@ -48,13 +50,13 @@ const set = (obj, path, value) => {
 };
 
 test('the kinds of the state store and of machine data: versions, paths and keys round-trip', () => {
-  assert.deepEqual(Object.keys(KINDS).sort(), ['counter', 'state', 'task', 'team', 'tombstone']);
-  assert.deepEqual(Object.keys(MACHINE_KINDS), ['projects']);
+  assert.deepEqual(Object.keys(KINDS).sort(), ['config', 'counter', 'state', 'task', 'team', 'tombstone']);
+  assert.deepEqual(Object.keys(MACHINE_KINDS), ['projects', 'machineConfig']);
   for (const [name, kind] of [...Object.entries(KINDS), ...Object.entries(MACHINE_KINDS)]) {
     assert.ok(Number.isInteger(kind.version) && kind.version >= 1, `${name}: integer version`);
     assert.ok(kind.readUpTo >= kind.version, `${name}: reads at least its own version`);
   }
-  const keys = { state: null, team: 'MG', task: 'T-MG-12', tombstone: 'D-ABCD-999999', counter: 'T-MG' };
+  const keys = { state: null, config: null, team: 'MG', task: 'T-MG-12', tombstone: 'D-ABCD-999999', counter: 'T-MG' };
   for (const [name, key] of Object.entries(keys)) {
     const rel = KINDS[name].path(key);
     const m = KINDS[name].match.exec(rel);
@@ -82,7 +84,7 @@ test('valid documents pass and serialize as 2-space JSON with a trailing newline
     assert.deepEqual(JSON.parse(text), doc, `${name}: lossless`);
   }
   // Map keys are sorted, so two writers produce the same bytes.
-  const flags = serialize(KINDS.state, { ...examples.state(), flags: { b: 'on', a: 'off' } });
+  const flags = serialize(KINDS.config, { ...examples.config(), flags: { b: 'on', a: 'off' } });
   assert.ok(flags.indexOf('"a"') < flags.indexOf('"b"'));
 });
 

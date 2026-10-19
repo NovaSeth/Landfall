@@ -11,9 +11,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { delimiter, dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { isolateProcessEnv } from './helpers/isolated-env.mjs';
 import { YamlError, parseYaml } from './lib/yaml-subset.mjs';
@@ -102,7 +102,9 @@ test('CI workflow: parses as strict YAML for every combination and has the GitHu
         assert.ok((step.uses === undefined) !== (step.run === undefined), `${at} ${id}: a step has uses or run`);
         if (step.uses !== undefined) {
           assert.match(step.uses, PINNED, `${at} ${id}: action pinned to a commit SHA`);
-          assert.deepEqual(step.with, { 'persist-credentials': false }, `${at} ${id}: checkout keeps no token`);
+          // The process job runs the secrets scan of a pull request's commits (SD-29): its checkout fetches the history.
+          const history = id === 'process' && o.package ? { 'fetch-depth': 0 } : {};
+          assert.deepEqual(step.with, { 'persist-credentials': false, ...history }, `${at} ${id}: checkout keeps no token`);
         }
       }
     }
@@ -237,7 +239,11 @@ test('pre-push hook: blocks a pushed commit that tracks a side file and a failin
   writeFileSync(hook, gen.render(target('pre-push'), options, names));
   chmodSync(hook, 0o755);
   const zeros = '0'.repeat(40);
-  const push = (lines, extraEnv = {}) => run(hook, ['origin', 'https://example.invalid/repo.git'], { cwd: dir, input: lines.map((l) => `${l}\n`).join(''), env: { ...process.env, MARKS: marks, ...extraEnv } });
+  // The hook scans each pushed range with the plugin CLI, found by its bin name (no package spec in these options).
+  const bin = scratch(t, 'gen-parse-bin-');
+  symlinkSync(join(pluginDir, 'bin', names.bin), join(bin, names.bin));
+  const PATH = `${bin}${delimiter}${dirname(process.execPath)}${delimiter}${process.env.PATH}`;
+  const push = (lines, extraEnv = {}) => run(hook, ['origin', 'https://example.invalid/repo.git'], { cwd: dir, input: lines.map((l) => `${l}\n`).join(''), env: { ...process.env, PATH, MARKS: marks, ...extraEnv } });
   const ran = () => {
     const lines = existsSync(join(marks, 'first')) ? readFileSync(join(marks, 'first'), 'utf8').split('\n').filter(Boolean) : [];
     assert.ok(lines.every((l) => l === "it's"), `the gate command ran unchanged: ${JSON.stringify(lines)}`);

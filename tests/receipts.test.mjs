@@ -305,9 +305,12 @@ test('usage: exactly one of --task and --run; IDs are checked; an unknown task o
     assert.equal(r.code, 2, `${args.join(' ')}: ${show(r)}`);
     assert.equal(r.out.errors[0].code, code, `${args.join(' ')}: ${show(r)}`);
   }
-  // It saves a file: consent first (REV-58), as for every command that changes files.
-  const { COMMANDS } = await lib('cli/commands.mjs');
-  assert.equal(COMMANDS.find((row) => row.name === 'receipt').mutating, true);
+  // --task saves a file: consent first (REV-58), as for every command that changes files (--loop and --since only read).
+  const { COMMANDS, mutates } = await lib('cli/commands.mjs');
+  const row = COMMANDS.find((x) => x.name === 'receipt');
+  assert.equal(mutates(row, { task: 'T-TU-1' }), true);
+  assert.equal(mutates(row, { run: 'codex-T-TU-1-reviewer-1' }), true);
+  assert.deepEqual([mutates(row, { loop: true }), mutates(row, { since: '2026-10-15' })], [false, false]);
   const refused = await cli(['receipt', '--task', 'T-TU-1'], p);
   assert.equal(refused.code, 7, show(refused));
   assert.ok(!existsSync(join(p.store, 'receipts')), 'nothing written without consent');
@@ -443,4 +446,194 @@ test('transcript directories: the slug of a working directory, as Claude Code na
   // Observed in ~/.claude/projects (Claude Code 2.1.296-2.1.300).
   assert.equal(slug('/Users/me/Documents/Code/CodingAgentsWorkflow-wt/I1.1'), '-Users-me-Documents-Code-CodingAgentsWorkflow-wt-I1-1');
   assert.equal(slug('/private/tmp/claude-501/-Users-me-Code/3c67/scratchpad/w2_tagt'), '-private-tmp-claude-501--Users-me-Code-3c67-scratchpad-w2-tagt');
+});
+
+// ---- receipt --loop and receipt --since … --by class|executor (spec §7.11 aggregation) ------------------------------
+// Hand-computed loop totals (prices above; requests of every session of the repository and its worktree, any task):
+//   loop started 2026-10-15T09:05:30Z, running: msg_07 (09:06) 764 · req_08 (10:00:05) 1828 · req_10 (11:00:05)
+//     1·4 + 10·20 + 100·0.2 = 224 · req_09 (11:00:30) 224 → 3040 µ$; tokens input 1+7+1+1 = 10, output 20+70+10+10 = 110,
+//     cache read 1800+2000+100+100 = 4000, cache write 0. Runs: reviewer-1 ended 09:04:55, before the start (left
+//     out); reviewer-2 and implementer-1 have no tokens and no cost. Earlier requests (req_x1 at 09:05:10) are left out.
+//   the same loop ended at 10:30Z: msg_07 + req_08 → 2592 µ$; input 8, output 90, cache read 3800.
+// Hand-computed --since totals from the saved receipts (T-TU-1 routed standard, T-TU-2 trivial) and one run record
+// saved after them (codex-T-TU-1-reviewer-3, 2026-10-16, 10,000 µ$, input 1000, output 500, cached 200):
+//   by class since 2026-10-15: standard 93324 + 10000 = 103324 (tokens T1 + the run) · trivial 2256 (T2) → 105580
+//   by executor: main 9924 + 2256 = 12180 · <plugin>:implementer 24420 · Explore 8675 · <plugin>:external 305 ·
+//     codex 50000 + 10000 = 60000 (4 runs) → 105580
+//   since 2026-10-16: both receipts ended on 10-15 (left out); the run → standard 10000.
+const LOOP_T1 = { input: 10, output: 110, cacheRead: 4000, cacheWrite: 0 };
+const RUN3 = { input: 1000, output: 500, cacheRead: 200, cacheWrite: 0 };
+const plus = (a, b) => Object.fromEntries(Object.keys(a).map((k) => [k, a[k] + b[k]]));
+
+async function writeLoop(p, patch = {}) {
+  const loop = await lib('loop/index.mjs');
+  const state = await lib('state/index.mjs');
+  const doc = { ...loop.newLoop({ now: Date.parse('2026-10-15T09:05:30.000Z') }), ...patch };
+  state.open(p.store, { names, kinds: loop.STORE_KINDS }).write(loop.LOOP.name, null, doc);
+  return doc;
+}
+
+test('receipt --loop: tokens and cost of the current loop since its start (until its exit), read-only; no loop exits 1', async (t) => {
+  const p = await project(t);
+  const none = await cli(['receipt', '--loop'], p);
+  assert.deepEqual([none.code, none.out.errors[0].code], [1, 'no-loop'], show(none));
+  const doc = await writeLoop(p);
+  const r = await cli(['receipt', '--loop'], p); // no --yes: it writes nothing, so it needs no consent
+  assert.equal(r.code, 0, show(r));
+  const d = r.out.data;
+  assert.deepEqual(d.loop, { id: doc.id, startedAt: '2026-10-15T09:05:30.000Z', exit: null, exitAt: null });
+  assert.deepEqual(d.tokens, LOOP_T1, 'token counts are exact');
+  assert.equal(d.costMicroUsd, 3040, 'cost in micro-dollars, exactly');
+  assert.equal(d.partial, false);
+  const text = await cli(['receipt', '--loop'], { ...p, json: false });
+  assert.match(text.out, new RegExp(`^loop ${doc.id} · since 2026-10-15T09:05:30\\.000Z \\(running\\) · input 10 · output 110 · cache read 4000 · cache write 0 · USD 0\\.003040 \\(estimate\\)`, 'm'));
+
+  await writeLoop(p, { id: doc.id, exit: 'DONE', exitAt: '2026-10-15T10:30:00.000Z', reason: 'stopped' });
+  const ended = await cli(['receipt', '--loop'], p);
+  assert.equal(ended.code, 0, show(ended));
+  assert.deepEqual([ended.out.data.tokens, ended.out.data.costMicroUsd], [{ input: 8, output: 90, cacheRead: 3800, cacheWrite: 0 }, 2592], 'an ended loop counts until its exit');
+  assert.ok(!existsSync(join(p.store, 'receipts')), 'nothing saved');
+});
+
+test('receipt --since --by class|executor: totals from saved receipts and the run records outside them', async (t) => {
+  const p = await project(t);
+  for (const args of [['route', 'T-TU-1', '--paths', 'src/a.js,src/b.js,src/c.js', '--loc', '120'], ['route', 'T-TU-2', '--paths', 'a.js', '--loc', '3'],
+    ['receipt', '--task', 'T-TU-1'], ['receipt', '--task', 'T-TU-2']]) {
+    const r = await cli([...args, '--yes'], p);
+    assert.equal(r.code, 0, `${args.join(' ')}: ${show(r)}`);
+  }
+  writeFileSync(join(p.runs, 'codex-T-TU-1-reviewer-3.json'), JSON.stringify({
+    schema: 1, runId: 'codex-T-TU-1-reviewer-3', task: 'T-TU-1', role: 'reviewer', provider: 'codex', model: 'gpt-5.5-codex', status: 'done',
+    startedAt: '2026-10-16T08:00:00.000Z', endedAt: '2026-10-16T08:01:00.000Z', elapsedMs: 60000, tokens: { input: 1000, output: 500, cached: 200 }, costMicroUsd: 10000, exit: 0,
+  }));
+  const before = readdirSync(p.store, { recursive: true }).sort();
+  const byClass = await cli(['receipt', '--since', '2026-10-15', '--by', 'class'], p); // read-only: no --yes
+  assert.equal(byClass.code, 0, show(byClass));
+  const d = byClass.out.data;
+  assert.deepEqual([d.since, d.by, d.receipts, d.runs, d.partial], ['2026-10-15', 'class', 2, 1, false]);
+  const row = (data, key) => data.groups.find((g) => g.key === key);
+  assert.deepEqual(d.groups.map((g) => g.key).sort(), ['standard', 'trivial']);
+  assert.deepEqual([row(d, 'standard').costMicroUsd, row(d, 'standard').tokens, row(d, 'standard').tasks, row(d, 'standard').runs], [103324, plus(T1, RUN3), ['T-TU-1'], 3]);
+  assert.deepEqual([row(d, 'trivial').costMicroUsd, row(d, 'trivial').tokens, row(d, 'trivial').tasks, row(d, 'trivial').runs], [T2_COST, T2, ['T-TU-2'], 1]);
+  assert.deepEqual([d.total.costMicroUsd, d.total.tokens], [105580, plus(plus(T1, T2), RUN3)]);
+  const dflt = await cli(['receipt', '--since', '2026-10-15'], p);
+  assert.deepEqual(dflt.out.data, d, '--by class is the default');
+
+  const byExec = (await cli(['receipt', '--since', '2026-10-15', '--by', 'executor'], p)).out.data;
+  const costs = Object.fromEntries(byExec.groups.map((g) => [g.key, g.costMicroUsd]));
+  assert.deepEqual(costs, { main: 12180, [`${names.plugin}:implementer`]: 24420, Explore: 8675, [`${names.plugin}:external`]: 305, codex: 60000 });
+  assert.deepEqual(row(byExec, 'main').tokens, { input: 20, output: 310, cacheRead: 9900, cacheWrite: 490 });
+  assert.deepEqual([row(byExec, 'codex').tokens, row(byExec, 'codex').runs], [{ input: 13000, output: 3500, cacheRead: 8200, cacheWrite: 0 }, 4]);
+  assert.equal(byExec.total.costMicroUsd, 105580, 'the same total, split by executor');
+
+  const later = (await cli(['receipt', '--since', '2026-10-16'], p)).out.data;
+  assert.deepEqual([later.receipts, later.runs, later.groups.map((g) => [g.key, g.costMicroUsd]), later.total.costMicroUsd], [0, 1, [['standard', 10000]], 10000]);
+  const text = await cli(['receipt', '--since', '2026-10-15', '--by', 'executor'], { ...p, json: false });
+  assert.match(text.out, /^receipts since 2026-10-15 by executor · 2 saved receipts, 1 run outside them$/m);
+  assert.match(text.out, /^total +2 +4 +\d+ .*0\.105580$/m);
+  assert.deepEqual(readdirSync(p.store, { recursive: true }).sort(), before, 'nothing written');
+
+  // A run record that cannot be read: the numbers found, partial, exit 1.
+  writeFileSync(join(p.runs, 'codex-T-TU-1-reviewer-4.json'), '{ not json');
+  const partial = await cli(['receipt', '--since', '2026-10-15'], p);
+  assert.equal(partial.code, 1, show(partial));
+  assert.deepEqual([partial.out.data.partial, partial.out.data.total.costMicroUsd, partial.out.errors[0].code], [true, 105580, 'run-invalid']);
+});
+
+test('receipt forms: one of --task, --run, --loop, --since; --by only with --since; dates and groups are checked', async (t) => {
+  const p = await project(t);
+  for (const [args, code] of [
+    [['--loop', '--task', 'T-TU-1'], 'conflicting-flags'],
+    [['--since', '2026-10-15', '--loop'], 'conflicting-flags'],
+    [['--by', 'class'], 'missing-flag'],
+    [['--loop', '--by', 'class'], 'missing-flag'],
+    [['--since', '2026-13-40'], 'invalid-value'],
+    [['--since', 'yesterday'], 'invalid-value'],
+    [['--since', '2026-10-15', '--by', 'owner'], 'invalid-value'],
+  ]) {
+    const r = await p.receipt(args);
+    assert.equal(r.code, 2, `${args.join(' ')}: ${show(r)}`);
+    assert.equal(r.out.errors[0].code, code, `${args.join(' ')}: ${show(r)}`);
+  }
+  // In an inactive repository there is nothing saved: zero totals with a warning.
+  const plain = join(p.repo, '..', 'plain');
+  mkdirSync(plain);
+  git(plain, p.env, ['init', '-q']);
+  const r = await cli(['receipt', '--since', '2026-10-15'], { ...p, cwd: plain });
+  assert.equal(r.code, 0, show(r));
+  assert.deepEqual([r.out.data.groups, r.out.data.total.costMicroUsd], [[], 0]);
+  assert.ok(r.out.data.warnings.some((w) => w.code === 'not-active'), show(r));
+});
+
+// ---- fix round 1 (review-r1): receipt --since ---------------------------------------------------------------------
+// The project of the --since test above: T-TU-1 routed standard, T-TU-2 trivial, both receipts saved.
+async function savedReceipts(t) {
+  const p = await project(t);
+  for (const args of [['route', 'T-TU-1', '--paths', 'src/a.js,src/b.js,src/c.js', '--loc', '120'], ['route', 'T-TU-2', '--paths', 'a.js', '--loc', '3']]) {
+    const r = await cli([...args, '--yes'], p);
+    assert.equal(r.code, 0, `${args.join(' ')}: ${show(r)}`);
+  }
+  p.save = async (task) => {
+    const r = await cli(['receipt', '--task', task, '--yes'], p);
+    assert.equal(r.code, 0, `receipt --task ${task}: ${show(r)}`);
+    return r.out.data.receipt;
+  };
+  return p;
+}
+const run3 = (doc) => ({
+  schema: 1, runId: 'codex-T-TU-1-reviewer-3', task: 'T-TU-1', role: 'reviewer', provider: 'codex', model: 'gpt-5.5-codex', status: 'running',
+  startedAt: '2026-10-16T23:00:00.000Z', endedAt: null, tokens: null, costMicroUsd: null, exit: null, ...doc,
+});
+
+test('F1 receipt --since: an included saved receipt that is partial makes the totals partial (exit 1), the numbers kept', async (t) => {
+  const p = await savedReceipts(t);
+  await p.save('T-TU-1');
+  await p.save('T-TU-2');
+  const state = await lib('state/index.mjs');
+  const { RECEIPT } = await lib('receipts/index.mjs');
+  state.open(p.store, { names, kinds: { ...state.KINDS, [RECEIPT.name]: RECEIPT } }).update(RECEIPT.name, 'T-TU-1', (doc) => ({ ...doc, partial: true }));
+  const r = await cli(['receipt', '--since', '2026-10-15'], p);
+  assert.equal(r.code, 1, show(r));
+  assert.equal(r.out.data.partial, true);
+  assert.equal(r.out.data.total.costMicroUsd, T1_COST + T2_COST, 'the available totals are kept');
+  assert.ok(r.out.errors.some((e) => e.code === 'receipt-partial' && e.message.includes('T-TU-1')), show(r));
+  // A partial receipt left out by the date does not make the totals partial.
+  const later = await cli(['receipt', '--since', '2026-10-16'], p);
+  assert.deepEqual([later.code, later.out.data.partial], [0, false], show(later));
+});
+
+test('F2 receipt --since: a run still running when its task receipt was saved counts with its finished usage', async (t) => {
+  const p = await savedReceipts(t);
+  writeFileSync(join(p.runs, 'codex-T-TU-1-reviewer-3.json'), JSON.stringify(run3({})));
+  const saved = await p.save('T-TU-1');
+  assert.ok(saved.external.some((e) => e.runId === 'codex-T-TU-1-reviewer-3' && e.costMicroUsd === null), 'the receipt saved the running run without usage');
+  assert.equal(saved.endedAt, '2026-10-16T23:00:00.000Z');
+  await p.save('T-TU-2');
+  // The run finishes after the receipt was saved.
+  writeFileSync(join(p.runs, 'codex-T-TU-1-reviewer-3.json'), JSON.stringify(run3({ status: 'done', endedAt: '2026-10-17T01:00:00.000Z', elapsedMs: 7200000, tokens: { input: 1000, output: 500, cached: 200 }, costMicroUsd: 10000, exit: 0 })));
+  const byClass = (await cli(['receipt', '--since', '2026-10-15'], p)).out.data;
+  const row = (data, key) => data.groups.find((g) => g.key === key);
+  assert.deepEqual([row(byClass, 'standard').costMicroUsd, row(byClass, 'standard').tokens, row(byClass, 'standard').runs], [103324, plus(T1, RUN3), 3]);
+  assert.equal(byClass.total.costMicroUsd, 105580);
+  const byExec = (await cli(['receipt', '--since', '2026-10-15', '--by', 'executor'], p)).out.data;
+  assert.deepEqual([row(byExec, 'codex').costMicroUsd, row(byExec, 'codex').runs], [60000, 4]);
+  assert.equal(byExec.total.costMicroUsd, 105580);
+  // The receipt ended (by its saved times) before the day; the run ended after it: the run still counts.
+  const later = await cli(['receipt', '--since', '2026-10-17'], p);
+  assert.equal(later.code, 0, show(later));
+  assert.deepEqual([later.out.data.receipts, later.out.data.runs, later.out.data.groups.map((g) => [g.key, g.costMicroUsd])], [0, 1, [['standard', 10000]]]);
+});
+
+test('F3 receipt --since: a saved receipt of a newer schema refuses with exit 7 and the upgrade hint (GC9); an invalid one is partial', async (t) => {
+  const p = await savedReceipts(t);
+  const saved = await p.save('T-TU-1');
+  const file = join(p.store, 'receipts', 'T-TU-1.json');
+  writeFileSync(file, JSON.stringify({ ...saved, schema: 2 }));
+  const r = await cli(['receipt', '--since', '2026-10-15'], p);
+  assert.equal(r.code, 7, show(r));
+  assert.deepEqual([r.out.exit, r.out.errors[0].code], ['REFUSED', 'schema-newer']);
+  assert.match(r.out.errors[0].hint, /update the plugin/);
+  writeFileSync(file, '{ not json');
+  const bad = await cli(['receipt', '--since', '2026-10-15'], p);
+  assert.deepEqual([bad.code, bad.out.data.partial, bad.out.errors[0].code], [1, true, 'state-invalid'], show(bad));
 });
