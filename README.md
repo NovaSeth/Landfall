@@ -15,6 +15,10 @@ claude plugin marketplace add NovaSeth/Landfall
 claude plugin install landfall@landfall-plugins
 ```
 
+If Claude Code says `landfall-plugins` is already known from another source (for example a local clone), run `claude plugin marketplace remove landfall-plugins`, which also uninstalls the plugin, then install again.
+
+First use: open Claude Code in your repository and ask for a change, as in the demo below; nothing needs to be invoked. Three slash commands are yours: `/landfall:start` activates tracking in the repository now, `/landfall:status` shows the state, `/landfall:doctor` checks the setup.
+
 Agents: check `claude plugin list --json` for `"id":"landfall@landfall-plugins","enabled":true`, then run `landfall doctor`. Installing writes nothing into your projects. Requirements: Claude Code and git. First steps: [docs/getting-started.md](docs/getting-started.md).
 
 ## 60-second demo

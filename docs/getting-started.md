@@ -12,7 +12,7 @@ Type `/reload-plugins`. If the install fails, run `claude plugin marketplace add
 
 ## 2. Ask for a change
 
-Open Claude Code in a git repository and describe the change. A trivial change runs as plain Claude Code and writes no files. For larger work the agent says it will track the repository and runs `landfall init`; the state goes in `.landfall/`. Say "no landfall here" to opt out; the choice is remembered outside the repository.
+Open Claude Code in a git repository and describe the change. A trivial change runs as plain Claude Code and writes no files. For larger work the agent says it will track the repository and runs `landfall init`; the state goes in `.landfall/`. Say "no landfall here" to opt out; the choice is remembered outside the repository. To activate tracking yourself, type `/landfall:start`; `/landfall:status` shows the state and `/landfall:doctor` checks the setup.
 
 ## 3. What happens next
 
