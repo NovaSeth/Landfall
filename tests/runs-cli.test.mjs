@@ -143,6 +143,22 @@ test('runs stop ends a fake run; a recorded identity that does not match is neve
   process.kill(rec.pid, 'SIGTERM');
 });
 
+test('runs stop ends the whole provider group (a grandchild ignoring SIGTERM), releases the lease; wait reports stopped', async (t) => {
+  const p = await project(t);
+  const id = (await startRun(p, 'T-TU-1', 'reviewer', 'fakestubborn')).e.data.runId;
+  await p.until('the provider to start its grandchild', () => existsSync(`${p.record(id).outFile}.pids`));
+  const pids = readFileSync(`${p.record(id).outFile}.pids`, 'utf8').trim().split(' ').map(Number);
+  assert.ok(pids.every(alive), 'provider and grandchild run');
+  const supervisor = p.record(id).pid;
+  await p.ok(['runs', 'stop', id]);
+  await p.until('the group to be gone', () => pids.every((pid) => !alive(pid)), 8000);
+  await p.until('the supervisor to end', () => !alive(supervisor), 8000);
+  assert.equal(p.record(id).status, 'stopped');
+  assert.equal(p.externalLeases().length, 0, 'the lease is released');
+  const w = await p.ok(['wait', id, '--timeout', '5']);
+  assert.equal(w.e.data.status, 'stopped');
+});
+
 test('runs list shows recent runs, hides and prunes finished records older than 30 days; show prints one run', async (t) => {
   const p = await project(t);
   const a = (await startRun(p, 'T-TU-1', 'reviewer', 'fakeok')).e.data.runId;
