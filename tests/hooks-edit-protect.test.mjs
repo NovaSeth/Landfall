@@ -49,7 +49,7 @@ test('edit hook: a direct Edit or Write of an owned state file is denied with th
   const f = fixture(t);
   const cases = [['tasks/T-AB-1/task.json', `${names.bin} task set T-AB-1`], ['tasks/T-AB-1/verify.json', `${names.bin} verify T-AB-1`],
     ['baseline/tests.json', `${names.bin} baseline pin`], ['local/loop.json', `${names.bin} loop`], ['tasks/T-AB-7/task.json', `${names.bin} task set T-AB-7`],
-    [`local/gate-cache/${'b'.repeat(64)}.json`, `${names.bin} verify`]];
+    [`local/gate-cache/${'b'.repeat(64)}.json`, `${names.bin} verify`], ['local/runs/fakeok-T-AB-1-reviewer-1.json', `${names.bin} exec`]];
   for (const [rel, use] of cases) {
     for (const [tool, input] of [['Edit', { old_string: '{', new_string: '{ ' }], ['Write', { content: '{}\n' }]]) {
       const v = edit(f, f.s(rel), input, tool);

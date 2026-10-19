@@ -8,7 +8,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { isolatedEnv, isolateProcessEnv } from './helpers/isolated-env.mjs';
@@ -183,4 +184,38 @@ test('exec refuses an unknown task, a task without a brief and a live run of the
   await codes(['--task', 'T-TU-1', '--role', 'reviewer', '--provider', 'fakeok'], 1, 'run-live');
   writeFileSync(`${p.record(live).outFile}.go`, '');
   await p.ended(live);
+});
+
+// run-supervise trusts the role and the repository, never the run record (T-MG-53): a rewritten record ends `failed`
+// with run-tampered and no provider starts.
+async function tampered(t, change) {
+  const p = await project(t);
+  const base = p.record((await (async () => { const id = (await startRun(p, 'T-TU-1', 'reviewer', 'fakeok')).e.data.runId; await p.ended(id); return { id }; })()).id);
+  const outDir = mkdtempSync(join(tmpdir(), `${names.bin}-run-`));
+  const runId = 'fakeok-T-TU-2-reviewer-1';
+  const rec = { ...base, runId, task: 'T-TU-2', status: 'starting', pid: null, endedAt: null, error: null, outFile: join(outDir, 'out.json'), ...change(p) };
+  writeFileSync(join(p.runsDir, `${runId}.json`), `${JSON.stringify(rec)}\n`);
+  const r = await p.cli(['run-supervise', runId]);
+  return { p, r, rec: p.record(runId), outFile: rec.outFile };
+}
+
+test('run-supervise: a record with a widened sandbox ends failed run-tampered and starts nothing', async (t) => {
+  const { r, rec, outFile } = await tampered(t, () => ({ sandbox: 'workspace-write' }));
+  assert.equal(rec.status, 'failed', show(r));
+  assert.equal(rec.error, 'run-tampered');
+  assert.equal(existsSync(`${outFile}.args`), false, 'no provider was started');
+});
+
+test('run-supervise: a record whose cwd is not the repository ends failed run-tampered and starts nothing', async (t) => {
+  const { r, rec, outFile } = await tampered(t, (p) => ({ cwd: p.base }));
+  assert.equal(rec.status, 'failed', show(r));
+  assert.equal(rec.error, 'run-tampered');
+  assert.equal(existsSync(`${outFile}.args`), false, 'no provider was started');
+});
+
+test('run-supervise: an out file outside the run temp directory ends failed run-tampered', async (t) => {
+  const { r, rec } = await tampered(t, (p) => ({ outFile: join(p.repo, 'a.txt') }));
+  assert.equal(rec.status, 'failed', show(r));
+  assert.equal(rec.error, 'run-tampered');
+  assert.equal(readFileSync(join(rec.cwd, 'a.txt'), 'utf8'), 'a\n');
 });

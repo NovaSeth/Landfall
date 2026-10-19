@@ -9,9 +9,9 @@
 // Exit (exec) 0 · 1 no such task, no brief, a live run of the task and role · 2 bad role or provider · 7 inactive
 // repository, newer schema · 8 provider missing or logged out.
 import { tolerateClosedStreams } from '../cli/output.mjs';
-import { mkdtempSync, readFileSync } from 'node:fs';
+import { lstatSync, mkdtempSync, readFileSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { EXIT } from '../cli/commands.mjs';
 import { start } from '../proc/index.mjs';
 import { capFor, liveRun, nextRunId, runsStore, LOG_LINE, LOG_LINES } from '../runs/index.mjs';
@@ -68,6 +68,17 @@ export function exec({ flags, names, io, pluginRoot }) {
   return { data: { runId, status: 'starting', provider: row.id, capS }, text: `${runId}: starting (${row.id}, ${role}, cap ${capS} s)\n` };
 }
 
+const patch0 = (store, runId, fields) => store.update('run', runId, (cur) => (cur ? { ...cur, ...fields } : undefined));
+
+// out.json directly inside a real 0700 directory of ours under the temp directory, neither of them a link.
+function ownOutFile(f) {
+  try {
+    if (typeof f !== 'string') return false;
+    const dir = dirname(f);
+    return realpathSync(dir) === join(realpathSync(tmpdir()), basename(dir)) && (lstatSync(dir).mode & 0o777) === 0o700 && !lstatSync(f, { throwIfNoEntry: false })?.isSymbolicLink();
+  } catch { return false; }
+}
+
 const clip = (s, max) => (s.length > max ? s.slice(0, max) : s);
 
 export async function runSupervise({ args, names, io }) {
@@ -78,6 +89,15 @@ export async function runSupervise({ args, names, io }) {
   const runId = args.run;
   const rec = store.read('run', runId);
   if (!rec) return fail('run-unknown', `no run ${runId} in ${w.dir}`, 'exec writes the record first');
+  // The sandbox and the cwd come from the role and the repository, the out file from the run's own private temp
+  // directory; a record that says otherwise was rewritten.
+  const adapter = adapters({ names, env: io.env }).find((a) => a.id === rec.provider);
+  const sandbox = ROLES.includes(rec.role) ? adapter?.sandboxes?.[rec.role] : undefined;
+  const cwd = rec.role === 'reviewer' ? w.repo : undefined;
+  if (!adapter || !sandbox || !cwd || rec.sandbox !== sandbox || rec.cwd !== cwd || !ownOutFile(rec.outFile)) {
+    patch0(store, runId, { status: 'failed', endedAt: new Date().toISOString(), error: 'run-tampered' });
+    return fail('run-tampered', `${runId}: the run record does not match its role, the repository or its temp directory`, 'start the run again with exec');
+  }
   const me = identify([process.pid], SYSTEM).get(process.pid);
   const patch = (fn) => store.update('run', runId, (cur) => (cur ? fn(cur) : undefined));
   patch((cur) => ({ ...cur, pid: process.pid, pidStart: me?.start ?? null, pidMethod: me?.method ?? null, status: 'queued', lastLine: 'waiting for an external slot' }));
@@ -87,11 +107,10 @@ export async function runSupervise({ args, names, io }) {
     patch((cur) => ({ ...cur, status: 'failed', endedAt: new Date().toISOString(), error: clip(got.reasons.map((x) => x.message).join('; '), 300) }));
     return fail('wait-timeout', `no external slot within ${WAIT_MS / 1000} s`, 'retry later');
   }
-  const adapter = adapters({ names, env: io.env }).find((a) => a.id === rec.provider);
   const brief = readFileSync(join(w.dir, KINDS.task.path(rec.task).replace(/[^/]+$/, TASK_TEXTS.brief)), 'utf8');
-  const argv = adapter.argv({ sandbox: rec.sandbox, cwd: rec.cwd, outFile: rec.outFile, model: rec.model ?? undefined });
+  const argv = adapter.argv({ sandbox, cwd, outFile: rec.outFile, model: rec.model ?? undefined });
   const began = Date.now();
-  const child = start(argv[0], argv.slice(1), { unit: 'providers', cwd: rec.cwd, env: { ...io.env, ...got.env }, detached: true, stdin: 'pipe' });
+  const child = start(argv[0], argv.slice(1), { unit: 'providers', cwd, env: { ...io.env, ...got.env }, detached: true, stdin: 'pipe' });
   child.stdin.on('error', () => {});
   child.stdin.end(brief);
   let live = { tokens: null, lastLine: null, unknownEvents: 0, lines: [] };
