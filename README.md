@@ -82,7 +82,7 @@ Claude  $ landfall profile set deployedToUsers true --source said \
 | External provider runs | — | — | — | — | ✓ | ✓ |
 | Agent cockpit or IDE integration | — | — | — | — | ✓ | — |
 
-The table lists what each tool documents, not how well it works. Landfall adds a layer to Claude Code sessions; it does not replace an editor or a cockpit. A with/without evaluation will be published after its pre-registration; until then this README makes no claim about speed, cost or quality.
+The table lists what each tool documents (public READMEs as read on 2026-10-19; corrections are welcome as issues), not how well it works. Landfall adds a layer to Claude Code sessions; it does not replace an editor or a cockpit. A comparison with these tools will run under the pre-registered rules in [docs/benchmark.md](docs/benchmark.md); until it is published this README makes no claim about speed, cost or quality.
 
 ## Commands at a glance
 
