@@ -188,7 +188,7 @@ test('occurrence counter: the literal in any case, never inside another word', (
   assert.equal(occurrences('macazzq zzq ZZQ_X zzq-y xzzq zzqx "zzq/claim/"', 'zzq'), 4);
 });
 
-const USER_DOCS = /^(README|CHANGELOG|CLAUDE)\.md$|^docs\/known-limitations\.md$/;
+const USER_DOCS = /^(README|CHANGELOG|CLAUDE)\.md$|^docs\/(known-limitations|getting-started|benchmark)\.md$/;
 
 test('the codename literal appears only in name.json and generated files (SD-30)', () => {
   const { pluginRel, nameRel, names } = locate(root);
