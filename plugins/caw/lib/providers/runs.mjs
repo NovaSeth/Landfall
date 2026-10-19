@@ -6,6 +6,7 @@
 // one of that pid; gone or another process: the run is marked failed, nothing is signalled; unreadable: refused.
 // Exit 0 · 1 unknown run · 2 bad --timeout · 3 wait: still running · 7 inactive repository, stop: identity unreadable.
 import { unlinkSync } from 'node:fs';
+import { RUN_ID } from '../runs/kind.mjs';
 import { join } from 'node:path';
 import { EXIT } from '../cli/commands.mjs';
 import { TERMINAL, readRunRecords, runsStore } from '../runs/index.mjs';
@@ -70,7 +71,9 @@ export function runsList({ names, io }) {
   const stamp = (x) => Date.parse(x.endedAt ?? x.startedAt ?? x.queuedAt);
   const all = readRunRecords(r.store);
   const old = all.filter((x) => TERMINAL.includes(x.status) && stamp(x) < cutoff);
+  // The file name comes from the validated run id only (RUN_ID): a record naming another path is skipped, never deleted.
   for (const x of old.slice(0, PRUNE_MAX)) {
+    if (typeof x.runId !== 'string' || !RUN_ID.test(x.runId)) continue;
     for (const ext of ['json', 'log']) { try { unlinkSync(join(r.w.dir, 'local', 'runs', `${x.runId}.${ext}`)); } catch { /* already gone */ } }
   }
   const runs = all.filter((x) => !old.includes(x)).sort((a, b) => (a.queuedAt < b.queuedAt ? 1 : -1)).map(summaryOf);
