@@ -1,6 +1,6 @@
 # Landfall
 
-Landfall is a Claude Code plugin that turns one session into a small engineering team and holds it to outcomes checked in code. The session orchestrates: it sizes the task, writes a brief, hands the work to a fresh implementer in its own worktree (a Claude agent or an external CLI such as Codex, visible as a row in the agent panel), has the result reviewed, and closes the task only when `landfall verify` has re-run the project's gates on the code. A trivial change skips all of that. Formerly `caw`.
+Landfall is a Claude Code plugin that turns one session into a small engineering team and holds it to outcomes checked in code. The session orchestrates: it sizes the task, writes a brief, hands the work to a fresh implementer in its own worktree (a Claude agent or an external CLI such as Codex, visible as a row in the agent panel), routes each role to the cheapest model that can do it, has the result reviewed, and closes the task only when `landfall verify` has re-run the project's gates on the code. A trivial change skips all of that, and every task leaves a receipt of what it cost. Formerly `caw`.
 
 ## Install
 
@@ -66,6 +66,7 @@ Claude  $ landfall profile set deployedToUsers true --source said \
 - **Decisions with IDs.** `landfall decide` records what, why and the cost if wrong under an ID such as `D-AB-3`; an agent that edits the code citing it sees the decision.
 - **A loop that ends, a machine that stays usable.** Unattended runs end with a typed exit (done, stalled, budget) and never reschedule after the end; `landfall heavy` queues full suites and builds per machine so parallel agents wait their turn.
 - **External executors as first-class agents.** `landfall exec`, `landfall wait` and `landfall runs` run Codex or Gemini CLI as supervised, recorded runs with agent-panel rows; `landfall secrets` scans before a report leaves the worktree.
+- **Tokens spent where they count.** Roles are routed to model tiers: the orchestrating session plans, dispatches and merges but never implements; the implementer and the reviewer run on Sonnet, the external wrapper on Haiku, the designer on Opus. Method rules load by ID on demand (always-on context about 550 tokens), trivial work calls nothing, and `landfall receipt` shows tokens and cost per task, loop, class or executor, with a dollar cap on unattended loops.
 - **Zero footprint until you say yes.** Installed once per user; a project gets one `.landfall/` directory only when real work starts there and you agree.
 
 ## How it compares
@@ -81,9 +82,10 @@ Claude  $ landfall profile set deployedToUsers true --source said \
 | Loop with typed exits and caps | — | — | — | — | — | ✓ |
 | Machine-wide queue for heavy commands | — | — | — | — | — | ✓ |
 | External provider runs | — | — | — | — | ✓ | ✓ |
+| Roles routed to model tiers, cost receipts per task | manual | — | — | — | manual | ✓ |
 | Agent cockpit or IDE integration | — | — | — | — | ✓ | — |
 
-The table lists what each tool documents (public READMEs as read on 2026-10-19; corrections are welcome as issues), not how well it works. Landfall adds a layer to Claude Code sessions; it does not replace an editor or a cockpit. A comparison with these tools will run under the pre-registered rules in [docs/benchmark.md](docs/benchmark.md).
+The table lists what each tool documents (public READMEs as read on 2026-10-19; corrections are welcome as issues), not how well it works. Landfall adds a process, cost and enforcement layer to Claude Code sessions; it does not replace an editor or a cockpit such as orca, and can run inside one. A comparison with these tools will run under the pre-registered rules in [docs/benchmark.md](docs/benchmark.md).
 
 ## Measured
 
