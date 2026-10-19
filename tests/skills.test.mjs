@@ -32,7 +32,7 @@ const MODEL_SKILLS = ['decide', 'dispatch', 'loop', 'plan', 'review', 'work'];
 const USER_SKILLS = ['doctor', 'start', 'status'];
 const AGENTS = ['designer', 'external', 'implementer', 'reviewer'];
 // Commands of a unit not merged yet that a shipped text already names (shrink-only; also on command-names PENDING).
-const PENDING_COMMANDS = ['wait'];
+const PENDING_COMMANDS = [];
 const TASK_TEMPLATES = ['brief', 'findings', 'report', 'rereview', 'review'];
 // SC3 budget per component (spec §7.15): 4 chars ≈ 1 token.
 const CHARS_PER_TOKEN = 4;
