@@ -16,6 +16,7 @@
 import { lstatSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { readRecords } from '../decisions/records.mjs';
+import { StateError } from '../state/index.mjs';
 import { CAP_RANGE, DEFAULT_CAPS, LOOP } from '../loop/kind.mjs';
 import { ENGINE_FLAG, lastRecordedChange } from '../engine/index.mjs';
 import { detectProviders } from '../providers/registry.mjs';
@@ -68,8 +69,14 @@ export const appliedTier = (store) => ((store.read('config', null)?.flags?.[ENGI
 
 // The review line `route` and `brief` print: { need, text } for a class, the applied tier of `store` and, only where it
 // decides the need (critical at L1), whether a reviewer provider is detected and authenticated (no probe cache written).
+// The need shown by route and brief. An unreadable config.json (the tier's flag) is reported as unknown rather than
+// failing the command: route still classifies from the shipped defaults; verify itself refuses on that state.
 export function reviewShown(store, cls, { names, env }) {
-  const tier = appliedTier(store);
+  let tier;
+  try { tier = appliedTier(store); } catch (err) {
+    if (!(err instanceof StateError)) throw err;
+    return { need: null, text: `unknown (${err.message})` };
+  }
   const [low, high] = [reviewNeed(cls, tier, false), reviewNeed(cls, tier, true)];
   const available = low !== high && detectProviders({ names, env, write: false }).rows.some((r) => r.found && r.auth === 'ok' && r.roles.includes('reviewer'));
   const need = available ? high : low;
