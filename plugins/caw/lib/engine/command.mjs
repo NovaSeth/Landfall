@@ -6,7 +6,7 @@ import { relative } from 'node:path';
 import { EXIT } from '../cli/commands.mjs';
 import { ProfileError } from '../profile/index.mjs';
 import { StateError, resolve } from '../state/index.mjs';
-import { ENGINE_FLAGS, SHADOW_LOG, THRESHOLDS, evaluate, signalLine } from './index.mjs';
+import { ENGINE_FLAGS, SHADOW_LOG, THRESHOLDS, engineThresholds, evaluate, signalLine } from './index.mjs';
 
 const MODE_TEXT = {
   shadow: 'engine shadow: computed and logged, not enforced',
@@ -34,13 +34,13 @@ export function explainLines(r, thresholds = THRESHOLDS) {
   return out;
 }
 
-function render(r, explain, { names, where }) {
+function render(r, explain, { names, where, thresholds }) {
   const lines = [`Tier ${r.tier} ${r.name} (${MODE_TEXT[r.mode]})`];
   const log = `${relative(where.worktree, where.dir).split('\\').join('/') || '.'}/${SHADOW_LOG}`;
   if (r.change) {
     const how = !r.active ? 'not recorded: the repository is not active' : r.written === 'shadow' ? `proposed in ${log}` : `recorded as ${r.decision}`;
     lines.push(`Change: ${r.change.from} → ${r.change.to}, ${how}`);
-  } else if (r.waiting) lines.push(`Waiting: ${r.waiting.to} after ${r.waiting.until} (one change per ${THRESHOLDS.changeEveryDays} days)`);
+  } else if (r.waiting) lines.push(`Waiting: ${r.waiting.to} after ${r.waiting.until} (one change per ${thresholds.changeEveryDays} days)`);
   else lines.push(`No change${r.since ? ` since ${r.since}` : ''}`);
   if (r.reasons.length) lines.push(`Reasons: ${r.reasons.join('; ')}`);
   lines.push(`Signals: ${signalLine(r.signals)}`);
@@ -57,10 +57,11 @@ function render(r, explain, { names, where }) {
 export function tier(ctx) {
   try {
     const where = resolve({ cwd: ctx.io.cwd, env: ctx.io.env, names: ctx.names });
-    const r = evaluate(where, { names: ctx.names, env: ctx.io.env });
-    const explain = ctx.flags.explain ? explainLines(r) : null;
+    const thresholds = engineThresholds(where, { names: ctx.names, env: ctx.io.env });
+    const r = evaluate(where, { names: ctx.names, env: ctx.io.env, thresholds });
+    const explain = ctx.flags.explain ? explainLines(r, thresholds) : null;
     const { detail, ...data } = r;
-    return { data: explain ? { ...data, explain } : data, text: render(r, explain, { names: ctx.names, where }) };
+    return { data: explain ? { ...data, explain } : data, text: render(r, explain, { names: ctx.names, where, thresholds }) };
   } catch (err) {
     if (err instanceof StateError || err instanceof ProfileError) return { code: EXIT[err.exit], errors: [err] };
     throw err;

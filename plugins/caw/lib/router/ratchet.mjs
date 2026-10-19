@@ -17,8 +17,10 @@
 // Accepted residual: the decision and the task are two writes under two lock holds (the store lock is not
 // re-entrant). If the task changed in between (class or recorded reasons) or the process stops, the decision stays
 // without effect; the error names it.
+import { thresholdsOf } from '../config/index.mjs';
+import { readRecords } from '../decisions/index.mjs';
 import { LIMITS, allocateId } from '../state/index.mjs';
-import { FLAGS, classify, publicReasons } from './classify.mjs';
+import { FLAGS, THRESHOLDS, classify, publicReasons } from './classify.mjs';
 import { checkQuote, renderOverride } from './decision.mjs';
 import { RouteError, usage } from './errors.mjs';
 import { CLASSES, addedSteps, rank, routeFor } from './routes.mjs';
@@ -135,10 +137,24 @@ function result({ id, doc, previous, computed, outcome, reasons, flags, decision
   };
 }
 
+// The `unit` thresholds (shipped `defaults`) with the overrides of the config.json behind `store`, for the overrides
+// that cite an active decision only (GC3). A config or decisions folder that cannot be read gives the shipped values.
+export function thresholdsWithOverrides(unit, defaults, store) {
+  try {
+    const all = store.read('config', null)?.thresholds ?? {};
+    const active = new Set(readRecords(store.dir).records.filter((r) => r.doc.status === 'active').map((r) => r.id));
+    const kept = Object.fromEntries(Object.entries(all).filter(([, o]) => active.has(o.decision)));
+    return thresholdsOf(unit, defaults, { thresholds: kept }).data;
+  } catch {
+    return structuredClone(defaults);
+  }
+}
+export const routerThresholds = (store) => thresholdsWithOverrides('router', THRESHOLDS, store);
+
 // Classifies the declared plan of task `id` and applies the ratchet. `handle` is the caller's registered handle;
 // `riskPaths` are the profile's risk globs (added to the defaults).
 export function routeTask(store, id, { paths, loc, flags = [], riskPaths = [], handle, at = new Date().toISOString() }) {
-  const plan = classify({ paths, loc, flags, riskPaths });
+  const plan = classify({ paths, loc, flags, riskPaths, thresholds: routerThresholds(store) });
   let step;
   const doc = store.update('task', id, (cur) => {
     step = applyClass(owned(cur, id, handle), plan, { at, by: handle });
