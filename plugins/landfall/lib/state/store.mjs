@@ -21,7 +21,7 @@
 // (Node has no openat or O_NOFOLLOW for directories), so a process that can already write the store could swap
 // a checked directory for a link in between. Locks never write through links, and that process could write the
 // store directly anyway; this window is not closed.
-import { closeSync, existsSync, writeFileSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, writeSync } from 'node:fs';
+import { closeSync, constants, existsSync, fstatSync, writeFileSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, writeSync } from 'node:fs';
 import { dirname, isAbsolute, join } from 'node:path';
 import { createExclusive, makeDirs, removeEmptyDirs, sweepTemps, unlockStale as fsxUnlockStale, withLock, writeAtomic } from '../fsx/index.mjs';
 import { checkWrite, invalidState, parseDoc, requireArg } from './document.mjs';
@@ -356,7 +356,9 @@ export class Store {
     if (bytes.length > APPEND_MAX) throw new StateError('limit-exceeded', 'USAGE', `${this.abs(rel)}: a log line is ${bytes.length} bytes, the limit is ${APPEND_MAX}`, { hint: 'nothing was logged' });
     const file = this.abs(rel);
     mkdirSync(dirname(file), { recursive: true });
-    const fd = openSync(file, 'a', 0o644);
+    // The log is opened without following a link and must be a regular file (a link planted at its path is refused).
+    const fd = openSync(file, constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | constants.O_NOFOLLOW, 0o644);
+    if (!fstatSync(fd).isFile()) { closeSync(fd); throw new StateError('state-invalid', 'FAIL', `${file} is not a regular file`, { hint: 'remove it; the plugin recreates the log' }); }
     try {
       const pause = process.env[`${this.names.envPrefix}TEST_APPEND_PAUSE`];
       if (pause) pauseUntilSignalled(pause);
