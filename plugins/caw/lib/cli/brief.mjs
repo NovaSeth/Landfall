@@ -18,6 +18,7 @@ import { briefRules } from '../method/index.mjs';
 import { openStore } from '../profile/index.mjs';
 import { leaseEnv, snapshot } from '../sched/index.mjs';
 import { KINDS, open, resolve, writeTaskText } from '../state/index.mjs';
+import { reviewShown } from '../verify/artifacts.mjs';
 import { EXIT } from './commands.mjs';
 
 const ROLES = Object.freeze(['implementer', 'reviewer']);
@@ -35,7 +36,7 @@ export function unedited(text) {
 }
 
 // The brief text. task: the task document; gates: the gate commands; lease: the lease env ({ name: value }) or null.
-export function renderBrief({ template, task, role, gates, lease, names }) {
+export function renderBrief({ template, task, role, gates, lease, review = null, names }) {
   const last = task.classHistory[task.classHistory.length - 1];
   const reason = last ? last.reason.replace(new RegExp(`^${escape(task.class)}: `), '') : null;
   const fills = {
@@ -54,6 +55,7 @@ export function renderBrief({ template, task, role, gates, lease, names }) {
   }
   const lines = template.split('\n');
   if (lease) lines.splice(lines.findIndex((l) => l.startsWith(WORKTREE)) + 1, 0, `Lease env (the scheduler's slot for this task): ${Object.entries(lease).map(([k, v]) => `${k}=${v}`).join(' ')}`);
+  if (review) lines.splice(lines.findIndex((l) => l.startsWith('Executor: ')) + 1, 0, `Review: ${review.text}`);
   const filled = new Set();
   const once = new RegExp(Object.keys(fills).map(escape).join('|'), 'g');
   let text = lines.join('\n').replace(once, (m) => {
@@ -85,8 +87,9 @@ export function brief({ args, flags, names, io, pluginRoot }) {
   const held = where.dataDir ? snapshot({ names, env: io.env }).leases.find((l) => l.owner && l.status === 'live' && l.task === id && l.project === where.worktree) : undefined; // a lease names the checkout it was taken in (lib/sched)
   const lease = held ? leaseEnv(held, names) : null;
   const template = readFileSync(join(pluginRoot, 'templates', 'task', 'brief.md'), 'utf8');
-  const text = renderBrief({ template, task, role, gates, lease, names });
-  const data = { task: id, role, class: task.class, kind: task.kind, title: task.title, rules: briefRules({ cls: task.class, role }), gates, lease, text, written: null, file: null };
+  const review = reviewShown(open(where.dir, { names }), task.class, { names, env: io.env });
+  const text = renderBrief({ template, task, role, gates, lease, review, names });
+  const data = { task: id, role, class: task.class, kind: task.kind, title: task.title, rules: briefRules({ cls: task.class, role }), gates, lease, review, text, written: null, file: null };
   if (!flags.write) return { data, text };
   const w = writeTaskText({ cwd: io.cwd, env: io.env, names, id, name: 'brief', text, replace: (cur) => Boolean(flags.force) || unedited(cur) });
   const done = { ...data, written: w.outcome, file: w.file };

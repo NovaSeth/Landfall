@@ -18,6 +18,7 @@ import { join } from 'node:path';
 import { readRecords } from '../decisions/records.mjs';
 import { CAP_RANGE, DEFAULT_CAPS, LOOP } from '../loop/kind.mjs';
 import { ENGINE_FLAG, lastRecordedChange } from '../engine/index.mjs';
+import { detectProviders } from '../providers/registry.mjs';
 
 const REVIEW_NEED = JSON.parse(readFileSync(new URL('../router/review-need.json', import.meta.url), 'utf8'));
 
@@ -64,6 +65,17 @@ export function reviewNeed(cls, tier, providerAvailable = false) {
 
 // The tier the engine applies: the latest active tier decision when the engine flag is on, else L0.
 export const appliedTier = (store) => ((store.read('config', null)?.flags?.[ENGINE_FLAG] ?? 'shadow') === 'on' ? lastRecordedChange(store.dir).tier : 'L0');
+
+// The review line `route` and `brief` print: { need, text } for a class, the applied tier of `store` and, only where it
+// decides the need (critical at L1), whether a reviewer provider is detected and authenticated (no probe cache written).
+export function reviewShown(store, cls, { names, env }) {
+  const tier = appliedTier(store);
+  const [low, high] = [reviewNeed(cls, tier, false), reviewNeed(cls, tier, true)];
+  const available = low !== high && detectProviders({ names, env, write: false }).rows.some((r) => r.found && r.auth === 'ok' && r.roles.includes('reviewer'));
+  const need = available ? high : low;
+  const text = need === 'none' ? 'none' : need === 'external' ? 'cross-provider' : low !== high ? 'cross-provider (if a provider is available)' : 'any reviewer';
+  return { need, text };
+}
 
 const classOf = (steps) => (steps.includes('cross-provider-review') ? 'critical' : steps.includes('review') ? 'standard' : 'trivial');
 

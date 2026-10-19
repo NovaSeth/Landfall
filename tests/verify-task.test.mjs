@@ -215,6 +215,8 @@ test('review: a standard task needs an approved typed review; a critical one an 
   assert.equal((await run(r)).env.data.artifacts.review, 'missing', 'the latest round (10 after 2) counts');
 
   const c = repo(t, { cls: 'critical' });
+  res = await run(c);
+  assert.match(res.env.errors.find((e) => e.code === 'missing-artifact').message, /needs an approved cross-provider review/, 'critical at L2 names the cross-provider review');
   review(c, 1, 'approved', 'claude');
   res = await run(c);
   assert.deepEqual([res.code, res.env.data.artifacts.review], [1, 'missing']);
