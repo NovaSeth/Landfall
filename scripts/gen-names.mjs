@@ -2,7 +2,7 @@
 // Generates every file that carries the plugin's published names from plugins/<plugin>/lib/name.json
 // (SD-30, REV-54): .claude-plugin/marketplace.json, plugins/<plugin>/.claude-plugin/plugin.json, the
 // launcher entry of package.json "bin" (other package.json fields stay as they are) and
-// plugins/<plugin>/hooks/hooks.json (hooks from lib/hooks/registry.mjs, command prefix from the bin name), and the
+// plugins/<plugin>/settings.json (subagentStatusLine), plugins/<plugin>/hooks/hooks.json (hooks from lib/hooks/registry.mjs, command prefix from the bin name), and the
 // skills and agents, which name the CLI: templates/skills/<name>.md → skills/<name>/SKILL.md and
 // templates/agents/<name>.md → agents/<name>.md, where "{{<key>}}" is a name.json value. Every file in skills/ and
 // agents/ has a source; a file there without one is an error.
@@ -122,6 +122,8 @@ async function plan(root) {
     const { hooksConfig } = await import(pathToFileURL(registry).href);
     files.set(`${pluginRel}/hooks/hooks.json`, json(hooksConfig(`\${CLAUDE_PLUGIN_ROOT}/bin/${names.bin}`)));
   }
+  // settings.json: the agent panel rows (subagentStatusLine) run through the launcher.
+  files.set(`${pluginRel}/settings.json`, json({ subagentStatusLine: { type: 'command', command: `\${CLAUDE_PLUGIN_ROOT}/bin/${names.bin} ui rows` } }));
   const pluginPath = join(root, 'plugins', dir);
   for (const c of COMPONENTS) {
     const sources = listDir(join(pluginPath, 'templates', c.kind), (f) => f.endsWith('.md')).sort();
