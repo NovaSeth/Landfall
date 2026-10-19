@@ -1,6 +1,6 @@
 # Landfall
 
-Landfall is a Claude Code plugin that sizes the process to each coding task and checks the outcome in code: a task is done only when its gates pass again. Formerly `caw`.
+Landfall is a Claude Code plugin that turns one session into a small engineering team and holds it to outcomes checked in code. The session orchestrates: it sizes the task, writes a brief, hands the work to a fresh implementer in its own worktree (a Claude agent or an external CLI such as Codex, visible as a row in the agent panel), has the result reviewed, and closes the task only when `landfall verify` has re-run the project's gates on the code. A trivial change skips all of that. Formerly `caw`.
 
 ## Install
 
@@ -60,12 +60,13 @@ Claude  $ landfall profile set deployedToUsers true --source said \
 
 ## What it does
 
-- **Outcome gates in code.** `landfall verify` re-runs the gate commands itself and compares the test inventory with a baseline; `landfall task done` refuses without a passing verify for the code at HEAD.
-- **Decisions with IDs.** `landfall decide` records what, why and the cost if wrong under an ID such as `D-AB-3`; the decision is shown to an agent that edits the code citing it.
-- **A loop that ends.** Unattended runs end with a typed exit (done, stalled, budget) and never reschedule after the end.
-- **Review scaled by tier.** `landfall route` classes a task trivial, standard or critical; `landfall tier` rates the project L0-L3.
-- **Machine queue.** `landfall heavy` runs full suites and builds from a per-machine queue so parallel agents wait their turn.
-- **External executors.** `landfall exec`, `landfall wait` and `landfall runs` run Codex or Gemini CLI as supervised, recorded runs.
+- **Orchestration built in.** Brief → implementer in a worktree → verify → reviewer → at most two fix rounds → merge, driven by skills that name the exact commands; an agent gets a brief file with exact values, never the session history.
+- **Done means verified.** `landfall verify` re-runs the gate commands itself and compares the test inventory with a baseline: a removed or newly skipped test fails without a recorded decision. `landfall task done` and `landfall task merge` refuse otherwise; the merge commits only when the gates pass on the merged tree.
+- **Ceremony scaled to the task and the project.** `landfall route` classes a change trivial, standard or critical from its paths, size and risk flags; the review need follows the project tier (`landfall tier`); a critical change gets a spec, a plan and a review from another provider.
+- **Decisions with IDs.** `landfall decide` records what, why and the cost if wrong under an ID such as `D-AB-3`; an agent that edits the code citing it sees the decision.
+- **A loop that ends, a machine that stays usable.** Unattended runs end with a typed exit (done, stalled, budget) and never reschedule after the end; `landfall heavy` queues full suites and builds per machine so parallel agents wait their turn.
+- **External executors as first-class agents.** `landfall exec`, `landfall wait` and `landfall runs` run Codex or Gemini CLI as supervised, recorded runs with agent-panel rows; `landfall secrets` scans before a report leaves the worktree.
+- **Zero footprint until you say yes.** Installed once per user; a project gets one `.landfall/` directory only when real work starts there and you agree.
 
 ## How it compares
 
