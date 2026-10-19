@@ -13,8 +13,8 @@
 //   profile      profile freshness (lib/profile scanDue): a scan due → warn
 //   flags        the capability flags (lib/config: machine overrides, config.json, defaults); a machine entry that is
 //                no rollout capability, or a repository value that would lower a protective capability (ignored) → warn
-//   providers    provider table: no provider detection in this version → skip "not available"
-//   scheduler    leases and stale reaps: no scheduler in this version → skip
+//   providers    provider detection (write: false): the providers found and their auth; none found → warn
+//   scheduler    calibration (saved or default) and the live leases; no saved calibration → warn
 //   context      the always-on cost from the one `claude plugin details` call the hooks check reads: over the SC3
 //                budget → warn
 //   permissions  the permission rules U3 advises, looked up in the user and project settings (never written)
@@ -28,7 +28,9 @@ import { trackedSideFiles } from '../gen/index.mjs';
 import { git } from '../git/index.mjs';
 import { HOOKS } from '../hooks/registry.mjs';
 import { run } from '../proc/index.mjs';
+import { detectProviders } from '../providers/index.mjs';
 import { readProfile } from '../profile/index.mjs';
+import { currentCalibration, snapshot } from '../sched/index.mjs';
 import { KINDS, StateError, open as openStore, resolve as resolveRepo } from '../state/index.mjs';
 import { EXIT } from './commands.mjs';
 
@@ -132,6 +134,26 @@ function releaseRow({ names, io, id, installed, marketplaces }) {
   const order = compareVersions(latest, known);
   if (order > 0 || (preRelease && order === 0)) return row('release', 'warn', `${installed} installed; ${latest.join('.')} is released`, update);
   return row('release', 'ok', `${installed} installed (latest tag ${latest.join('.')})`, update);
+}
+
+// Read-only (write: false): the providers found with their auth; none found → warn.
+function providersRow({ names, io }) {
+  try {
+    const rows = detectProviders({ names, env: io.env, write: false }).rows;
+    const found = rows.filter((r) => r.found);
+    const detail = `${found.length}/${rows.length} found: ${found.map((r) => `${r.id} (auth ${r.auth})`).join(', ') || 'none'}`;
+    return row('providers', found.length ? 'ok' : 'warn', detail, `'${names.bin} providers' lists them; install a provider CLI to delegate work`);
+  } catch (err) { return row('providers', 'skip', `not readable: ${firstLine(err.message)}`, `'${names.bin} providers --refresh' re-detects`); }
+}
+
+// Read-only: the calibration (saved or from the readings) and the live leases.
+function schedulerRow({ names, io }) {
+  try {
+    const opts = { names, env: io.env };
+    const c = currentCalibration(opts);
+    const live = snapshot(opts).leases.filter((l) => l.status === 'live').length;
+    return row('scheduler', c.saved ? 'ok' : 'warn', `calibration ${c.saved ? 'saved' : 'not saved (defaults)'}${c.due ? ', due' : ''}; ${live} live lease${live === 1 ? '' : 's'}`, `'${names.bin} slots calibrate' sets the machine limits`);
+  } catch (err) { return row('scheduler', 'skip', `not readable: ${firstLine(err.message)}`, `'${names.bin} slots' shows the scheduler`); }
 }
 
 function firstOnPath(name, pathValue) {
@@ -350,8 +372,8 @@ export function doctor({ names, io, version, pluginRoot }) {
     row('heartbeat', 'skip', 'not recorded: no hook writes a heartbeat in this version', 'nothing to fix; if hooks seem inactive, run /reload-plugins or restart Claude Code'),
     binRow({ names, io, pluginRoot }),
     ...repo.rows,
-    row('providers', 'skip', 'not available: no provider detection in this version', 'nothing to fix in this version'),
-    row('scheduler', 'skip', 'not checked: leases and stale reaps need the scheduler, not in this version', 'nothing to fix in this version'),
+    providersRow({ names, io }),
+    schedulerRow({ names, io }),
     contextRow(info),
     permissionsRow({ names, io, repo: repo.worktree ?? null }), // the project settings of the checkout Claude Code runs in
     row('protection', 'skip', `${names.claimRefPrefix}* not checked: it needs gh, which this version does not run`,

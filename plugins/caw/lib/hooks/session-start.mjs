@@ -4,9 +4,10 @@
 // always rules of the method (up to 8). An inactive, declined or non-git directory gets nothing; nothing is written.
 // Budget: the fixed lines and the rules come first; tasks fill the rest in ID order and the remainder is counted in
 // one "… N more" line. Tasks are read until the hook's deadline nears. The text goes through lib/text forModel.
-// The tier comes from the adaptive engine; until it lands the line is left out (renderContext takes it already).
+// The tier comes from the adaptive engine (explain only, nothing recorded); the line is left out when it is off.
 import { isAbsolute, relative } from 'node:path';
 import { performance } from 'node:perf_hooks';
+import { evaluate } from '../engine/index.mjs';
 import { getRule, openMethod } from '../method/index.mjs';
 import { open } from '../state/index.mjs';
 import { forModel } from '../text/clean.mjs';
@@ -92,6 +93,13 @@ function alwaysRules() {
   } catch { return []; } // a broken method copy: the context still carries the state
 }
 
+// The tier from the adaptive engine, explain only (record: false writes nothing); an engine that is off or cannot be
+// evaluated, or a deadline that is near, leaves the line out.
+function tierOf(where, names, env, deadline) {
+  if (performance.now() > deadline - 2 * READ_MARGIN_MS) return null;
+  try { return evaluate(where, { names, env, record: false }).tier; } catch { return null; }
+}
+
 // Registry handler: (hook input, { env, deadline }) → { stdout }.
 export function sessionStart(input, { env = process.env, deadline = Infinity } = {}) {
   const cwd = [input.cwd, env.CLAUDE_PROJECT_DIR].find((d) => typeof d === 'string' && isAbsolute(d));
@@ -104,6 +112,7 @@ export function sessionStart(input, { env = process.env, deadline = Infinity } =
   const loop = r.error ? { error: r.error } : { doc: r.doc, exit: loopExit(r.doc) };
   const { tasks, more } = activeTasks(store, deadline);
   const rel = relative(where.worktree, where.dir); // from a linked worktree: the main checkout's state, by its path
-  const text = renderContext({ bin: names.bin, where: `state in ${rel && !rel.startsWith('..') && !isAbsolute(rel) ? rel : where.dir}`, tasks, more, loop, rules: alwaysRules() });
+  const tier = tierOf(where, names, env, deadline);
+  const text = renderContext({ bin: names.bin, tier, where: `state in ${rel && !rel.startsWith('..') && !isAbsolute(rel) ? rel : where.dir}`, tasks, more, loop, rules: alwaysRules() });
   return { stdout: `${JSON.stringify({ hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: forModel(text) } })}\n` };
 }

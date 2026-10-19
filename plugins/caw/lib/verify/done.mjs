@@ -15,6 +15,7 @@
 // nothing written); a cancelled one is closed (exit 1).
 import { authorHandle } from '../decisions/index.mjs';
 import { emptyProfile } from '../profile/index.mjs';
+import { saveReceipt, taskReceipt } from '../receipts/index.mjs';
 import { recordedKeys, routeFor } from '../router/index.mjs';
 import { KINDS, StateError } from '../state/index.mjs';
 import { reviewState } from './artifacts.mjs';
@@ -58,5 +59,10 @@ export function markDone({ cwd, env, names, id, at = new Date().toISOString() })
     changed = true;
     return { ...cur, status: 'done', events: [...cur.events, { at, by: handle, event: 'done', data: { head } }] };
   });
-  return { id, task, changed, head };
+  // The receipt (spec §7.7) is written once, when the task closes; a receipt that cannot be built never undoes the close.
+  let receipt = null;
+  if (changed) {
+    try { const r = taskReceipt(id, { cwd, env, names }); receipt = saveReceipt(r.receipt, { where: r.where, names }).file; } catch { /* `receipt <id>` writes it later */ }
+  }
+  return { id, task, changed, head, receipt };
 }
