@@ -358,7 +358,7 @@ export class Store {
     mkdirSync(dirname(file), { recursive: true });
     const fd = openSync(file, 'a', 0o644);
     try {
-      const pause = process.env[`${this.names.envPrefix ?? 'LANDFALL_'}TEST_APPEND_PAUSE`];
+      const pause = process.env[`${this.names.envPrefix}TEST_APPEND_PAUSE`];
       if (pause) pauseUntilSignalled(pause);
       writeSync(fd, bytes);
     } finally {
