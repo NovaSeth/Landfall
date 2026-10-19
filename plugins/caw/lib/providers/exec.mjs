@@ -8,6 +8,7 @@
 // directory (0700). Implementer runs (a worktree from the task base) are not in this slice: exit 2.
 // Exit (exec) 0 · 1 no such task, no brief, a live run of the task and role · 2 bad role or provider · 7 inactive
 // repository, newer schema · 8 provider missing or logged out.
+import { tolerateClosedStreams } from '../cli/output.mjs';
 import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -70,7 +71,7 @@ export function exec({ flags, names, io, pluginRoot }) {
 const clip = (s, max) => (s.length > max ? s.slice(0, max) : s);
 
 export async function runSupervise({ args, names, io }) {
-  process.stdout.on('error', () => {}); // the parent closed the pipes
+  tolerateClosedStreams(); // the parent closed the pipes
   const r = where(io, names);
   if (r.refused) return r.refused;
   const { w, store } = r;

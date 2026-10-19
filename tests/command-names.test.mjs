@@ -28,7 +28,6 @@ const { OWN_COMMANDS } = await lib('guard/allow.mjs');
 // Shrink-only (spec §8.2 commands whose unit is not merged yet, and names that differ from the row that exists):
 // remove an entry when its row lands or nothing names it any more; never add one to hide a typo.
 const PENDING = Object.freeze([
-  { name: 'exec', why: 'providers unit (spec §7.12): guard auto-allow list' },
   { name: 'wait', why: 'providers unit (spec §7.12): guard auto-allow list' },
   { name: 'runs', why: 'providers unit (spec §7.12): guard auto-allow list' },
   { name: 'team add', why: 'team command (spec §8.2): owned-file text of team/<H>.json' },

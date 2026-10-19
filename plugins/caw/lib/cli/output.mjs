@@ -46,3 +46,9 @@ export function writeHook(io, result) {
   if (result?.stderr) io.err(result.stderr);
   if (result?.text) io.out(result.text);
 }
+
+// A detached process whose parent closed the pipes: an EPIPE on the terminal streams must not end it (the run
+// supervisor writes its record and log through lib/state, never to these streams).
+export function tolerateClosedStreams() {
+  for (const s of [process.stdout, process.stderr]) s.on('error', () => {});
+}
