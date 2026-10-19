@@ -1,4 +1,4 @@
-# CodingAgentsWorkflow — rules for agents working on this repository
+# Landfall — rules for agents working on this repository
 
 This repository is the `landfall` Claude Code plugin (`plugins/landfall/`), its marketplace (`.claude-plugin/`), its tests (`tests/`) and generators (`scripts/`).
 
