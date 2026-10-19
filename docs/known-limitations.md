@@ -5,6 +5,9 @@
 - No published evaluation numbers yet; no example project.
 
 ## Edge cases
+- External executors: `landfall exec --role implementer` is refused in this release (reviewer runs only, read-only sandbox in the task worktree); the implementer role with its own worktree follows.
+- Scheduler admission hooks run in shadow mode: a would-be denial is logged to `local/shadow.jsonl`, agent spawns are not refused yet.
+- Run records are command-owned and the supervisor derives sandbox and cwd from the role; a deliberate rewrite of a record between that check and the spawn is not defended (R90).
 - Bash guard: `mv <dir> …` and `rsync --delete` are not modelled as removals; a state path hidden in `--pathspec-from-file`, created through a link on the same line, or built only from variables is not detected. With the shell's working directory inside the state directory, every non-read command is blocked. The guard is a seat belt, not a security boundary.
 - Bash guard: a push without an explicit `<src>:<dst>` refspec is blocked when an earlier command on the same line may change the branch (for example `npm test && git push origin feat/x`); push in a separate command.
 - Loop: an agent that runs `landfall deactivate` and then `landfall init` starts a new loop with default caps.
