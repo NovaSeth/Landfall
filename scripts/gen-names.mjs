@@ -32,7 +32,7 @@ const KEYS = {
   // The GitHub source of the plugin CLI for npx (SD-21, SD-39): github:<owner>/<repo>.
   repository: /^github:[A-Za-z0-9][A-Za-z0-9-]{0,38}\/[A-Za-z0-9._-]{1,100}$/,
 };
-const DESCRIPTION = 'Process for building software with a team of AI coding agents: specs, plans, briefs, reviews and outcome gates.';
+const DESCRIPTION = 'Sizes the process to each coding task and checks the outcome in code: a task is done only when its gates pass again.';
 const OWNER = { name: 'NovaSeth', url: 'https://github.com/NovaSeth' };
 const USAGE = 'usage: node scripts/gen-names.mjs [--check] [--root <dir>]\n';
 

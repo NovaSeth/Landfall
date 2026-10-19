@@ -1,7 +1,7 @@
 {
   "name": "landfall",
   "version": "2.0.1",
-  "description": "Process for building software with a team of AI coding agents: specs, plans, briefs, reviews and outcome gates.",
+  "description": "Sizes the process to each coding task and checks the outcome in code: a task is done only when its gates pass again.",
   "author": {
     "name": "NovaSeth",
     "url": "https://github.com/NovaSeth"

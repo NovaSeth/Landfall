@@ -444,7 +444,7 @@ test('price table: dated; every model priced in every category; cache-read ratio
 test('transcript directories: the slug of a working directory, as Claude Code names it', async () => {
   const { slug } = await lib('receipts/index.mjs');
   // Observed in ~/.claude/projects (Claude Code 2.1.296-2.1.300).
-  assert.equal(slug('/Users/me/Documents/Code/CodingAgentsWorkflow-wt/I1.1'), '-Users-me-Documents-Code-CodingAgentsWorkflow-wt-I1-1');
+  assert.equal(slug('/Users/me/Documents/Code/Landfall-wt/I1.1'), '-Users-me-Documents-Code-Landfall-wt-I1-1');
   assert.equal(slug('/private/tmp/claude-501/-Users-me-Code/3c67/scratchpad/w2_tagt'), '-private-tmp-claude-501--Users-me-Code-3c67-scratchpad-w2-tagt');
 });
 
