@@ -244,3 +244,12 @@ test('gen-names renders skills and agents from templates; stale, orphan and unkn
   writeFileSync(fx('agents/extra.md'), '---\nname: extra\n---\n');
   assert.equal(gen(['--check', '--root', fixture]).status, 2, 'an agent without a source');
 });
+
+test('work: trivial requests are classed from the request (no command first); work and dispatch run secrets before the report', () => {
+  const work = read(skillFile('work'));
+  const first = work.split('\n').find((l) => l.startsWith('1. '));
+  assert.match(first, /trivial/i);
+  assert.doesNotMatch(first, /status|route|rule/);
+  assert.ok(work.indexOf('route --probe') > work.indexOf('Unsure'), 'route --probe only when unsure');
+  for (const name of ['work', 'dispatch']) assert.match(read(skillFile(name)), /`landfall secrets` \(exit 0\) before/, name);
+});
