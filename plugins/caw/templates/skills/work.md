@@ -7,9 +7,9 @@ description: Use when the user asks for a change to code in a repository, such a
 
 Rules by ID, never whole files: `{{bin}} rule PRI-2 FLW-1 COD-1 COD-3 PRI-15`. Pass `--json` to every command; commands that write files also take `--yes`.
 
-1. `{{bin}} status --json`. Active: go to 4. Declined: work without caw, stop here.
+1. `{{bin}} status --json`. Active: go to 4. Declined: work without the plugin, stop here.
 2. Class the change without writing anything: `{{bin}} route --probe --paths <p,…> --loc <n>` (PRI-2).
-3. Trivial: make the change, run the project's tests, no files. Critical: `{{plugin}}:plan`, then `{{plugin}}:dispatch`. Standard: tell the user in one line that caw will track the repository in `{{stateDir}}/` and that "no caw here" opts out (`{{bin}} decline`), then `{{bin}} init --yes`.
+3. Trivial: make the change, run the project's tests, no files. Critical: `{{plugin}}:plan`, then `{{plugin}}:dispatch`. Standard: tell the user in one line that the plugin will track the repository in `{{stateDir}}/` and that "no {{plugin}} here" opts out (`{{bin}} decline`), then `{{bin}} init --yes`.
 4. `{{bin}} profile observe --yes`; ask at most 3 questions the scan cannot answer and record each: `{{bin}} profile set <key> <value> --source said --evidence "<their words>" --yes`.
 5. `{{bin}} task new "<title>" --yes`, then `{{bin}} route <id> --paths <p,…> --loc <n> --yes`.
 6. Test first: write it, run it, keep the failure and its reason; make it pass; commit (COD-1, COD-2, COD-3).

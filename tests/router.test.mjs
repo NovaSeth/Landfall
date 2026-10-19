@@ -802,6 +802,7 @@ test('route: the review need is in the data and the text (critical: cross-provid
   assert.deepEqual(j.env.data.review, { need: 'external', text: 'cross-provider' });
   const text = await cli(['route', '--probe', '--paths', 'src/auth/a.js', '--loc', '5'], { ...r, json: false });
   assert.match(text.text, /^review: cross-provider$/m);
+});
 
 // ---- threshold overrides from config.json (T-MG-40) ----
 
