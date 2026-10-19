@@ -219,6 +219,21 @@ test('--json: version, help, doctor and every usage error print exactly one enve
   assert.equal(envelopeOf(cli(['doctor', 'extra-arg', '--json'], { env })).errors[0].code, 'unexpected-argument');
 });
 
+test('a command group without a subcommand lists the group subcommands and exits 2, with or without --help', (t) => {
+  const { env } = scratch(t);
+  for (const [group, subs] of [['task', ['task list', 'task new', 'task set']], ['lane', ['lane claim', 'lane list', 'lane release']]]) {
+    for (const extra of [[], ['--help']]) {
+      const r = cli([group, ...extra, '--json'], { env });
+      assert.equal(r.status, 2, `${group} ${extra}\n${out(r)}`);
+      const e = envelopeOf(r);
+      assert.equal(e.errors[0].code, 'missing-subcommand', JSON.stringify(e));
+      assert.doesNotMatch(e.errors[0].message, /unknown command/);
+      for (const s of subs) assert.ok(e.errors[0].message.includes(s), `${group}: lists ${s}\n${e.errors[0].message}`);
+    }
+  }
+  assert.equal(envelopeOf(cli(['task', 'no-such', '--json'], { env })).errors[0].code, 'unknown-command');
+});
+
 test('human mode: help lists public commands only, version line, usage errors on stderr with exit 2', (t) => {
   const { env } = scratch(t);
   const help = cli(['--help'], { env });

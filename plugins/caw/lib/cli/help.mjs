@@ -39,6 +39,7 @@ export function synopsis(row, bin) {
 
 // The usage lines: help, command help and usage errors all print these.
 export const generalUsage = (bin) => `usage: ${bin} <command> [options]`;
+export const groupUsage = (bin, group) => `usage: ${bin} ${group} <subcommand> [options]`;
 export const commandUsage = (row, bin) => `usage: ${synopsis(row, bin)}`;
 
 export function renderHelp({ names, commands, globalFlags, exitCodes }) {

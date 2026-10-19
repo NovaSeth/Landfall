@@ -22,19 +22,16 @@ const pluginDir = (() => {
 })();
 const names = JSON.parse(readFileSync(join(pluginDir, 'lib', 'name.json'), 'utf8'));
 const lib = (rel) => import(pathToFileURL(join(pluginDir, 'lib', rel)).href);
-const { COMMANDS } = await lib('cli/commands.mjs');
+const { COMMANDS, mutates } = await lib('cli/commands.mjs');
+const { ownCommand } = await lib('guard/allow.mjs');
 const { OWN_COMMANDS } = await lib('guard/allow.mjs');
 
 // Shrink-only (spec §8.2 commands whose unit is not merged yet, and names that differ from the row that exists):
 // remove an entry when its row lands or nothing names it any more; never add one to hide a typo.
 const PENDING = Object.freeze([
-  { name: 'wait', why: 'providers unit (spec §7.12): guard auto-allow list' },
-  { name: 'runs', why: 'providers unit (spec §7.12): guard auto-allow list' },
   { name: 'team add', why: 'team command (spec §8.2): owned-file text of team/<H>.json' },
-  { name: 'decisions context', why: 'spec §8.2 name; the row that exists is `decisions find --path`: guard auto-allow list' },
-  { name: 'slot list', why: 'spec §8.2 name; the row that exists is `slots`: guard auto-allow list' },
 ]);
-const PENDING_MAX = 6; // lower it with every entry removed; never raise it
+const PENDING_MAX = 1; // lower it with every entry removed; never raise it
 
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const WORDS = '([a-z][a-z0-9-]*(?: [a-z][a-z0-9-]*)*)';
@@ -86,7 +83,7 @@ test('the checker finds a command a fixture skill names that the table lacks, an
   const src = 'const a = `run \\`${bin} tick\\` now`; const b = `\'${names.bin} loop stop\' ends it`; const c = `${bin} executor rules`; const d = `the ${bin} loop ended`;';
   assert.deepEqual(references(src, 'source').map((w) => w.join(' ')), ['tick', 'loop stop']);
   // A pending entry resolves its own words and longer ones only.
-  assert.deepEqual(unresolved([{ where: 'x', words: ['exec', '--task'] }, { where: 'x', words: ['execute'] }]), [`x: \`${names.bin} execute\` names no command`]);
+  assert.deepEqual(unresolved([{ where: 'x', words: ["team", "add", "--task"] }, { where: 'x', words: ["team", "added"] }]), [`x: \`${names.bin} team added\` names no command`]);
 });
 
 test('every command the templates, skills, agents, loop steps, hook messages and the guard allow list name is a row', () => {
@@ -99,7 +96,7 @@ test('every command the templates, skills, agents, loop steps, hook messages and
   const has = (part, name) => refs.some((r) => r.where.startsWith(part) && isPrefix(name, r.words));
   for (const [part, name] of [['templates/', 'gen apply'], ['templates/', 'decisions check'], ['skills/', 'rule'], ['agents/', 'rule'], ['lib/loop/', 'task set'],
     ['lib/loop/', 'brief'], ['lib/loop/', 'verify'], ['lib/hooks/', 'tick'], ['lib/guard/', 'decisions supersede']]) assert.ok(has(part, name), `${part}: names ${name}`);
-  assert.ok(OWN_COMMANDS.length >= 10, 'the allow list is scanned');
+  assert.ok(OWN_COMMANDS.length >= 8, 'the allow list is scanned');
   assert.deepEqual(unresolved(refs), []);
 });
 
@@ -112,4 +109,16 @@ test('PENDING only shrinks: each entry is still no row, something still names it
     assert.ok(p.why.length > 0, `${p.name}: why it is pending`);
   }
   assert.equal(new Set(PENDING.map((p) => p.name)).size, PENDING.length, 'no entry twice');
+});
+
+test('auto-allow covers only rows that never change files: a mutating row is never allowed, a read-only one is', () => {
+  for (const name of OWN_COMMANDS) {
+    const row = COMMANDS.find((c) => c.name === name);
+    assert.ok(row, `${name} is a row`);
+    assert.equal(typeof row.mutating, 'undefined', `${name}: no mutating form (flag-dependent or not)`);
+    assert.equal(mutates(row, {}), false, `${name} never mutates`);
+  }
+  for (const row of COMMANDS.filter((c) => mutates(c, {}) || c.mutating)) assert.ok(!OWN_COMMANDS.includes(row.name), `${row.name} mutates: not auto-allowed`);
+  assert.equal(ownCommand(`${names.bin} rule COD-1`), 'rule');
+  for (const c of ['verify T-AB-1', 'receipt --task T-AB-1', 'slots --unlock-stale', 'task set T-AB-1']) assert.equal(ownCommand(`${names.bin} ${c}`), null, c);
 });

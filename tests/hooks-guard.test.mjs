@@ -1159,13 +1159,12 @@ test('guard input over 16 MiB: always blocked for the Bash guard ("command too l
 });
 
 // ---------- own-command auto-allow (SD-33), shadow ----------
-const OWN = ['@BIN@ status', '@BIN@ tick', '@BIN@ verify T-AB-1', '@BIN@ exec --task T-AB-1 --role reviewer', '@BIN@ wait r-1 --timeout 300', '@BIN@ runs',
-  '@BIN@ rule SEC-3 TRP-2', '@BIN@ method coding', '@BIN@ receipt T-AB-1', '@BIN@ doctor --json', '@BIN@ profile show', '@BIN@ decisions check',
-  '@BIN@ decisions context src/a.ts', '@BIN@ slot list', '@BIN@ --json status', '@BIN@ runs show r-1'].map(withBin);
+const OWN = ['@BIN@ status', '@BIN@ tick', '@BIN@ rule SEC-3 TRP-2', '@BIN@ method coding', '@BIN@ doctor --json', '@BIN@ profile show', '@BIN@ decisions check',
+  '@BIN@ decisions find --path src/a.ts', '@BIN@ --json status'].map(withBin);
 const NOT_OWN = ['@BIN@ status; rm -rf x', '@BIN@ status && ls', '@BIN@ status | cat', '@BIN@ status > out.txt', '@BIN@ rule "$X"', '@BIN@ $(echo status)',
   '@BIN@ init --yes', '@BIN@ profile set x y', '@BIN@ decisions list', '@BIN@ slot acquire agent', '@BIN@ task done T-AB-1', '@BIN@ heavy -- npm test',
   'X=1 @BIN@ status', '/tmp/@BIN@ status', '@BIN@', '@BIN@ status\nls', 'echo @BIN@ status', '@BIN@ secrets', '@BIN@ status &', '@BIN@ tick <<< x',
-  '@BIN@ `id`', '@BIN@ st"atus"x', '@BIN@ hook guard-bash', '@BIN@ profile', '@BIN@ --help status'].map(withBin);
+  '@BIN@ `id`', '@BIN@ st"atus"x', '@BIN@ hook guard-bash', '@BIN@ profile', '@BIN@ --help status', '@BIN@ verify T-AB-1', '@BIN@ receipt --task T-AB-1', '@BIN@ slots --unlock-stale', '@BIN@ exec --task T-AB-1', '@BIN@ runs'].map(withBin);
 
 test('own-command auto-allow (SD-33) in shadow: an allowlisted single simple command is logged as would-allow; nothing else changes', () => {
   for (const cmd of OWN) {
