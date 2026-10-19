@@ -39,6 +39,10 @@ function demoCommands() {
 test('every command of the README demo exists', () => {
   const cmds = demoCommands();
   assert.ok(cmds.length >= 7, `demo commands found: ${cmds.length}`);
+  // The demo block shows the commands of the flow test below, in order.
+  const lead = cmds.map((c) => c.split(/\s+/).filter((w) => /^[a-z]+$/.test(w)).slice(0, 2).join(' '));
+  assert.deepEqual(lead.map((l) => l.split(' ')[0] + (l.startsWith('task') || l.startsWith('profile') ? ' ' + l.split(' ')[1] : '')),
+    ['route', 'init', 'profile observe', 'profile set', 'task new', 'route', 'verify', 'task done']);
   const iso = isolatedEnv({ prefix: 'readme-demo-help-' });
   try {
     for (const c of cmds) {

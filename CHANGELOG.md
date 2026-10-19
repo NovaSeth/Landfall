@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.0.0
+
+Landfall (renamed from `caw`): plugin `landfall`, command `landfall`, state directory `.landfall/`, environment prefix `LANDFALL_`, marketplace `landfall-plugins`, repository NovaSeth/Landfall. Existing `.caw/` state and machine data move to the new names by layout migration `002-rename-state-dir` (`landfall migrate`).
+
+Since 2.0.0-beta.1:
+- External executors: `landfall exec`, `landfall wait`, `landfall runs list|show|stop`, `landfall providers [add]`; a detached supervisor ends the provider group on SIGTERM; run records are command-owned and sandbox and cwd derive from the role; agent-panel rows and an external wrapper agent.
+- Wiring: the SessionStart tier line, the `task done` receipt, doctor rows for providers and the scheduler; long gates run under the heavy lease and gate output is redacted at one point; gate results are reused for an identical clean tree.
+- Verify measures the reference at the task base; worktree-aware state; secrets scan (`landfall secrets`).
+- Router and engine read decision-backed threshold overrides; route and brief print the review need; review tier and review close.
+- Skills walk the real flow (work, start, dispatch, review, loop, decide, plan, status, doctor); implementer and reviewer agents.
+- Admin commands: flags, config, profile gates, migrate, install; read commands: status, brief, method, receipt.
+- The guard's owned-file list comes from the state kinds; the README demo runs as an e2e test; timing tests wait on what they observe.
+
 ## 2.0.0-beta.1
 
 CodingAgentsWorkflow 2 is a Claude Code plugin (`caw`) installed once per user. It adds a process and enforcement layer to the agents you already use: work starts from a conversation, outcomes are checked in code, decisions are recorded, and unattended loops always end. This is a beta: see [docs/known-limitations.md](docs/known-limitations.md).
