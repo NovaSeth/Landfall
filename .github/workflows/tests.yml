@@ -6,7 +6,7 @@ on:
 permissions:
   contents: read
 env:
-  CAW_REQUIRE_TOOLS: '1' # missing tools fail the run instead of skipping tests
+  LANDFALL_REQUIRE_TOOLS: '1' # missing tools fail the run instead of skipping tests
   PERF_P95_MS: '600' # hook latency p95 on shared runners; the 1 s max per hook is unchanged
 jobs:
   tests:

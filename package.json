@@ -13,7 +13,7 @@
     "check-secrets": "node plugins/*/bin/* secrets"
   },
   "bin": {
-    "caw": "plugins/caw/bin/caw"
+    "landfall": "plugins/landfall/bin/landfall"
   },
   "files": [
     "plugins",

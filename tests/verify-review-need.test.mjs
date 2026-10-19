@@ -2,13 +2,15 @@
 // → none | any | external. The applied tier is L0 while the engine is in shadow mode or no tier decision exists.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const lib = (rel) => import(pathToFileURL(join(root, 'plugins', 'caw', 'lib', rel)).href);
+// The plugin directory comes from name.json (SD-30): this file holds no plugin name.
+const pluginDir = readdirSync(join(root, 'plugins')).filter((d) => existsSync(join(root, 'plugins', d, 'lib', 'name.json'))).map((d) => join(root, 'plugins', d))[0];
+const lib = (rel) => import(pathToFileURL(join(pluginDir, 'lib', rel)).href);
 const { reviewNeed, reviewState, appliedTier } = await lib('verify/artifacts.mjs');
 const { routeFor } = await lib('router/index.mjs');
 
