@@ -44,7 +44,8 @@ const UNITS = new Set(['cli', 'state', 'config', 'profile', 'engine', 'router', 
 // §4.3: hooks import directly only these units (and Node built-ins), and never reach the HOOK_NEVER units at all.
 // config (brief I2.4): the read side of the capability flags, over lib/state, for the pass-through of a hook whose
 // capability is off.
-const HOOK_IMPORTS = new Set(['hooks', 'state', 'config', 'method', 'decisions', 'sched', 'loop', 'guard', 'text']);
+// engine (INT-3a): the read side of the applied tier for the SessionStart tier line; evaluation itself stays in the CLI.
+const HOOK_IMPORTS = new Set(['hooks', 'state', 'config', 'engine', 'method', 'decisions', 'sched', 'loop', 'guard', 'text']);
 const HOOK_NEVER = new Set(['providers', 'gen', 'lanes', 'receipts']);
 // §4.3: the only unit allowed to spawn each external program (basename of the literal first argument).
 const SPAWN_OWNER = { git: 'git', gh: 'mirror', codex: 'providers', gemini: 'providers' };
