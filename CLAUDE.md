@@ -1,6 +1,6 @@
 # CodingAgentsWorkflow — rules for agents working on this repository
 
-This repository is the `caw` Claude Code plugin (`plugins/caw/`), its marketplace (`.claude-plugin/`), its tests (`tests/`) and generators (`scripts/`).
+This repository is the `landfall` Claude Code plugin (`plugins/landfall/`), its marketplace (`.claude-plugin/`), its tests (`tests/`) and generators (`scripts/`).
 
 ## Gate
 - `npm test` — the whole suite (Node ≥ 18, zero dependencies). Run single files with `node --test --test-timeout=120000 <file>`.
@@ -22,5 +22,5 @@ This repository is the `caw` Claude Code plugin (`plugins/caw/`), its marketplac
 
 ## Changes
 - A change comes with a test that fails without it.
-- All terminal output goes through `plugins/caw/lib/cli/output.mjs`; all state writes go through `plugins/caw/lib/state`.
+- All terminal output goes through `plugins/landfall/lib/cli/output.mjs`; all state writes go through `plugins/landfall/lib/state`.
 - Commit messages in English with a conventional prefix (`feat(<area>):`, `fix:`, `docs:`, `test:`, `chore:`).

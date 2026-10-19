@@ -62,6 +62,7 @@ function scanned() {
     ...walk(join(pluginDir, 'templates')).map((f) => [f, 'template']),
     ...walk(join(pluginDir, 'skills')).filter((f) => f.endsWith('.md')).map((f) => [f, 'markdown']),
     ...walk(join(pluginDir, 'agents')).filter((f) => f.endsWith('.md')).map((f) => [f, 'markdown']),
+    ...['README.md', 'docs/getting-started.md', 'docs/known-limitations.md'].map((f) => [join(root, f), 'markdown']),
     ...['loop', 'hooks', 'guard'].flatMap((u) => walk(join(pluginDir, 'lib', u)).filter((f) => f.endsWith('.mjs')).map((f) => [f, 'source'])),
   ];
   const refs = [];
