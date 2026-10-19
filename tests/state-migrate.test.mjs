@@ -30,7 +30,7 @@ const names = JSON.parse(readFileSync(join(pluginDir, 'lib', 'name.json'), 'utf8
 const STATE = pathToFileURL(join(pluginDir, 'lib', 'state', 'index.mjs')).href;
 const state = await import(STATE);
 const { EXIT } = await import(pathToFileURL(join(pluginDir, 'lib', 'cli', 'commands.mjs')).href);
-const { KINDS, MACHINE_KINDS, MIGRATIONS } = state;
+const { KINDS, LAYOUTS, MACHINE_KINDS, MIGRATIONS } = state;
 const AT = '2026-10-15T05:42:00.000Z';
 const is = (code, exit) => (e) => e instanceof state.StateError && e.code === code && e.exit === exit;
 
@@ -253,11 +253,15 @@ test('the migration registry matches its directory; every kind has a complete ch
   const dir = join(pluginDir, 'lib', 'state', 'migrations');
   const files = readdirSync(dir).filter((f) => f !== 'index.mjs').sort();
   for (const f of files) assert.match(f, /^\d{3}-[a-z][a-z0-9]*-[a-z0-9-]+\.mjs$/, f);
-  assert.deepEqual(MIGRATIONS.map((m) => `${m.id}.mjs`), files, 'index.mjs lists every step module, in order');
+  // Document steps (MIGRATIONS, in order) and layout steps (LAYOUTS: directory moves) together name every module.
+  const listed = [...MIGRATIONS, ...LAYOUTS].map((m) => `${m.id}.mjs`);
+  assert.deepEqual([...listed].sort(), files, 'index.mjs lists every step module');
+  assert.deepEqual(MIGRATIONS.map((m) => `${m.id}.mjs`), files.filter((f) => !LAYOUTS.some((l) => `${l.id}.mjs` === f)), 'document steps in order');
   for (const f of files) {
     const mod = await import(pathToFileURL(join(dir, f)).href);
-    assert.equal(MIGRATIONS.find((m) => `${m.id}.mjs` === f), mod.default, `${f}: the listed step is the module's default export`);
+    assert.equal([...MIGRATIONS, ...LAYOUTS].find((m) => `${m.id}.mjs` === f), mod.default, `${f}: the listed step is the module's default export`);
   }
+  for (const l of LAYOUTS) assert.deepEqual([typeof l.plan, typeof l.run], ['function', 'function'], `${l.id}: a layout step plans and runs`);
   assert.deepEqual(state.checkChain({ ...KINDS, ...MACHINE_KINDS }, MIGRATIONS), []);
 });
 

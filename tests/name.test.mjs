@@ -127,7 +127,7 @@ for (const mode of ['git', 'plain']) {
     for (const p of ['package.json', '.claude-plugin', pluginRel]) cpSync(join(root, p), join(fixture, p), { recursive: true });
     const pkgBefore = readJson(join(fixture, 'package.json'));
     if (mode === 'git') { git(fixture, ['init', '-q']); git(fixture, ['add', '-A']); git(fixture, ['commit', '-qm', 'base']); }
-    const fresh = { codename: 'zzq', displayName: 'Zzq', plugin: 'zzq', marketplace: 'zzq-plugins', bin: 'zzq', stateDir: '.zzq', envPrefix: 'ZZQ_', claimRefPrefix: 'zzq/claim/', repository: old.repository };
+    const fresh = { codename: 'zzq', displayName: 'Zzq', plugin: 'zzq', marketplace: 'zzq-plugins', bin: 'zzq', stateDir: '.zzq', envPrefix: 'ZZQ_', claimRefPrefix: 'zzq/claim/', repository: 'github:NovaSeth/Zzq' };
     writeFileSync(join(fixture, pluginRel, 'lib', 'name.json'), JSON.stringify(fresh, null, 2) + '\n');
 
     const stale = gen(['--check', '--root', fixture]);

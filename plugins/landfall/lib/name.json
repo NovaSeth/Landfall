@@ -1,0 +1,11 @@
+{
+  "codename": "landfall",
+  "displayName": "Landfall",
+  "plugin": "landfall",
+  "marketplace": "landfall-plugins",
+  "bin": "landfall",
+  "stateDir": ".landfall",
+  "envPrefix": "LANDFALL_",
+  "claimRefPrefix": "landfall/claim/",
+  "repository": "github:NovaSeth/Landfall"
+}
