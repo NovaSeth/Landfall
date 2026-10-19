@@ -55,6 +55,8 @@ import { measureAt } from './base.mjs';
 import { baselineSha, compareInventory, excusable, fingerprint, referenceOf, splitFailures } from './baseline.mjs';
 import { cacheKey, lookup, store as storeRuns, treeOf } from './gate-cache.mjs';
 import { runGate, tailLines } from './gates.mjs';
+import { runHeavy } from './heavy.mjs';
+import { redacted } from './redact.mjs';
 import { byCodeUnit, hashOf } from './inventory.mjs';
 import { VERIFY_KINDS } from './kinds.mjs';
 import { parseReport } from './reporters.mjs';
@@ -313,7 +315,7 @@ export function evaluate({ where, names, env, id, mode, handle = null, at = now(
     const tree = treeOf((a) => gitIn(where, env, a), { staged: mode === 'merge' });
     const key = tree ? cacheKey({ tree, gatesSha: doc.gatesSha, version }) : null;
     const hit = key && cache ? lookup(store, { key, tree, gatesSha: doc.gatesSha, version, gates: profile.gates, at }) : null;
-    const runs = hit ? hit.runs : profile.gates.map((g) => runGate(g, { cwd: where.worktree, env }));
+    const runs = hit ? hit.runs : runHeavy(profile.gates, { names, env, cwd: where.worktree, task: id }, (g) => redacted(runGate(g, { cwd: where.worktree, env })));
     reused = hit?.at ?? null;
     doc.gates = runs.map((r) => r.gate);
     output = runs.map((r) => ({ name: r.gate.name, lines: tailLines(r.output) }));
