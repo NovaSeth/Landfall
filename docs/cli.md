@@ -1284,3 +1284,16 @@ Arguments:
 Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
 Exit codes: 0 OK · 1 FAIL · 7 REFUSED · 8 ENV
 ```
+
+### `caw ui rows`
+
+```text
+usage: caw ui rows
+
+Body of the agent-panel rows: the command of the plugin's subagentStatusLine.
+Reads the statusline JSON on stdin and prints one {"id","content"} line per external-run row (<provider>-<role>-<task>):
+provider, role, task, elapsed, tokens, cost, status and last line of the run record. Other rows and malformed input: no output, exit 0.
+
+Internal: called by generated files; an error ends with exit 0 and no output, except a guard that cannot verify a guarded command (exit 2).
+Exit codes: 0 OK
+```

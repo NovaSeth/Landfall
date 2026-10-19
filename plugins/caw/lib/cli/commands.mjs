@@ -69,6 +69,18 @@ const ROWS = [
     load: () => import('../ui/status.mjs').then((m) => m.status),
   },
   {
+    name: 'ui rows',
+    summary: 'Body of the agent-panel rows: the command of the plugin\'s subagentStatusLine.',
+    details: ['Reads the statusline JSON on stdin and prints one {"id","content"} line per external-run row (<provider>-<role>-<task>):',
+      'provider, role, task, elapsed, tokens, cost, status and last line of the run record. Other rows and malformed input: no output, exit 0.'],
+    args: [],
+    flags: [],
+    exits: ['OK'],
+    hidden: true,
+    failOpen: true,
+    load: () => import('../ui/rows.mjs').then((m) => m.rows),
+  },
+  {
     name: 'doctor',
     summary: 'Health report: Claude Code floor, plugin and hooks, release, state, profile, flags, context cost, permissions.',
     details: [

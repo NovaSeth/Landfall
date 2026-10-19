@@ -165,6 +165,11 @@ for (const mode of ['git', 'plain']) {
   });
 }
 
+test('settings.json is generated: the agent panel rows run through the launcher', () => {
+  const { pluginRel, names } = locate(root);
+  assert.deepEqual(readJson(join(root, pluginRel, 'settings.json')), { subagentStatusLine: { type: 'command', command: `\${CLAUDE_PLUGIN_ROOT}/bin/${names.bin} ui rows` } });
+});
+
 test('gen-names: invalid name.json and unknown flags exit 2', () => {
   const { pluginRel } = locate(root);
   const fixture = mkdtempSync(join(tmpdir(), 'names-bad-'));
@@ -189,7 +194,7 @@ test('the codename literal appears only in name.json and generated files (SD-30)
   const { pluginRel, nameRel, names } = locate(root);
   // Skills and agents are rendered from templates/{skills,agents} (gen-names --check above proves each is exactly
   // the generator's output, and a file there without a source is an error).
-  const whollyGenerated = new Set([nameRel, '.claude-plugin/marketplace.json', `${pluginRel}/.claude-plugin/plugin.json`, `${pluginRel}/hooks/hooks.json`, 'docs/cli.md',
+  const whollyGenerated = new Set([nameRel, '.claude-plugin/marketplace.json', `${pluginRel}/.claude-plugin/plugin.json`, `${pluginRel}/hooks/hooks.json`, `${pluginRel}/settings.json`, 'docs/cli.md',
     ...generatedComponents(root, pluginRel)]);
   const found = [];
   let legacy = 0;
