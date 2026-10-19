@@ -59,11 +59,13 @@ const heavyLeases = (data) => (existsSync(join(data, 'leases')) ? readdirSync(jo
 const probeCmd = (probe, extra = '') => `ls -R "$CLAUDE_PLUGIN_DATA" >> ${probe}; ${extra}node --test`;
 
 test('a gate printing a key: verify.json, the log and the CLI output hold the masked value, never the key', async (t) => {
-  const s = await setup(t, { timeoutS: 30, cmd: `printf "token %s%s\\n" ${KEY.slice(0, 8)} ${KEY.slice(8)}; node --test` });
+  const s = await setup(t, { timeoutS: 30, cmd: `printf "token %s%s\\n" ${KEY.slice(0, 8)} ${KEY.slice(8)}; printf "err %s%s\\n" ${KEY.slice(0, 8)} ${KEY.slice(8)} >&2; node --test` });
   const v = await s.run(['verify', s.id, '--yes', '--json']);
   assert.equal(v.code, 0, v.text.slice(0, 1500));
   assert.ok(!v.text.includes(KEY), `CLI output: ${v.text.slice(Math.max(0, v.text.indexOf(KEY) - 250), v.text.indexOf(KEY) + 80)}`);
   assert.match(v.text, /ghp_\*{8}/);
+  const txt = await s.run(['verify', s.id, '--yes', '--no-cache']);
+  assert.ok(!txt.text.includes(KEY), 'text output');
   const files = readdirSync(s.stateDir, { recursive: true }).map((f) => join(s.stateDir, f)).filter((f) => /verify/.test(f) && existsSync(f) && !readdirSync(dirname(f)).includes(f));
   let seen = 0;
   for (const f of files) {
