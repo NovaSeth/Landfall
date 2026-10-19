@@ -240,6 +240,9 @@ test('a review recorded after a passing verify is bound by value: task done clos
   r.vstore.write('review', verify.reviewKey(r.id, 1), REVIEW);
   let d = await done(r);
   assert.equal(d.code, 0, `a typed review is not code: ${show(d)}`);
+  const file = join(r.stateDir, 'receipts', `${r.id}.json`);
+  assert.ok(existsSync(file), 'task done wrote receipts/<id>.json');
+  assert.equal(JSON.parse(readFileSync(file, 'utf8')).task, r.id);
 
   const s = repo(t, { cls: 'standard' });
   s.vstore.write('review', verify.reviewKey(s.id, 1), REVIEW);
