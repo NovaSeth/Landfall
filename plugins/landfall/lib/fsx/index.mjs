@@ -107,6 +107,8 @@ export function removeEmptyDirs(leaf, top) {
 
 // Removes a file or a directory tree; a symbolic link is removed itself, never followed. A missing path is fine.
 export const removeTree = (path) => rmSync(path, { recursive: true, force: true });
+// Moves a file or directory tree on the same volume (one rename; the target must not exist for a directory).
+export const moveTree = (from, to) => renameSync(from, to);
 
 // True when a process with this pid exists (EPERM: it exists but belongs to another user).
 export function isAlive(pid) {

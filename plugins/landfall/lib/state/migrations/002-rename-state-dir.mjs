@@ -6,26 +6,27 @@
 // tracked (history kept), otherwise a rename, then every `.gitignore` line naming the old directory is rewritten.
 // Both directories present is a conflict: a typed error, nothing moved. Machine data moves once, only while the current
 // directory does not exist (projects.json keys are repository paths and stay as they are).
-import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { moveTree, writeAtomic } from '../../fsx/index.mjs';
+import { git } from '../../git/index.mjs';
 import { StateError } from '../errors.mjs';
 import { machineDataDir } from '../resolve.mjs';
 
 const PREVIOUS = Object.freeze({ stateDir: '.caw', dataDir: 'caw-caw-plugins' });
 
 function tracked(repo, rel, env) {
-  const r = spawnSync('git', ['ls-files', '--', rel], { cwd: repo, env, encoding: 'utf8' });
+  const r = git(['ls-files', '--', rel], { cwd: repo, env });
   return r.status === 0 && r.stdout.trim() !== '';
 }
 
 function moveProjectDir(repo, from, to, env) {
   if (tracked(repo, from, env)) {
-    const r = spawnSync('git', ['mv', from, to], { cwd: repo, env, encoding: 'utf8' });
+    const r = git(['mv', from, to], { cwd: repo, env });
     if (r.status !== 0) throw new StateError('state-dir-move-failed', 'ENV', `git mv ${from} ${to}: ${r.stderr.trim()}`, { hint: 'resolve the git error, then rerun migrate' });
     return 'git mv';
   }
-  renameSync(join(repo, from), join(repo, to));
+  moveTree(join(repo, from), join(repo, to));
   return 'rename';
 }
 
@@ -36,7 +37,7 @@ function rewriteGitignore(repo, from, to) {
   const text = readFileSync(file, 'utf8');
   const next = text.split('\n').map((line) => (line === from || line.startsWith(`${from}/`) ? `${to}${line.slice(from.length)}` : line)).join('\n');
   if (next === text) return false;
-  writeFileSync(file, next);
+  writeAtomic(file, next);
   return true;
 }
 
@@ -74,7 +75,7 @@ export default Object.freeze({
         m.how = moveProjectDir(repo, PREVIOUS.stateDir, names.stateDir, env);
         gitignore = rewriteGitignore(repo, PREVIOUS.stateDir, names.stateDir);
       } else {
-        renameSync(m.from, m.to);
+        moveTree(m.from, m.to);
         m.how = 'rename';
       }
     }
