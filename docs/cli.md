@@ -83,6 +83,10 @@ Commands:
   review record        Record a typed review result as the next round tasks/<id>/review-r<k>.json; the Markdown review closes nothing.
   route                Classify a task as trivial, standard or critical from its plan and print its route; the class only rises.
   rule                 Print method rules by ID; a retired ID prints its successor. --core prints the always-on rules.
+  runs                 List the external runs of the last 30 days (queued, running, finished); older finished records are deleted.
+  runs list            List the external runs of the last 30 days (same as runs).
+  runs show            Print one external run record, or with --summary the short summary.
+  runs stop            Stop an external run: SIGTERM to its supervisor, only when the recorded pid and start time still match.
   secrets              Scan for secrets and key files: working tree and index, staged changes, a commit range or a built artifact.
   slots                Show the machine scheduler: calibration, load and free memory, leases with ports and DB names, FIFO queues.
   slots calibrate      Calibrate the scheduler: cores, RAM, memory method; save LOAD_MAX, FREE_MIN and per-kind max overrides.
@@ -97,6 +101,7 @@ Commands:
   tick                 One loop tick: the next steps from the task state; exit ACTION (0), WAIT (3), DONE (4), STALLED (5) or BUDGET (6).
   tier                 Evaluate the project tier (L0-L3) from git history and the state; a change is logged (shadow) or recorded (on).
   verify               Re-run the profile gates, compare the test inventory with the baseline and record verify.json for a task.
+  wait                 Wait for an external run: exit 3 while it runs, exit 0 with a short summary once it ended.
 
 Options:
   --json         print exactly one JSON envelope line on stdout
@@ -895,6 +900,61 @@ Read-only.
 Exit codes: 0 OK · 2 USAGE
 ```
 
+### `caw runs [--yes] [--json]`
+
+```text
+usage: caw runs [--yes] [--json]
+
+List the external runs of the last 30 days (queued, running, finished); older finished records are deleted.
+Deletes at most 200 finished records (and their logs) older than 30 days per call.
+
+Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
+Exit codes: 0 OK · 7 REFUSED · 8 ENV
+```
+
+### `caw runs list [--yes] [--json]`
+
+```text
+usage: caw runs list [--yes] [--json]
+
+List the external runs of the last 30 days (same as runs).
+
+Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
+Exit codes: 0 OK · 7 REFUSED · 8 ENV
+```
+
+### `caw runs show <run> [--summary] [--json]`
+
+```text
+usage: caw runs show <run> [--summary] [--json]
+
+Print one external run record, or with --summary the short summary.
+
+Arguments:
+  run  the run ID from exec
+
+Options:
+  --summary  the summary only (status, provider, role, task, elapsed, tokens, last line, out file)
+
+Read-only.
+Exit codes: 0 OK · 1 FAIL · 7 REFUSED · 8 ENV
+```
+
+### `caw runs stop <run> [--yes] [--json]`
+
+```text
+usage: caw runs stop <run> [--yes] [--json]
+
+Stop an external run: SIGTERM to its supervisor, only when the recorded pid and start time still match.
+A supervisor that is gone or whose pid names another process: the run is marked failed and nothing is signalled. An unreadable identity: refused (exit 7). Unknown run: exit 1.
+
+Arguments:
+  run  the run ID from exec
+
+Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
+Exit codes: 0 OK · 1 FAIL · 7 REFUSED · 8 ENV
+```
+
 ### `caw secrets [--range <revs>] [--staged] [--artifact <path>] [--json]`
 
 ```text
@@ -1170,6 +1230,24 @@ Options:
 
 Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
 Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
+```
+
+### `caw wait <run> [--timeout <s>] [--json]`
+
+```text
+usage: caw wait <run> [--timeout <s>] [--json]
+
+Wait for an external run: exit 3 while it runs, exit 0 with a short summary once it ended.
+Polls the run record for at most --timeout seconds (default 0: one look). The summary holds at most 1 KB: status, provider, role, task, elapsed time, tokens, last line, out file.
+
+Arguments:
+  run  the run ID from exec
+
+Options:
+  --timeout <s>  longest wait in seconds, 0 to 590
+
+Read-only.
+Exit codes: 0 OK · 1 FAIL · 2 USAGE · 3 WAIT · 7 REFUSED · 8 ENV
 ```
 
 ## Internal commands
