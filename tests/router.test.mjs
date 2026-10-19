@@ -783,15 +783,43 @@ test('route row: listed in help, changes files, and its --flags help names exact
 
 // ---- threshold overrides from config.json (T-MG-40) ----
 
+const decisionText = (id, status) => `---\nschema: 1\nid: ${id}\ntitle: Larger changes\nstatus: ${status}\nkind: general\ndate: 2026-10-15\nauthor: TU\nsupersedes: []\nsupersededBy: null\nscope: []\nallowsTestRemoval: []\n---\n\n## What\n\nLarger changes.\n\n## Why\n\nLong modules.\n\n## Cost if wrong\n\nlow\n`;
+function override(r, decision, status = 'active', value = 800) {
+  if (status) {
+    mkdirSync(decisionsDir(r), { recursive: true });
+    writeFileSync(join(decisionsDir(r), `${decision}.md`), decisionText(decision, status));
+  }
+  r.store.write('config', null, { schema: 1, thresholds: { 'router.critical.overLoc': { value, decision, at: AT } } });
+}
+const probe500 = ['route', '--probe', '--paths', 'src/a.js', '--loc', '500', '--yes'];
+
 test('route --probe and the ratchet read router threshold overrides from config.json; defaults hold without them', async (t) => {
   const r = repo(t);
-  const probe = ['route', '--probe', '--paths', 'src/a.js', '--loc', '500', '--yes'];
-  assert.equal((await cli(probe, r)).env.data.class, 'critical', 'default: 500 LOC > 400');
-  r.store.write('config', null, { schema: 1, thresholds: { 'router.critical.overLoc': { value: 800, decision: 'D-TU-1', at: AT } } });
-  const over = await cli(probe, r);
-  assert.equal(over.env.data.class, 'standard', 'override 800: 500 LOC is standard');
+  assert.equal((await cli(probe500, r)).env.data.class, 'critical', 'default: 500 LOC > 400');
+  override(r, 'D-TU-1');
+  assert.equal((await cli(probe500, r)).env.data.class, 'standard', 'override 800: 500 LOC is standard');
   const id = newTask(r.store, r.handle);
   assert.equal(router.routeTask(r.store, id, { paths: ['src/a.js'], loc: 500, handle: r.handle, at: AT }).class, 'standard');
   const outside = repo(t, { active: false });
-  assert.equal((await cli(probe, outside)).env.data.class, 'critical', 'no repository state: defaults');
+  assert.equal((await cli(probe500, outside)).env.data.class, 'critical', 'no repository state: defaults');
+});
+
+test('an override whose decision is missing or not active changes nothing; an unreadable config gives the defaults', async (t) => {
+  const r = repo(t);
+  override(r, 'D-TU-1', null);
+  assert.equal((await cli(probe500, r)).env.data.class, 'critical', 'no record of the cited decision');
+  override(r, 'D-TU-2', 'retired');
+  assert.equal((await cli(probe500, r)).env.data.class, 'critical', 'retired decision');
+  writeFileSync(join(r.stateDir, 'config.json'), '{ not json');
+  assert.equal((await cli(probe500, r)).env.data.class, 'critical', 'unreadable config: shipped defaults');
+});
+
+test('a raised critical.overLoc after a task was routed critical keeps it critical (the ratchet only rises)', (t) => {
+  const r = repo(t);
+  const id = newTask(r.store, r.handle);
+  assert.equal(router.routeTask(r.store, id, { paths: ['src/a.js'], loc: 500, handle: r.handle, at: AT }).class, 'critical');
+  override(r, 'D-TU-1');
+  const again = router.routeTask(r.store, id, { paths: ['src/a.js'], loc: 500, handle: r.handle, at: AT });
+  assert.equal(again.class, 'critical');
+  assert.equal(r.store.read('task', id).class, 'critical');
 });

@@ -549,9 +549,16 @@ test('tier [--explain]: one table row; the envelope carries tier, change and cap
   assert.ok(Array.isArray(ex.data.explain) && ex.data.explain.length >= 5);
 });
 
-test('evaluate reads engine threshold overrides from config.json; defaults hold without them', (t) => {
+test('evaluate reads engine threshold overrides from config.json when they cite an active decision; defaults hold without them', (t) => {
+  const record = (status) => `---\nschema: 1\nid: D-TU-1\ntitle: Later tiers\nstatus: ${status}\nkind: general\ndate: 2026-10-15\nauthor: TU\nsupersedes: []\nsupersededBy: null\nscope: []\nallowsTestRemoval: []\n---\n\n## What\n\nLater tiers.\n\n## Why\n\nLong modules.\n\n## Cost if wrong\n\nlow\n`;
+  const withOverride = (status) => {
+    const { dir, store } = l1Repo(t, {});
+    if (status) put(store, 'decisions/D-TU-1.md', record(status));
+    put(store, 'config.json', { schema: KINDS.config.version, thresholds: { 'engine.tierSignals.loc.levels.0.up': { value: 8000, decision: 'D-TU-1', at: isoAt(1) } } });
+    return evaluate(dir).tier;
+  };
   assert.equal(evaluate(l1Repo(t, {}).dir).tier, 'L1', 'default: 5,000 lines call for L1');
-  const { dir, store } = l1Repo(t, {});
-  put(store, 'config.json', { schema: KINDS.config.version, thresholds: { 'engine.tierSignals.loc.levels.0.up': { value: 8000, decision: 'D-TU-1', at: isoAt(1) } } });
-  assert.equal(evaluate(dir).tier, 'L0', 'override 8000: 5,000 lines stay L0');
+  assert.equal(withOverride('active'), 'L0', 'override 8000: 5,000 lines stay L0');
+  assert.equal(withOverride(null), 'L1', 'no record of the decision: ignored');
+  assert.equal(withOverride('retired'), 'L1', 'retired decision: ignored');
 });

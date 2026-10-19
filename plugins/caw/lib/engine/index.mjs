@@ -16,7 +16,8 @@
 // content).
 import { isDeepStrictEqual } from 'node:util';
 import { authorHandle, createDecision, readRecords } from '../decisions/index.mjs';
-import { modeOf, readConfig, thresholdsOf } from '../config/index.mjs';
+import { modeOf, readConfig } from '../config/index.mjs';
+import { thresholdsWithOverrides } from '../router/index.mjs';
 import { activePacks, openMethod } from '../method/index.mjs';
 import { LOGS, StateError, open } from '../state/index.mjs';
 import { ENGINE_FLAGS, capabilities } from './capabilities.mjs';
@@ -100,7 +101,7 @@ function engineMode(where, names, env) {
 }
 
 // The engine thresholds of the repository `where`: the shipped ones with the overrides of its config.json.
-export const engineThresholds = (where, { names, env }) => thresholdsOf('engine', THRESHOLDS, readConfig(where, { names, env }).repo).data;
+export const engineThresholds = (where, { names }) => (where.active ? thresholdsWithOverrides('engine', THRESHOLDS, open(where.dir, { names })) : structuredClone(THRESHOLDS));
 
 // Evaluates the tier of the resolved repository `where` (lib/state resolve) at `now` and records a change by the
 // mode; record: false (the status view) evaluates the same way and writes nothing, so a change is only reported.

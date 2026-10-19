@@ -18,6 +18,7 @@
 // re-entrant). If the task changed in between (class or recorded reasons) or the process stops, the decision stays
 // without effect; the error names it.
 import { thresholdsOf } from '../config/index.mjs';
+import { readRecords } from '../decisions/index.mjs';
 import { LIMITS, allocateId } from '../state/index.mjs';
 import { FLAGS, THRESHOLDS, classify, publicReasons } from './classify.mjs';
 import { checkQuote, renderOverride } from './decision.mjs';
@@ -136,8 +137,19 @@ function result({ id, doc, previous, computed, outcome, reasons, flags, decision
   };
 }
 
-// The router thresholds of the repository behind `store`: the shipped ones with the overrides of its config.json.
-export const routerThresholds = (store) => thresholdsOf('router', THRESHOLDS, store.read('config', null)).data;
+// The `unit` thresholds (shipped `defaults`) with the overrides of the config.json behind `store`, for the overrides
+// that cite an active decision only (GC3). A config or decisions folder that cannot be read gives the shipped values.
+export function thresholdsWithOverrides(unit, defaults, store) {
+  try {
+    const all = store.read('config', null)?.thresholds ?? {};
+    const active = new Set(readRecords(store.dir).records.filter((r) => r.doc.status === 'active').map((r) => r.id));
+    const kept = Object.fromEntries(Object.entries(all).filter(([, o]) => active.has(o.decision)));
+    return thresholdsOf(unit, defaults, { thresholds: kept }).data;
+  } catch {
+    return structuredClone(defaults);
+  }
+}
+export const routerThresholds = (store) => thresholdsWithOverrides('router', THRESHOLDS, store);
 
 // Classifies the declared plan of task `id` and applies the ratchet. `handle` is the caller's registered handle;
 // `riskPaths` are the profile's risk globs (added to the defaults).
