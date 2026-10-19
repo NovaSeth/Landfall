@@ -64,13 +64,15 @@ function detectOne(a, env) {
 }
 
 // { at, cached, rows }: the cached rows when fresh (and none was declared since), else a probe of every adapter.
-export function detectProviders({ names, env, refresh = false, write = true }) {
+// cacheOnly: answer from the cache only (doctor): a stale or missing cache is reported as notProbed, no CLI is spawned.
+export function detectProviders({ names, env, refresh = false, write = true, cacheOnly = false }) {
   const dir = dataDirOf(names, env);
   const doc = readFile(dir);
   const list = [...BUILTINS, ...Object.entries(doc.generic).map(([id, entry]) => fromEntry(id, entry))];
   const d = doc.detected;
   const fresh = d && Date.now() - Date.parse(d.at) < CACHE_MS && d.rows.map((r) => r.id).join() === list.map((a) => a.id).join();
   if (fresh && !refresh) return { at: d.at, cached: true, rows: d.rows };
+  if (cacheOnly) return { at: d?.at ?? null, cached: false, rows: [], notProbed: true };
   const at = new Date().toISOString();
   const rows = list.map((a) => detectOne(a, env));
   if (write && dir && !doc.newer) update(dir, names, (cur) => ({ ...cur, detected: { at, rows } }));

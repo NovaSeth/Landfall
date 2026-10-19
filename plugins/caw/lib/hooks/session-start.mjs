@@ -7,9 +7,9 @@
 // The tier comes from the adaptive engine (explain only, nothing recorded); the line is left out when it is off.
 import { isAbsolute, relative } from 'node:path';
 import { performance } from 'node:perf_hooks';
-import { evaluate } from '../engine/index.mjs';
-import { getRule, openMethod } from '../method/index.mjs';
+import { ENGINE_FLAG, lastRecordedChange } from '../engine/index.mjs';
 import { open } from '../state/index.mjs';
+import { getRule, openMethod } from '../method/index.mjs';
 import { forModel } from '../text/clean.mjs';
 import { loadNames, loopExit, readLoop, stateOf } from './loop-state.mjs';
 
@@ -93,11 +93,14 @@ function alwaysRules() {
   } catch { return []; } // a broken method copy: the context still carries the state
 }
 
-// The tier from the adaptive engine, explain only (record: false writes nothing); an engine that is off or cannot be
-// evaluated, or a deadline that is near, leaves the line out.
+// The applied tier (spec §7.4): the latest recorded tier change while the engine flag is on, else L0 (shadow mode or
+// no decision). A read of two files, never an evaluation (that runs detached); a near deadline leaves the line out.
 function tierOf(where, names, env, deadline) {
   if (performance.now() > deadline - 2 * READ_MARGIN_MS) return null;
-  try { return evaluate(where, { names, env, record: false }).tier; } catch { return null; }
+  try {
+    const mode = open(where.dir, { names }).read('config', null)?.flags?.[ENGINE_FLAG] ?? 'shadow';
+    return mode === 'on' ? lastRecordedChange(where.dir).tier : mode === 'off' ? null : 'L0';
+  } catch { return null; }
 }
 
 // Registry handler: (hook input, { env, deadline }) → { stdout }.

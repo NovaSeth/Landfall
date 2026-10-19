@@ -139,7 +139,9 @@ function releaseRow({ names, io, id, installed, marketplaces }) {
 // Read-only (write: false): the providers found with their auth; none found → warn.
 function providersRow({ names, io }) {
   try {
-    const rows = detectProviders({ names, env: io.env, write: false }).rows;
+    const detected = detectProviders({ names, env: io.env, write: false, cacheOnly: true });
+    if (detected.notProbed) return row('providers', 'ok', 'not probed yet (doctor reads the cache only)', `'${names.bin} providers' detects the provider CLIs`);
+    const rows = detected.rows;
     const found = rows.filter((r) => r.found);
     const detail = `${found.length}/${rows.length} found: ${found.map((r) => `${r.id} (auth ${r.auth})`).join(', ') || 'none'}`;
     return row('providers', found.length ? 'ok' : 'warn', detail, `'${names.bin} providers' lists them; install a provider CLI to delegate work`);

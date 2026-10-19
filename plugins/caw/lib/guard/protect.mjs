@@ -29,7 +29,7 @@ const KIND_USE = {
   team: (bin) => `\`${bin} init\` or \`${bin} team add\``,
   task: (bin, id) => `\`${bin} task set ${id} <state>\``,
   tombstone: (bin, id) => `\`${bin} decisions retire ${id}\``,
-  counter: (bin) => `\`${bin} task new\` or \`${bin} decisions propose\``,
+  counter: (bin) => `\`${bin} task new\` or \`${bin} decide\``,
 };
 const KIND_OWNED = Object.values(KINDS).map((k) => {
   if (!KIND_USE[k.name]) throw new Error(`guard: state kind ${k.name} has no owning command in KIND_USE`);
