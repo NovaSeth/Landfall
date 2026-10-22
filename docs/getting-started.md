@@ -21,7 +21,7 @@ Open Claude Code in a git repository and describe the change. A trivial change r
 3. The agent writes a failing test, then the change, and a report with a RED and a GREEN result.
 4. `landfall verify T-AB-1` re-runs the gates itself and compares the tests with the baseline. `landfall task done T-AB-1` works only after a passing verify for the code at HEAD.
 
-The full session is in the README demo.
+The full session is in the README demo. In a fullscreen terminal wide enough (144 columns) the `Landfall` pane opens beside the transcript and shows the open tasks, the agents at work with their task, role and time, the slots and the next step; `/landfall:dashboard` opens it from 110 columns, and narrower terminals get its one-line summary in the status bar.
 
 ## 4. Useful commands
 

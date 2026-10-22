@@ -1,10 +1,24 @@
 {
   "name": "landfall",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "description": "Sizes the process to each coding task and checks the outcome in code: a task is done only when its gates pass again.",
   "author": {
     "name": "NovaSeth",
     "url": "https://github.com/NovaSeth"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "dashboard": {
+      "type": "string",
+      "title": "Dashboard pane",
+      "description": "auto opens the Landfall dashboard beside the transcript when a session starts; command opens it only on /landfall:dashboard; off draws nothing and sets no status line.",
+      "default": "auto",
+      "options": [
+        "auto",
+        "command",
+        "off"
+      ]
+    }
+  }
 }

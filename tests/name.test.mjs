@@ -54,7 +54,9 @@ function generatedComponents(dir, pluginRel) {
   const at = (rel) => join(dir, pluginRel, rel);
   const skills = existsSync(at('skills')) ? readdirSync(at('skills')).filter((d) => existsSync(at(`skills/${d}/SKILL.md`))).map((d) => `${pluginRel}/skills/${d}/SKILL.md`) : [];
   const agents = existsSync(at('agents')) ? readdirSync(at('agents')).filter((f) => f.endsWith('.md')).map((f) => `${pluginRel}/agents/${f}`) : [];
-  return [...skills, ...agents];
+  // the hooks module, its test and its state contract are rendered from templates/{hooks,types}/*.tmpl
+  const code = (dir) => (existsSync(at(dir)) ? readdirSync(at(dir)).filter((f) => /\.(?:[cm]?[jt]sx?|d\.ts)$/.test(f)).map((f) => `${pluginRel}/${dir}/${f}`) : []);
+  return [...skills, ...agents, ...code('hooks'), ...code('types')];
 }
 
 // A codename occurrence is the literal, in any case, not glued to another letter or digit

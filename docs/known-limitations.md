@@ -1,10 +1,16 @@
-# Known limitations (2.1.0)
+# Known limitations (2.2.0)
 
 ## Not in this release
 - The adaptive engine runs in shadow mode: `landfall tier` explains the recommended tier; tier changes are not applied automatically.
 - No example project; the evaluation covers small tasks only ([evaluation.md](evaluation.md)).
 - A task created `--after` others waits until they are done or cancelled; the loop does not merge them for it, and the brief's base is still the orchestrator's to fill.
-- No agent-panel rows for Claude subagents (only external runs have them); no `qa` pack or agent; no backlog of minor findings across tasks.
+- Dashboard: rows only, no buttons; no round-by-round view of a task's findings; no agent transcript opened from the pane; no band above the prompt. No `qa` pack or agent; no backlog of minor findings across tasks.
+
+## Dashboard
+- The pane is a Claude Code hooks module (function hooks, Claude Code 2.1.30x or newer); an older Claude Code ignores it and shows no pane and no status line.
+- The pane opens unasked only in the fullscreen terminal from 144 columns; from 110 columns `/landfall:dashboard` opens it; narrower, only the status line shows.
+- An agent's elapsed time counts from the moment the module first saw it; a reload of the module (a plugin update, a hot reload) starts the counters again and forgets the agents that had ended. The result path is the last `.json` or `.md` path in the agent's prompt or answer.
+- The task rows come from `landfall status --json` in the session's working directory: a task in another repository is not shown.
 
 ## Edge cases
 - External executors: `landfall exec --role implementer` is refused in this release (reviewer runs only, read-only sandbox in the task worktree); the implementer role with its own worktree follows.

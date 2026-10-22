@@ -145,5 +145,8 @@
         ]
       }
     ]
-  }
+  },
+  "modules": [
+    "./dashboard.tsx"
+  ]
 }

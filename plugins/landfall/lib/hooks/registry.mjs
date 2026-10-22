@@ -56,6 +56,10 @@ export const HOOKS = [
   { name: 'stop-guard', event: 'Stop', timeout: TIMEOUT_S, budgetMs: BUDGET_MS, handler: stopGuard, onError: 'allow' },
 ];
 
+// The hooks modules (Claude Code function hooks) the plugin ships next to the command hooks: the dashboard pane and status
+// line (hooks/dashboard.tsx, retro 2026-10 P1-9). A Claude Code without function hooks ignores the key.
+export const MODULES = Object.freeze(['./dashboard.tsx']);
+
 // hooks/hooks.json content; `launcher` is the launcher path as Claude Code expands it.
 export function hooksConfig(launcher) {
   const hooks = {};
@@ -66,7 +70,7 @@ export function hooksConfig(launcher) {
       hooks: [{ type: 'command', command: 'node', args: [launcher, 'hook', h.name], timeout: h.timeout }],
     });
   }
-  return { description: 'Generated from lib/hooks/registry.mjs by scripts/gen-names.mjs; do not edit.', hooks };
+  return { description: 'Generated from lib/hooks/registry.mjs by scripts/gen-names.mjs; do not edit.', hooks, modules: [...MODULES] };
 }
 
 // Whether the hook's capability is off for the event's repository (false for a hook without one). Read errors and a
