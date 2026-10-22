@@ -80,6 +80,7 @@ Commands:
   providers            List the provider CLIs for external runs: found on PATH, version, auth, roles and the sandbox per role.
   providers add        Declare another provider CLI (generic adapter): its argv template and the sandbox mode per role.
   receipt              Tokens and estimated cost of a task, one external run, the current loop, or all work since a day by class or executor.
+  review brief         Render the review brief of a task from the state: the range pinned to HEAD, the diff saved to a file, acceptance points, risks and the output shape; --write saves it.
   review record        Record a typed review result as the next round tasks/<id>/review-r<k>.json; the Markdown review closes nothing.
   route                Classify a task as trivial, standard or critical from its plan and print its route; the class only rises.
   rule                 Print method rules by ID; a retired ID prints its successor. --core prints the always-on rules.
@@ -827,6 +828,32 @@ Options:
   --by <class|executor>  with --since: one row per task class (default) or per executor
 
 Read-only. Changes files with --task, --run: needs a terminal or --yes, otherwise exit 7 REFUSED.
+Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
+```
+
+### `landfall review brief <id> [--round <k>] [--scope <ids>] [--write] [--force] [--yes] [--json]`
+
+```text
+usage: landfall review brief <id> [--round <k>] [--scope <ids>] [--write] [--force] [--yes] [--json]
+
+Render the review brief of a task from the state: the range pinned to HEAD, the diff saved to a file, acceptance points, risks and the output shape; --write saves it.
+Round: --round, else the next after the recorded review rounds. Range: the task base (a later round: the HEAD its previous review
+brief pinned) to HEAD of this checkout, which must be clean (exit 1 dirty-tree: a brief pins a sha). The diff (-U10, the state
+directory left out) goes to local/review/<id>-r<k>.diff in the state directory. The brief lists the changed files, the acceptance
+points of tasks/<id>/brief.md, the risks (profile risk paths the diff touches, the profile's review focus, decisions cited in the
+changed files), the previous round's findings to re-check (--scope narrows them), the severity rule and the output shape.
+--write saves tasks/<id>/review-r<k>-brief.md; a brief edited by hand is kept unless --force. Exit 1: no such task, not routed, no base.
+
+Arguments:
+  id  task ID such as T-AB-1
+
+Options:
+  --round <k>    the review round (default: the next one)
+  --scope <ids>  comma-separated finding IDs of the previous round to re-check (default: all of them)
+  --write        save it as tasks/<id>/review-r<k>-brief.md in the state directory (the task's owner)
+  --force        with --write: replace a brief written or edited by hand
+
+Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
 Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
 ```
 
