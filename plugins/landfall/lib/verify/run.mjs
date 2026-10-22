@@ -47,8 +47,8 @@ import { lstatSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { authorHandle, readRecords, stateRel } from '../decisions/index.mjs';
 import { git } from '../git/index.mjs';
-import { PROFILE_KINDS, emptyProfile, listFiles, observe } from '../profile/index.mjs';
-import { MAX_PATHS, addedSteps, applyClass, classify, rank, recordedKeys, routeFor, routeTask, routerThresholds } from '../router/index.mjs';
+import { PROFILE_KINDS, emptyProfile, listFiles, observe, riskGlobsOf } from '../profile/index.mjs';
+import { MAX_PATHS, addedSteps, applyClass, classify, rank, recordedKeys, routeFor, routeTask, routerThresholds, weightless } from '../router/index.mjs';
 import { KINDS, StateError, check, open, resolve } from '../state/index.mjs';
 import { appliedTier, readReport, reportHasEvidence, reviewNeed, reviewState } from './artifacts.mjs';
 import { measureAt } from './base.mjs';
@@ -59,6 +59,7 @@ import { runHeavy } from './heavy.mjs';
 import { redacted } from './redact.mjs';
 import { byCodeUnit, hashOf } from './inventory.mjs';
 import { VERIFY_KINDS } from './kinds.mjs';
+import { detectRenames, idFiles } from './rename.mjs';
 import { parseReport } from './reporters.mjs';
 import { SKIP_DIRS, scanRepo, scannerOf } from './scan.mjs';
 
@@ -97,18 +98,17 @@ export function gitIn(where, env, args) {
 
 export const commitExists = (where, env, sha) => Boolean(sha) && gitIn(where, env, ['cat-file', '-e', `${sha}^{commit}`]).status === 0;
 
-// The repository as verify sees it: { rel, scope, routeScope, head, dirty }. `scope` (freshness: dirty, done) is the
-// working tree without verify's and the task's own outputs, and without the typed review records (exactly the review
-// kind's names, review-r<1-999>.json), which `task done` reads by value inside its lock: verify → review record →
-// task done needs no second verify. `routeScope` (the change the route classifies) leaves the whole state directory
-// out: process records are not the code change.
-const REVIEW_NAMES = ['[1-9]', '[1-9][0-9]', '[1-9][0-9][0-9]'].map((k) => `review-r${k}.json`);
+// The repository as verify sees it: { rel, scope, routeScope, head, dirty }. `scope` (freshness: dirty, done) and
+// `routeScope` (the change the route classifies) both leave the whole state directory out: the state is not code (a
+// decision recorded, a report stored or a review written between verify and `task done` is no change of the code, and
+// nothing the gates run reads them), so verify → decide → review record → task done needs no commit in between; the
+// typed review records and the baseline are read by value inside the lock of `task done` instead. Before 2.1 only
+// verify's own outputs left the scope, and every state write forced a commit before verify (156 state commits in one
+// 40-task project).
 export function codeState(where, env) {
   const rel = stateRel(where.repo, where.dir);
-  const reviews = rel ? REVIEW_NAMES.map((n) => `:(exclude,glob)${rel}/tasks/*/${n}`) : [];
-  const own = rel ? [`:(exclude)${rel}/local`, `:(exclude,glob)${rel}/tasks/*/verify.json`, `:(exclude,glob)${rel}/tasks/*/task.json`, ...reviews, `:(exclude)${rel}/${VERIFY_KINDS.baseline.path()}`] : [];
-  const scope = ['--', '.', ...own];
-  const routeScope = ['--', '.', ...(rel ? [`:(exclude)${rel}`] : [])];
+  const scope = ['--', '.', ...(rel ? [`:(exclude)${rel}`] : [])];
+  const routeScope = scope;
   const h = gitIn(where, env, ['rev-parse', '--verify', '-q', 'HEAD']);
   const st = gitIn(where, env, ['status', '--porcelain', '--untracked-files=all', ...scope]);
   if (st.status !== 0) throw envError('git-failed', `git status failed in ${where.worktree}`, 'check that the repository is readable');
@@ -220,24 +220,57 @@ function lineCount(file) {
   }
 }
 
-// The change since `base` (committed, uncommitted and untracked; the state directory left out), or null
-// when git cannot diff against it.
+// The integration line the task branches off, every ref of it that exists: origin's HEAD branch, origin/main,
+// origin/master, a local main or master; empty when none. Several refs, because a local main may be ahead of origin
+// (not pushed) or behind it (not pulled), and the work either one has is integration work, not the task's.
+function integrationRefs(where, env) {
+  const refs = [];
+  const head = gitIn(where, env, ['symbolic-ref', '-q', 'refs/remotes/origin/HEAD']);
+  if (head.status === 0 && head.stdout.trim()) refs.push(head.stdout.trim());
+  for (const name of ['refs/remotes/origin/main', 'refs/remotes/origin/master', 'refs/heads/main', 'refs/heads/master']) {
+    if (!refs.includes(name) && gitIn(where, env, ['rev-parse', '-q', '--verify', name]).status === 0) refs.push(name);
+  }
+  return refs;
+}
+
+// The task's own change since `base` (the state directory left out), or null when git cannot diff against it: the
+// commits of the branch's own first-parent line base..HEAD, always (no ref anyone can move hides them), plus every
+// commit of base..HEAD the integration line does not have (a side branch merged into the task is the task's work,
+// review r1 F3), so a `git merge main` into the branch brings none of main's work into the class (retro 2026-10
+// D-MG-13); a merge commit counts what it changes beyond every parent (`--cc`: a conflict resolution or an edit made
+// in the merge itself). Without an integration ref every commit of base..HEAD counts: a class may rise, never fall.
+// Plus the uncommitted and untracked changes; the LOC of those paths against the base. Weightless paths (docs, images:
+// lib/router) count no LOC.
 function changeSince(where, env, base, scope) {
-  const d = gitIn(where, env, ['diff', '--numstat', '-z', '--no-renames', base, ...scope]);
-  if (d.status !== 0) return null;
-  const paths = new Set();
+  const wt = gitIn(where, env, ['diff', '--name-only', '-z', 'HEAD', ...scope]);
+  if (wt.status !== 0) return null;
+  const paths = new Set(wt.stdout.split('\0').filter(Boolean));
+  const refs = integrationRefs(where, env);
+  const chain = gitIn(where, env, ['rev-list', '--first-parent', `${base}..HEAD`]);
+  const rest = gitIn(where, env, ['rev-list', `${base}..HEAD`, ...(refs.length ? ['--not', ...refs] : [])]);
+  if (chain.status !== 0 || rest.status !== 0) return null;
+  const shas = [...new Set([...chain.stdout.split('\n'), ...rest.stdout.split('\n')].filter(Boolean))];
+  for (let i = 0; i < shas.length; i += 200) {
+    const own = gitIn(where, env, ['log', '--no-walk=unsorted', '--format=', '--name-only', '-z', '--cc', ...shas.slice(i, i + 200), ...scope]);
+    if (own.status !== 0) return null;
+    for (const p of own.stdout.split('\0').filter(Boolean)) if (!/^[0-9a-f]{40}$/.test(p)) paths.add(p);
+  }
+  const tracked = [...paths].filter((p) => !UNSAFE_PATH.test(p)).slice(0, MAX_PATHS);
   let loc = 0;
-  for (const rec of d.stdout.split('\0')) {
-    const m = /^(\d+|-)\t(\d+|-)\t([\s\S]+)$/.exec(rec);
-    if (!m) continue;
-    paths.add(m[3]);
-    if (m[1] !== '-') loc += Number(m[1]) + Number(m[2]);
+  if (tracked.length) {
+    const d = gitIn(where, env, ['diff', '--numstat', '-z', '--no-renames', base, '--', ...tracked]);
+    if (d.status !== 0) return null;
+    for (const rec of d.stdout.split('\0')) {
+      const m = /^(\d+|-)\t(\d+|-)\t([\s\S]+)$/.exec(rec);
+      if (!m || m[1] === '-' || weightless(m[3])) continue;
+      loc += Number(m[1]) + Number(m[2]);
+    }
   }
   const u = gitIn(where, env, ['ls-files', '-z', '--others', '--exclude-standard', ...scope]);
   for (const p of u.status === 0 ? u.stdout.split('\0').filter(Boolean) : []) {
     if (paths.has(p)) continue;
     paths.add(p);
-    loc += lineCount(join(where.worktree, p));
+    if (!weightless(p)) loc += lineCount(join(where.worktree, p));
   }
   return { paths: [...paths].filter((p) => !UNSAFE_PATH.test(p)).slice(0, MAX_PATHS), loc };
 }
@@ -293,8 +326,10 @@ export function evaluate({ where, names, env, id, mode, handle = null, at = now(
   };
   let candidates = null;
   let inv = null;
+  let ctx = null;
   let output = [];
   let reused = null;
+  let renamed = [];
   const baseOk = mode === 'merge' || commitExists(where, env, task.base);
   if (!baseOk) say('fail', 'base-missing', task.base ? `the base commit ${task.base.slice(0, 12)} of ${id} is not in this repository` : `${id} has no base commit`, `record it: ${names.bin} task set ${id} dispatched --executor <e> --base <sha> (fetch it first in a shallow clone)`);
   const anchorCommit = mode === 'merge' ? anchor : baseOk ? task.base : null;
@@ -319,7 +354,8 @@ export function evaluate({ where, names, env, id, mode, handle = null, at = now(
     reused = hit?.at ?? null;
     doc.gates = runs.map((r) => r.gate);
     output = runs.map((r) => ({ name: r.gate.name, lines: tailLines(r.output) }));
-    inv = inventoryOf(runs, context(where, env, code.rel));
+    ctx = context(where, env, code.rel);
+    inv = inventoryOf(runs, ctx);
     if (key && !hit && mode !== 'ci') {
       const report = (r) => {
         const part = inv.parts.find((p) => p.run === r);
@@ -366,6 +402,22 @@ export function evaluate({ where, names, env, id, mode, handle = null, at = now(
     } else {
       reference = referenceOf(pinned);
       cmp = compareInventory(reference, inv, active.map((d) => ({ id: d.id, allowsTestRemoval: d.allowsTestRemoval ?? [] })));
+      // A test removed by its title whose body is present under a title the anchor's inventory did not have (rename.mjs)
+      // changed its name, not its assertions: it is reported as renamed and needs no decision (COD-3 names removals and
+      // weakenings). The candidates are the current tests the anchor's accepted inventory lacks (not only this run's
+      // additions: after a passing verify grew the working baseline, a second run still sees the old titles removed).
+      const anchorDoc = measure ? measured : anchored.doc;
+      if (cmp.removed.length && anchorCommit && anchorDoc) {
+        const known = new Set(anchorDoc.tests.map((t) => t.id));
+        // only running tests are targets: a removed test paired with a skipped or focused one would hide the skip
+        const candidates = inv.tests.filter((t) => !t.skipped && !t.focused).map((t) => t.id).filter((x) => !known.has(x));
+        const readAt = (p) => { const r = gitIn(where, env, ['show', `${anchorCommit}:${p}`]); return r.status === 0 ? r.stdout : null; };
+        renamed = candidates.length ? detectRenames({ removed: cmp.removed, added: candidates, files: [...(change?.paths ?? []), ...idFiles(cmp.removed)], readAt, readNow: ctx.read }) : [];
+        if (renamed.length) {
+          const from = new Set(renamed.map((r) => r.from));
+          cmp = { ...cmp, removed: cmp.removed.filter((x) => !from.has(x)), unallowed: cmp.unallowed.filter((x) => !from.has(x)) };
+        }
+      }
     }
     for (const d of cmp.allowedBy) allowedBy.add(d);
     if (cmp.unallowed.length) say('baseline-shrunk', 'baseline-shrunk', `removed or skipped without a decision: ${some(cmp.unallowed)}`, 'restore them, or record a decision that lists them in allowsTestRemoval');
@@ -389,7 +441,7 @@ export function evaluate({ where, names, env, id, mode, handle = null, at = now(
 
   if (mode !== 'merge') {
     if (change) {
-      const { route, flags } = reroute({ store, task, id, write, handle, riskPaths: profile.riskPaths, change, at });
+      const { route, flags } = reroute({ store, task, id, write, handle, riskPaths: riskGlobsOf(profile), change, at });
       doc.route = route;
       doc.class = route.actual;
       if (route.escalated) say('route-escalated', 'route-escalated', `the change is ${route.actual}, not ${route.declared}: the route adds ${route.missingSteps.join(', ')}`, 'do the added steps, then verify again');
@@ -415,11 +467,25 @@ export function evaluate({ where, names, env, id, mode, handle = null, at = now(
   if (write && doc.result === 'pass' && inv) grow(store, { inv, preexisting: doc.failures.preexisting, head: code.head, at });
   doc.baselineSha = workingSha(store);
   doc.durationMs = Date.now() - started;
+  // Every run keeps its own log (local/verify/<id>-<n>.log, merge runs <id>-m<n>; machine-local) next to the latest
+  // one, so a failed run never hides the output of the one before it; a write-mode run is also an event of the task
+  // (result, head, attempt), so `task show` lists every attempt.
+  let attempt = null;
   if (write) {
     store.write('verify', id, doc);
     store.write('verifyLog', id, { task: id, at, gates: output });
+    const run = { result: doc.result, head: doc.head, class: doc.class };
+    store.update('task', id, (cur) => {
+      if (cur === null) return undefined;
+      attempt = cur.events.filter((e) => e.event === 'verify').length + 1;
+      return { ...cur, events: [...cur.events, { at, by: handle ?? 'verify', event: 'verify', data: { ...run, attempt } }] };
+    });
+    if (attempt !== null) store.write('verifyAttempt', `${id}-${attempt}`, { task: id, at, gates: output });
+  } else if (mode === 'merge') {
+    const n = store.list('verifyAttempt').filter((k) => k.startsWith(`${id}-m`)).length + 1;
+    store.write('verifyAttempt', `${id}-m${n}`, { task: id, at, gates: output });
   }
-  return { doc, reasons: reasons.map(({ code: c, message, hint }) => ({ code: c, message, hint })), written: write, candidates, output, reused };
+  return { doc, reasons: reasons.map(({ code: c, message, hint }) => ({ code: c, message, hint })), written: write, candidates, output, reused, attempt, renamed };
 }
 
 // On pass the baseline is this inventory; written only when its content changed, and only over the baseline this run
@@ -434,11 +500,14 @@ function grow(store, { inv, preexisting, head, at }) {
 }
 
 // `verify <id> [--ci] [--no-cache]`: the owner's verify writes; --ci only reports; --no-cache runs the gates whatever
-// the gate cache holds.
+// the gate cache holds. A closed task (done or cancelled) takes no further state: its verify runs as a check and
+// writes nothing (`closed` in the result), so a later run on another HEAD never replaces the record that closed it.
+const CLOSED = new Set(['done', 'cancelled']);
 export function verifyTask({ cwd, env, names, id, ci = false, cache = true, version = null, at = now() }) {
   const where = activeWhere({ cwd, env, names });
   KINDS.task.path(id);
   let handle = null;
+  let closed = null;
   if (!ci) {
     const store = storeOf(where, names);
     const task = store.read('task', id);
@@ -447,6 +516,7 @@ export function verifyTask({ cwd, env, names, id, ci = false, cache = true, vers
     if (task.owner !== handle) {
       throw new StateError('not-owner', 'REFUSED', `${id} belongs to ${task.owner}; only its owner verifies it with writes`, { hint: `ask ${task.owner}, or check without writing: ${names.bin} verify ${id} --ci` });
     }
+    if (CLOSED.has(task.status)) closed = task.status;
   }
-  return evaluate({ where, names, env, id, mode: ci ? 'ci' : 'write', handle, at, version, cache });
+  return { ...evaluate({ where, names, env, id, mode: ci || closed ? 'ci' : 'write', handle, at, version, cache }), closed };
 }

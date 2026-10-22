@@ -13,7 +13,7 @@
 ### Model
 **SEC-1.** Validate security in four layers, none replacing another: (1) automated checks on every task, push and CI, (2) a security review when a diff touches a trigger, (3) an audit before each release, (4) release gates.
 **SEC-2.** The threat model MUST include the actor "developer or AI agent" (trusted but fallible) and the supply chain.
-**SEC-3.** The command guard is a seatbelt against accidental rule breaks, not a security boundary: a command with a guarded token passes only in a recognized simple form and is blocked when state cannot be read.
+**SEC-3.** The command guard is a seatbelt against accidental rule breaks, not a security boundary: a command with a guarded token passes only in a recognized simple form and is blocked when state cannot be read; a literal variable, a for loop over literals, a cd before a command and a reader naming the state in its data are simple forms.
 **SEC-10.** MUST enable the hard boundaries once the project has a remote: server-side branch protection, the pre-push secrets scan and the CI secrets scan.
 **SEC-4.** MUST NOT bypass a guard block (wrapper script, other syntax) or skip git hooks (`--no-verify`, `commit -n`, changing `core.hooksPath`); when the action is necessary, ask the human; put project-specific blocks and secret patterns in the project's own files, never in plugin files.
 

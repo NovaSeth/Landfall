@@ -159,15 +159,25 @@ test('runs stop ends the whole provider group (a grandchild ignoring SIGTERM), r
   assert.equal(w.e.data.status, 'stopped');
 });
 
-test('runs list shows recent runs, hides and prunes finished records older than 30 days; show prints one run', async (t) => {
+test('runs list only reads and marks old records; runs prune deletes them with --yes; show prints one run', async (t) => {
   const p = await project(t);
   const a = (await startRun(p, 'T-TU-1', 'reviewer', 'fakeok')).e.data.runId;
   await p.ended(a);
   const b = (await startRun(p, 'T-TU-2', 'reviewer', 'fakeok')).e.data.runId;
   await p.ended(b);
   age(p, a, 40);
+  const noYes = [];
+  const bare = (args) => main(args, { io: { out: (s) => noYes.push(s), err: (s) => noYes.push(s), stdinIsTTY: false, env: p.env, cwd: p.cwd, stdin: null } });
+  assert.equal(await bare(['runs', 'list']), 0, 'runs list needs no --yes');
   const l = await p.ok(['runs']);
-  assert.deepEqual(l.e.data.runs.map((r) => r.runId), [b]);
+  assert.deepEqual(l.e.data.runs.map((r) => r.runId).sort(), [a, b].sort());
+  assert.ok(l.e.data.runs.find((r) => r.runId === a).ageDays >= 40, 'the old record is marked by its age');
+  assert.ok(existsSync(join(p.runsDir, `${a}.json`)) && existsSync(join(p.runsDir, `${a}.log`)), 'listing deletes nothing');
+  assert.deepEqual((await p.ok(['runs', 'list'])).e.data.runs.map((r) => r.runId).sort(), [a, b].sort());
+  assert.equal(await bare(['runs', 'prune']), 7, 'runs prune without --yes is refused');
+  assert.ok(existsSync(join(p.runsDir, `${a}.json`)), 'refused prune deletes nothing');
+  const pr = await p.ok(['runs', 'prune']);
+  assert.deepEqual(pr.e.data.removed, [a]);
   assert.ok(!existsSync(join(p.runsDir, `${a}.json`)) && !existsSync(join(p.runsDir, `${a}.log`)), 'pruned with its log');
   assert.deepEqual((await p.ok(['runs', 'list'])).e.data.runs.map((r) => r.runId), [b]);
   const s = await p.ok(['runs', 'show', b]);

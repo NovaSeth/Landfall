@@ -88,9 +88,10 @@ const classOf = (steps) => (steps.includes('cross-provider-review') ? 'critical'
 
 export function reviewState(store, id, steps, { tier = appliedTier(store), providerAvailable = false } = {}) {
   const need = reviewNeed(classOf(steps), tier, providerAvailable);
-  if (need === 'none') return 'not-required';
   const round = (key) => Number(key.slice(key.lastIndexOf('-r') + 2));
   const keys = store.list('review').filter((k) => k.startsWith(`${id}/`)).sort((a, b) => round(a) - round(b));
+  // Nothing is required: a recorded approved latest round is still reported, never "missing".
+  if (need === 'none') return keys.length && store.read('review', keys[keys.length - 1]).verdict === 'approved' ? 'approved' : 'not-required';
   if (!keys.length) return 'missing';
   const latest = store.read('review', keys[keys.length - 1]);
   if (latest.verdict === 'approved' && (need === 'any' || latest.reviewer.kind === 'external')) return 'approved';

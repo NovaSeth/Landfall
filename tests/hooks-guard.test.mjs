@@ -36,7 +36,7 @@ const state = await lib('state/index.mjs');
 // @STATEGLOB@ and @STATECLASS@ are globs that reach the state directory (bypass rows): its first two characters + '*', and its
 // second character in a bracket class; @STATEQ@, @STATEBR@ and @STATEBRACE@: last character as '?', last character bracketed,
 // third character in a brace list.
-const withBin = (s) => s.split('@BIN@').join(names.bin).split('@STATEGLOB@').join(`${names.stateDir.slice(0, 2)}*`).split('@STATECLASS@').join(`.[${names.stateDir[1]}]${names.stateDir.slice(2)}`).split('@STATEQ@').join(`${names.stateDir.slice(0, -1)}?`).split('@STATEBR@').join(`${names.stateDir.slice(0, -1)}[${names.stateDir.slice(-1)}]`).split('@STATEBRACE@').join(`${names.stateDir.slice(0, 2)}{${names.stateDir[2]},b}${names.stateDir.slice(3)}`).split('@STATE@').join(names.stateDir);
+const withBin = (s) => s.split('@BIN@').join(names.bin).split('@STATEHEAD@').join(names.stateDir.slice(0, 2)).split('@STATETAIL@').join(names.stateDir.slice(2)).split('@STATEGLOB@').join(`${names.stateDir.slice(0, 2)}*`).split('@STATECLASS@').join(`.[${names.stateDir[1]}]${names.stateDir.slice(2)}`).split('@STATEQ@').join(`${names.stateDir.slice(0, -1)}?`).split('@STATEBR@').join(`${names.stateDir.slice(0, -1)}[${names.stateDir.slice(-1)}]`).split('@STATEBRACE@').join(`${names.stateDir.slice(0, 2)}{${names.stateDir[2]},b}${names.stateDir.slice(3)}`).split('@STATE@').join(names.stateDir);
 
 // ---------- corpus context ----------
 // Row: [command, rule ID or phrase in the reason (blocks only), context]. Context = the command's directory: 'none'
@@ -115,13 +115,14 @@ const PORTED_BLOCK = [
   ['\\\\git stash', UNV], ["g=git; '$g' stash", UNV, 'feat'], ['g=git; "\\$g" stash', UNV, 'feat'],
   // variables: a value is no proof (printf -v, read, declare, mapfile, for change it outside an assignment); an expansion
   // where it decides the operation (name, subcommand, option, refspec, key, code) cannot be verified (C6)
-  ['S=stash; git $S', UNV], ['B=main; git push -f origin $B', UNV], ['export B=main; git push -f origin $B', UNV],
-  ['F=-n; git commit $F -m x', UNV], ["printf -v c 'git stash'; $c", UNV], ['read c <<< "git stash"; $c', UNV], ['a=(git stash); "${a[@]}"', UNV],
+  // a literal variable of the line is read (lib/guard/tokenizer.mjs expandLiterals, retro 2026-10): the rule it hides applies
+  ['S=stash; git $S', 'ORC-13'], ['B=main; git push -f origin $B', 'TRP-6'], ['export B=main; git push -f origin $B', UNV],
+  ['F=-n; git commit $F -m x', 'SEC-4'], ["printf -v c 'git stash'; $c", UNV], ['read c <<< "git stash"; $c', UNV], ['a=(git stash); "${a[@]}"', UNV],
   ['s=list; printf -v s push; git stash "$s"', UNV], ['G=git; $G status', UNV], ['x=ls; $x src', UNV],
-  ["X='x -n'; git commit -m $X", UNV], ['F=--no-verify; git rebase "$F" main', UNV], ['git config "$K" /dev/null && git push origin feat/x', UNV],
+  ["X='x -n'; git commit -m $X", 'SEC-4'], ['F=--no-verify; git rebase "$F" main', 'SEC-4'], ['git config "$K" /dev/null && git push origin feat/x', UNV],
   ['git config core "$X" && git commit -m x', UNV], ["X='--upload-pack=git stash'; git fetch \"$X\" .", UNV], ["C='git stash'; flock /tmp/l $C", UNV],
   ['T=push; make "$T"', UNV], ["S='1e git stash'; sed \"$S\" f", UNV], [`X='import os; os.system("git stash")'; python3 -c "$X"`, UNV],
-  ['S=check-secrets; npm run "$S" | tail -1', UNV], ["X='-exec git stash ;'; find . $X", UNV], ['x=core.hooksPath; git -c "$x=/dev/null" log', UNV],
+  ['S=check-secrets; npm run "$S" | tail -1', 'SEC-6'], ["X='-exec git stash ;'; find . $X", UNV], ['x=core.hooksPath; git -c "$x=/dev/null" log', 'SEC-4'],
   // prefixes and wrappers
   ['time -p git stash', UNV], ['exec -a x git stash', UNV], ['command -p git stash', UNV], ['nice -n10 git stash', UNV],
   ['nice -10 git stash', UNV], ['stdbuf -o0 git stash', UNV], ['setsid git stash', 'ORC-13'], ['sudo -E git stash', UNV],
@@ -156,7 +157,7 @@ const PORTED_BLOCK = [
   ["git rebase --ex 'git stash' main", UNV], ["git pull --upl 'git stash' origin", UNV],
   // security review round 1: regression (ls-remote -u) and parser differences (npm --, alias/hash -p, container with the repo)
   ["git ls-remote -u 'git stash' origin", UNV], ["git ls-remote -u'git stash' origin", UNV], ['npm run -- check-secrets | tail -1', 'SEC-6'],
-  ['S=check-secrets; npm run -- "$S" | tail -1', UNV], ['alias ls=git\nls stash', UNV], ['hash -p /usr/bin/git ls; ls stash', UNV],
+  ['S=check-secrets; npm run -- "$S" | tail -1', 'SEC-6'], ['alias ls=git\nls stash', UNV], ['hash -p /usr/bin/git ls; ls stash', UNV],
   ['docker run --rm -v "$PWD:/w" -w /w alpine/git stash', UNV], ['podman run --rm alpine/git stash', UNV],
   ['docker compose run app git push --force origin main', UNV],
   ['git;stash', UNV], ['git&&stash', UNV], ['commit -m x', UNV], ['gpush origin main', UNV],
@@ -358,7 +359,7 @@ const NEW_BLOCK = [
   // a pipe after an outcome-gate command (TRP-2; the secrets scan SEC-6): one list, GATES in lib/guard/tokens.mjs; test runs
   // are no gate (ruling R60: verify re-runs the gates itself)
   ['bash .workflow/bin/budget.sh agent | tail -1', 'TRP-2'], ['.workflow/bin/budget.sh agent | tail -1', 'TRP-2'], ['env bash .workflow/bin/budget.sh e2e | cat', 'TRP-2'],
-  ['@BIN@ verify T-AB-1 | tail -1', 'TRP-2'], ['@BIN@ --json verify T-AB-1 | jq .code', 'TRP-2'], ['@BIN@ secrets | tail -1', 'SEC-6'],
+  ['@BIN@ verify T-AB-1 | tail -1', 'TRP-2'], ['@BIN@ secrets | tail -1', 'SEC-6'],
   ['@BIN@ secrets --range main..HEAD 2>&1 | head', 'SEC-6'], ['@BIN@ slot acquire agent | cat', 'TRP-2'], ['@BIN@ heavy -- npm test | tail -1', 'TRP-2'],
   ['./bin/@BIN@ verify T-AB-1 | tail -1', 'TRP-2'],
   // a gate behind a wrapper (env, nice, timeout, command) is still the executed program
@@ -431,7 +432,7 @@ const NEW_BLOCK = [
   // C1 / F1 / F8 / M5: no cwd after `cd -`, a non-literal, failing, conditional or piped cd: a removal or a state path then blocks
   ['cd /tmp && cd - && rm -rf src', UNV, 'tracked'], ['cd src; cd -; rm -rf docs', UNV, 'tracked'], ['cd src && cd - && echo x > @STATE@/tasks/T-AB-1/task.json', UNV, 'tracked'],
   ['cd -P - && rm -rf src', UNV, 'tracked'], ['cd -L -; rm -rf docs', UNV, 'tracked'], ['cd /nonexistent_dir_zz; rm -rf src', UNV, 'tracked'],
-  ['cd nope_zz || rm -rf src', UNV, 'tracked'], ['cd nope_zz || cp x @STATE@/tasks/T-AB-1/task.json', UNV, 'tracked'], ['false && cd /tmp; rm -rf src', UNV, 'tracked'],
+  ['cd nope_zz || rm -rf src', UNV, 'tracked'], ['cd nope_zz || cp x @STATE@/tasks/T-AB-1/task.json', UNV, 'tracked'], ['false && cd /tmp; rm -rf src', 'PRI-17', 'tracked'],
   ['cd /tmp | cat; rm -rf src', UNV, 'tracked'], ['cd src || cd /tmp; rm -rf src', UNV, 'tracked'], ['cd /etc/passwd; rm -rf src', UNV, 'tracked'],
   ['cd ~ && rm -rf src', UNV, 'tracked'], ['cd @STATEGLOB@; cp x tasks/T-AB-1/task.json', UNV, 'tracked'],
   // C2 / F2 / F3: operators without spaces, find without a start path, find with any filter, find -exec rm, busybox
@@ -464,7 +465,7 @@ const NEW_BLOCK = [
   // I3 / F7: globs, braces and expansions that reach the state directory
   ['cp x @STATEGLOB@/tasks/T-AB-1/task.json', 'FLW-7', 'tracked'], ['rm -f @STATEGLOB@/tasks/*/task.json', 'FLW-7', 'tracked'], ['rm -f @STATECLASS@/tasks/T-AB-1/task.json', 'FLW-7', 'tracked'],
   ['cp x */tasks/T-AB-1/task.json', 'FLW-7', 'tracked'], ['cp x **/task.json', 'FLW-7', 'tracked'], ['echo x > @STATEQ@/tasks/T-AB-1/task.json', 'FLW-7', 'tracked'],
-  ['cp x @STATEBRACE@/tasks/T-AB-1/task.json', UNV, 'tracked'], ['X=.c; cp x ${X}aw/tasks/T-AB-1/task.json', UNV, 'tracked'], ['cp x .$(echo c)aw/tasks/T-AB-1/task.json', UNV, 'tracked'],
+  ['cp x @STATEBRACE@/tasks/T-AB-1/task.json', UNV, 'tracked'], ['X=@STATEHEAD@; cp x ${X}@STATETAIL@/tasks/T-AB-1/task.json', 'FLW-7', 'tracked'], ['cp x .$(echo c)aw/tasks/T-AB-1/task.json', UNV, 'tracked'],
   ['cp x .c$(:)aw/tasks/T-AB-1/task.json', UNV, 'tracked'], ['echo x > @STATEBR@/tasks/T-AB-1/task.json', 'FLW-7', 'tracked'], ['echo x > @STATE@/tasks/T-AB-1/task.j*', 'FLW-7', 'tracked'],
   ['mv @STATEGLOB@ /tmp/', 'FLW-7', 'tracked'], ['mv @STATEBRACE@ /tmp/', UNV, 'tracked'],
   // I4 / F9: git rewriting state paths (also through a pathspec that contains the state directory)
@@ -480,6 +481,8 @@ const NEW_ALLOW = [
   // gate commands without a pipe, or with the output in a file
   ['npm test > out.txt 2>&1; echo $?'], ['npm test; echo "exit $?"'], ['node --test tests/a.test.mjs'], ['bash .workflow/bin/budget.sh agent; echo $?'],
   ['@BIN@ verify T-AB-1'], ['@BIN@ secrets; echo $?'], ['@BIN@ heavy -- npm test'], ['@BIN@ status | head -5'], ['@BIN@ rule SEC-3 | cat'],
+  // with --json the exit code is in the envelope: a pipe after the own command reads data (retro 2026-10 §3.9)
+  ['@BIN@ --json verify T-AB-1 | jq .code'], ['@BIN@ secrets --json | jq .code'], ['@BIN@ verify T-AB-1 --json 2>&1 | head -c 300'],
   ['@BIN@ slot list | cat'], ['echo npm test | cat'], ['cat .workflow/bin/budget.sh | head'], ['git commit -m "budget"; echo $?'],
   // reading or unsetting a config key that runs commands; other keys
   ['git config core.pager'], ['git config --get core.editor'], ['git config --unset core.pager'], ['git config --get-regexp alias'],

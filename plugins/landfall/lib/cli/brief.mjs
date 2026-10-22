@@ -15,7 +15,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { briefRules } from '../method/index.mjs';
-import { openStore } from '../profile/index.mjs';
+import { openStore, reviewFocusOf } from '../profile/index.mjs';
 import { leaseEnv, snapshot } from '../sched/index.mjs';
 import { KINDS, open, resolve, writeTaskText } from '../state/index.mjs';
 import { reviewShown } from '../verify/artifacts.mjs';
@@ -35,8 +35,12 @@ export function unedited(text) {
   return m !== null && sha256(text.slice(0, m.index)) === m[1];
 }
 
-// The brief text. task: the task document; gates: the gate commands; lease: the lease env ({ name: value }) or null.
-export function renderBrief({ template, task, role, gates, lease, review = null, names }) {
+// The text with its marker line (the review brief ends the same way).
+export const seal = (text, bin) => `${text}${marker(bin, sha256(text))}`;
+
+// The brief text. task: the task document; gates: the gate commands; lease: the lease env ({ name: value }) or null;
+// focus: the profile's review focus (what every review of the project checks), one line after the review line.
+export function renderBrief({ template, task, role, gates, lease, review = null, focus = [], names }) {
   const last = task.classHistory[task.classHistory.length - 1];
   const reason = last ? last.reason.replace(new RegExp(`^${escape(task.class)}: `), '') : null;
   const fills = {
@@ -56,6 +60,7 @@ export function renderBrief({ template, task, role, gates, lease, review = null,
   const lines = template.split('\n');
   if (lease) lines.splice(lines.findIndex((l) => l.startsWith(WORKTREE)) + 1, 0, `Lease env (the scheduler's slot for this task): ${Object.entries(lease).map(([k, v]) => `${k}=${v}`).join(' ')}`);
   if (review) lines.splice(lines.findIndex((l) => l.startsWith('Executor: ')) + 1, 0, `Review: ${review.text}`);
+  if (focus.length) lines.splice(lines.findIndex((l) => l.startsWith('Executor: ')) + (review ? 2 : 1), 0, `Review focus (what every review of this project checks): ${focus.join('; ')}`);
   const filled = new Set();
   const once = new RegExp(Object.keys(fills).map(escape).join('|'), 'g');
   let text = lines.join('\n').replace(once, (m) => {
@@ -83,13 +88,15 @@ export function brief({ args, flags, names, io, pluginRoot }) {
   if (!task.class) {
     return { code: EXIT.FAIL, errors: [{ code: 'task-unrouted', message: `${id} is not routed: its class decides the depth and the rules of the brief`, hint: `${bin} route ${id} --paths <p,…> --loc <n>` }] };
   }
-  const gates = (openStore(where.dir, names).read('profile')?.gates ?? []).map((g) => g.cmd);
+  const profile = openStore(where.dir, names).read('profile');
+  const gates = (profile?.gates ?? []).map((g) => g.cmd);
+  const focus = reviewFocusOf(profile);
   const held = where.dataDir ? snapshot({ names, env: io.env }).leases.find((l) => l.owner && l.status === 'live' && l.task === id && l.project === where.worktree) : undefined; // a lease names the checkout it was taken in (lib/sched)
   const lease = held ? leaseEnv(held, names) : null;
   const template = readFileSync(join(pluginRoot, 'templates', 'task', 'brief.md'), 'utf8');
   const review = reviewShown(open(where.dir, { names }), task.class, { names, env: io.env });
-  const text = renderBrief({ template, task, role, gates, lease, review, names });
-  const data = { task: id, role, class: task.class, kind: task.kind, title: task.title, rules: briefRules({ cls: task.class, role }), gates, lease, review, text, written: null, file: null };
+  const text = renderBrief({ template, task, role, gates, lease, review, focus, names });
+  const data = { task: id, role, class: task.class, kind: task.kind, title: task.title, rules: briefRules({ cls: task.class, role }), gates, lease, review, focus, text, written: null, file: null };
   if (!flags.write) return { data, text };
   const w = writeTaskText({ cwd: io.cwd, env: io.env, names, id, name: 'brief', text, replace: (cur) => Boolean(flags.force) || unedited(cur) });
   const done = { ...data, written: w.outcome, file: w.file };

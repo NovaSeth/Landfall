@@ -19,6 +19,8 @@
 // "<ref>:" or "<ref> ". The first entry without a task is the next step when none of my tasks is open, else a hint.
 // Outcome: action when any action row exists; wait when work runs (my waiting tasks, live runs, blocked or others'
 // tasks); done otherwise (then the state directory must be committed). Rows: { task, state, step, rules, kind }.
+import { afterOf } from '../state/index.mjs';
+
 export const STATUS_MIN = 20; // ORC-9 default: status request after 20 min without an event
 export const WAIT_S = Object.freeze({ runs: 600, agents: 1800, min: 60, max: 3600 });
 const LIVE = new Set(['queued', 'starting', 'running']);
@@ -28,7 +30,7 @@ const BLOCKING_REPORTS = new Set(['needs-context', 'blocked']);
 const MIN_MS = 60000;
 
 // Every rule ID this table cites (tests check that each resolves in the method).
-export const TABLE_RULES = Object.freeze(['FLW-3', 'ORC-4', 'FLW-4', 'ORC-9', 'FLW-6', 'PRI-6', 'ORC-5', 'REV-6', 'REV-20', 'REV-7',
+export const TABLE_RULES = Object.freeze(['FLW-3', 'ORC-4', 'FLW-4', 'ORC-9', 'FLW-6', 'PRI-6', 'ORC-5', 'REV-6', 'REV-20', 'REV-7', 'REV-5',
   'REV-11', 'FLW-8', 'ORC-7', 'SPC-1', 'SPC-2', 'SPC-11', 'FLW-9', 'PRI-1', 'COL-24', 'FLW-7']);
 
 const natural = (a, b) => a.localeCompare(b, 'en', { numeric: true });
@@ -72,6 +74,18 @@ function taskRow(t, { now, bin, lanesOn, caps }) {
     return action(id, `fix round ${k} delivered`, `dispatch the scoped re-review of round ${k}'s diff and ${record}; a mechanical or UI round you may verify yourself: \`${bin} task set ${id} self-verified --round ${k}\`${last}`,
       k >= caps.rounds ? ['REV-6', 'REV-20', 'REV-7'] : ['REV-6', 'REV-20']);
   };
+  // a review recorded (a `review` event, review record) after the last report, fix round or dispatch decides the step by
+  // its verdict, whatever the status says: approved → verify and close; needs-fixes → the next fix round from its
+  // findings, or the decision past the rounds cap. A review before the fix round that answers it decides nothing.
+  const since = lastIndex(t.events, ['implementer', 'fix-round', 'dispatched']);
+  const rv = [...t.events.slice(since + 1)].reverse().find((e) => e.event === 'review');
+  if (rv && ['dispatched', 'in-review', 'implemented', 'fix-round'].includes(t.status)) {
+    const n = rv.data?.round ?? '?';
+    if (rv.data?.verdict === 'approved') return approved(`review r${n} approved`);
+    const k = (t.round ?? 0) + 1;
+    if (k > caps.rounds) return decide(k);
+    return action(id, `review r${n}: needs-fixes`, `hand its blocking findings to the implementer as fix round ${k} (REV-5; the review file: \`${bin} task show ${id}\`) and record it: \`${bin} task set ${id} fix-round --round ${k} --addressed 0 --open <n>\``, ['REV-5', 'PRI-6']);
+  }
   switch (t.status) {
     case 'new':
       if (t.class === null) return action(id, 'new, not routed', `classify it: \`${bin} route ${id} --paths <p,…> --loc <n>\``, ['FLW-3']);
@@ -126,7 +140,12 @@ export function nextSteps({ tasks = [], runs = [], handles = [], me = null, plan
       if (!open(t)) continue;
       if (!mine(t)) { info.push({ task: t.id, state: `${t.owner}: ${t.status}${t.lane ? ` (lane ${t.lane})` : ''}`, kind: 'others' }); continue; }
       ownOpen++;
-      const r = taskRow(t, { now, bin, lanesOn, caps });
+      // a task created --after others waits, undispatched, until each of them is closed (retro 2026-10 §4.13: a
+      // dependency is state, not a sentence in the brief); an unknown predecessor counts as open
+      const pending = (t.status === 'new' || t.status === 'planned') ? afterOf(t).filter((id) => open(byId.get(id)) || !byId.has(id)) : [];
+      const r = pending.length
+        ? wait(t.id, `waits for ${pending.join(', ')}`, `dispatch nothing until ${pending.length === 1 ? 'it is' : 'they are'} done or cancelled; then route and brief it from the merged base`, ['FLW-9'])
+        : taskRow(t, { now, bin, lanesOn, caps });
       const run = liveOf.get(t.id);
       // a live run of the task is its work in progress: wait for it instead of starting the step again
       if (run && r.kind !== 'blocked') steps.push(wait(t.id, `${r.state}; run ${run.runId} ${run.status}`, 'wait for the run; its record changes when it ends', ['FLW-4']));

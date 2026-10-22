@@ -20,8 +20,8 @@
 **PRI-4.** One task = one fresh agent = one branch from `main` = one pull request; parallel tasks that write files MUST each have their own worktree; a fix round for an agent whose context exceeds the threshold (default 250k tokens) goes to a fresh agent with the findings file.
 
 ### Roles
-**PRI-5.** [always] While orchestrating, MUST NOT write feature code; exceptions: project foundation and mechanical rewiring verified by assertions.
-**PRI-6.** [always] The author never reviews; every fix round ends with a scoped re-review, which a self-check MUST NOT replace for data, writes, authorization or concurrency.
+**PRI-5.** [always] While orchestrating, MUST NOT write feature code; exceptions: project foundation and mechanical rewiring verified by assertions (a scripted text change with counted replacements too).
+**PRI-6.** [always] The author never reviews; every fix round ends with a scoped re-review, which a self-check MUST NOT replace for data, writes, authorization or concurrency; an editorial round (text, names) may be self-checked.
 **PRI-7.** Shared parts (contract, data world, design tokens, UI kit, platform code, package manifest, lockfile, lint and compiler configuration) change only through a shared task: the orchestrator dispatches it, the designer does it (an implementer for a mechanical change), and a lane task changes only its own directory.
 
 ### Decisions and lessons

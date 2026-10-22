@@ -689,3 +689,50 @@ test('r2 D5: task merge compares with the target tip: a test added to the target
   assert.equal(res.env.data.result, 'baseline-shrunk');
   assert.equal(r.git('rev-parse', 'HEAD'), before);
 });
+
+// ---- the state is not code; every run is logged (retro 2026-10 §3.1, §4.4, §4.8) ----
+
+test('state written between verify and task done (a decision, a report edit) is not a change of the code; a file outside the state directory is', async (t) => {
+  const r = repo(t);
+  assert.equal((await run(r)).code, 0);
+  r.write(`${names.stateDir}/decisions/D-TU-7.md`, '---\nschema: 1\nid: D-TU-7\n---\n');
+  r.write(`${names.stateDir}/tasks/${r.id}/report.md`, `${REPORT}\nMore prose after verify.\n`);
+  const again = await run(r);
+  assert.equal(again.env.data.head, r.git('rev-parse', 'HEAD'), `a state write leaves the code clean: ${show(again)}`);
+  let d = await done(r);
+  assert.equal(d.code, 0, `task done without a state commit: ${show(d)}`);
+  const o = repo(t);
+  assert.equal((await run(o)).code, 0);
+  o.write('later.txt', 'x\n');
+  d = await done(o);
+  assert.deepEqual([d.code, errorCodes(d)[0]], [1, 'uncommitted-changes'], show(d));
+});
+
+test('every verify run is an event of the task and keeps its own log; a closed task takes no further verify record', async (t) => {
+  const r = repo(t);
+  const first = await run(r);
+  assert.equal(first.code, 0, show(first));
+  assert.equal(first.env.data.attempt, 1);
+  r.write('calc.test.mjs', `${TESTS}test('third', () => {});\n`);
+  commitAll(r);
+  const second = await run(r);
+  assert.deepEqual([second.code, second.env.data.attempt], [0, 2], show(second));
+  const events = r.store.read('task', r.id).events.filter((e) => e.event === 'verify');
+  assert.deepEqual(events.map((e) => [e.data.attempt, e.data.result, e.data.head, e.data.class]), [[1, 'pass', first.env.data.head, 'trivial'], [2, 'pass', second.env.data.head, 'trivial']]);
+  assert.equal(events[0].by, r.handle);
+  assert.deepEqual(r.vstore.list('verifyAttempt'), [`${r.id}-1`, `${r.id}-2`], 'one log per run under local/verify');
+  assert.ok(r.vstore.read('verifyAttempt', `${r.id}-2`).gates[0].lines.some((l) => l.includes('third')), 'the second log holds the second run');
+  assert.ok(!r.vstore.read('verifyAttempt', `${r.id}-1`).gates[0].lines.some((l) => l.includes('third')), 'the first log is kept as it was');
+  assert.deepEqual(r.vstore.list('verifyLog'), [r.id], 'the latest log keeps its name');
+  // Closed: a later run on another HEAD reports but writes nothing, so the record that closed the task stays.
+  assert.equal((await done(r)).code, 0);
+  const closing = r.vstore.read('verify', r.id);
+  r.write('calc.test.mjs', "import { test } from 'node:test';\ntest('adds', () => {});\n");
+  commitAll(r, 'drop a test after done');
+  const late = await run(r);
+  assert.deepEqual([late.code, late.env.data.result, late.env.data.written, late.env.data.closed], [1, 'baseline-shrunk', false, 'done'], show(late));
+  assert.match((await cli(['verify', r.id, '--yes'], { ...r, json: false })).text, /nothing written: .* is done/);
+  assert.deepEqual(r.vstore.read('verify', r.id), closing, 'verify.json is the passing run that closed the task');
+  assert.equal(r.store.read('task', r.id).events.filter((e) => e.event === 'verify').length, 2, 'no verify event after done');
+  assert.deepEqual(r.vstore.list('verifyAttempt'), [`${r.id}-1`, `${r.id}-2`]);
+});

@@ -31,6 +31,10 @@ export const FACT_KEYS = Object.freeze({
   stack: { type: 'list', summary: 'languages and runtimes' },
   ci: { type: 'token', summary: 'CI provider, or none' },
   otherHarnesses: { type: 'list', summary: 'other agent harnesses configured in the repository' },
+  // Retro 2026-10 §3.3, §3.6: the project's own risk globs (added to the scan's riskPaths, which observe rewrites) and
+  // what every review of this project checks (injected into the task brief and the review brief).
+  riskGlobs: { type: 'globs', summary: 'path globs the project treats as risky, added to the scanned risk paths' },
+  reviewFocus: { type: 'notes', summary: 'what every review of this project checks, one note per item' },
 });
 export const STRUCTURED_KEYS = Object.freeze(['gates', 'riskPaths']);
 export const KEYS = Object.freeze([...Object.keys(FACT_KEYS), ...STRUCTURED_KEYS]);
@@ -66,6 +70,10 @@ function realDate(s) {
 }
 const goodText = (s, max) => typeof s === 'string' && s.trim() === s && length(s) >= 1 && length(s) <= max && !FORBIDDEN.test(s);
 const goodItem = (s) => goodText(s, LIMITS.listItem) && s === s.toLowerCase() && !s.includes(',');
+// A risk glob (the router's syntax: ** * ? and {a,b}; a comma only inside braces) or a review note (any text, no comma).
+const goodGlob = (s) => goodText(s, LIMITS.glob) && !/\s/.test(s) && !s.replace(/\{[^{}]*\}/g, '').includes(',');
+const goodNote = (s) => goodText(s, LIMITS.glob) && !s.includes(',');
+const distinct = (list, max, ok) => Array.isArray(list) && list.length >= 1 && list.length <= max && list.every(ok) && new Set(list).size === list.length;
 
 // Whether `value` is a valid stored value of fact `key`.
 export function validValue(key, value) {
@@ -78,6 +86,8 @@ export function validValue(key, value) {
     case 'date': return typeof value === 'string' && realDate(value);
     case 'token': return typeof value === 'string' && value.length <= LIMITS.token && TOKEN.test(value);
     case 'list': return Array.isArray(value) && value.length <= LIMITS.listItems && value.every(goodItem) && new Set(value).size === value.length && value.join(', ').length <= LIMITS.value;
+    case 'globs': return distinct(value, LIMITS.riskPaths, goodGlob);
+    case 'notes': return distinct(value, LIMITS.listItems, goodNote);
     default: return false;
   }
 }
@@ -91,17 +101,33 @@ function expected(key) {
     case 'date': return 'a date YYYY-MM-DD';
     case 'token': return 'a lower-case name such as github-actions, or none';
     case 'list': return `comma-separated items of ≤ ${LIMITS.listItem} characters, ≤ ${LIMITS.listItems} items, ≤ ${LIMITS.value} characters in all`;
+    case 'globs': return `comma-separated path globs (** * ? {a,b}) of ≤ ${LIMITS.glob} characters each, at most ${LIMITS.riskPaths}`;
+    case 'notes': return `comma-separated notes of ≤ ${LIMITS.glob} characters each, at most ${LIMITS.listItems}`;
     default: return '';
   }
 }
 
 export function requireFactKey(key) {
   if (STRUCTURED_KEYS.includes(key)) {
-    throw new ProfileError('not-settable', 'USAGE', `${key} is not set as a fact: ${key === 'gates' ? 'gates come from the observation scan, and changing them after activation is a decision (kind gate-change)' : 'risk paths come from the observation scan'}`, { hint: 'run profile observe to refresh it' });
+    throw new ProfileError('not-settable', 'USAGE', `${key} is not set as a fact: ${key === 'gates' ? 'gates come from the observation scan, and changing them after activation is a decision (kind gate-change)' : 'risk paths come from the observation scan'}`, { hint: key === 'gates' ? 'run profile observe to refresh it' : 'add the project\'s own risk globs as the fact riskGlobs: profile set riskGlobs <glob,…> --source said --evidence <words>' });
   }
   if (!Object.hasOwn(FACT_KEYS, key)) {
     throw new ProfileError('unknown-key', 'USAGE', `unknown profile key: ${key}`, { hint: `keys: ${Object.keys(FACT_KEYS).join(', ')}` });
   }
+}
+
+// Comma-separated globs; a comma inside {…} belongs to the glob.
+function splitGlobs(text) {
+  const out = [];
+  let depth = 0;
+  let cur = '';
+  for (const c of text) {
+    if (c === '{') depth++;
+    else if (c === '}') depth = Math.max(0, depth - 1);
+    if (c === ',' && depth === 0) { out.push(cur); cur = ''; } else cur += c;
+  }
+  out.push(cur);
+  return out.map((s) => s.trim()).filter(Boolean);
 }
 
 // The typed value of fact `key` from command-line text; throws ProfileError (USAGE) when it is not valid.
@@ -113,6 +139,8 @@ export function parseValue(key, raw) {
   if (type === 'bool') value = { true: true, yes: true, false: false, no: false }[text.toLowerCase()];
   else if (type === 'enum' || type === 'token') value = text.toLowerCase();
   else if (type === 'list') value = text === '' ? [] : text.split(',').map((s) => s.trim().toLowerCase());
+  else if (type === 'globs') value = splitGlobs(text);
+  else if (type === 'notes') value = text.split(',').map((s) => s.trim()).filter(Boolean);
   if (!validValue(key, value)) throw new ProfileError('invalid-value', 'USAGE', `invalid value for ${key}: ${JSON.stringify(String(raw ?? '')).slice(0, 80)}`, { hint: `${key} takes ${expected(key)}` });
   return value;
 }

@@ -13,7 +13,7 @@
 ### Tests first
 **COD-1.** Write the test first: run it, show the failure and its reason in the report, then make it pass; one plan step = one commit, and the tree is clean at the end of the task.
 **COD-2.** A test MUST discriminate: correct code passes and the same code with one change fails; a test that passes by rejection proves nothing; check hard-to-reproduce behavior (concurrency, retries, navigation) by mutation.
-**COD-3.** [always] MUST NOT remove, skip or weaken a test without a decision that allows it.
+**COD-3.** [always] MUST NOT remove, skip or weaken a test without a decision that allows it; a title change with an identical body is a rename, not a removal.
 **COD-15.** In a migration or refactor, E2E test files stay unchanged (configuration may change), because they prove the behavior did not change.
 **COD-4.** Before changing untested legacy code, write a characterization test; a missing test harness is a separate task first.
 

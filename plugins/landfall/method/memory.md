@@ -19,6 +19,7 @@
 **MEM-5.** On resume (usage limit, compaction, new session, restart) read the orchestrator handbook first, inventory worktrees, locks and processes, read result files and 5-line statuses instead of full logs, then run the CLI `tick`.
 **MEM-9.** Give every tool the work depends on (supervisor, loop, log monitor, sleep blocker) a status step and a start step in the resume procedure.
 **MEM-10.** Re-dispatch a task only after checking that its background process is no longer running.
+**MEM-11.** After a compaction or a new session, rebuild a task from the CLI `task show` and `status`, never from memory notes: the state knows the class, the branch, the rounds, the last verify and the next step.
 
 ### Context
 **MEM-6.** Read state in summary form (CLI `status`, `tick`) and find a decision's reasoning by its ID; MUST NOT load whole logs or every decision into context.

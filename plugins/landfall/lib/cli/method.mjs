@@ -19,6 +19,10 @@ function namesText(names) {
 
 export function method({ args, names: { bin } }) {
   const m = openMethod();
+  if (args.name === undefined) {
+    const names = partNames(m);
+    return { data: { names }, text: `${namesText(names)}\n` };
+  }
   const part = methodPart(m, args.name);
   if (!part) {
     const names = partNames(m);

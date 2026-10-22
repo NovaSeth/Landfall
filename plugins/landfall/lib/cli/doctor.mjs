@@ -31,7 +31,7 @@ import { run } from '../proc/index.mjs';
 import { detectProviders } from '../providers/index.mjs';
 import { readProfile } from '../profile/index.mjs';
 import { currentCalibration, snapshot } from '../sched/index.mjs';
-import { KINDS, StateError, open as openStore, resolve as resolveRepo } from '../state/index.mjs';
+import { KINDS, StateError, machineDataDir, open as openStore, resolve as resolveRepo } from '../state/index.mjs';
 import { EXIT } from './commands.mjs';
 
 // SD-5: the oldest Claude Code version CI runs (tests/cli-contract.test.mjs keeps the two equal).
@@ -257,6 +257,36 @@ function repoRows({ names, io, id, errors }) {
   return { rows: [stateRow, profileRow, flagsRow], repo: where.repo, worktree: where.worktree, env: null };
 }
 
+// The Bash guard's blocks of the last 7 days, from the plugin data shadow log (lib/hooks/guard-bash.mjs logs every block
+// with its rule): a block on a read or a plain idiom is a gap of the guard, not of the command (retro 2026-10 §4.1: 172
+// blocks in one project, most of them on reads and idioms). Over 50 in a week is a warning.
+const GUARD_DAYS = 7;
+const GUARD_WARN = 50;
+function guardRow({ names, io }) {
+  const hint = 'a block on a read or a plain idiom is a gap of the guard: report the command (shadow.jsonl in the plugin data directory holds it)';
+  let dir = null;
+  try { dir = machineDataDir(names, io.env); } catch { dir = null; }
+  if (!dir) return row('guard', 'skip', 'no plugin data directory (CLAUDE_PLUGIN_DATA, CLAUDE_CONFIG_DIR or HOME)', hint);
+  let text;
+  try { text = readFileSync(join(dir, 'shadow.jsonl'), 'utf8'); } catch (err) {
+    return err.code === 'ENOENT' || err.code === 'ENOTDIR' ? row('guard', 'ok', `no blocks logged in the last ${GUARD_DAYS} days`, hint) : row('guard', 'skip', `shadow.jsonl not readable: ${firstLine(err.message)}`, hint);
+  }
+  const since = Date.now() - GUARD_DAYS * 86400e3;
+  const byRule = new Map();
+  let n = 0;
+  for (const line of text.split('\n')) {
+    if (!line.trim()) continue;
+    let e;
+    try { e = JSON.parse(line); } catch { continue; }
+    if (e?.capability !== 'guard-bash' || e.event !== 'block' || !(Date.parse(e.at) >= since)) continue;
+    n++;
+    const rule = typeof e.rule === 'string' ? e.rule : 'other';
+    byRule.set(rule, (byRule.get(rule) ?? 0) + 1);
+  }
+  const rules = [...byRule].sort((a, b) => b[1] - a[1]).map(([r, c]) => `${r} ${c}`).join(', ');
+  return row('guard', n > GUARD_WARN ? 'warn' : 'ok', n ? `${n} blocks in ${GUARD_DAYS} days (${rules})` : `no blocks logged in the last ${GUARD_DAYS} days`, hint);
+}
+
 function contextRow(info) {
   if (!info) return row('context', 'skip', 'unknown: `claude plugin details` is not readable', 'install and enable the plugin, then /reload-plugins');
   const n = info.alwaysOnTokens;
@@ -376,6 +406,7 @@ export function doctor({ names, io, version, pluginRoot }) {
     ...repo.rows,
     providersRow({ names, io }),
     schedulerRow({ names, io }),
+    guardRow({ names, io }),
     contextRow(info),
     permissionsRow({ names, io, repo: repo.worktree ?? null }), // the project settings of the checkout Claude Code runs in
     row('protection', 'skip', `${names.claimRefPrefix}* not checked: it needs gh, which this version does not run`,

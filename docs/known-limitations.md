@@ -1,11 +1,15 @@
-# Known limitations (2.0.0)
+# Known limitations (2.1.0)
 
 ## Not in this release
 - The adaptive engine runs in shadow mode: `landfall tier` explains the recommended tier; tier changes are not applied automatically.
-- No published evaluation numbers yet; no example project.
+- No example project; the evaluation covers small tasks only ([evaluation.md](evaluation.md)).
+- A task created `--after` others waits until they are done or cancelled; the loop does not merge them for it, and the brief's base is still the orchestrator's to fill.
+- No agent-panel rows for Claude subagents (only external runs have them); no `qa` pack or agent; no backlog of minor findings across tasks.
 
 ## Edge cases
 - External executors: `landfall exec --role implementer` is refused in this release (reviewer runs only, read-only sandbox in the task worktree); the implementer role with its own worktree follows.
+- Rename detection reads JS and TS sources only; a Python, Go or Rust test that changes its title is still a removal and needs a decision. Titles built at run time, tests declared in loops and template literals with nested braces are not read.
+- `task merge` still needs a clean tree, the state directory included (verify and task done do not): run `landfall commit` before the merge.
 - Scheduler admission hooks run in shadow mode: a would-be denial is logged to `local/shadow.jsonl`, agent spawns are not refused yet.
 - Run records are command-owned and the supervisor derives sandbox and cwd from the role; a deliberate rewrite of a record between that check and the spawn is not defended (R90).
 - Bash guard: `mv <dir> …` and `rsync --delete` are not modelled as removals; a state path hidden in `--pathspec-from-file`, created through a link on the same line, or built only from variables is not detected. With the shell's working directory inside the state directory, every non-read command is blocked. The guard is a seat belt, not a security boundary.
@@ -19,6 +23,7 @@
 - A review-close decision takes effect when a later round reaches the cap and all its blocking IDs are listed, not when it is recorded.
 - Verify: the base gates run once more whenever no stored baseline describes the task base; with in-repo state the temporary worktree sits under `.landfall/local/` meanwhile.
 - Verify: a hand-edited `verify.json` (for example dropping tests from `inventory.tests`) changes the reference of that task.
+- Verify: the integration line is origin's HEAD branch, `origin/main`, `origin/master` or a local `main` or `master`; in a repository with none of them, work merged into the task branch from its integration branch counts as the task's own (the class may rise, never fall).
 - Worktrees: `gen apply` from a linked worktree writes into the main checkout; state files edited after verify do not make the worktree dirty for `task done`.
 - Lease: after SIGKILL a stale lease lock stays until `landfall slots --unlock-stale`.
 - Flags: `landfall flags set guard-bash off --local --yes` turns the guard off on that machine (the intended rollback); a mixed team on older plugin versions does not see `config.json`.

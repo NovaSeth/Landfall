@@ -64,9 +64,9 @@ Claude  $ landfall profile set deployedToUsers true --source said \
 
 ## What it does
 
-- **Orchestration built in.** Brief → implementer in a worktree → verify → reviewer → at most two fix rounds → merge, driven by skills that name the exact commands; an agent gets a brief file with exact values, never the session history.
-- **Done means verified.** `landfall verify` re-runs the gate commands itself and compares the test inventory with a baseline: a removed or newly skipped test fails without a recorded decision. `landfall task done` and `landfall task merge` refuse otherwise; the merge commits only when the gates pass on the merged tree.
-- **Ceremony scaled to the task and the project.** `landfall route` classes a change trivial, standard or critical from its paths, size and risk flags; the review need follows the project tier (`landfall tier`); a critical change gets a spec, a plan and a review from another provider.
+- **Orchestration built in.** `landfall task start` (worktree, branch, base) → brief → implementer → `landfall report` → verify → `landfall review brief` → reviewer → at most two fix rounds → merge → `landfall commit`, driven by skills that name the exact commands; an agent gets a brief file with exact values, never the session history, and `landfall task show` is the card a session resumes from.
+- **Done means verified.** `landfall verify` re-runs the gate commands itself and compares the test inventory with a baseline: a removed or newly skipped test fails without a recorded decision, while a test that only changed its title is reported as renamed. `landfall task done` and `landfall task merge` refuse otherwise; the merge commits only when the gates pass on the merged tree. The state directory is not code: a decision or a report written after verify needs no new commit.
+- **Ceremony scaled to the task and the project.** `landfall route` classes a change trivial, standard or critical from its paths, size and risk flags; documentation and images weigh nothing, the project's own risk globs and review focus live in the profile, and a task is classed from its own commits, not from main merged into it. The review need follows the project tier (`landfall tier`); a critical change gets a spec, a plan and a review from another provider.
 - **Decisions with IDs.** `landfall decide` records what, why and the cost if wrong under an ID such as `D-AB-3`; an agent that edits the code citing it sees the decision.
 - **A loop that ends, a machine that stays usable.** Unattended runs end with a typed exit (done, stalled, budget) and never reschedule after the end; `landfall heavy` queues full suites and builds per machine so parallel agents wait their turn.
 - **External executors as first-class agents.** `landfall exec`, `landfall wait` and `landfall runs` run Codex or Gemini CLI as supervised, recorded runs with agent-panel rows; `landfall secrets` scans before a report leaves the worktree.
@@ -104,10 +104,15 @@ With/without evaluation on the plugin's own suite (10 small tasks with hidden te
 | `landfall profile observe` | Scan the repository and merge the facts into the profile |
 | `landfall task new <title>` | Create a task with the next ID of your handle |
 | `landfall route <task>` | Class a task and print its route |
-| `landfall verify <task>` | Re-run the gates and compare with the baseline |
+| `landfall task start <task>` | Create the task's worktree and branch, record the base |
+| `landfall report <task> --from <file>` | Store the task report (RED/GREEN checked); `--round` appends a fix round |
+| `landfall review brief <task>` | Render the review brief: range pinned to HEAD, diff file, acceptance, risks |
+| `landfall verify <task>` | Re-run the gates and compare with the baseline (renames need no decision) |
 | `landfall task done <task>` | Close a task; refused without a passing verify |
 | `landfall task merge <task>` | Merge a branch; commit only if the gates pass on the merged tree |
-| `landfall decide` | Record a decision |
+| `landfall commit` | Commit the state directory as one chore commit |
+| `landfall decide` | Record a decision (`--from-verify` allows the tests verify saw removed) |
+| `landfall task show <task>` | The resume card: class, branch, rounds, last verify, next step |
 | `landfall status` | Activation, open tasks, loop and leases |
 
 Commands that change files need a terminal or `--yes`. With `--json` every command prints one JSON line; exit codes are typed. Full reference: [docs/cli.md](docs/cli.md) or `landfall <command> --help`.

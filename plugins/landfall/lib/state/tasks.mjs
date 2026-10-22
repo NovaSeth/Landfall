@@ -29,8 +29,12 @@ import { emailHash, gitIdentity } from './team.mjs';
 const REPORTS = { done: 'implemented', 'done-with-concerns': 'implemented', 'needs-context': 'blocked', blocked: 'blocked' };
 const unchanged = (data, doc) => doc.status;
 const STATES = Object.freeze({
+  // started --branch <b> --base <sha> [--worktree <path>]: the task's branch and base are recorded (task start, or by hand);
+  // the status does not move (the brief reads them, task merge merges the branch).
+  started: { required: ['branch', 'base'], optional: ['worktree'], status: unchanged },
   dispatched: { required: ['executor', 'base'], optional: ['lane'], status: () => 'dispatched' },
-  implementer: { required: ['report'], status: (data) => REPORTS[data.report] },
+  // implementer --report <status> [--round <k>]: a fix round's report delivery also records the round (the report command).
+  implementer: { required: ['report'], optional: ['round'], status: (data) => REPORTS[data.report] },
   blocked: { required: ['reason'], status: () => 'blocked' },
   cancelled: { required: ['reason'], status: () => 'cancelled' },
   'fix-round': { required: ['round', 'addressed', 'open'], status: () => 'fix-round' },
@@ -42,6 +46,8 @@ const text = (max, extra = {}) => ({ t: 'str', max, min: 1, ...extra });
 const VALUES = {
   executor: text(LIMITS.actor, { re: PATTERNS.actor }),
   base: text(64, { re: PATTERNS.sha }),
+  branch: text(LIMITS.branch, { re: PATTERNS.branch }),
+  worktree: text(LIMITS.path, { re: PATTERNS.absPath }),
   lane: text(LIMITS.lane, { re: PATTERNS.lane }),
   reason: text(LIMITS.reason),
   note: text(LIMITS.reason),
@@ -97,12 +103,20 @@ function actor(store, where, env, names) {
 const unknownTask = (id, where, names) => usage('task-unknown', `no task ${id} in ${where.dir}`, `'${names.bin} task list' lists the tasks`);
 const lanesOn = (store) => store.read('config', null)?.flags?.lanes === 'on';
 
-// `task new`: { id, task }.
-export function createTask({ cwd, env, names, title, kind = 'task', lane = null, at = now() } = {}) {
+const AFTER_MAX = 20;
+
+// `task new`: { id, task }. `after`: the IDs of the tasks this one waits for (retro 2026-10 §4.13: dependencies are
+// state, not sentences in a brief); kept in the created event's data, so the loop holds the task back until each
+// predecessor is closed (lib/loop/table.mjs afterOf).
+export function createTask({ cwd, env, names, title, kind = 'task', lane = null, after = [], at = now() } = {}) {
   return guarded(() => {
+    if (!Array.isArray(after) || after.length > AFTER_MAX) throw usage('invalid-value', `--after takes at most ${AFTER_MAX} task IDs`, 'name the tasks this one waits for, comma-separated');
+    for (const id of after) if (!PATTERNS.taskId.test(String(id))) throw usage('invalid-value', `--after ${String(id).slice(0, 40)}: not a task ID`, 'a task ID is T-<handle>-<number>');
     const { where, store } = activeStore({ cwd, env, names });
     const by = actor(store, where, env, names);
-    const build = (id) => ({ id, kind, title, lane: lane ?? null, owner: by, class: null, classHistory: [], status: 'new', round: 0, events: [{ at, by, event: 'created', data: {} }], base: null, branch: null });
+    for (const id of after) if (store.read('task', id) === null) throw unknownTask(id, where, names);
+    const data = after.length ? { after: [...new Set(after)] } : {};
+    const build = (id) => ({ id, kind, title, lane: lane ?? null, owner: by, class: null, classHistory: [], status: 'new', round: 0, events: [{ at, by, event: 'created', data }], base: null, branch: null });
     const probe = `T-${by}-1`;
     checkWrite(KINDS.task, { schema: KINDS.task.version, ...build(probe) }, { where: 'task', key: probe });
     const id = allocateId(store, { prefix: 'T', handle: by, build });
@@ -129,7 +143,11 @@ export function setTask({ cwd, env, names, id, state, options = {}, at = now() }
         doc.base = data.base;
         if (data.lane !== undefined) doc.lane = data.lane;
       }
-      if (state === 'fix-round') doc.round = data.round;
+      if (state === 'started') {
+        doc.branch = data.branch;
+        doc.base = data.base;
+      }
+      if (state === 'fix-round' || (state === 'implementer' && data.round !== undefined)) doc.round = data.round;
       doc.status = STATES[state].status(data, doc);
       event = { at, by, event: state, data };
       doc.events.push(event);
@@ -139,17 +157,28 @@ export function setTask({ cwd, env, names, id, state, options = {}, at = now() }
   });
 }
 
-// Task text files by name: tasks/<id>/<file>.
-export const TASK_TEXTS = Object.freeze({ brief: 'brief.md' });
+// Task text files by name: tasks/<id>/<file>. The brief (`brief --write`), the report (`report`) and the review brief of a
+// round (`review brief --write`, named by its round: review-r<k>-brief.md) are documents of the task, written whole by
+// the task's owner; they are not state records (FLW-7 names the records: task.json, verify.json, the reviews).
+export const TASK_TEXTS = Object.freeze({ brief: 'brief.md', report: 'report.md', 'review-brief': 'review-r<k>-brief.md' });
 const TEXT_MAX = 65536;
+const ROUND_MAX = 999;
+
+// The file name of task text `name` (round: the review brief's round, 1 to 999).
+export function taskTextFile(name, { round } = {}) {
+  if (!Object.hasOwn(TASK_TEXTS, name)) throw new TypeError(`state.taskTextFile: unknown task text ${name}`);
+  if (name !== 'review-brief') return TASK_TEXTS[name];
+  if (!Number.isInteger(round) || round < 1 || round > ROUND_MAX) throw usage('invalid-value', `a review brief needs a round from 1 to ${ROUND_MAX}, got ${JSON.stringify(round)}`, 'pass --round <k>');
+  return TASK_TEXTS[name].replace('<k>', String(round));
+}
 
 // Writes the task text `name` of task `id` for its owner, under the store lock: { file, outcome }. outcome: created ·
 // replaced (replace(current text) allowed it) · unchanged (same text, nothing written) · kept (replace refused).
-export function writeTaskText({ cwd, env, names, id, name, text, replace = () => false } = {}) {
+export function writeTaskText({ cwd, env, names, id, name, round, text, replace = () => false } = {}) {
   return guarded(() => {
-    if (!Object.hasOwn(TASK_TEXTS, name)) throw new TypeError(`state.writeTaskText: unknown task text ${name}`);
-    const rel = KINDS.task.path(id).replace(/[^/]+$/, TASK_TEXTS[name]);
-    if (typeof text !== 'string' || Buffer.byteLength(text) > TEXT_MAX) throw usage('limit-exceeded', `tasks/${id}/${TASK_TEXTS[name]}: at most ${TEXT_MAX} bytes of text`, 'shorten it; nothing was written');
+    const file = taskTextFile(name, { round });
+    const rel = KINDS.task.path(id).replace(/[^/]+$/, file);
+    if (typeof text !== 'string' || Buffer.byteLength(text) > TEXT_MAX) throw usage('limit-exceeded', `tasks/${id}/${file}: at most ${TEXT_MAX} bytes of text`, 'shorten it; nothing was written');
     const { where, store } = activeStore({ cwd, env, names });
     const by = actor(store, where, env, names);
     let outcome = null;
@@ -157,7 +186,7 @@ export function writeTaskText({ cwd, env, names, id, name, text, replace = () =>
       store.assertWritable();
       const doc = store.read('task', id);
       if (doc === null) throw unknownTask(id, where, names);
-      if (doc.owner !== by) throw new StateError('not-owner', 'FAIL', `${id} belongs to ${doc.owner}; only its owner writes its ${TASK_TEXTS[name]}`, { hint: 'ask the owner' });
+      if (doc.owner !== by) throw new StateError('not-owner', 'FAIL', `${id} belongs to ${doc.owner}; only its owner writes its ${file}`, { hint: 'ask the owner' });
       const cur = store.readText(rel);
       if (cur === text) outcome = 'unchanged';
       else if (cur !== null && !replace(cur)) outcome = 'kept';
@@ -169,6 +198,12 @@ export function writeTaskText({ cwd, env, names, id, name, text, replace = () =>
     return { file: join(where.dir, rel), outcome };
   });
 }
+
+// The IDs a task waits for (the created event's `after`), [] when none.
+export const afterOf = (task) => {
+  const created = task?.events?.find((e) => e.event === 'created');
+  return Array.isArray(created?.data?.after) ? created.data.after.filter((x) => typeof x === 'string') : [];
+};
 
 // `task list`: { repo, dir, active, tasks } (an inactive repository has no tasks).
 export function listTasks({ cwd, env, names } = {}) {

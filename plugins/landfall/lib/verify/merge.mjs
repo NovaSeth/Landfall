@@ -20,7 +20,7 @@
 // `git merge --abort` (the tree was clean before the merge). A target that moved while the gates ran is never moved
 // back: the merge is left as it is (`target-moved`). An up-to-date branch merges nothing (exit 0).
 import { authorHandle, readRecords } from '../decisions/index.mjs';
-import { emptyProfile } from '../profile/index.mjs';
+import { emptyProfile, riskGlobsOf } from '../profile/index.mjs';
 import { KINDS, StateError } from '../state/index.mjs';
 import { activeWhere, evaluate, gatesSha, gitIn, stateAt, storeOf } from './run.mjs';
 
@@ -28,14 +28,15 @@ const usage = (code, message, hint = '') => new StateError(code, 'USAGE', messag
 const fail = (code, message, hint = '') => new StateError(code, 'FAIL', message, { hint });
 const firstLine = (r) => (r.stderr || r.stdout).trim().split('\n')[0] ?? '';
 
-// Whether `merged` changes the gate set of `target` in any way, or drops or changes one of its risk paths.
-const changesGates = (target, merged) => gatesSha(target.gates) !== gatesSha(merged.gates) || target.riskPaths.some((p) => !merged.riskPaths.includes(p));
+// Whether `merged` changes the gate set of `target` in any way, or drops one of its risk globs (the scanned risk paths
+// and the said riskGlobs alike: lib/profile riskGlobsOf).
+const changesGates = (target, merged) => gatesSha(target.gates) !== gatesSha(merged.gates) || riskGlobsOf(target).some((p) => !riskGlobsOf(merged).includes(p));
 
-// The gates and risk paths of a committed profile text (empty when there is none or it cannot be read).
+// The gates, risk paths and facts of a committed profile text (empty when there is none or it cannot be read).
 function profileOf(text) {
   try {
     const doc = text === null ? null : JSON.parse(text);
-    return { gates: Array.isArray(doc?.gates) ? doc.gates : [], riskPaths: Array.isArray(doc?.riskPaths) ? doc.riskPaths : [] };
+    return { gates: Array.isArray(doc?.gates) ? doc.gates : [], riskPaths: Array.isArray(doc?.riskPaths) ? doc.riskPaths : [], facts: doc?.facts && typeof doc.facts === 'object' ? doc.facts : {} };
   } catch {
     return emptyProfile();
   }

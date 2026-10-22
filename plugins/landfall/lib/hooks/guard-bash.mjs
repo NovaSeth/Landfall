@@ -99,7 +99,12 @@ export function guardBash(input, opts = {}) {
     if (v.deny) break;
   }
   const stderr = v.warnings.length ? `${v.warnings.join('\n')}\n` : '';
-  if (v.deny) return { ...deny(v.deny), stderr };
+  if (v.deny) {
+    // every block is logged (plugin data shadow.jsonl), so `doctor` can count the blocks of the last days: a block on a
+    // read or a plain idiom is a gap of the guard, not of the command (retro 2026-10 §4.1)
+    (opts.shadowLog ?? defaultShadowLog(env))({ at: new Date().toISOString(), capability: 'guard-bash', event: 'block', rule: /^([A-Z]{3}-\d+)/.exec(v.deny)?.[1] ?? 'other', command: command.slice(0, 200), cwd });
+    return { ...deny(v.deny), stderr };
+  }
   if (v.own) {
     const mode = autoAllowMode(opts, env, s().where ?? null, names);
     if (mode === 'on') return { ...decision('allow', `SD-33: own command \`${v.own}\` is on the auto-allow list.`), stderr };

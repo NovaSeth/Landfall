@@ -17,7 +17,7 @@ import { git } from '../git/index.mjs';
 import { MSG, short } from './messages.mjs';
 import { OWNED_NAMES, globReaches, inside, realPath, stateText } from './protect.mjs';
 import { effects, shape } from './shapes.mjs';
-import { NotPlain, parse, why } from './tokenizer.mjs';
+import { NotPlain, expandLiterals, parse, why } from './tokenizer.mjs';
 import { BIN, caseVariants, prescan, variants } from './tokens.mjs';
 
 export const LIMIT = Object.freeze({ cmd: 65536, spawns: 16, simple: 200 });
@@ -38,7 +38,7 @@ function context({ cwd, env = process.env, deadline = Infinity, readProjectMode,
     return r;
   };
   const ctx = {
-    cwd, cwdHint: null, env, state, stateHit, unsure: false, shadowNames: new Set(), simple: [],
+    cwd, cwdHint: null, cwdBefore: null, alts: [], env, state, stateHit, unsure: false, shadowNames: new Set(), simple: [],
     tick() { if (performance.now() > deadline) throw new Error('analysis over its time budget'); },
     inDir: (dir, v) => (/^~/.test(v) ? null : /^\//.test(v) ? resolve(v) : dir === null ? null : resolve(dir, v)),
     // code to run (bash -c, eval, node -e …): no token and no project-rule literal
@@ -101,14 +101,20 @@ function context({ cwd, env = process.env, deadline = Infinity, readProjectMode,
 }
 
 // The whole line: plain syntax, then the shape of each simple command in order (effects of cd / switch for the next ones).
+// A cd after && moved the cwd only along its && chain: a command after ; or a newline may run where the line began
+// (the cd may have failed), so it is checked in both directories (ctx.alts) and the first block wins.
 function checkLine(src, ctx) {
   const cmds = parse(src, { tick: ctx.tick, limit: LIMIT.cmd });
   for (const c of cmds) if (ctx.simple.length < LIMIT.simple) ctx.simple.push(c.words.map((x) => x.text).join(' '));
   for (const c of cmds) {
-    // a cd after && moved the cwd only along its && chain: a command after ; or a newline may run where the line began
-    if (ctx.cwdConditional && c.before !== '&&') { ctx.cwd = null; ctx.cwdConditional = false; ctx.unsure = true; }
-    const v = shape(c, ctx);
-    if (v) return v;
+    if (ctx.cwdConditional && c.before !== '&&') { if (ctx.cwdBefore !== ctx.cwd && !ctx.alts.includes(ctx.cwdBefore)) ctx.alts.push(ctx.cwdBefore); ctx.cwdConditional = false; }
+    const primary = ctx.cwd;
+    for (const dir of [primary, ...ctx.alts]) {
+      ctx.cwd = dir;
+      const v = shape(c, ctx);
+      if (v) return v;
+    }
+    ctx.cwd = primary;
     effects(c, c.words.map((x) => x.text), ctx);
   }
   return null;
@@ -151,12 +157,16 @@ export function evaluate(command, opts = {}) {
     }
     const { rules, warnings: w } = loadRules(text);
     warnings.push(...w);
+    // literal variables substituted (tokenizer.mjs expandLiterals): the tokens and the state are looked for in both
+    // texts, the shapes read the expanded one
+    const expanded = expandLiterals(command);
+    const texts = expanded === command ? [command] : [command, expanded];
     const st = opts.state ?? null;
-    const stateHit = st !== null && namesState(command, st, opts.cwd);
+    const stateHit = st !== null && texts.some((t) => namesState(t, st, opts.cwd));
     if (st?.unknown && stateHit) return { deny: MSG.stateUnknown(String(st.unknown).slice(0, 60), BIN), warnings };
     const state = st?.unknown ? null : st;
     const literals = [...rules.flatMap((r) => r.literals), ...(state ? stateLiterals(state) : [])];
-    hits = prescan(command, literals);
+    hits = new Set(texts.flatMap((t) => [...prescan(t, literals)]));
     if (state && stateHit) hits.add('names the state directory');
     const ctx = context({ ...opts, literals, state, stateHit: state !== null && stateHit });
     // project rules: first on the text (the project message wins), after parsing on the simple commands
@@ -168,12 +178,12 @@ export function evaluate(command, opts = {}) {
       }
       return null;
     };
-    const textRule = rules.length ? applyRules([command, ...caseVariants(command.slice(0, LIMIT.cmd))]) : null;
+    const textRule = rules.length ? applyRules(texts.flatMap((t) => [t, ...caseVariants(t.slice(0, LIMIT.cmd))])) : null;
     if (textRule) return { deny: textRule, warnings };
     if (hits.size) {
       ctx.tick();
-      if (command.length > LIMIT.cmd) why(`a command longer than ${LIMIT.cmd} characters`);
-      const verdict = checkLine(command, ctx);
+      if (expanded.length > LIMIT.cmd) why(`a command longer than ${LIMIT.cmd} characters`);
+      const verdict = checkLine(expanded, ctx);
       if (verdict) return { deny: verdict, warnings };
       const simpleRule = applyRules(ctx.simple);
       if (simpleRule) return { deny: simpleRule, warnings };

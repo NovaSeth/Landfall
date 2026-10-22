@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.1.0
+
+From the retrospective of the first 40-task project built with Landfall 2.0.1: the mechanics the orchestrator ran in prose and scripts move into the CLI, and the three generators of friction (the Bash guard, test identity by title, class by size) change.
+
+- Commands: `task start` (worktree, branch and base recorded on the task), `report` (stores the task report with its RED/GREEN frontmatter checked; `--round` appends a fix round; records the implementer event), `review brief` (the review brief rendered from the state: range pinned to HEAD, diff saved to a file, acceptance points, risks from risk paths, review focus and cited decisions, previous findings for a re-review), `commit` (one chore commit of the state directory), `runs prune`, `task new --after` (the loop holds a task until its predecessors are closed); `task set <id> started`, `implementer --round`.
+- Verify: a test whose title changed and whose body stayed is renamed, not removed, and needs no decision (parametrized titles match their template); the state directory is not code, so a decision, report or review written after verify needs no commit before `task done`; every run is an event of the task with its own log; a closed task takes no further verify record; a recorded review is reported even when the route needs none.
+- Router: documentation, images and media weigh nothing (a docs-only change is at most standard); a task is classed from its own commits, a side branch merged into it included, so merging main into the branch changes nothing; the profile facts `riskGlobs` and `reviewFocus` (profile schema 2).
+- Decisions: `decide --from-verify <task>` and `--from-file <json>`.
+- Bash guard: a literal variable of the line and a for loop over literals are read; a reader, curl or sed that names the state in its data is no write; cp from the state is a read; `git -C <dir>` places its pathspecs; a command after `cd` with `;` is checked in both directories; a pipe after the own command with `--json` is allowed; a `$` no expansion can follow is literal; every block is logged and `doctor` counts the last 7 days.
+- Views: `task list` with class, round and branch; `task show` is the resume card (branch, base, worktree, verify, reviews, open findings, next step, which a recorded review decides); `method` without a name lists the names; `receipt` without a selector means since activation; SessionStart says when a profile scan is due.
+- Method and skills: the brief template with scope, contracts, budget and assignments; agents run full suites through `heavy`, the reviewer may run tests; skills use the new commands; rules ORC-19 (several agents in one worktree), REV-21 (review focus in every review brief), MEM-11 (resume from `task show`, not memory); PRI-5, PRI-6, FLW-7, COD-3, ORC-5 and SEC-3 say what the retro settled.
+
 ## 2.0.1
 
 - Skills: an obviously trivial request is classed from the request and runs no plugin command; `work` and `dispatch` run `landfall secrets` before the report; when the CLI is not on PATH the skills call `${CLAUDE_PLUGIN_ROOT}/bin/landfall`.

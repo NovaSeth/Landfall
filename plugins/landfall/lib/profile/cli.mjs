@@ -7,7 +7,7 @@
 import { StateError, resolve } from '../state/index.mjs';
 import { EXIT } from '../cli/commands.mjs';
 import { FACT_KEYS, ProfileError } from './keys.mjs';
-import { applyGates, readProfile, runObserve, setFact, setGate } from './index.mjs';
+import { applyGates, readProfile, riskGlobsOf, runObserve, setFact, setGate } from './index.mjs';
 
 const fail = (err) => {
   if (err instanceof StateError || err instanceof ProfileError) return { code: EXIT[err.exit], errors: [err] };
@@ -38,7 +38,8 @@ export function show(ctx) {
     const p = r.profile;
     const lines = [`Profile of ${w.repo}`, ...(Object.keys(p.facts).length ? factLines(p.facts) : ['  (no facts yet)'])];
     lines.push(`Gates: ${p.gates.length ? p.gates.map((g) => `${g.name}: ${g.cmd}`).join(' · ') : '(none)'}`);
-    lines.push(`Risk paths: ${p.riskPaths.length ? p.riskPaths.join(', ') : '(none)'}`);
+    const said = riskGlobsOf(p).filter((g) => !p.riskPaths.includes(g));
+    lines.push(`Risk paths: ${p.riskPaths.length ? p.riskPaths.join(', ') : '(none)'}${said.length ? `; said (riskGlobs): ${said.join(', ')}` : ''}`);
     const last = p.lastScan ? `last scan ${p.lastScan.at} at ${p.lastScan.head ? p.lastScan.head.slice(0, 12) : 'no commit'}` : 'never scanned';
     lines.push(`Scan: ${last}; ${r.scan.due ? `due (${r.scan.reason}): run ${ctx.names.bin} profile observe` : 'not due'}`);
     return { data: { active: true, repo: w.repo, profile: p, scan: r.scan }, text: `${lines.join('\n')}\n` };

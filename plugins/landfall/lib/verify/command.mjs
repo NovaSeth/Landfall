@@ -30,16 +30,18 @@ const typed = (fn) => (ctx) => {
   }
 };
 
-// `reused`: the time of the gate runs reused from the gate cache (null: the gates ran).
-export function renderVerify(doc, reused = null) {
+// `reused`: the time of the gate runs reused from the gate cache (null: the gates ran); `renamed`: the [{ from, to }]
+// pairs of tests that changed their title and kept their body (no decision needed).
+export function renderVerify(doc, reused = null, renamed = []) {
   const lines = [`${doc.task}: ${doc.result} (${doc.head ? `head ${doc.head.slice(0, 12)}` : 'uncommitted changes'}, class ${doc.class ?? 'none'})`];
   if (doc.gates.length) {
     const width = Math.max(...doc.gates.map((g) => g.name.length));
     lines.push(reused ? `gates: reused from ${reused}` : 'gates:', ...doc.gates.map((g) => `  ${g.name.padEnd(width)}  ${g.result.padEnd(7)}  exit ${g.exit ?? '-'}  ${seconds(g.durationMs)}`));
   }
   const inv = doc.inventory;
-  lines.push(`tests (${inv.collector}${inv.weak ? ', weak: a test gate read by the static scan only' : ''}): ${inv.total}; added ${inv.added.length}, removed ${inv.removed.length}, newly skipped ${inv.newlySkipped.length}${inv.allowedBy.length ? `; allowed by ${inv.allowedBy.join(', ')}` : ''}`);
+  lines.push(`tests (${inv.collector}${inv.weak ? ', weak: a test gate read by the static scan only' : ''}): ${inv.total}; added ${inv.added.length}, removed ${inv.removed.length}, renamed ${renamed.length}, newly skipped ${inv.newlySkipped.length}${inv.allowedBy.length ? `; allowed by ${inv.allowedBy.join(', ')}` : ''}`);
   if (inv.removed.length) lines.push(`  removed: ${some(inv.removed)}`);
+  if (renamed.length) lines.push(`  renamed (same body, no decision needed): ${some(renamed.map((r) => `${r.from} → ${r.to}`), 5)}`);
   if (inv.newlySkipped.length) lines.push(`  newly skipped: ${some(inv.newlySkipped)}`);
   lines.push(`failures: ${doc.failures.new.length} new, ${doc.failures.preexisting.length} pre-existing`);
   const r = doc.route;
@@ -50,9 +52,10 @@ export function renderVerify(doc, reused = null) {
 
 export const verify = typed(({ args, flags, names, version, io }) => {
   const out = verifyTask({ cwd: io.cwd, env: io.env, names, id: args.id, ci: Boolean(flags.ci), cache: !flags.noCache, version: version ?? null });
-  const data = { ...out.doc, written: out.written, ...(out.candidates ? { candidates: out.candidates } : {}), output: out.output, reusedFrom: out.reused };
-  const lines = [...renderVerify(out.doc, out.reused), out.written ? `gate output: local/verify/${out.doc.task}.log in the state directory` : 'nothing written (--ci)'];
-  return { code: exitOf(out.doc.result), data, errors: out.reasons, text: `${forTerminal(lines.join('\n'))}\n` };
+  const data = { ...out.doc, renamed: out.renamed, written: out.written, attempt: out.attempt, closed: out.closed, ...(out.candidates ? { candidates: out.candidates } : {}), output: out.output, reusedFrom: out.reused };
+  const tail = out.written ? `gate output: local/verify/${out.doc.task}.log in the state directory (attempt ${out.attempt}: ${out.doc.task}-${out.attempt}.log)`
+    : out.closed ? `nothing written: ${out.doc.task} is ${out.closed}, a closed task takes no further state` : 'nothing written (--ci)';
+  return { code: exitOf(out.doc.result), data, errors: out.reasons, text: `${forTerminal([...renderVerify(out.doc, out.reused, out.renamed), tail].join('\n'))}\n` };
 });
 
 export const taskDone = typed(({ args, names, io }) => {

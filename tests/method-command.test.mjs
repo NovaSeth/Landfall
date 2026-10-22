@@ -97,7 +97,14 @@ test('method: an unknown name exits 2 with every pack and section name; a bare s
     const [topic, slug] = [s.slice(0, s.lastIndexOf('/')), s.slice(s.lastIndexOf('/') + 1)];
     assert.match(text.stdout, new RegExp(`^  ${topic}/: .*\\b${slug}\\b`, 'm'), `text lists section ${s}`);
   }
-  const missing = cli(['method', '--json']);
-  assert.equal(missing.status, 2, out(missing));
-  assert.equal(envelope(missing).errors[0].code, 'missing-argument');
+});
+
+test('method without a name lists every pack and section name and exits 0; an unknown name still exits 2', () => {
+  const bare = cli(['method']);
+  assert.equal(bare.status, 0, out(bare));
+  assert.match(bare.stdout, /Packs:/);
+  assert.match(bare.stdout, /Sections/);
+  const env = envelope(cli(['method', '--json']));
+  assert.ok(env.data.names.packs.length > 0 && env.data.names.sections.length > 0);
+  assert.equal(cli(['method', 'x']).status, 2);
 });

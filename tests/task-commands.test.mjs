@@ -138,10 +138,10 @@ test('task list and task show: natural order, the stored document, events with a
   assert.equal(list.code, 0, show(list));
   assert.equal(list.out.data.active, true);
   assert.deepEqual(list.out.data.tasks.map((x) => x.id), Array.from({ length: 11 }, (_, i) => `T-${ME}-${i + 1}`));
-  assert.deepEqual(list.out.data.tasks[0], { id: `T-${ME}-1`, kind: 'task', status: 'new', owner: ME, lane: null, round: 0, title: 'Task 1' });
+  assert.deepEqual(list.out.data.tasks[0], { id: `T-${ME}-1`, kind: 'task', status: 'new', owner: ME, lane: null, round: 0, title: 'Task 1', class: null, branch: null, base: null });
   const text = await cli(['task', 'list'], { ...r, json: false });
   assert.equal(text.out.trim().split('\n').length, 11);
-  assert.match(text.out, new RegExp(`^T-${ME}-10 +new +task +- +Task 10$`, 'm'), 'columns: ID, status, kind, lane (- for none), title');
+  assert.match(text.out, new RegExp(`^T-${ME}-10 +new +- +- +task +- +- +Task 10$`, 'm'), 'columns: ID, status, class, round, kind, lane, branch, title (- for none)');
   await r.run(['task', 'set', `T-${ME}-2`, 'dispatched', '--executor', 'claude:implementer', '--base', 'abc1234']);
   const one = await cli(['task', 'show', `T-${ME}-2`], r);
   assert.equal(one.code, 0, show(one));
@@ -153,6 +153,43 @@ test('task list and task show: natural order, the stored document, events with a
     const res = await cli(['task', 'show', id], r);
     assert.deepEqual([res.code, res.out.errors[0].code], [2, code], `${id}: ${show(res)}`);
   }
+});
+
+test('task show is the resume card after a compaction', async (t) => {
+  const r = await active(t);
+  const id = `T-${ME}-1`;
+  await r.run(['task', 'new', 'Parser']);
+  writeFileSync(join(r.dir, 'a.js'), 'x\n');
+  git(r.dir, r.env, ['add', '.']);
+  git(r.dir, r.env, ['commit', '-q', '-m', 'a']);
+  const sha = git(r.dir, r.env, ['rev-parse', 'HEAD']).trim();
+  const routed = await r.run(['route', id, '--paths', 'a.js', '--loc', '10']);
+  assert.equal(routed.code, 0, show(routed));
+  const started = await r.run(['task', 'set', id, 'started', '--branch', 'task/x', '--base', sha, '--worktree', '/tmp/wt/x']);
+  assert.equal(started.code, 0, show(started));
+  const { openStore } = await lib('verify/index.mjs');
+  const where = state.resolve({ cwd: r.dir, env: r.env, names });
+  openStore(where.dir, names).write('review', `${id}/review-r1`, {
+    verdict: 'needs-fixes', reviewer: { kind: 'claude', id: 'claude:reviewer' },
+    findings: [{ id: 'F1', severity: 'blocking', path: 'a.js', line: 3, rule: null, text: 'off by one' }, { id: 'F2', severity: 'minor', path: null, line: null, rule: null, text: 'naming' }],
+  });
+  const fix = await r.run(['task', 'set', id, 'fix-round', '--round', '1', '--addressed', '0', '--open', '1']);
+  assert.equal(fix.code, 0, show(fix));
+  const text = (await cli(['task', 'show', id], { ...r, json: false })).out;
+  assert.match(text, new RegExp(`^branch task/x · base ${sha} · worktree /tmp/wt/x$`, 'm'));
+  assert.match(text, /^reviews: r1 needs-fixes \(claude, 1 blocking, 1 minor\)$/m);
+  assert.match(text, /^open findings: F1 off by one$/m);
+  assert.match(text, /^next: .*fix round 1 in progress/m);
+  assert.match(text, /^verify: none$/m);
+  assert.ok(text.indexOf('open findings:') < text.indexOf('events:'));
+  const card = (await cli(['task', 'show', id], r)).out.data.card;
+  assert.equal(card.branch, 'task/x');
+  assert.equal(card.base, sha);
+  assert.equal(card.worktree, '/tmp/wt/x');
+  assert.equal(card.verify, null);
+  assert.deepEqual(card.reviews, [{ round: 1, verdict: 'needs-fixes', reviewer: 'claude', blocking: 1, minor: 1 }]);
+  assert.deepEqual(card.openFindings, [{ id: 'F1', path: 'a.js', line: 3, text: 'off by one' }]);
+  assert.match(card.next.state, /fix round 1 in progress/);
 });
 
 // ---- task set: the 1.x task.sh states ----
@@ -212,6 +249,17 @@ test('1.x: every state is recorded with author and time in the grammar of the su
   await refused([id, 'blocked', '--reason', 'r'.repeat(201)], 'limit-exceeded', '--reason over 200 characters');
   await refused([id, 'blocked', '--reason', ''], 'invalid-value', 'empty --reason');
 
+  // started --branch <b> --base <sha> [--worktree <path>]: branch and base recorded, the status unchanged (task start)
+  await refused([id, 'started', '--branch', 'task/x'], 'missing-flag', 'started without --base');
+  await refused([id, 'started', '--branch', '-bad', '--base', 'abc1234'], 'invalid-value', 'a branch name git refuses');
+  await refused([id, 'started', '--branch', 'task/x', '--base', 'abc1234', '--worktree', 'relative/path'], 'invalid-value', 'the worktree is an absolute path');
+  res = await set(id, 'started', '--branch', 'task/T-1-x', '--base', 'bcd2345', '--worktree', '/tmp/wt/T-1');
+  doc = r.task(id);
+  assert.deepEqual([res.code, doc.status, doc.branch, doc.base, lastEvent(doc).data], [0, 'implemented', 'task/T-1-x', 'bcd2345', { branch: 'task/T-1-x', base: 'bcd2345', worktree: '/tmp/wt/T-1' }], show(res));
+  // implementer --round <k>: the report of a fix round records the round too
+  res = await set(id, 'implementer', '--report', 'done', '--round', '2');
+  assert.deepEqual([res.code, r.task(id).status, r.task(id).round, lastEvent(r.task(id)).data], [0, 'implemented', 2, { report: 'done', round: 2 }], show(res));
+
   // 1.x: fix-round --round k --addressed a --open o, numbers only
   res = await set(id, 'fix-round', '--round', '1', '--addressed', '3', '--open', '0');
   doc = r.task(id);
@@ -255,7 +303,25 @@ test('1.x: every state is recorded with author and time in the grammar of the su
     assert.match(e.at, ISO_TIME);
   }
   assert.deepEqual(r.task(id).events.map((e) => e.event), ['created', 'dispatched', 'blocked', 'self-verified', 'status-request',
-    'implementer', 'implementer', 'implementer', 'implementer', 'fix-round']);
+    'implementer', 'implementer', 'implementer', 'implementer', 'started', 'implementer', 'fix-round']);
+});
+
+test('task texts: brief, report and the review brief of a round are written whole by the owner; a round outside 1..999 is refused', async (t) => {
+  const r = await active(t);
+  const id = `T-${ME}-1`;
+  await r.run(['task', 'new', 'Texts']);
+  const ctx = { cwd: r.cwd, env: r.env, names };
+  assert.equal(state.taskTextFile('report'), 'report.md');
+  assert.equal(state.taskTextFile('review-brief', { round: 2 }), 'review-r2-brief.md');
+  assert.throws(() => state.taskTextFile('review-brief', { round: 0 }), /round from 1 to 999/);
+  assert.throws(() => state.taskTextFile('diff'), TypeError);
+  const report = state.writeTaskText({ ...ctx, id, name: 'report', text: '---\nred: {}\n---\n# Report\n' });
+  assert.deepEqual([report.outcome, report.file], ['created', join(r.store, 'tasks', id, 'report.md')]);
+  assert.equal(readFileSync(report.file, 'utf8'), '---\nred: {}\n---\n# Report\n');
+  const rb = state.writeTaskText({ ...ctx, id, name: 'review-brief', round: 3, text: '# Review brief\n' });
+  assert.deepEqual([rb.outcome, rb.file], ['created', join(r.store, 'tasks', id, 'review-r3-brief.md')]);
+  assert.equal(state.writeTaskText({ ...ctx, id, name: 'review-brief', round: 3, text: '# Edited\n' }).outcome, 'kept', 'an existing text is kept unless replace allows');
+  assert.equal(state.writeTaskText({ ...ctx, id, name: 'review-brief', round: 3, text: '# Edited\n', replace: () => true }).outcome, 'replaced');
 });
 
 test('1.x: self-verified accepts --round k (r<k> was the ledger spelling and is refused); the default is the current round', async (t) => {

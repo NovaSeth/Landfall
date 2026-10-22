@@ -7,8 +7,116 @@
 // Result: simple commands { words: [{ text, q, glob }], redirs: [{ op, target, glob }], heredoc: body | null, pipeIn, pipeOut,
 // before, after } — before / after: the connector on that side (';', '&&', '||', '|', '\n' or null at either end).
 // q: '' plain · '?' holds $? · 'msg' the message substitution (its body as one word).
+import { ENV_EXEC } from './tokens.mjs';
+
 export class NotPlain extends Error {}
 export const why = (w) => { throw new NotPlain(w); };
+
+// Literal variables (retro 2026-10 §4.1, SEC-3): `NAME=value` standing as a simple command of its own, whose value is one
+// bare word of letters, digits and . / : @ , + = _ - or one quoted string without quotes, $, backtick, backslash or
+// a shell metacharacter, is substituted for every later `$NAME` or `${NAME}` outside single quotes in the same text,
+// and the assignment is dropped, so the shapes read literal words (the 36 "expansion inside quotes" and 10 "assignment
+// before the command" blocks of one project). The assignment must run unconditionally in the line's shell: it follows
+// the start, `;` or a newline (never `&&`, `||` or a pipe) and `;`, a newline or `&&` follows it. Nothing is substituted
+// (the text stays as written and the parser rejects the expansion) when an assignment is conditional, names a variable
+// the shell, git or a loader reads (PATH, IFS, HOME, the ENV_EXEC list …: its value changes what runs, not only a
+// word), a name is set or used any other way in the text (printf -v, read, declare, export, for, unset, +=, an array
+// index) or assigned twice, or a reference stands where the command name goes (a command from a variable has no shape).
+// `for NAME in <literal words>; do <body>; done` as the whole text is unrolled the same way.
+const ASSIGN = /^\s*([A-Za-z_]\w*)=(.*?)\s*$/s;
+const BARE = /^[A-Za-z0-9_./:@,+=-]*$/;
+const META = /[;&|<>(){}$`\\!*?[\]#~'"\n]/;
+const FOR = /^\s*for\s+([A-Za-z_]\w*)\s+in\s+([^;\n]+?)\s*(?:;|\n)\s*do\s+([\s\S]*?)\s*(?:;|\n)?\s*done\s*$/;
+// Names whose value the shell, a loader or a tool reads for what to run or how to split words: never a literal of the line.
+const SPECIAL = /^(?:PATH|IFS|CDPATH|HOME|PWD|OLDPWD|SHELL|TMPDIR|TMP|TEMP|USER|LOGNAME|LANG|LC_\w*|TERM|OPTIND|OPTARG|RANDOM|LINENO|SECONDS|BASH\w*|ZDOTDIR|FPATH|MODULE_PATH|NODE_PATH|NODE_OPTIONS|PYTHONPATH|PYTHONSTARTUP|PERL5LIB|PERL5OPT|RUBYLIB|RUBYOPT|GEM_PATH|GEM_HOME|CLASSPATH|GOPATH|GOFLAGS|GOROOT|CARGO_HOME|RUSTFLAGS|npm_config_\w*|NPM_CONFIG_\w*|CLAUDE\w*|ANTHROPIC\w*)$/i;
+const UNCONDITIONAL_BEFORE = new Set(['', ';', '\n']);
+const UNCONDITIONAL_AFTER = new Set(['', ';', '\n', '&&']);
+
+// The literal of a value word, or null when it is not one.
+function literal(value) {
+  if (BARE.test(value)) return value;
+  const q = value[0];
+  if ((q === "'" || q === '"') && value.length >= 2 && value.endsWith(q)) {
+    const inner = value.slice(1, -1);
+    return META.test(inner) ? null : inner;
+  }
+  return null;
+}
+
+// Top-level segments of the text (split at ; newline && || | outside quotes) with the connector that follows each.
+function segments(src) {
+  const out = [];
+  let cur = '';
+  let q = null;
+  for (let i = 0; i < src.length; i++) {
+    const c = src[i];
+    if (q) { cur += c; if (c === q) q = null; continue; }
+    if (c === "'" || c === '"') { q = c; cur += c; continue; }
+    if (c === '(' || c === ')' || c === '`') return null; // left to the parser
+    const two = src.slice(i, i + 2);
+    if (two === '&&' || two === '||') { out.push({ text: cur, sep: two }); cur = ''; i++; continue; }
+    if (c === ';' || c === '\n' || c === '|') { out.push({ text: cur, sep: c }); cur = ''; continue; }
+    cur += c;
+  }
+  if (q) return null;
+  out.push({ text: cur, sep: '' });
+  return out;
+}
+
+// `text` with `$NAME` / `${NAME}` of `vars` replaced outside single quotes; a reference in command position stays.
+function substitute(text, vars) {
+  let out = '';
+  let q = null;
+  let atStart = true; // only whitespace so far in the current simple command
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (q === "'") { out += c; if (c === "'") q = null; continue; }
+    if (c === "'" && q === null) { q = c; out += c; atStart = false; continue; }
+    if (c === '"') { q = q === '"' ? null : '"'; out += c; continue; }
+    if (c === '$') {
+      const m = /^\$(?:\{([A-Za-z_]\w*)\}|([A-Za-z_]\w*))/.exec(text.slice(i));
+      const name = m ? m[1] ?? m[2] : null;
+      if (name !== null && vars.has(name) && !atStart) { out += vars.get(name); i += m[0].length - 1; continue; }
+      out += c; atStart = false; continue;
+    }
+    if (q === null && (c === ';' || c === '|' || c === '&' || c === '\n')) { out += c; atStart = true; continue; }
+    if (!/\s/.test(c) || q !== null) atStart = false;
+    out += c;
+  }
+  return out;
+}
+
+export function expandLiterals(src) {
+  const loop = FOR.exec(src);
+  if (loop) {
+    const words = loop[2].split(/\s+/).filter(Boolean).map(literal);
+    if (words.length && words.every((w) => w !== null)) return expandLiterals(words.map((w) => substitute(loop[3], new Map([[loop[1], w]]))).join('; '));
+  }
+  const segs = segments(src);
+  if (!segs) return src;
+  const vars = new Map();
+  const twice = new Set();
+  const rest = [];
+  for (let i = 0; i < segs.length; i++) {
+    const s = segs[i];
+    const m = ASSIGN.exec(s.text);
+    if (!m) { rest.push(s); continue; }
+    const value = literal(m[2]);
+    const before = i === 0 ? '' : segs[i - 1].sep;
+    // a conditional assignment (after && or ||, in a pipe) may not run, so its name has no literal value; a special
+    // name changes what runs: the text stays as written and the parser rejects the expansion
+    if (value === null || !UNCONDITIONAL_BEFORE.has(before) || !UNCONDITIONAL_AFTER.has(s.sep) || SPECIAL.test(m[1]) || ENV_EXEC.test(m[1])) return src;
+    if (vars.has(m[1])) twice.add(m[1]);
+    vars.set(m[1], value);
+  }
+  for (const name of twice) vars.delete(name);
+  if (!vars.size) return src;
+  const text = rest.map((s) => s.text + s.sep).join('').replace(/^\s+/, '');
+  // a bare occurrence of the name (not $NAME, ${NAME}) sets or reads it another way: no proof of its value
+  for (const name of [...vars.keys()]) if (new RegExp(`(?<![\\w$\\{])${name}(?![\\w])`).test(text)) vars.delete(name);
+  if (!vars.size) return src;
+  return substitute(text, vars);
+}
 
 const MSG_SUB = /^"\$\(cat <<(-?)(['"])([A-Za-z_]\w*)\2\n([\s\S]*?)\n(\t*)\3\n\)"/;
 // tick() throws when the analysis is over its deadline; limit is the longest text read at once.
@@ -47,7 +155,9 @@ export function parse(src, { tick = () => {}, limit = 65536 } = {}) {
     add(''); i++;
     while (i < n && src[i] !== '"') {
       const d = src[i];
-      if (d === '$' || d === '`') why('expansion inside quotes');
+      // a $ followed by the closing quote, a blank or one of a few punctuation marks is the literal character, as in bash;
+      // anything else (a name, a brace, a bracket, a backslash that may continue the line) may open an expansion
+      if (d === '`' || (d === '$' && !/^["\s/.:,^;=+%)]$/.test(src[i + 1] ?? ''))) why('expansion inside quotes');
       if (d === '\\') { const x = src[i + 1] ?? ''; if (x !== '\n') add('$`"\\'.includes(x) ? x : d + x); i += 2; continue; }
       add(d); i++;
     }

@@ -43,6 +43,7 @@ Commands:
   baseline pin         Repair the test baseline: replace it with the inventory collected now, with a gate-change or test-removal decision.
   baseline show        Print the pinned test baseline: every test with its skip flag, pinned failures, collector and last pin.
   brief                Render the brief of a routed task from the brief template and the state; --write saves tasks/<id>/brief.md.
+  commit               Commit the changes under the state directory as one chore commit; the code and the index outside it stay as they are.
   config set           Set one config value: a threshold override (only with an active decision) or the providers of an executor role.
   config show          Show the configuration: threshold overrides with their default and decision, executor preferences, changed flags.
   deactivate           Remove the untracked state of this repository (or the link of its external state) and remember the opt-out.
@@ -70,7 +71,7 @@ Commands:
   loop start           Start a loop with caps (defaults: wallMin=480,ticks=200,usd=25,rounds=2); a running loop is never replaced.
   loop status          Print the loop: ticks, wall time and cost against the caps, the stall count, and the exit once it ended.
   loop stop            End the running loop: exit DONE, so no wakeup is scheduled again; an ended loop is left as it is.
-  method               Print one pack or one section of the method by name: each rule line of it, under its section heading.
+  method               Print one pack or one section of the method by name, or the names of every pack and section.
   migrate              Run the forward migrations on every state file of this repository; --dry-run lists the steps and writes nothing.
   profile gates apply  Replace the profile gates with the candidates the scan detects; only with an active gate-change decision.
   profile gates set    Add a profile gate or replace the one of that name; only with an active gate-change decision.
@@ -79,12 +80,15 @@ Commands:
   profile show         Print the project profile: facts with source and evidence, gates, risk paths, and whether a scan is due.
   providers            List the provider CLIs for external runs: found on PATH, version, auth, roles and the sandbox per role.
   providers add        Declare another provider CLI (generic adapter): its argv template and the sandbox mode per role.
-  receipt              Tokens and estimated cost of a task, one external run, the current loop, or all work since a day by class or executor.
+  receipt              Tokens and cost of a task, a run, the loop, or all work since a day (default: since activation) by class or executor.
+  report               Store a task report from a file (RED/GREEN checked); --round appends a fix round; records the implementer event.
+  review brief         Review brief of a task: range pinned to HEAD, diff saved to a file, acceptance, risks, output shape; --write saves it.
   review record        Record a typed review result as the next round tasks/<id>/review-r<k>.json; the Markdown review closes nothing.
   route                Classify a task as trivial, standard or critical from its plan and print its route; the class only rises.
   rule                 Print method rules by ID; a retired ID prints its successor. --core prints the always-on rules.
-  runs                 List the external runs of the last 30 days (queued, running, finished); older finished records are deleted.
-  runs list            List the external runs of the last 30 days (same as runs).
+  runs                 List the external runs: queued, running, finished (newest first).
+  runs list            List the external runs (same as runs).
+  runs prune           Delete finished run records (and logs) older than 30 days, at most 200 a call.
   runs show            Print one external run record, or with --summary the short summary.
   runs stop            Stop an external run: SIGTERM to its supervisor, only when the recorded pid and start time still match.
   secrets              Scan for secrets and key files: working tree and index, staged changes, a commit range or a built artifact.
@@ -93,11 +97,12 @@ Commands:
   state unlock         Remove a lock left by a process that is gone (store and machine data); writes never take one over.
   status               Show this repository: activation, tier, open tasks with their next step, the loop and leases; the default command.
   task done            Mark your task done; only after a passing verify for the code at HEAD (the only way to status done).
-  task list            List the tasks of this repository: ID, status, kind, lane, title.
+  task list            List the tasks of this repository: ID, status, class, round, kind, lane, branch, title.
   task merge           Merge a task branch with --no-ff --no-commit, run the outcome gates on the merged tree, commit only on pass.
   task new             Create a task with the next ID of your handle (T-<H>-<n>); area gates and releases are --kind gate.
   task set             Record a state of your task as an event with author and time; it moves the task's status.
-  task show            Print one task: its fields and events.
+  task show            Print one task as its resume card: class, branch, base, worktree, verify, reviews, open findings, next step, events.
+  task start           Create the task's worktree and branch from a base commit and record them (started); the brief carries both.
   tick                 One loop tick: the next steps from the task state; exit ACTION (0), WAIT (3), DONE (4), STALLED (5) or BUDGET (6).
   tier                 Evaluate the project tier (L0-L3) from git history and the state; a change is logged (shadow) or recorded (on).
   verify               Re-run the profile gates, compare the test inventory with the baseline and record verify.json for a task.
@@ -170,6 +175,25 @@ Read-only. Changes files with --write: needs a terminal or --yes, otherwise exit
 Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
 ```
 
+### `landfall commit [--message <text>] [--yes] [--json]`
+
+```text
+usage: landfall commit [--message <text>] [--yes] [--json]
+
+Commit the changes under the state directory as one chore commit; the code and the index outside it stay as they are.
+Stages and commits only paths under the state directory (git add -A and git commit with that pathspec), with the message
+"chore(<bin>): <what changed>" (the task IDs, decision IDs and files touched) unless --message says otherwise. The commit runs
+your hooks (a refusing hook: exit 1, the paths stay staged). Nothing changed: exit 0. A state directory outside the repository
+(init --state-dir) has nothing git tracks: exit 0, nothing done. The state is not code: verify and task done ignore it, so one
+commit after a task is enough.
+
+Options:
+  --message <text>  the commit message (one line of at most 200 characters; default: chore(<bin>): <what changed>)
+
+Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
+Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
+```
+
 ### `landfall config set <key> <value> [--decision <D>] [--yes] [--json]`
 
 ```text
@@ -219,10 +243,10 @@ Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
 Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
 ```
 
-### `landfall decide [--title <text>] [--why <text>] [--cost <text>] [--scope <globs>] [--kind <kind>] [--supersedes <ids>] [--allows-test-removal <ids>] [--task <id>] [--remaining <ids>] [--yes] [--json]`
+### `landfall decide [--title <text>] [--why <text>] [--cost <text>] [--scope <globs>] [--kind <kind>] [--supersedes <ids>] [--allows-test-removal <ids>] [--from-verify <task>] [--from-file <json>] [--task <id>] [--remaining <ids>] [--yes] [--json]`
 
 ```text
-usage: landfall decide [--title <text>] [--why <text>] [--cost <text>] [--scope <globs>] [--kind <kind>] [--supersedes <ids>] [--allows-test-removal <ids>] [--task <id>] [--remaining <ids>] [--yes] [--json]
+usage: landfall decide [--title <text>] [--why <text>] [--cost <text>] [--scope <globs>] [--kind <kind>] [--supersedes <ids>] [--allows-test-removal <ids>] [--from-verify <task>] [--from-file <json>] [--task <id>] [--remaining <ids>] [--yes] [--json]
 
 Record a decision: a new D-<H>-<n> file under the state directory with what, why and cost if wrong.
 The number is the next of your handle: above every local record and tombstone and every one on origin/main.
@@ -230,6 +254,9 @@ The number is the next of your handle: above every local record and tombstone an
 --allows-test-removal lists test IDs in allowsTestRemoval; a JSON ID such as ["file","title",1] keeps its commas.
 --task with --remaining (review-close): once the latest review round reaches the loop's rounds cap (default 2) and
 remaining lists every blocking finding ID of that round, the review step counts as approved; gates and report do not.
+--from-verify <task> takes the tests the task's latest verify saw removed or newly skipped as allowsTestRemoval (title,
+kind test-removal and scope filled in unless given). --from-file <json> reads the fields from a JSON object (title, why,
+cost, scope, kind, supersedes, allowsTestRemoval, task, remaining); a flag given here wins over the file.
 Cite it next to the code it constrains (COD-12): "// D-<H>-<n>: <why in five words>".
 
 Options:
@@ -240,6 +267,8 @@ Options:
   --kind <kind>                general (default), tier, tier-pin, route-override, test-removal, gate-change, takeover or review-close
   --supersedes <ids>           comma-separated IDs of active decisions this one replaces
   --allows-test-removal <ids>  comma-separated test IDs verify may see removed or newly skipped (as verify prints them); kind test-removal by default
+  --from-verify <task>         allow the tests the task's latest verify saw removed or newly skipped (a test-removal decision)
+  --from-file <json>           read the fields from a JSON file (a regular file of at most 64 KB); flags given here win
   --task <id>                  the task whose review step a review-close decision closes; kind review-close by default
   --remaining <ids>            comma-separated blocking finding IDs of the latest review round left open (review-close)
 
@@ -642,18 +671,19 @@ Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
 Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
 ```
 
-### `landfall method <name> [--json]`
+### `landfall method [<name>] [--json]`
 
 ```text
-usage: landfall method <name> [--json]
+usage: landfall method [<name>] [--json]
 
-Print one pack or one section of the method by name: each rule line of it, under its section heading.
+Print one pack or one section of the method by name, or the names of every pack and section.
 A pack is a name of the packs table in method/index.json (discovery, team, …); a section is <topic>/<section slug>,
 such as coding/tests-first (a slug alone repeats across topics). Reads method/index.json and the topic files; writes
-nothing. An unknown name exits 2 and prints every name (--json: data.names).
+nothing. Without a name it prints every pack and section name (exit 0; --json: data.names). An unknown name exits 2
+and prints every name too.
 
 Arguments:
-  name  a pack, or <topic>/<section slug>
+  name  a pack, or <topic>/<section slug> (omit to list the names)
 
 Read-only.
 Exit codes: 0 OK · 2 USAGE
@@ -736,7 +766,9 @@ Exit codes: 0 OK · 1 FAIL · 7 REFUSED · 8 ENV
 usage: landfall profile set <key> <value> [--source <said|observed>] [--evidence <text>] [--yes] [--json]
 
 Record one profile fact with its source and evidence: the user's words (said) or a path:line (observed).
-Keys: goal, productKind, phase, people, ui, backend, dataSensitivity, deployedToUsers, deadline, stack, ci, otherHarnesses.
+Keys: goal, productKind, phase, people, ui, backend, dataSensitivity, deployedToUsers, deadline, stack, ci, otherHarnesses, riskGlobs, reviewFocus.
+riskGlobs: the project's own risk globs (comma-separated), added to the scanned risk paths for route and verify; reviewFocus:
+what every review of the project checks (comma-separated notes), written into the task brief and the review brief.
 A said fact outranks an observed one (exit 1). Exit 7 in an inactive repository.
 
 Arguments:
@@ -806,7 +838,7 @@ Exit codes: 0 OK · 2 USAGE · 7 REFUSED · 8 ENV
 ```text
 usage: landfall receipt [--task <id>] [--run <id>] [--loop] [--since <YYYY-MM-DD>] [--by <class|executor>] [--yes] [--json]
 
-Tokens and estimated cost of a task, one external run, the current loop, or all work since a day by class or executor.
+Tokens and cost of a task, a run, the loop, or all work since a day (default: since activation) by class or executor.
 Reads the Claude Code transcripts of this repository and its worktrees ($CLAUDE_CONFIG_DIR/projects, default
 ~/.claude/projects) and the run records. A task gets the requests made while it was active (after a task, route,
 brief, verify or exec command naming it), the subagents whose description or name holds its ID (and the subagents
@@ -818,6 +850,7 @@ Something unreadable or unpriced: exit 1 with the numbers found (data.receipt.pa
 counts them; no loop record: exit 1. --since: the saved receipts that ended on or after the day (UTC), their runs
 from the current run records, and the other runs that did not end before it, per task class or per executor (agent
 type, provider). --loop and --since write nothing (exit 1 with data.partial when a number is a lower bound).
+No selector in an active repository means --since the activation day (data.defaulted); an inactive one exits 2.
 
 Options:
   --task <id>            the task, such as T-AB-1
@@ -827,6 +860,57 @@ Options:
   --by <class|executor>  with --since: one row per task class (default) or per executor
 
 Read-only. Changes files with --task, --run: needs a terminal or --yes, otherwise exit 7 REFUSED.
+Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
+```
+
+### `landfall report <id> [--from <file>] [--round <k>] [--force] [--yes] [--json]`
+
+```text
+usage: landfall report <id> [--from <file>] [--round <k>] [--force] [--yes] [--json]
+
+Store a task report from a file (RED/GREEN checked); --round appends a fix round; records the implementer event.
+Without --round the file becomes the report: its frontmatter must hold red and green evidence (as verify reads it) and its last
+"Status:" line one of DONE, DONE_WITH_CONCERNS, NEEDS_CONTEXT or BLOCKED; an existing report is replaced only with --force.
+With --round <k> the report must exist: the file's frontmatter (if any) is dropped and its body is appended under "## Fix round <k>"
+(the heading is added when the body does not start with it); earlier bytes of the report, the frontmatter included, stay as they are.
+Then the task gets the implementer event with the report status (done, done-with-concerns, needs-context or blocked) and the round.
+Exit 1: no evidence, no Status line, the report missing (--round) or present (no --force), the round already in the report, a closed task.
+
+Arguments:
+  id  task ID such as T-AB-1
+
+Options:
+  --from <file>  required: the report text (a regular file of at most 256 KB)
+  --round <k>    the fix round the text reports (1 to 999): appended as a section
+  --force        without --round: replace an existing report
+
+Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
+Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
+```
+
+### `landfall review brief <id> [--round <k>] [--scope <ids>] [--write] [--force] [--yes] [--json]`
+
+```text
+usage: landfall review brief <id> [--round <k>] [--scope <ids>] [--write] [--force] [--yes] [--json]
+
+Review brief of a task: range pinned to HEAD, diff saved to a file, acceptance, risks, output shape; --write saves it.
+Round: --round, else the next after the recorded review rounds. Range: the task base (a later round: the HEAD its previous review
+brief pinned) to HEAD of this checkout, which must be clean (exit 1 dirty-tree: a brief pins a sha). The diff (-U10, the state
+directory left out) goes to local/review/<id>-r<k>.diff in the state directory. The brief lists the changed files, the acceptance
+points of tasks/<id>/brief.md, the risks (profile risk paths the diff touches, the profile's review focus, decisions cited in the
+changed files), the previous round's findings to re-check (--scope narrows them), the severity rule and the output shape.
+--write saves tasks/<id>/review-r<k>-brief.md; a brief edited by hand is kept unless --force. Exit 1: no such task, not routed, no base.
+
+Arguments:
+  id  task ID such as T-AB-1
+
+Options:
+  --round <k>    the review round (default: the next one)
+  --scope <ids>  comma-separated finding IDs of the previous round to re-check (default: all of them)
+  --write        save it as tasks/<id>/review-r<k>-brief.md in the state directory (the task's owner)
+  --force        with --write: replace a brief written or edited by hand
+
+Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
 Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
 ```
 
@@ -900,24 +984,36 @@ Read-only.
 Exit codes: 0 OK · 2 USAGE
 ```
 
-### `landfall runs [--yes] [--json]`
+### `landfall runs [--json]`
 
 ```text
-usage: landfall runs [--yes] [--json]
+usage: landfall runs [--json]
 
-List the external runs of the last 30 days (queued, running, finished); older finished records are deleted.
-Deletes at most 200 finished records (and their logs) older than 30 days per call.
+List the external runs: queued, running, finished (newest first).
+Reads only; a finished record older than 30 days is listed with its age (ageDays). `runs prune` deletes them.
 
-Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
+Read-only.
 Exit codes: 0 OK · 7 REFUSED · 8 ENV
 ```
 
-### `landfall runs list [--yes] [--json]`
+### `landfall runs list [--json]`
 
 ```text
-usage: landfall runs list [--yes] [--json]
+usage: landfall runs list [--json]
 
-List the external runs of the last 30 days (same as runs).
+List the external runs (same as runs).
+
+Read-only.
+Exit codes: 0 OK · 7 REFUSED · 8 ENV
+```
+
+### `landfall runs prune [--yes] [--json]`
+
+```text
+usage: landfall runs prune [--yes] [--json]
+
+Delete finished run records (and logs) older than 30 days, at most 200 a call.
+A record naming another path is skipped, never deleted; queued and running records are kept whatever their age.
 
 Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
 Exit codes: 0 OK · 7 REFUSED · 8 ENV
@@ -1072,7 +1168,7 @@ Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
 ```text
 usage: landfall task list [--json]
 
-List the tasks of this repository: ID, status, kind, lane, title.
+List the tasks of this repository: ID, status, class, round, kind, lane, branch, title.
 An inactive repository has no tasks; nothing is written.
 
 Read-only.
@@ -1100,13 +1196,14 @@ Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
 Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
 ```
 
-### `landfall task new <title> [--kind <kind>] [--lane <lane>] [--yes] [--json]`
+### `landfall task new <title> [--kind <kind>] [--lane <lane>] [--after <ids>] [--yes] [--json]`
 
 ```text
-usage: landfall task new <title> [--kind <kind>] [--lane <lane>] [--yes] [--json]
+usage: landfall task new <title> [--kind <kind>] [--lane <lane>] [--after <ids>] [--yes] [--json]
 
 Create a task with the next ID of your handle (T-<H>-<n>); area gates and releases are --kind gate.
-Exit 7 in an inactive repository (run init first); nothing is written.
+--after names the tasks this one waits for: the loop and status hold it back (no route, no dispatch) until each of them
+is done or cancelled; the brief can then take the merged base. Exit 7 in an inactive repository (run init first); nothing is written.
 
 Arguments:
   title  task title, at most 120 characters
@@ -1114,20 +1211,22 @@ Arguments:
 Options:
   --kind <kind>  task (default), gate or incident
   --lane <lane>  lane: [a-z0-9][a-z0-9._-]{0,39}
+  --after <ids>  comma-separated IDs of existing tasks this one waits for (at most 20)
 
 Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
 Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
 ```
 
-### `landfall task set <id> <state> [--executor <name>] [--base <sha>] [--lane <lane>] [--report <status>] [--reason <text>] [--round <k>] [--addressed <n>] [--open <n>] [--note <text>] [--yes] [--json]`
+### `landfall task set <id> <state> [--executor <name>] [--base <sha>] [--branch <branch>] [--worktree <path>] [--lane <lane>] [--report <status>] [--reason <text>] [--round <k>] [--addressed <n>] [--open <n>] [--note <text>] [--yes] [--json]`
 
 ```text
-usage: landfall task set <id> <state> [--executor <name>] [--base <sha>] [--lane <lane>] [--report <status>] [--reason <text>] [--round <k>] [--addressed <n>] [--open <n>] [--note <text>] [--yes] [--json]
+usage: landfall task set <id> <state> [--executor <name>] [--base <sha>] [--branch <branch>] [--worktree <path>] [--lane <lane>] [--report <status>] [--reason <text>] [--round <k>] [--addressed <n>] [--open <n>] [--note <text>] [--yes] [--json]
 
 Record a state of your task as an event with author and time; it moves the task's status.
-States: dispatched --executor <e> --base <sha> [--lane <l>] · implementer --report done|done-with-concerns|needs-context|blocked
-· blocked --reason <t> · cancelled --reason <t> · fix-round --round <k> --addressed <n> --open <n> · self-verified [--round <k>]
-· status-request. --note <t> fits every state. Only the owner records a state; a done or cancelled task is closed.
+States: started --branch <b> --base <sha> [--worktree <path>] (status unchanged; task start records it) · dispatched --executor <e>
+--base <sha> [--lane <l>] · implementer --report done|done-with-concerns|needs-context|blocked [--round <k>] · blocked --reason <t>
+· cancelled --reason <t> · fix-round --round <k> --addressed <n> --open <n> · self-verified [--round <k>] · status-request.
+--note <t> fits every state. Only the owner records a state; a done or cancelled task is closed.
 done is never set here: a task is done only after a passing verify (GC3). With the lanes capability on, dispatched needs a lane.
 
 Arguments:
@@ -1136,11 +1235,13 @@ Arguments:
 
 Options:
   --executor <name>  dispatched: who implements, such as claude:implementer
-  --base <sha>       dispatched: the commit the work starts from
+  --base <sha>       started, dispatched: the commit the work starts from
+  --branch <branch>  started: the task branch (task merge merges it)
+  --worktree <path>  started: the absolute path of the task worktree
   --lane <lane>      dispatched: the lane, stored on the task
   --report <status>  implementer: done, done-with-concerns, needs-context or blocked
   --reason <text>    blocked: what unblocks it; cancelled: why (at most 200 characters)
-  --round <k>        fix-round: the round delivered; self-verified: the round verified
+  --round <k>        fix-round: the round delivered; implementer: the fix round the report delivers; self-verified: the round verified
   --addressed <n>    fix-round: findings addressed
   --open <n>         fix-round: findings still open
   --note <text>      any state: a note (at most 200 characters)
@@ -1154,12 +1255,35 @@ Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
 ```text
 usage: landfall task show <id> [--json]
 
-Print one task: its fields and events.
+Print one task as its resume card: class, branch, base, worktree, verify, reviews, open findings, next step, events.
 
 Arguments:
   id  task ID such as T-AB-1
 
 Read-only.
+Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
+```
+
+### `landfall task start <id> [--slug <s>] [--from <ref>] [--path <dir>] [--yes] [--json]`
+
+```text
+usage: landfall task start <id> [--slug <s>] [--from <ref>] [--path <dir>] [--yes] [--json]
+
+Create the task's worktree and branch from a base commit and record them (started); the brief carries both.
+Branch task/<id>-<slug> (--slug, else from the title: lower case, non-alphanumerics as -, at most 40 characters) at --from (a commit or
+ref; default HEAD of this checkout); worktree at --path (default <parent of the repository>/<repository name>-wt/<id>), created by
+`git worktree add`, so nothing is written by hand. Then `task set <id> started --branch --base --worktree`: the status does not move.
+Exit 1: the task is closed, --from names no commit, the branch or the path exists; nothing is created then.
+
+Arguments:
+  id  task ID such as T-AB-1
+
+Options:
+  --slug <s>    the branch suffix: [a-z0-9][a-z0-9.-]*, at most 40 characters (default: from the title)
+  --from <ref>  the base commit or ref (default: HEAD)
+  --path <dir>  the worktree directory (default: <repo parent>/<repo name>-wt/<id>)
+
+Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
 Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
 ```
 
