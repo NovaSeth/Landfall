@@ -59,6 +59,7 @@ import { runHeavy } from './heavy.mjs';
 import { redacted } from './redact.mjs';
 import { byCodeUnit, hashOf } from './inventory.mjs';
 import { VERIFY_KINDS } from './kinds.mjs';
+import { detectRenames, idFiles } from './rename.mjs';
 import { parseReport } from './reporters.mjs';
 import { SKIP_DIRS, scanRepo, scannerOf } from './scan.mjs';
 
@@ -292,8 +293,10 @@ export function evaluate({ where, names, env, id, mode, handle = null, at = now(
   };
   let candidates = null;
   let inv = null;
+  let ctx = null;
   let output = [];
   let reused = null;
+  let renamed = [];
   const baseOk = mode === 'merge' || commitExists(where, env, task.base);
   if (!baseOk) say('fail', 'base-missing', task.base ? `the base commit ${task.base.slice(0, 12)} of ${id} is not in this repository` : `${id} has no base commit`, `record it: ${names.bin} task set ${id} dispatched --executor <e> --base <sha> (fetch it first in a shallow clone)`);
   const anchorCommit = mode === 'merge' ? anchor : baseOk ? task.base : null;
@@ -318,7 +321,8 @@ export function evaluate({ where, names, env, id, mode, handle = null, at = now(
     reused = hit?.at ?? null;
     doc.gates = runs.map((r) => r.gate);
     output = runs.map((r) => ({ name: r.gate.name, lines: tailLines(r.output) }));
-    inv = inventoryOf(runs, context(where, env, code.rel));
+    ctx = context(where, env, code.rel);
+    inv = inventoryOf(runs, ctx);
     if (key && !hit && mode !== 'ci') {
       const report = (r) => {
         const part = inv.parts.find((p) => p.run === r);
@@ -365,6 +369,21 @@ export function evaluate({ where, names, env, id, mode, handle = null, at = now(
     } else {
       reference = referenceOf(pinned);
       cmp = compareInventory(reference, inv, active.map((d) => ({ id: d.id, allowsTestRemoval: d.allowsTestRemoval ?? [] })));
+      // A test removed by its title whose body is present under a title the anchor's inventory did not have (rename.mjs)
+      // changed its name, not its assertions: it is reported as renamed and needs no decision (COD-3 names removals and
+      // weakenings). The candidates are the current tests the anchor's accepted inventory lacks (not only this run's
+      // additions: after a passing verify grew the working baseline, a second run still sees the old titles removed).
+      const anchorDoc = measure ? measured : anchored.doc;
+      if (cmp.removed.length && anchorCommit && anchorDoc) {
+        const known = new Set(anchorDoc.tests.map((t) => t.id));
+        const candidates = inv.tests.map((t) => t.id).filter((x) => !known.has(x));
+        const readAt = (p) => { const r = gitIn(where, env, ['show', `${anchorCommit}:${p}`]); return r.status === 0 ? r.stdout : null; };
+        renamed = candidates.length ? detectRenames({ removed: cmp.removed, added: candidates, files: [...(change?.paths ?? []), ...idFiles(cmp.removed)], readAt, readNow: ctx.read }) : [];
+        if (renamed.length) {
+          const from = new Set(renamed.map((r) => r.from));
+          cmp = { ...cmp, removed: cmp.removed.filter((x) => !from.has(x)), unallowed: cmp.unallowed.filter((x) => !from.has(x)) };
+        }
+      }
     }
     for (const d of cmp.allowedBy) allowedBy.add(d);
     if (cmp.unallowed.length) say('baseline-shrunk', 'baseline-shrunk', `removed or skipped without a decision: ${some(cmp.unallowed)}`, 'restore them, or record a decision that lists them in allowsTestRemoval');
@@ -432,7 +451,7 @@ export function evaluate({ where, names, env, id, mode, handle = null, at = now(
     const n = store.list('verifyAttempt').filter((k) => k.startsWith(`${id}-m`)).length + 1;
     store.write('verifyAttempt', `${id}-m${n}`, { task: id, at, gates: output });
   }
-  return { doc, reasons: reasons.map(({ code: c, message, hint }) => ({ code: c, message, hint })), written: write, candidates, output, reused, attempt };
+  return { doc, reasons: reasons.map(({ code: c, message, hint }) => ({ code: c, message, hint })), written: write, candidates, output, reused, attempt, renamed };
 }
 
 // On pass the baseline is this inventory; written only when its content changed, and only over the baseline this run

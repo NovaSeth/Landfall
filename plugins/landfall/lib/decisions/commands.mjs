@@ -75,14 +75,77 @@ export function splitTestIds(value) {
   return [...new Set(out.map((s) => s.trim()).filter(Boolean).map(canonical))];
 }
 
-function create({ flags, names, io }, supersedes) {
-  const missing = ['title', 'why', 'cost'].filter((k) => typeof flags[k] !== 'string' || flags[k].trim() === '');
-  if (missing.length) {
-    return { code: EXIT.USAGE, errors: missing.map((k) => ({ code: 'missing-flag', message: `--${k} <text> is required`, hint: `${names.bin} decide --title <what> --why <why> --cost <cost if wrong>` })) };
+const FILE_MAX = 65536;
+const FILE_KEYS = ['title', 'why', 'cost', 'scope', 'kind', 'supersedes', 'allowsTestRemoval', 'task', 'remaining'];
+
+// --from-file <json>: the fields of a decision as a JSON object (title, why, cost, scope, kind, supersedes,
+// allowsTestRemoval, task, remaining; lists as arrays or comma-separated text); a flag given on the command line wins.
+function fromFile(flags, io) {
+  const file = isAbsolute(flags.fromFile) ? flags.fromFile : join(io.cwd, flags.fromFile);
+  let doc;
+  try {
+    const st = lstatSync(file);
+    if (!st.isFile() || st.size > FILE_MAX) return { error: usage('decision-file-unreadable', `${flags.fromFile} is not a regular file of at most ${FILE_MAX} bytes`, 'give a JSON file with title, why and cost') };
+    doc = JSON.parse(readFileSync(file, 'utf8'));
+  } catch (err) {
+    return { error: usage('decision-file-unreadable', `${flags.fromFile} cannot be read as JSON: ${String(err.message).slice(0, 120)}`, 'give a JSON file with title, why and cost') };
+  }
+  if (!doc || typeof doc !== 'object' || Array.isArray(doc)) return { error: usage('decision-file-unreadable', `${flags.fromFile} does not hold a JSON object`, 'give a JSON object with title, why and cost') };
+  const unknown = Object.keys(doc).filter((k) => !FILE_KEYS.includes(k));
+  if (unknown.length) return { error: usage('invalid-value', `${flags.fromFile}: unknown field ${unknown[0]}`, `fields: ${FILE_KEYS.join(', ')}`) };
+  const merged = { ...flags };
+  for (const k of FILE_KEYS) {
+    if (doc[k] === undefined || merged[k] !== undefined) continue;
+    const v = doc[k];
+    if (Array.isArray(v)) merged[k] = k === 'allowsTestRemoval' ? v.map((x) => (typeof x === 'string' ? x : JSON.stringify(x))).join(',') : v.map(String).join(',');
+    else if (typeof v === 'string') merged[k] = v;
+    else return { error: usage('invalid-value', `${flags.fromFile}: ${k} must be text${k === 'scope' || k === 'supersedes' || k === 'allowsTestRemoval' || k === 'remaining' ? ' or a list' : ''}`, 'fix the file; nothing was written') };
+  }
+  return { flags: merged };
+}
+
+// --from-verify <task>: the tests the task's latest verify saw removed or newly skipped become allowsTestRemoval; the
+// title defaults to what they are; the kind is test-removal; the scope lists their files. verify.json is read as text
+// through the store (the verify unit owns its kind).
+function fromVerify(flags, store, names) {
+  const id = String(flags.fromVerify);
+  if (!PATTERNS.taskId.test(id)) return { error: usage('invalid-value', `--from-verify ${id.slice(0, 40)}: not a task ID`, 'a task ID is T-<handle>-<number>') };
+  let v;
+  try { v = JSON.parse(store.readText(`tasks/${id}/verify.json`) ?? 'null'); } catch { v = null; }
+  if (!v || typeof v !== 'object' || !v.inventory) return { error: { code: EXIT.FAIL, errors: [{ code: 'verify-missing', message: `${id} has no verify record to take the removed tests from`, hint: `run ${names.bin} verify ${id} first` }] } };
+  const ids = [...new Set([...(v.inventory.removed ?? []), ...(v.inventory.newlySkipped ?? [])])];
+  if (!ids.length) return { error: { code: EXIT.FAIL, errors: [{ code: 'nothing-to-allow', message: `the latest verify of ${id} saw no test removed or newly skipped`, hint: 'nothing to allow; a renamed test needs no decision' }] } };
+  const files = [...new Set(ids.map((x) => { try { const a = JSON.parse(x); return Array.isArray(a) && typeof a[0] === 'string' && a[0] !== '' ? a[0] : null; } catch { return null; } }).filter(Boolean))];
+  const given = splitTestIds(flags.allowsTestRemoval);
+  const merged = {
+    ...flags,
+    allowsTestRemoval: [...new Set([...given, ...ids])].join(','),
+    title: flags.title ?? `${id}: ${ids.length} ${ids.length === 1 ? 'test' : 'tests'} removed or newly skipped`,
+    kind: flags.kind ?? 'test-removal',
+    scope: flags.scope ?? (files.length ? files.join(',') : undefined),
+  };
+  return { flags: merged };
+}
+
+function create({ flags: given, names, io }, supersedes) {
+  let flags = given;
+  if (flags.fromFile !== undefined) {
+    const r = fromFile(flags, io);
+    if (r.error) return r.error;
+    flags = r.flags;
   }
   const where = here({ io, names });
   requireActive(where, names);
   const store = open(where.dir, { names });
+  if (flags.fromVerify !== undefined) {
+    const r = fromVerify(flags, store, names);
+    if (r.error) return r.error;
+    flags = r.flags;
+  }
+  const missing = ['title', 'why', 'cost'].filter((k) => typeof flags[k] !== 'string' || flags[k].trim() === '');
+  if (missing.length) {
+    return { code: EXIT.USAGE, errors: missing.map((k) => ({ code: 'missing-flag', message: `--${k} <text> is required`, hint: `${names.bin} decide --title <what> --why <why> --cost <cost if wrong>` })) };
+  }
   const handle = authorHandle({ store, where, names, env: io.env });
   const allowsTestRemoval = splitTestIds(flags.allowsTestRemoval);
   const kind = flags.kind ?? (allowsTestRemoval.length ? 'test-removal' : flags.task !== undefined ? 'review-close' : undefined);
@@ -93,7 +156,7 @@ function create({ flags, names, io }, supersedes) {
   return { data: result, text: `${lines.join('\n')}\n`, warnings: result.warnings.map((w) => w.message) };
 }
 
-export const decide = guarded((ctx) => create(ctx, splitList(ctx.flags.supersedes)));
+export const decide = guarded((ctx) => create(ctx, splitList(ctx.flags.supersedes ?? (ctx.flags.fromFile !== undefined ? fromFile(ctx.flags, ctx.io).flags?.supersedes : undefined))));
 export const supersede = guarded((ctx) => create(ctx, [String(ctx.args.id)]));
 
 export const retire = guarded(({ args, flags, names, io }) => {
