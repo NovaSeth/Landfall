@@ -86,8 +86,9 @@ Commands:
   review record        Record a typed review result as the next round tasks/<id>/review-r<k>.json; the Markdown review closes nothing.
   route                Classify a task as trivial, standard or critical from its plan and print its route; the class only rises.
   rule                 Print method rules by ID; a retired ID prints its successor. --core prints the always-on rules.
-  runs                 List the external runs of the last 30 days (queued, running, finished); older finished records are deleted.
-  runs list            List the external runs of the last 30 days (same as runs).
+  runs                 List the external runs: queued, running, finished (newest first).
+  runs list            List the external runs (same as runs).
+  runs prune           Delete finished run records (and logs) older than 30 days, at most 200 a call.
   runs show            Print one external run record, or with --summary the short summary.
   runs stop            Stop an external run: SIGTERM to its supervisor, only when the recorded pid and start time still match.
   secrets              Scan for secrets and key files: working tree and index, staged changes, a commit range or a built artifact.
@@ -975,24 +976,36 @@ Read-only.
 Exit codes: 0 OK · 2 USAGE
 ```
 
-### `landfall runs [--yes] [--json]`
+### `landfall runs [--json]`
 
 ```text
-usage: landfall runs [--yes] [--json]
+usage: landfall runs [--json]
 
-List the external runs of the last 30 days (queued, running, finished); older finished records are deleted.
-Deletes at most 200 finished records (and their logs) older than 30 days per call.
+List the external runs: queued, running, finished (newest first).
+Reads only; a finished record older than 30 days is listed with its age (ageDays). `runs prune` deletes them.
 
-Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
+Read-only.
 Exit codes: 0 OK · 7 REFUSED · 8 ENV
 ```
 
-### `landfall runs list [--yes] [--json]`
+### `landfall runs list [--json]`
 
 ```text
-usage: landfall runs list [--yes] [--json]
+usage: landfall runs list [--json]
 
-List the external runs of the last 30 days (same as runs).
+List the external runs (same as runs).
+
+Read-only.
+Exit codes: 0 OK · 7 REFUSED · 8 ENV
+```
+
+### `landfall runs prune [--yes] [--json]`
+
+```text
+usage: landfall runs prune [--yes] [--json]
+
+Delete finished run records (and logs) older than 30 days, at most 200 a call.
+A record naming another path is skipped, never deleted; queued and running records are kept whatever their age.
 
 Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
 Exit codes: 0 OK · 7 REFUSED · 8 ENV

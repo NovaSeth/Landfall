@@ -1,7 +1,8 @@
 // `<bin> wait <run> [--timeout <s>]`, `<bin> runs [list]`, `<bin> runs show <run> [--summary]`, `<bin> runs stop <run>`
 // (spec §7.12, §8.5). Reads and updates the run records written by exec. wait polls the record (every 200 ms, at most
 // --timeout seconds, ≤ 590): exit 3 while the run is not terminal, exit 0 with a summary of at most 1 KB when it is.
-// list shows the runs of the last 30 days and deletes finished records (and logs) older than that, at most 200 a call.
+// list shows every run (newest first, records older than 30 days marked by their age) and writes nothing; prune deletes
+// finished records (and logs) older than 30 days, at most 200 a call.
 // stop signals the supervisor (SIGTERM) only when the recorded identity (pid + start time + method) is the current
 // one of that pid; gone or another process: the run is marked failed, nothing is signalled; unreadable: refused.
 // Exit 0 · 1 unknown run · 2 bad --timeout · 3 wait: still running · 7 inactive repository, stop: identity unreadable.
@@ -64,20 +65,35 @@ export async function wait({ args, flags, names, io }) {
   }
 }
 
+const stampOf = (x) => Date.parse(x.endedAt ?? x.startedAt ?? x.queuedAt);
+
 export function runsList({ names, io }) {
   const r = where(io, names);
   if (r.refused) return r.refused;
+  const now = Date.now();
+  const runs = readRunRecords(r.store).sort((a, b) => (a.queuedAt < b.queuedAt ? 1 : -1)).map((x) => {
+    const s = summaryOf(x);
+    const age = Math.floor((now - stampOf(x)) / DAY_MS);
+    return TERMINAL.includes(x.status) && age >= KEEP_DAYS ? { ...s, ageDays: age } : s;
+  });
+  const line = (x) => `${x.runId}  ${x.status}  ${x.task}  ${Math.round(x.elapsedMs / 1000)} s${x.ageDays === undefined ? '' : `  (${x.ageDays} days old)`}`;
+  return { data: { runs }, text: runs.length ? `${runs.map(line).join('\n')}\n` : 'no runs\n' };
+}
+
+export function runsPrune({ names, io }) {
+  const r = where(io, names);
+  if (r.refused) return r.refused;
   const cutoff = Date.now() - KEEP_DAYS * DAY_MS;
-  const stamp = (x) => Date.parse(x.endedAt ?? x.startedAt ?? x.queuedAt);
   const all = readRunRecords(r.store);
-  const old = all.filter((x) => TERMINAL.includes(x.status) && stamp(x) < cutoff);
+  const old = all.filter((x) => TERMINAL.includes(x.status) && stampOf(x) < cutoff);
+  const removed = [];
   // The file name comes from the validated run id only (RUN_ID): a record naming another path is skipped, never deleted.
   for (const x of old.slice(0, PRUNE_MAX)) {
     if (typeof x.runId !== 'string' || !RUN_ID.test(x.runId)) continue;
     for (const ext of ['json', 'log']) { try { unlinkSync(join(r.w.dir, 'local', 'runs', `${x.runId}.${ext}`)); } catch { /* already gone */ } }
+    removed.push(x.runId);
   }
-  const runs = all.filter((x) => !old.includes(x)).sort((a, b) => (a.queuedAt < b.queuedAt ? 1 : -1)).map(summaryOf);
-  return { data: { runs }, text: runs.length ? `${runs.map((x) => `${x.runId}  ${x.status}  ${x.task}  ${Math.round(x.elapsedMs / 1000)} s`).join('\n')}\n` : 'no runs in the last 30 days\n' };
+  return { data: { removed, kept: all.length - removed.length }, text: `pruned ${removed.length} finished runs older than 30 days\n` };
 }
 
 export function runsShow({ args, flags, names, io }) {
