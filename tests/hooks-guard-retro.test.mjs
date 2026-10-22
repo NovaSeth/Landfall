@@ -6,7 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -49,6 +49,10 @@ function repo() {
     mkdirSync(dirname(join(d, rel)), { recursive: true });
     writeFileSync(join(d, rel), text);
   }
+  // a planted launcher with the running plugin's lib linked beside it (2.2.1: a sibling directory proves nothing)
+  mkdirSync(join(d, 'linked', 'bin'), { recursive: true });
+  writeFileSync(join(d, 'linked', 'bin', BIN), '#!/bin/sh\necho linked\n');
+  symlinkSync(join(pluginDir, 'lib'), join(d, 'linked', 'lib'));
   git('add', '-A');
   git('-c', 'user.name=T', '-c', 'user.email=t@example.com', 'commit', '-q', '-m', 'tracked');
   return d;
@@ -165,6 +169,8 @@ const MUST_BLOCK = [
   [`/nowhere/plugins/x/bin/${BIN} commit --yes`, 'SEC-3', 'a launcher path that does not exist is a script'],
   [`copy/bin/${BIN} commit --yes`, 'SEC-3', 'the launcher\'s own bytes in a copy nobody trusts: the code beside it is unknown'],
   [`node copy/bin/${BIN} commit --yes`, 'SEC-3', 'the same behind node'],
+  [`linked/bin/${BIN} commit --yes`, 'SEC-3', 'a planted launcher with the real lib linked beside it: a sibling directory proves nothing'],
+  [`node linked/bin/${BIN} commit --yes`, 'SEC-3', 'the same behind node'],
   [`time X=a git stash`, 'SEC-3', 'an assignment after time (bash reads it as a prefix assignment)'],
   [`time PATH=/tmp/evil git commit -m x`, 'SEC-3', 'PATH set after time'],
   [`time ! git stash`, 'SEC-3', 'compound syntax after time'],

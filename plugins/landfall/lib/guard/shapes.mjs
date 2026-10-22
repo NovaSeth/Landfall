@@ -26,23 +26,19 @@ const KIT_SCRIPT = /(^|\/)(\.workflow\/(bin|routing)|\.githooks)\/[\w.-]+$/;
 const isBin = (w) => w === BIN;
 // The plugin's launcher called by its path (`plugins/<p>/bin/<bin> …`, also behind `node`): the own command, not a
 // script with arguments (retro follow-up 2.2.1). The name and even the file's bytes prove nothing about the code the
-// launcher runs (its `../lib`): the path, resolved from the command's directory and through links, must be the
-// launcher of this running plugin, or sit beside this plugin's lib directory, or be named by the operator in the
-// session's environment (`<PREFIX>LAUNCHERS`, a `:`-separated list of launcher paths: a development checkout). Any
-// other copy, another version or a missing file falls back to the script rules.
+// launcher runs (its `../lib`), and a sibling directory proves nothing either (a link beside a planted file): the
+// path, resolved from the command's directory and through links, must be the launcher of this running plugin or one
+// the operator named in the session's environment (`<PREFIX>LAUNCHERS`, a `:`-separated list of launcher paths: a
+// development checkout). Any other copy, another version or a missing file falls back to the script rules.
 const LAUNCHER = new RegExp(`(^|/)bin/${BIN}$`);
 const real = (p) => { try { return realpathSync(p); } catch { return null; } };
-const OWN = (() => {
-  const launcher = real(fileURLToPath(new URL(`../../bin/${BIN}`, import.meta.url)));
-  const lib = real(fileURLToPath(new URL('../', import.meta.url)));
-  return launcher && lib ? { launcher, lib } : null;
-})();
+const OWN_LAUNCHER = real(fileURLToPath(new URL(`../../bin/${BIN}`, import.meta.url)));
 function isLauncher(t, ctx) {
-  if (t === BIN || !LAUNCHER.test(t) || OWN === null || typeof ctx.cwd !== 'string') return false;
+  if (t === BIN || !LAUNCHER.test(t) || OWN_LAUNCHER === null || typeof ctx.cwd !== 'string') return false;
   const p = real(resolve(ctx.cwd, t));
   if (p === null) return false;
   try { if (!statSync(p).isFile()) return false; } catch { return false; }
-  if (p === OWN.launcher || real(join(dirname(p), '..', 'lib')) === OWN.lib) return true;
+  if (p === OWN_LAUNCHER) return true;
   const trusted = String(ctx.env?.[`${ENV_PREFIX}LAUNCHERS`] ?? '').split(':').filter(Boolean).map(real);
   return trusted.includes(p);
 }
