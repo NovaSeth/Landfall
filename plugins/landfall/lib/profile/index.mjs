@@ -22,6 +22,11 @@ export { QUESTIONS, QUESTION_CAPS, confirmation, pendingQuestions } from './ques
 export { TRIGGERS, commitsSince, headOf, scanDue } from './triggers.mjs';
 export { factValues } from './values.mjs';
 
+// The risk globs the router adds to its defaults: the scanned riskPaths and the said fact riskGlobs, each once.
+export const riskGlobsOf = (profile) => [...new Set([...(profile?.riskPaths ?? []), ...(Array.isArray(profile?.facts?.riskGlobs?.value) ? profile.facts.riskGlobs.value : [])])];
+// What every review of the project checks (the said fact reviewFocus), or [].
+export const reviewFocusOf = (profile) => (Array.isArray(profile?.facts?.reviewFocus?.value) ? profile.facts.reviewFocus.value : []);
+
 const nowIso = () => new Date().toISOString();
 
 // The state directory relative to the repository when it lives inside it (its files are not project files): a tree

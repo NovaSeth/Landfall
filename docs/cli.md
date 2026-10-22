@@ -766,7 +766,9 @@ Exit codes: 0 OK · 1 FAIL · 7 REFUSED · 8 ENV
 usage: landfall profile set <key> <value> [--source <said|observed>] [--evidence <text>] [--yes] [--json]
 
 Record one profile fact with its source and evidence: the user's words (said) or a path:line (observed).
-Keys: goal, productKind, phase, people, ui, backend, dataSensitivity, deployedToUsers, deadline, stack, ci, otherHarnesses.
+Keys: goal, productKind, phase, people, ui, backend, dataSensitivity, deployedToUsers, deadline, stack, ci, otherHarnesses, riskGlobs, reviewFocus.
+riskGlobs: the project's own risk globs (comma-separated), added to the scanned risk paths for route and verify; reviewFocus:
+what every review of the project checks (comma-separated notes), written into the task brief and the review brief.
 A said fact outranks an observed one (exit 1). Exit 7 in an inactive repository.
 
 Arguments:

@@ -77,6 +77,14 @@ const TABLE = [
   ['a guide about migrations is not a migration', { paths: ['docs/migration-guide.md'], loc: 2 }, 'trivial', ['small']],
   ['sqlite.js is not SQL', { paths: ['src/sqlite.js'], loc: 2 }, 'trivial', ['small']],
   ['.github outside workflows', { paths: ['.github/CODEOWNERS'], loc: 2 }, 'trivial', ['small']],
+  // docs and binaries are weightless (retro 2026-10 §3.6): size never raises them above standard; risk globs and flags still do
+  ['a manual of 2,100 lines in 12 files is docs-only: standard', { paths: many(12, 'docs/manual/pl').map((p) => p.replace('.js', '.md')), loc: 2100 }, 'standard', ['docs-only']],
+  ['35 screenshots are docs-only: standard', { paths: many(35, 'docs/qa').map((p) => p.replace('.js', '.png')), loc: 0 }, 'standard', ['docs-only']],
+  ['one README line stays trivial', { paths: ['README.md'], loc: 5 }, 'trivial', ['small']],
+  ['a docs file under a risk glob is still critical', { paths: ['src/auth/README.md', 'docs/a.md', 'docs/b.md'], loc: 900 }, 'critical', ['risk-path']],
+  ['a flag on docs is still a flag', { paths: ['docs/a.md', 'docs/b.md', 'docs/c.md'], loc: 900, flags: ['new-dependency'] }, 'standard', ['docs-only', 'flag']],
+  ['16 code files plus 20 images: the images weigh nothing (16 files > 15 by the code alone)', { paths: [...many(16), ...many(20, 'assets').map((p) => p.replace('.js', '.png'))], loc: 100 }, 'critical', ['files-over']],
+  ['15 code files plus 20 images: standard, not critical', { paths: [...many(15), ...many(20, 'assets').map((p) => p.replace('.js', '.png'))], loc: 100 }, 'standard', ['files-over-trivial', 'loc-over-trivial']],
   // every reason is listed, critical ones first
   ['risk path, risk flag and size together', { paths: ['src/auth/a.js', ...many(16)], loc: 500, flags: ['migration', 'new-dependency'] }, 'critical', ['risk-path', 'risk-flag', 'files-over', 'loc-over']],
   // duplicate paths count once
@@ -411,9 +419,10 @@ test('override: a waiver never covers an unrelated later risk (findings-r1 #2, t
   const r = repo(t);
   const id = newTask(r.store, r.handle);
   const go = (plan) => router.routeTask(r.store, id, { ...plan, handle: r.handle, at: AT });
-  assert.equal(go({ paths: ['docs/generated/api.md'], loc: 401 }).class, 'critical');
-  router.overrideTask(r.store, id, { to: 'trivial', by: 'user', quote: 'Only generated documentation changed; skip the critical review for that', handle: r.handle, at: AT });
-  const docs = go({ paths: ['docs/generated/api.md'], loc: 401 });
+  // generated code (docs would be weightless since 2.1): 401 lines are critical by size until the user waives it
+  assert.equal(go({ paths: ['src/generated/api.js'], loc: 401 }).class, 'critical');
+  router.overrideTask(r.store, id, { to: 'trivial', by: 'user', quote: 'Only generated code changed; skip the critical review for that', handle: r.handle, at: AT });
+  const docs = go({ paths: ['src/generated/api.js'], loc: 401 });
   assert.deepEqual([docs.outcome, docs.class], ['held', 'trivial'], 'the waived plan stays waived');
   const risky = go({ paths: ['auth/delete-users.sql'], loc: 1000, flags: ['security', 'data-write', 'irreversible'] });
   assert.deepEqual([risky.outcome, risky.class, risky.computed, risky.escalated], ['escalated', 'critical', 'critical', true]);

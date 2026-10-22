@@ -13,7 +13,7 @@
 // repository, not the task's owner, no registered handle, newer schema · 8 not a git repository, git missing.
 import { isAbsolute, relative } from 'node:path';
 import { EXIT } from '../cli/commands.mjs';
-import { openStore } from '../profile/index.mjs';
+import { openStore, riskGlobsOf } from '../profile/index.mjs';
 import { StateError, emailHash, gitIdentity, open, resolve } from '../state/index.mjs';
 import { reviewShown } from '../verify/artifacts.mjs';
 import { classify } from './classify.mjs';
@@ -76,8 +76,9 @@ function tracked({ io, names }) {
   return { where, store, handle };
 }
 
-// The profile's risk globs of the state directory `dir` (classify adds them to the defaults); none before a scan.
-export const readProfileRiskPaths = ({ dir, names }) => openStore(dir, names).read('profile')?.riskPaths ?? [];
+// The profile's risk globs of the state directory `dir` (classify adds them to the defaults): the scanned risk paths
+// and the said fact riskGlobs; none before a scan or a said fact.
+export const readProfileRiskPaths = ({ dir, names }) => riskGlobsOf(openStore(dir, names).read('profile'));
 
 function probe(f, { io, names, readRisk }) {
   let where = null;

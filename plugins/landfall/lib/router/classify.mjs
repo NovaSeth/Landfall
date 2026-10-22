@@ -158,15 +158,26 @@ export const pathKey = (path) => `risk-path:${createHash('sha256').update(path).
 
 const strip = ({ code, text, path }) => (path === undefined ? { code, text } : { code, text, path });
 
+// Weightless paths (retro 2026-10 §3.6, §4.3): documentation, images and other binary assets count for the risk globs
+// and the flags, never for the size thresholds. In a 40-task project 37 tasks were critical by size alone, two of them
+// a manual and its translation, one a batch of screenshots. A path is weightless by its extension or by lying under a
+// docs directory; a change made only of weightless paths is `docs-only`: size never raises it above standard.
+const WEIGHTLESS_EXT = /\.(?:md|mdx|markdown|txt|rst|adoc|asciidoc|png|jpe?g|gif|webp|avif|svg|ico|bmp|tiff?|pdf|mp[34]|mov|webm|ogg|wav|woff2?|ttf|otf|eot|zip|gz|tgz|jar|wasm)$/i;
+const DOCS_DIR = /^(?:docs?|documentation)\//i;
+export const weightless = (path) => WEIGHTLESS_EXT.test(path) || DOCS_DIR.test(path);
+
 // { class, reasons: [{ code, text, path? }], all: [{ code, text, path?, level, key }], files, loc, flags }.
 // `riskPaths` are the profile's globs, added to the defaults; `thresholds` are the shipped ones with the repository's
-// overrides (lib/config thresholdsOf), the shipped ones when omitted.
+// overrides (lib/config thresholdsOf), the shipped ones when omitted. Size thresholds count the paths that carry weight;
+// a docs-only change (every path weightless, no flag) is trivial when small and standard otherwise.
 export function classify({ paths, loc, flags = [], riskPaths = [], thresholds = THRESHOLDS } = {}) {
   const files = checkPaths(paths);
   checkLoc(loc);
   const declared = checkFlags(flags);
   const globs = checkGlobs(riskPaths);
   const { trivial, critical } = thresholds;
+  const sized = files.filter((p) => !weightless(p));
+  const docsOnly = sized.length === 0;
 
   const all = [];
   const add = (level, code, text, key, path) => all.push(path === undefined ? { code, text, level, key } : { code, text, path, level, key });
@@ -176,10 +187,12 @@ export function classify({ paths, loc, flags = [], riskPaths = [], thresholds = 
     if (hit) add('critical', 'risk-path', `matches risk glob ${hit.glob}`, pathKey(path), path);
   }
   for (const f of declared) if (CRITICAL_FLAGS.includes(f)) add('critical', 'risk-flag', `flag ${f}`, `risk-flag:${f}`);
-  if (files.length > critical.overFiles) add('critical', 'files-over', `${files.length} files > ${critical.overFiles}`, 'files-over');
-  if (loc > critical.overLoc) add('critical', 'loc-over', `${loc} LOC > ${critical.overLoc}`, 'loc-over');
-  if (files.length > trivial.maxFiles) add('standard', 'files-over-trivial', `${files.length} files > ${trivial.maxFiles}`, 'files-over-trivial');
-  if (loc > trivial.maxLoc) add('standard', 'loc-over-trivial', `${loc} LOC > ${trivial.maxLoc}`, 'loc-over-trivial');
+  if (sized.length > critical.overFiles) add('critical', 'files-over', `${sized.length} files > ${critical.overFiles}`, 'files-over');
+  if (!docsOnly && loc > critical.overLoc) add('critical', 'loc-over', `${loc} LOC > ${critical.overLoc}`, 'loc-over');
+  const big = files.length > trivial.maxFiles || loc > trivial.maxLoc;
+  if (docsOnly && big) add('standard', 'docs-only', `${files.length} documentation or binary ${files.length === 1 ? 'file' : 'files'}, ${loc} LOC: size never raises docs above standard`, 'docs-only');
+  if (!docsOnly && files.length > trivial.maxFiles) add('standard', 'files-over-trivial', `${files.length} files > ${trivial.maxFiles}`, 'files-over-trivial');
+  if (!docsOnly && loc > trivial.maxLoc) add('standard', 'loc-over-trivial', `${loc} LOC > ${trivial.maxLoc}`, 'loc-over-trivial');
   for (const f of declared) if (!CRITICAL_FLAGS.includes(f)) add('standard', 'flag', `flag ${f}`, `flag:${f}`);
 
   const cls = all.some((r) => r.level === 'critical') ? 'critical' : all.length ? 'standard' : 'trivial';

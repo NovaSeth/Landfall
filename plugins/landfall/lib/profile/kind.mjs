@@ -18,6 +18,8 @@ function valueSpec({ type, of }) {
     case 'date': return str(10, { re: /^\d{4}-\d{2}-\d{2}$/ });
     case 'token': return str(LIMITS.token, { re: PATTERNS.kebab });
     case 'list': return { t: 'arr', max: LIMITS.listItems, of: str(LIMITS.listItem, { min: 1, re: /^[^,A-Z]+$/ }) };
+    case 'globs': return { t: 'arr', max: LIMITS.riskPaths, of: str(LIMITS.glob, { min: 1, re: /^\S+$/ }) };
+    case 'notes': return { t: 'arr', max: LIMITS.listItems, of: str(LIMITS.glob, { min: 1, re: /^[^,]+$/ }) };
     default: throw new Error(`profile: unknown value type ${type}`);
   }
 }
@@ -36,8 +38,10 @@ const observation = {
   f: { facts: allFacts((value) => ({ t: 'obj', f: { value, evidence, confidence } })), gates, riskPaths, files: { t: 'int', min: 0, max: 100000000 } },
 };
 
+// Profile schema 2 (retro 2026-10): the said facts riskGlobs and reviewFocus (migration 003 stamps an older file; its
+// content needs no change).
 export const PROFILE_KINDS = Object.freeze({
-  profile: defineKind('profile', 1, {
+  profile: defineKind('profile', 2, {
     dir: '',
     file: () => 'profile.json',
     match: /^profile\.json$/,

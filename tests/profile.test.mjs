@@ -123,10 +123,16 @@ const WEB = {
 // ---- keys ----
 
 test('the profile keys are the spec §7.3 list, fixed in keys.mjs; the deployment fact is deployedToUsers (§7.4a)', () => {
-  assert.deepEqual(profile.KEYS, ['goal', 'productKind', 'phase', 'people', 'ui', 'backend', 'dataSensitivity', 'deployedToUsers', 'deadline', 'stack', 'ci', 'otherHarnesses', 'gates', 'riskPaths']);
+  assert.deepEqual(profile.KEYS, ['goal', 'productKind', 'phase', 'people', 'ui', 'backend', 'dataSensitivity', 'deployedToUsers', 'deadline', 'stack', 'ci', 'otherHarnesses', 'riskGlobs', 'reviewFocus', 'gates', 'riskPaths']);
   assert.ok(!profile.KEYS.includes('deployed'), '`deployed` is not a key (§7.4a)');
   const F = profile.FACT_KEYS;
   assert.deepEqual(Object.keys(F), profile.KEYS.filter((k) => k !== 'gates' && k !== 'riskPaths'), 'gates and riskPaths are profile fields of their own (§5.1)');
+  assert.deepEqual([F.riskGlobs.type, F.reviewFocus.type], ['globs', 'notes'], 'the said risk globs and the review focus (retro 2026-10)');
+  assert.deepEqual(profile.parseValue('riskGlobs', 'client/src/ai/**, server/src/{hosts,webhooks}.ts'), ['client/src/ai/**', 'server/src/{hosts,webhooks}.ts']);
+  assert.deepEqual(profile.parseValue('reviewFocus', 'maskedIds and hiddenIds in private mode, LAN-only webhooks'), ['maskedIds and hiddenIds in private mode', 'LAN-only webhooks']);
+  for (const [k, raw] of [['riskGlobs', 'a b/**'], ['riskGlobs', ''], ['reviewFocus', ''], ['riskGlobs', 'x/**, x/**']]) {
+    assert.throws(() => profile.parseValue(k, raw), (e) => e.exit === 'USAGE' && e.code === 'invalid-value', `${k}=${raw}`);
+  }
   assert.deepEqual(F.productKind.of, ['library', 'cli', 'web', 'mobile', 'service', 'data', 'other']);
   assert.deepEqual(F.phase.of, ['idea', 'building', 'live']);
   assert.deepEqual(F.people.of, ['solo', 'small-team', 'large-team']);
@@ -281,7 +287,7 @@ test('profile observe: ≤ 2 s on a 10k-file repository; writes profile.json and
   assert.ok(elapsed <= 2000, `profile observe took ${Math.round(elapsed)} ms on ${r.data.files} files (limit 2000 ms)`);
   assert.deepEqual([r.data.active, r.data.written, r.data.cached, r.data.head], [true, true, false, head]);
   const p = readProfile(store);
-  assert.equal(p.schema, 1);
+  assert.equal(p.schema, profile.PROFILE_KINDS.profile.version);
   assert.equal(p.facts.ui.source, 'observed');
   assert.equal(p.lastScan.head, head);
   assert.ok(Math.abs(Date.parse(p.lastScan.at) - Date.now()) < 60000, 'lastScan.at is now');

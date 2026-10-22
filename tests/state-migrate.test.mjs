@@ -262,7 +262,10 @@ test('the migration registry matches its directory; every kind has a complete ch
     assert.equal([...MIGRATIONS, ...LAYOUTS].find((m) => `${m.id}.mjs` === f), mod.default, `${f}: the listed step is the module's default export`);
   }
   for (const l of LAYOUTS) assert.deepEqual([typeof l.plan, typeof l.run], ['function', 'function'], `${l.id}: a layout step plans and runs`);
-  assert.deepEqual(state.checkChain({ ...KINDS, ...MACHINE_KINDS }, MIGRATIONS), []);
+  // Every kind `migrate` handles (the state kinds, the machine kinds and the other units' committed kinds) has a chain.
+  const { MIGRATE_KINDS } = await import(pathToFileURL(join(pluginDir, 'lib', 'cli', 'migrate.mjs')).href);
+  assert.deepEqual(state.checkChain({ ...MIGRATE_KINDS, ...MACHINE_KINDS }, MIGRATIONS), []);
+  assert.ok(MIGRATIONS.some((m) => m.kind === 'profile' && m.to === 2), 'the profile step (retro 2026-10: said risk globs and review focus) is registered');
 });
 
 test('checkChain finds every planted chain defect (REV-45)', () => {

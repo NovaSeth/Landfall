@@ -47,8 +47,8 @@ import { lstatSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { authorHandle, readRecords, stateRel } from '../decisions/index.mjs';
 import { git } from '../git/index.mjs';
-import { PROFILE_KINDS, emptyProfile, listFiles, observe } from '../profile/index.mjs';
-import { MAX_PATHS, addedSteps, applyClass, classify, rank, recordedKeys, routeFor, routeTask, routerThresholds } from '../router/index.mjs';
+import { PROFILE_KINDS, emptyProfile, listFiles, observe, riskGlobsOf } from '../profile/index.mjs';
+import { MAX_PATHS, addedSteps, applyClass, classify, rank, recordedKeys, routeFor, routeTask, routerThresholds, weightless } from '../router/index.mjs';
 import { KINDS, StateError, check, open, resolve } from '../state/index.mjs';
 import { appliedTier, readReport, reportHasEvidence, reviewNeed, reviewState } from './artifacts.mjs';
 import { measureAt } from './base.mjs';
@@ -220,24 +220,31 @@ function lineCount(file) {
   }
 }
 
-// The change since `base` (committed, uncommitted and untracked; the state directory left out), or null
-// when git cannot diff against it.
+// The task's own change since `base` (the state directory left out), or null when git cannot diff against it: the
+// paths its own commits touch (the first-parent line base..HEAD without merge commits, so a `git merge main` into the
+// branch brings none of main's work into the class: retro 2026-10 D-MG-13), plus the uncommitted and untracked
+// changes; the LOC of those paths against the base. Weightless paths (docs, binaries: lib/router) count no LOC.
 function changeSince(where, env, base, scope) {
-  const d = gitIn(where, env, ['diff', '--numstat', '-z', '--no-renames', base, ...scope]);
-  if (d.status !== 0) return null;
-  const paths = new Set();
+  const own = gitIn(where, env, ['log', '--first-parent', '--no-merges', '--format=', '--name-only', '-z', `${base}..HEAD`, ...scope]);
+  const wt = gitIn(where, env, ['diff', '--name-only', '-z', 'HEAD', ...scope]);
+  if (own.status !== 0 || wt.status !== 0) return null;
+  const paths = new Set([...own.stdout.split('\0'), ...wt.stdout.split('\0')].filter(Boolean));
+  const tracked = [...paths].filter((p) => !UNSAFE_PATH.test(p)).slice(0, MAX_PATHS);
   let loc = 0;
-  for (const rec of d.stdout.split('\0')) {
-    const m = /^(\d+|-)\t(\d+|-)\t([\s\S]+)$/.exec(rec);
-    if (!m) continue;
-    paths.add(m[3]);
-    if (m[1] !== '-') loc += Number(m[1]) + Number(m[2]);
+  if (tracked.length) {
+    const d = gitIn(where, env, ['diff', '--numstat', '-z', '--no-renames', base, '--', ...tracked]);
+    if (d.status !== 0) return null;
+    for (const rec of d.stdout.split('\0')) {
+      const m = /^(\d+|-)\t(\d+|-)\t([\s\S]+)$/.exec(rec);
+      if (!m || m[1] === '-' || weightless(m[3])) continue;
+      loc += Number(m[1]) + Number(m[2]);
+    }
   }
   const u = gitIn(where, env, ['ls-files', '-z', '--others', '--exclude-standard', ...scope]);
   for (const p of u.status === 0 ? u.stdout.split('\0').filter(Boolean) : []) {
     if (paths.has(p)) continue;
     paths.add(p);
-    loc += lineCount(join(where.worktree, p));
+    if (!weightless(p)) loc += lineCount(join(where.worktree, p));
   }
   return { paths: [...paths].filter((p) => !UNSAFE_PATH.test(p)).slice(0, MAX_PATHS), loc };
 }
@@ -408,7 +415,7 @@ export function evaluate({ where, names, env, id, mode, handle = null, at = now(
 
   if (mode !== 'merge') {
     if (change) {
-      const { route, flags } = reroute({ store, task, id, write, handle, riskPaths: profile.riskPaths, change, at });
+      const { route, flags } = reroute({ store, task, id, write, handle, riskPaths: riskGlobsOf(profile), change, at });
       doc.route = route;
       doc.class = route.actual;
       if (route.escalated) say('route-escalated', 'route-escalated', `the change is ${route.actual}, not ${route.declared}: the route adds ${route.missingSteps.join(', ')}`, 'do the added steps, then verify again');

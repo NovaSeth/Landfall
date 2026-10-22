@@ -11,6 +11,7 @@
 // before the document chain; checkChain does not see them.
 import stateFlagsToConfig from './001-state-flags-to-config.mjs';
 import renameStateDir from './002-rename-state-dir.mjs';
+import profileSaidGlobs from './003-profile-said-globs.mjs';
 
-export const MIGRATIONS = Object.freeze([stateFlagsToConfig]);
+export const MIGRATIONS = Object.freeze([stateFlagsToConfig, profileSaidGlobs]);
 export const LAYOUTS = Object.freeze([renameStateDir]);
