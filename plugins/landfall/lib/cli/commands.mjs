@@ -669,7 +669,7 @@ const ROWS = [
   },
   {
     name: 'review brief',
-    summary: 'Render the review brief of a task from the state: the range pinned to HEAD, the diff saved to a file, acceptance points, risks and the output shape; --write saves it.',
+    summary: 'Review brief of a task: range pinned to HEAD, diff saved to a file, acceptance, risks, output shape; --write saves it.',
     details: [
       'Round: --round, else the next after the recorded review rounds. Range: the task base (a later round: the HEAD its previous review',
       'brief pinned) to HEAD of this checkout, which must be clean (exit 1 dirty-tree: a brief pins a sha). The diff (-U10, the state',

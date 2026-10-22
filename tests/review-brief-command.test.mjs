@@ -152,6 +152,7 @@ test('review brief: round 2 starts at the HEAD round 1 pinned and lists the prev
   assert.ok(written.includes('| F1 | blocking | src/auth/login.js:2 | fails open |'), written);
   assert.ok(written.includes('| F2 | minor | src/auth/login.js:'), written);
   assert.ok(existsSync(join(p.store, 'local', 'review', 'T-TU-1-r2.diff')));
+  p.commit('chore: review brief r2');
   const s = await cli(['review', 'brief', 'T-TU-1', '--scope', 'F1', '--yes'], { ...p, json: true });
   assert.deepEqual(s.out.data.previous, ['F1']);
   const bad = await cli(['review', 'brief', 'T-TU-1', '--scope', 'F9', '--yes'], p);
