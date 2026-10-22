@@ -45,7 +45,9 @@ const UNITS = new Set(['cli', 'state', 'config', 'profile', 'engine', 'router', 
 // config (brief I2.4): the read side of the capability flags, over lib/state, for the pass-through of a hook whose
 // capability is off.
 // engine (INT-3a): the read side of the applied tier for the SessionStart tier line; evaluation itself stays in the CLI.
-const HOOK_IMPORTS = new Set(['hooks', 'state', 'config', 'engine', 'method', 'decisions', 'sched', 'loop', 'guard', 'text']);
+const HOOK_IMPORTS = new Set(['hooks', 'state', 'config', 'engine', 'method', 'decisions', 'sched', 'loop', 'guard', 'text',
+  // profile (retro 2026-10): the read side of the scan trigger for the SessionStart line
+  'profile']);
 const HOOK_NEVER = new Set(['providers', 'gen', 'lanes', 'receipts']);
 // §4.3: the only unit allowed to spawn each external program (basename of the literal first argument).
 const SPAWN_OWNER = { git: 'git', gh: 'mirror', codex: 'providers', gemini: 'providers' };
