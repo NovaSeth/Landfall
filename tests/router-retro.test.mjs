@@ -138,3 +138,39 @@ test('verify classes a task from its own commits: main merged into the branch br
   const grown = await r.cli(['verify', 'T-TU-1', '--yes']);
   assert.deepEqual([grown.code, grown.env.data.route.actual, grown.env.data.route.escalated], [1, 'critical', true], show(grown));
 });
+
+test('a side branch merged cleanly into the task is the task\'s own work: its risk path and lines count (review r1 F3)', async (t) => {
+  const r = await repo(t);
+  await r.cli(['task', 'new', 'Login', '--yes']);
+  assert.equal((await r.cli(['route', 'T-TU-1', '--paths', 'src/a.js', '--loc', '2', '--yes'])).env.data.class, 'trivial');
+  const base = r.git('rev-parse', 'HEAD');
+  // the task branch does its own small change (the state travels with it)
+  r.git('switch', '-q', '-c', 'task/T-TU-1-login');
+  r.write('src/a.js', 'export const a = 2;\n');
+  r.write(`${names.stateDir}/tasks/T-TU-1/report.md`, REPORT);
+  state.setTask({ cwd: r.dir, env: r.env, names, id: 'T-TU-1', state: 'started', options: { branch: 'task/T-TU-1-login', base } });
+  r.git('add', '-A');
+  r.git('commit', '-q', '-m', 'the task');
+  // a helper's side branch, off the same base, adds an auth file with 900 lines; the task merges it without a conflict
+  r.git('switch', '-q', '-c', 'side', base);
+  r.write('src/auth/login.js', 'export const login = 1;\n'.repeat(900));
+  r.git('add', '-A');
+  r.git('commit', '-q', '-m', 'side: login');
+  r.git('switch', '-q', 'task/T-TU-1-login');
+  r.git('merge', '-q', '--no-ff', '--no-edit', 'side');
+  const res = await r.cli(['verify', 'T-TU-1', '--yes']);
+  assert.deepEqual([res.code, res.env.data.route.actual, res.env.data.route.escalated], [1, 'critical', true], show(res));
+  assert.ok(res.env.errors.some((e) => e.code === 'route-escalated'), show(res));
+  // the same change on main itself (no branch) is classed from its own commits too
+  const m = await repo(t);
+  await m.cli(['task', 'new', 'On main', '--yes']);
+  assert.equal((await m.cli(['route', 'T-TU-1', '--paths', 'src/a.js', '--loc', '2', '--yes'])).env.data.class, 'trivial');
+  const mb = m.git('rev-parse', 'HEAD');
+  m.write('src/auth/login.js', 'export const login = 1;\n');
+  m.write(`${names.stateDir}/tasks/T-TU-1/report.md`, REPORT);
+  state.setTask({ cwd: m.dir, env: m.env, names, id: 'T-TU-1', state: 'dispatched', options: { executor: 'claude:implementer', base: mb } });
+  m.git('add', '-A');
+  m.git('commit', '-q', '-m', 'on main');
+  const onMain = await m.cli(['verify', 'T-TU-1', '--yes']);
+  assert.deepEqual([onMain.env.data.route.actual, onMain.env.data.route.escalated], ['critical', true], show(onMain));
+});

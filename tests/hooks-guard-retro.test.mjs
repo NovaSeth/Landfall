@@ -123,6 +123,22 @@ const MUST_BLOCK = [
   [`echo "${'$'}{S}" > ${S}/tasks/T-AB-1/report.md`, 'SEC-3', 'a brace expansion inside quotes too'],
   [`echo "$\\\nHOME" > ${S}/tasks/T-AB-1/report.md`, 'SEC-3', 'a line continuation after the dollar joins it to a name'],
   [`echo "$[1+1]" > ${S}/tasks/T-AB-1/report.md`, 'SEC-3', 'the old arithmetic form'],
+  // review r1 F1: sed programs that write the file they name, glued or behind an option
+  [`sed -n 'w${S}/tasks/T-AB-1/task.json' notes.md`, 'FLW-7', 'a w command with no blank'],
+  [`sed -n 's/a/b/w${S}/tasks/T-AB-1/task.json' notes.md`, 'FLW-7', 'the w flag of s with no blank'],
+  [`sed -n --expression='w ${S}/tasks/T-AB-1/task.json' notes.md`, 'FLW-7', 'the program behind --expression='],
+  [`sed -n -e'w ${S}/tasks/T-AB-1/task.json' notes.md`, 'FLW-7', 'the program glued to -e'],
+  [`sed -n -ew${S}/tasks/T-AB-1/task.json notes.md`, 'FLW-7', 'the program glued to -e without a blank'],
+  [`sed -f script.sed ${S}/tasks/T-AB-1/task.json`, 'FLW-7', 'a script file the guard cannot read, on a state path'],
+  // review r1 F2: --json after -- belongs to the wrapped command, not to the envelope
+  [`${BIN} heavy -- npm test --json | tail -3`, 'TRP-2', 'a pipe after heavy with the inner command\'s --json'],
+  [`${BIN} heavy --json -- npm test | tail -3`, 'TRP-2', 'heavy itself gets no --json leniency'],
+  // the security review of the literal variables: conditional assignments and special names are no literals
+  [`true || F=/tmp/safe; cp ${S}/tasks/T-AB-1/report.md "$F"`, 'SEC-3', 'an assignment after || may not run: no literal'],
+  [`true && F=${S}/tasks/T-AB-1/report.md; cat "$F"`, 'SEC-3', 'an assignment after && may not run either'],
+  [`echo x | F=${S}/tasks/T-AB-1/report.md; cat "$F"`, 'SEC-3', 'an assignment in a pipe runs in a subshell'],
+  ['PATH=/tmp/evil; git commit -m x', 'SEC-3', 'PATH changes what runs: never a literal of the line'],
+  [`IFS=/; F=${S}/tasks/T-AB-1/report.md; cat $F`, 'SEC-3', 'IFS changes word splitting'],
 ];
 
 test('retro idioms pass: literal variables, loops over literals, the state named in data, reads, script arguments, a pipe after --json', () => {
@@ -157,6 +173,15 @@ test('expandLiterals: the rules of a literal variable', () => {
   assert.equal(expandLiterals("F=a; echo '$F'"), "echo '$F'", 'single quotes keep the reference');
   assert.equal(expandLiterals('F=a cmd $F'), 'F=a cmd $F', 'an assignment before a command is not a variable of the line');
   assert.equal(expandLiterals('F=a; echo $FOO'), 'echo $FOO', 'a longer name is another variable');
+  // conditional assignments and special names: the text stays as written (the parser rejects the expansion)
+  assert.equal(expandLiterals('true || F=a; cat $F'), 'true || F=a; cat $F');
+  assert.equal(expandLiterals('true && F=a; cat $F'), 'true && F=a; cat $F');
+  assert.equal(expandLiterals('echo x | F=a; cat $F'), 'echo x | F=a; cat $F');
+  assert.equal(expandLiterals('F=a && cat $F'), 'cat a', 'an unconditional assignment followed by && runs');
+  assert.equal(expandLiterals('PATH=/x; git status'), 'PATH=/x; git status');
+  assert.equal(expandLiterals('IFS=,; cat $IFS'), 'IFS=,; cat $IFS');
+  assert.equal(expandLiterals('HOME=/tmp; cat $HOME/x'), 'HOME=/tmp; cat $HOME/x');
+  assert.equal(expandLiterals('BASH_ENV=/x; cat a'), 'BASH_ENV=/x; cat a');
   // for loops over literals
   assert.equal(expandLiterals('for t in a b; do cat "$t"; done'), 'cat "a"; cat "b"');
   assert.equal(expandLiterals('for t in a b\ndo\n  cat $t\ndone'), 'cat a; cat b');

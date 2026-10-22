@@ -150,9 +150,15 @@ const READ_ONLY = new Map(Object.entries({
   cd: null, pushd: null, popd: null,
 }));
 // Programs for which the state's text inside an argument is data, not a path they write: the exact readers, the network
-// and text tools; sed only without an in-place option and without a `w <state path>` command in its program.
+// and text tools; sed only when every argument that names the state is a plain substitution (`s<d>…<d>…<d>[flags]`
+// without the w or e flag, also behind -e or --expression=) and no option writes in place: any other sed program (a
+// `w` command, glued or spaced, a script file) may write the file it names (review r1 F1).
 const MENTION_OK = new Set([...READ_ONLY.keys(), 'curl', 'wget', 'sort', 'uniq', 'cut', 'tr', 'sed', 'gsed', 'basename', 'dirname', 'realpath', 'date', 'true', 'false', ':']);
-const sedWrites = (w, text) => w.slice(1).some((t) => /^-[a-zA-Z]*i|^--in-place/.test(t)) || w.slice(1).some((t) => !t.startsWith('-') && new RegExp(`w\\s+\\S*${text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'i').test(t));
+const SED_SUBST = /^(?:-e|--expression=)?s(.)(?:\\.|(?!\1).)*\1(?:\\.|(?!\1).)*\1[gpiImM0-9]*$/s;
+function sedWrites(w, text) {
+  if (w.slice(1).some((t) => /^-[a-zA-Z]*i|^--in-place|^-f|^--file=/.test(t))) return true;
+  return w.slice(1).some((t) => t.toLowerCase().includes(text) && !SED_SUBST.test(t));
+}
 
 function readShape(c, w) {
   if (c.redirs.some((r) => !safeRedir(r))) return false;

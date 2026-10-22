@@ -177,9 +177,11 @@ export function shape(c, ctx) {
   const name = w[0]; const b = base(name);
   const fed = c.pipeIn || c.heredoc !== null || c.redirs.some((r) => r.op.startsWith('<')); // input from a pipe, heredoc or file
   const tok = (k = 1) => w.slice(k).some(wordTok);
-  // a pipe after a gate reports the last command's exit code (TRP-2, SEC-6); the plugin's own command with --json carries
-  // its code in the envelope, so a pipe after it reads data (retro 2026-10 §3.9)
-  const pipeAfter = (gate, jsonOk = false) => (c.pipeOut && gate && !(jsonOk && w.includes('--json')) ? MSG.pipe(gate, w.join(' ')) : null);
+  // a pipe after a gate reports the last command's exit code (TRP-2, SEC-6); the plugin's own command with --json among
+  // its own flags (before a `--`) carries its code in the envelope, so a pipe after it reads data (retro 2026-10 §3.9);
+  // `heavy` runs another command, whose own --json is no envelope (review r1 F2)
+  const ownJson = () => { const dd = w.indexOf('--'); return (dd < 0 ? w : w.slice(0, dd)).includes('--json'); };
+  const pipeAfter = (gate, jsonOk = false) => (c.pipeOut && gate && !(jsonOk && gate.id !== 'slot admission' && ownJson()) ? MSG.pipe(gate, w.join(' ')) : null);
   if (c.words.some((x) => x.q === '?') && b !== 'echo' && b !== 'printf') why('$? outside echo/printf');
   if (c.words.some((x) => x.q === 'msg') && !['git', 'gh', 'echo', 'printf'].includes(b)) why('a $( ) substitution outside a message');
   if (ctx.shadowNames.has(name)) why(`"${short(name)}" redefined earlier in this command (alias or hash -p)`);

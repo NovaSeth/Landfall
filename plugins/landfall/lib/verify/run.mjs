@@ -220,21 +220,47 @@ function lineCount(file) {
   }
 }
 
+// The integration line the task branches off: origin's HEAD branch, else a local main or master; null when none.
+function integrationRef(where, env) {
+  const head = gitIn(where, env, ['symbolic-ref', '-q', 'refs/remotes/origin/HEAD']);
+  if (head.status === 0 && head.stdout.trim()) return head.stdout.trim();
+  for (const name of ['main', 'master']) if (gitIn(where, env, ['rev-parse', '-q', '--verify', `refs/heads/${name}`]).status === 0) return name;
+  return null;
+}
+
 // The task's own change since `base` (the state directory left out), or null when git cannot diff against it: the
-// paths its own commits touch (the first-parent line base..HEAD without merge commits, so a `git merge main` into the
-// branch brings none of main's work into the class: retro 2026-10 D-MG-13), what its merge commits change beyond
-// every parent (a conflict resolution or an edit made in the merge itself: `git diff-tree --cc`), plus the uncommitted
-// and untracked changes; the LOC of those paths against the base. Weightless paths (docs, images: lib/router) count no LOC.
+// paths of the commits base..HEAD that the integration line does not have (a `git merge main` into the branch brings
+// none of main's work into the class, retro 2026-10 D-MG-13; a side branch merged into the task is the task's work,
+// review r1 F3), merge commits counted by what they change beyond every parent (`--cc`: a conflict resolution or an
+// edit made in the merge itself); on the integration line itself, or without one, the first-parent line without merge
+// commits plus the merges' own edits. Plus the uncommitted and untracked changes; the LOC of those paths against the
+// base. Weightless paths (docs, images: lib/router) count no LOC.
 function changeSince(where, env, base, scope) {
-  const own = gitIn(where, env, ['log', '--first-parent', '--no-merges', '--format=', '--name-only', '-z', `${base}..HEAD`, ...scope]);
   const wt = gitIn(where, env, ['diff', '--name-only', '-z', 'HEAD', ...scope]);
-  const merges = gitIn(where, env, ['log', '--first-parent', '--merges', '--format=%H', `${base}..HEAD`]);
-  if (own.status !== 0 || wt.status !== 0 || merges.status !== 0) return null;
-  const paths = new Set([...own.stdout.split('\0'), ...wt.stdout.split('\0')].filter(Boolean));
-  for (const sha of merges.stdout.split('\n').filter(Boolean)) {
-    const cc = gitIn(where, env, ['diff-tree', '--cc', '-r', '--name-only', '-z', sha, ...scope]);
-    if (cc.status !== 0) return null;
-    for (const p of cc.stdout.split('\0').filter(Boolean)) if (!/^[0-9a-f]{40}$/.test(p)) paths.add(p);
+  if (wt.status !== 0) return null;
+  const paths = new Set(wt.stdout.split('\0').filter(Boolean));
+  const noId = (p) => !/^[0-9a-f]{40}$/.test(p);
+  const ref = integrationRef(where, env);
+  const onLine = ref !== null && gitIn(where, env, ['merge-base', '--is-ancestor', 'HEAD', ref]).status === 0;
+  if (ref !== null && !onLine) {
+    const list = gitIn(where, env, ['rev-list', `${base}..HEAD`, '--not', ref]);
+    if (list.status !== 0) return null;
+    const shas = list.stdout.split('\n').filter(Boolean);
+    for (let i = 0; i < shas.length; i += 200) {
+      const own = gitIn(where, env, ['log', '--no-walk=unsorted', '--format=', '--name-only', '-z', '--cc', ...shas.slice(i, i + 200), ...scope]);
+      if (own.status !== 0) return null;
+      for (const p of own.stdout.split('\0').filter(Boolean)) if (noId(p)) paths.add(p);
+    }
+  } else {
+    const own = gitIn(where, env, ['log', '--first-parent', '--no-merges', '--format=', '--name-only', '-z', `${base}..HEAD`, ...scope]);
+    const merges = gitIn(where, env, ['log', '--first-parent', '--merges', '--format=%H', `${base}..HEAD`]);
+    if (own.status !== 0 || merges.status !== 0) return null;
+    for (const p of own.stdout.split('\0').filter(Boolean)) paths.add(p);
+    for (const sha of merges.stdout.split('\n').filter(Boolean)) {
+      const cc = gitIn(where, env, ['diff-tree', '--cc', '-r', '--name-only', '-z', sha, ...scope]);
+      if (cc.status !== 0) return null;
+      for (const p of cc.stdout.split('\0').filter(Boolean)) if (noId(p)) paths.add(p);
+    }
   }
   const tracked = [...paths].filter((p) => !UNSAFE_PATH.test(p)).slice(0, MAX_PATHS);
   let loc = 0;

@@ -7,6 +7,8 @@
 // Result: simple commands { words: [{ text, q, glob }], redirs: [{ op, target, glob }], heredoc: body | null, pipeIn, pipeOut,
 // before, after } — before / after: the connector on that side (';', '&&', '||', '|', '\n' or null at either end).
 // q: '' plain · '?' holds $? · 'msg' the message substitution (its body as one word).
+import { ENV_EXEC } from './tokens.mjs';
+
 export class NotPlain extends Error {}
 export const why = (w) => { throw new NotPlain(w); };
 
@@ -14,14 +16,21 @@ export const why = (w) => { throw new NotPlain(w); };
 // bare word of letters, digits and . / : @ , + = _ - or one quoted string without quotes, $, backtick, backslash or
 // a shell metacharacter, is substituted for every later `$NAME` or `${NAME}` outside single quotes in the same text,
 // and the assignment is dropped, so the shapes read literal words (the 36 "expansion inside quotes" and 10 "assignment
-// before the command" blocks of one project). No substitution: a name set or used any other way in the text (printf -v,
-// read, declare, export, for, unset, +=, an array index), a name assigned twice, or a reference where the command name
-// stands (a command from a variable has no shape). `for NAME in <literal words>; do <body>; done` as the whole text is
-// unrolled the same way. Anything else stays as written and the parser decides.
+// before the command" blocks of one project). The assignment must run unconditionally in the line's shell: it follows
+// the start, `;` or a newline (never `&&`, `||` or a pipe) and `;`, a newline or `&&` follows it. Nothing is substituted
+// (the text stays as written and the parser rejects the expansion) when an assignment is conditional, names a variable
+// the shell, git or a loader reads (PATH, IFS, HOME, the ENV_EXEC list …: its value changes what runs, not only a
+// word), a name is set or used any other way in the text (printf -v, read, declare, export, for, unset, +=, an array
+// index) or assigned twice, or a reference stands where the command name goes (a command from a variable has no shape).
+// `for NAME in <literal words>; do <body>; done` as the whole text is unrolled the same way.
 const ASSIGN = /^\s*([A-Za-z_]\w*)=(.*?)\s*$/s;
 const BARE = /^[A-Za-z0-9_./:@,+=-]*$/;
 const META = /[;&|<>(){}$`\\!*?[\]#~'"\n]/;
 const FOR = /^\s*for\s+([A-Za-z_]\w*)\s+in\s+([^;\n]+?)\s*(?:;|\n)\s*do\s+([\s\S]*?)\s*(?:;|\n)?\s*done\s*$/;
+// Names whose value the shell, a loader or a tool reads for what to run or how to split words: never a literal of the line.
+const SPECIAL = /^(?:PATH|IFS|CDPATH|HOME|PWD|OLDPWD|SHELL|TMPDIR|TMP|TEMP|USER|LOGNAME|LANG|LC_\w*|TERM|OPTIND|OPTARG|RANDOM|LINENO|SECONDS|BASH\w*|ZDOTDIR|FPATH|MODULE_PATH|NODE_PATH|NODE_OPTIONS|PYTHONPATH|PYTHONSTARTUP|PERL5LIB|PERL5OPT|RUBYLIB|RUBYOPT|GEM_PATH|GEM_HOME|CLASSPATH|GOPATH|GOFLAGS|GOROOT|CARGO_HOME|RUSTFLAGS|npm_config_\w*|NPM_CONFIG_\w*|CLAUDE\w*|ANTHROPIC\w*)$/i;
+const UNCONDITIONAL_BEFORE = new Set(['', ';', '\n']);
+const UNCONDITIONAL_AFTER = new Set(['', ';', '\n', '&&']);
 
 // The literal of a value word, or null when it is not one.
 function literal(value) {
@@ -88,15 +97,17 @@ export function expandLiterals(src) {
   const vars = new Map();
   const twice = new Set();
   const rest = [];
-  for (const s of segs) {
+  for (let i = 0; i < segs.length; i++) {
+    const s = segs[i];
     const m = ASSIGN.exec(s.text);
-    const value = m ? literal(m[2]) : null;
-    if (m && value !== null && s.sep !== '|') {
-      if (vars.has(m[1])) twice.add(m[1]);
-      vars.set(m[1], value);
-      continue;
-    }
-    rest.push(s);
+    if (!m) { rest.push(s); continue; }
+    const value = literal(m[2]);
+    const before = i === 0 ? '' : segs[i - 1].sep;
+    // a conditional assignment (after && or ||, in a pipe) may not run, so its name has no literal value; a special
+    // name changes what runs: the text stays as written and the parser rejects the expansion
+    if (value === null || !UNCONDITIONAL_BEFORE.has(before) || !UNCONDITIONAL_AFTER.has(s.sep) || SPECIAL.test(m[1]) || ENV_EXEC.test(m[1])) return src;
+    if (vars.has(m[1])) twice.add(m[1]);
+    vars.set(m[1], value);
   }
   for (const name of twice) vars.delete(name);
   if (!vars.size) return src;
