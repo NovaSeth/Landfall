@@ -30,7 +30,7 @@ const BLOCKING_REPORTS = new Set(['needs-context', 'blocked']);
 const MIN_MS = 60000;
 
 // Every rule ID this table cites (tests check that each resolves in the method).
-export const TABLE_RULES = Object.freeze(['FLW-3', 'ORC-4', 'FLW-4', 'ORC-9', 'FLW-6', 'PRI-6', 'ORC-5', 'REV-6', 'REV-20', 'REV-7',
+export const TABLE_RULES = Object.freeze(['FLW-3', 'ORC-4', 'FLW-4', 'ORC-9', 'FLW-6', 'PRI-6', 'ORC-5', 'REV-6', 'REV-20', 'REV-7', 'REV-5',
   'REV-11', 'FLW-8', 'ORC-7', 'SPC-1', 'SPC-2', 'SPC-11', 'FLW-9', 'PRI-1', 'COL-24', 'FLW-7']);
 
 const natural = (a, b) => a.localeCompare(b, 'en', { numeric: true });
@@ -74,6 +74,18 @@ function taskRow(t, { now, bin, lanesOn, caps }) {
     return action(id, `fix round ${k} delivered`, `dispatch the scoped re-review of round ${k}'s diff and ${record}; a mechanical or UI round you may verify yourself: \`${bin} task set ${id} self-verified --round ${k}\`${last}`,
       k >= caps.rounds ? ['REV-6', 'REV-20', 'REV-7'] : ['REV-6', 'REV-20']);
   };
+  // a review recorded (a `review` event, review record) after the last report, fix round or dispatch decides the step by
+  // its verdict, whatever the status says: approved → verify and close; needs-fixes → the next fix round from its
+  // findings, or the decision past the rounds cap. A review before the fix round that answers it decides nothing.
+  const since = lastIndex(t.events, ['implementer', 'fix-round', 'dispatched']);
+  const rv = [...t.events.slice(since + 1)].reverse().find((e) => e.event === 'review');
+  if (rv && ['dispatched', 'in-review', 'implemented', 'fix-round'].includes(t.status)) {
+    const n = rv.data?.round ?? '?';
+    if (rv.data?.verdict === 'approved') return approved(`review r${n} approved`);
+    const k = (t.round ?? 0) + 1;
+    if (k > caps.rounds) return decide(k);
+    return action(id, `review r${n}: needs-fixes`, `hand its blocking findings to the implementer as fix round ${k} (REV-5; the review file: \`${bin} task show ${id}\`) and record it: \`${bin} task set ${id} fix-round --round ${k} --addressed 0 --open <n>\``, ['REV-5', 'PRI-6']);
+  }
   switch (t.status) {
     case 'new':
       if (t.class === null) return action(id, 'new, not routed', `classify it: \`${bin} route ${id} --paths <p,…> --loc <n>\``, ['FLW-3']);

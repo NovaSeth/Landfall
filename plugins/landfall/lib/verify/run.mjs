@@ -220,47 +220,40 @@ function lineCount(file) {
   }
 }
 
-// The integration line the task branches off: origin's HEAD branch, else a local main or master; null when none.
-function integrationRef(where, env) {
+// The integration line the task branches off, every ref of it that exists: origin's HEAD branch, origin/main,
+// origin/master, a local main or master; empty when none. Several refs, because a local main may be ahead of origin
+// (not pushed) or behind it (not pulled), and the work either one has is integration work, not the task's.
+function integrationRefs(where, env) {
+  const refs = [];
   const head = gitIn(where, env, ['symbolic-ref', '-q', 'refs/remotes/origin/HEAD']);
-  if (head.status === 0 && head.stdout.trim()) return head.stdout.trim();
-  for (const name of ['main', 'master']) if (gitIn(where, env, ['rev-parse', '-q', '--verify', `refs/heads/${name}`]).status === 0) return name;
-  return null;
+  if (head.status === 0 && head.stdout.trim()) refs.push(head.stdout.trim());
+  for (const name of ['refs/remotes/origin/main', 'refs/remotes/origin/master', 'refs/heads/main', 'refs/heads/master']) {
+    if (!refs.includes(name) && gitIn(where, env, ['rev-parse', '-q', '--verify', name]).status === 0) refs.push(name);
+  }
+  return refs;
 }
 
 // The task's own change since `base` (the state directory left out), or null when git cannot diff against it: the
-// paths of the commits base..HEAD that the integration line does not have (a `git merge main` into the branch brings
-// none of main's work into the class, retro 2026-10 D-MG-13; a side branch merged into the task is the task's work,
-// review r1 F3), merge commits counted by what they change beyond every parent (`--cc`: a conflict resolution or an
-// edit made in the merge itself); on the integration line itself, or without one, the first-parent line without merge
-// commits plus the merges' own edits. Plus the uncommitted and untracked changes; the LOC of those paths against the
-// base. Weightless paths (docs, images: lib/router) count no LOC.
+// commits of the branch's own first-parent line base..HEAD, always (no ref anyone can move hides them), plus every
+// commit of base..HEAD the integration line does not have (a side branch merged into the task is the task's work,
+// review r1 F3), so a `git merge main` into the branch brings none of main's work into the class (retro 2026-10
+// D-MG-13); a merge commit counts what it changes beyond every parent (`--cc`: a conflict resolution or an edit made
+// in the merge itself). Without an integration ref every commit of base..HEAD counts: a class may rise, never fall.
+// Plus the uncommitted and untracked changes; the LOC of those paths against the base. Weightless paths (docs, images:
+// lib/router) count no LOC.
 function changeSince(where, env, base, scope) {
   const wt = gitIn(where, env, ['diff', '--name-only', '-z', 'HEAD', ...scope]);
   if (wt.status !== 0) return null;
   const paths = new Set(wt.stdout.split('\0').filter(Boolean));
-  const noId = (p) => !/^[0-9a-f]{40}$/.test(p);
-  const ref = integrationRef(where, env);
-  const onLine = ref !== null && gitIn(where, env, ['merge-base', '--is-ancestor', 'HEAD', ref]).status === 0;
-  if (ref !== null && !onLine) {
-    const list = gitIn(where, env, ['rev-list', `${base}..HEAD`, '--not', ref]);
-    if (list.status !== 0) return null;
-    const shas = list.stdout.split('\n').filter(Boolean);
-    for (let i = 0; i < shas.length; i += 200) {
-      const own = gitIn(where, env, ['log', '--no-walk=unsorted', '--format=', '--name-only', '-z', '--cc', ...shas.slice(i, i + 200), ...scope]);
-      if (own.status !== 0) return null;
-      for (const p of own.stdout.split('\0').filter(Boolean)) if (noId(p)) paths.add(p);
-    }
-  } else {
-    const own = gitIn(where, env, ['log', '--first-parent', '--no-merges', '--format=', '--name-only', '-z', `${base}..HEAD`, ...scope]);
-    const merges = gitIn(where, env, ['log', '--first-parent', '--merges', '--format=%H', `${base}..HEAD`]);
-    if (own.status !== 0 || merges.status !== 0) return null;
-    for (const p of own.stdout.split('\0').filter(Boolean)) paths.add(p);
-    for (const sha of merges.stdout.split('\n').filter(Boolean)) {
-      const cc = gitIn(where, env, ['diff-tree', '--cc', '-r', '--name-only', '-z', sha, ...scope]);
-      if (cc.status !== 0) return null;
-      for (const p of cc.stdout.split('\0').filter(Boolean)) if (noId(p)) paths.add(p);
-    }
+  const refs = integrationRefs(where, env);
+  const chain = gitIn(where, env, ['rev-list', '--first-parent', `${base}..HEAD`]);
+  const rest = gitIn(where, env, ['rev-list', `${base}..HEAD`, ...(refs.length ? ['--not', ...refs] : [])]);
+  if (chain.status !== 0 || rest.status !== 0) return null;
+  const shas = [...new Set([...chain.stdout.split('\n'), ...rest.stdout.split('\n')].filter(Boolean))];
+  for (let i = 0; i < shas.length; i += 200) {
+    const own = gitIn(where, env, ['log', '--no-walk=unsorted', '--format=', '--name-only', '-z', '--cc', ...shas.slice(i, i + 200), ...scope]);
+    if (own.status !== 0) return null;
+    for (const p of own.stdout.split('\0').filter(Boolean)) if (!/^[0-9a-f]{40}$/.test(p)) paths.add(p);
   }
   const tracked = [...paths].filter((p) => !UNSAFE_PATH.test(p)).slice(0, MAX_PATHS);
   let loc = 0;

@@ -174,3 +174,43 @@ test('a side branch merged cleanly into the task is the task\'s own work: its ri
   const onMain = await m.cli(['verify', 'T-TU-1', '--yes']);
   assert.deepEqual([onMain.env.data.route.actual, onMain.env.data.route.escalated], ['critical', true], show(onMain));
 });
+
+test('no ref anyone can move hides the branch\'s own line: main pointed at a task commit still counts it; without main, master or origin every commit counts', async (t) => {
+  const r = await repo(t);
+  await r.cli(['task', 'new', 'Login', '--yes']);
+  assert.equal((await r.cli(['route', 'T-TU-1', '--paths', 'src/a.js', '--loc', '2', '--yes'])).env.data.class, 'trivial');
+  const base = r.git('rev-parse', 'HEAD');
+  r.git('switch', '-q', '-c', 'task/T-TU-1-login');
+  r.write('src/auth/login.js', 'export const login = 1;\n'.repeat(900));
+  r.write(`${names.stateDir}/tasks/T-TU-1/report.md`, REPORT);
+  state.setTask({ cwd: r.dir, env: r.env, names, id: 'T-TU-1', state: 'started', options: { branch: 'task/T-TU-1-login', base } });
+  r.git('add', '-A');
+  r.git('commit', '-q', '-m', 'login');
+  r.write('src/a.js', 'export const a = 2;\n');
+  r.git('add', '-A');
+  r.git('commit', '-q', '-m', 'small');
+  // main moved onto the task's first commit: the 900 lines are the task's all the same
+  r.git('branch', '-f', 'main', 'HEAD~1');
+  const moved = await r.cli(['verify', 'T-TU-1', '--yes']);
+  assert.deepEqual([moved.env.data.route.actual, moved.env.data.route.escalated], ['critical', true], show(moved));
+  // no integration ref at all: a side branch merged in counts too (a class may rise, never fall)
+  const n = await repo(t);
+  await n.cli(['task', 'new', 'Login', '--yes']);
+  assert.equal((await n.cli(['route', 'T-TU-1', '--paths', 'src/a.js', '--loc', '2', '--yes'])).env.data.class, 'trivial');
+  n.git('branch', '-m', 'main', 'trunk');
+  const nb = n.git('rev-parse', 'HEAD');
+  n.git('switch', '-q', '-c', 'task/T-TU-1-login');
+  n.write('src/a.js', 'export const a = 2;\n');
+  n.write(`${names.stateDir}/tasks/T-TU-1/report.md`, REPORT);
+  state.setTask({ cwd: n.dir, env: n.env, names, id: 'T-TU-1', state: 'started', options: { branch: 'task/T-TU-1-login', base: nb } });
+  n.git('add', '-A');
+  n.git('commit', '-q', '-m', 'the task');
+  n.git('switch', '-q', '-c', 'side', nb);
+  n.write('src/auth/login.js', 'export const login = 1;\n'.repeat(900));
+  n.git('add', '-A');
+  n.git('commit', '-q', '-m', 'side: login');
+  n.git('switch', '-q', 'task/T-TU-1-login');
+  n.git('merge', '-q', '--no-ff', '--no-edit', 'side');
+  const none = await n.cli(['verify', 'T-TU-1', '--yes']);
+  assert.deepEqual([none.env.data.route.actual, none.env.data.route.escalated], ['critical', true], show(none));
+});

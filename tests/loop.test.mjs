@@ -124,6 +124,29 @@ test('1.x self-verified round → approved: verify, merge, close (REV-11, FLW-8)
   assert.ok(s.rules.includes('REV-6'), 'round 2 delivered: a re-review, not approval');
 });
 
+test('a recorded review decides the step: approved → verify and close (REV-11, FLW-8); needs-fixes → the next fix round (REV-5, PRI-6); past the cap → decide (REV-7)', () => {
+  const rev = (min, round, verdict) => ev('review', min, { round, verdict, reviewer: 'claude' });
+  let s = row(table([task('T-TU-1', 'implemented', { events: [ev('implementer', 2, { report: 'done' }), rev(3, 1, 'approved')] })]), 'T-TU-1');
+  assert.deepEqual(s.rules, ['REV-11', 'FLW-8']);
+  assert.match(s.state, /review r1 approved/);
+  // the same after a dispatched reviewer: the record, not the status, says it
+  s = row(table([task('T-TU-1', 'dispatched', { events: [ev('dispatched', 2, { executor: 'claude:reviewer' }), rev(3, 1, 'approved')] })]), 'T-TU-1');
+  assert.deepEqual(s.rules, ['REV-11', 'FLW-8']);
+  // a fix round delivered, then its scoped re-review approved
+  s = row(table([task('T-TU-1', 'implemented', { round: 1, events: [rev(2, 1, 'needs-fixes'), ev('implementer', 3, { report: 'done', round: 1 }), rev(4, 2, 'approved')] })]), 'T-TU-1');
+  assert.deepEqual(s.rules, ['REV-11', 'FLW-8']);
+  // needs-fixes → fix round 1 to the implementer
+  s = row(table([task('T-TU-1', 'implemented', { events: [ev('implementer', 2, { report: 'done' }), rev(3, 1, 'needs-fixes')] })]), 'T-TU-1');
+  assert.deepEqual(s.rules, ['REV-5', 'PRI-6']);
+  assert.match(s.step, new RegExp(`${BIN} task set T-TU-1 fix-round --round 1 --addressed 0 --open <n>`));
+  // the review that opened the fix round decides nothing once the round is under way
+  s = row(table([task('T-TU-1', 'fix-round', { round: 1, events: [rev(2, 1, 'needs-fixes'), ev('fix-round', 3, { round: 1, addressed: 0, open: 3 })] })]), 'T-TU-1');
+  assert.equal(s.kind, 'wait');
+  // needs-fixes after the last allowed round → decide only
+  s = row(table([task('T-TU-1', 'implemented', { round: CAPS.rounds, events: [ev('implementer', 2, { report: 'done', round: CAPS.rounds }), rev(3, CAPS.rounds + 1, 'needs-fixes')] })]), 'T-TU-1');
+  assert.deepEqual(s.rules, ['REV-7']);
+});
+
 test('rounds (1.x breaker after 2 rounds): the second round names the decision; a third round → decide only (REV-7)', () => {
   const round = (k, open) => task('T-TU-1', 'fix-round', { round: k, events: [ev('fix-round', 2, { round: k, addressed: open ? 0 : 1, open })] });
   let s = row(table([round(1, 0)]), 'T-TU-1');
