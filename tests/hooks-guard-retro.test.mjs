@@ -41,7 +41,9 @@ function repo() {
   state.registerHandle(store, { name: 'Dev AB', email: 'ab@example.com', handle: 'AB' });
   store.write('task', 'T-AB-1', { id: 'T-AB-1', kind: 'task', title: 'x', lane: null, owner: 'AB', class: null, classHistory: [], status: 'new', round: 0, events: [{ at, by: 'AB', event: 'created', data: {} }], base: null, branch: null });
   for (const [rel, text] of [[`${S}/tasks/T-AB-1/report.md`, '---\n---\nStatus: DONE\n'], [`${S}/tasks/T-AB-1/brief.md`, '# brief\n'], [`${S}/decisions/D-AB-1.md`, '---\nid: D-AB-1\nstatus: active\n---\n\nbody\n'],
-    ['src/a.js', 'x\n'], ['src/old.js', 'x\n'], ['docs/a.md', '# a\n'], ['scripts/fs-comment.mjs', 'process.exit(0)\n'], ['notes.md', 'x\n']]) {
+    ['src/a.js', 'x\n'], ['src/old.js', 'x\n'], ['docs/a.md', '# a\n'], ['scripts/fs-comment.mjs', 'process.exit(0)\n'], ['notes.md', 'x\n'],
+    // the plugin's launcher as a checkout holds it, and two scripts named like the CLI that are not it (2.2.1)
+    [`plugins/x/bin/${BIN}`, readFileSync(join(pluginDir, 'bin', BIN), 'utf8')], [`evil/bin/${BIN}`, '#!/bin/sh\necho evil\n'], [`tools/${BIN}`, '#!/bin/sh\necho tool\n']]) {
     mkdirSync(dirname(join(d, rel)), { recursive: true });
     writeFileSync(join(d, rel), text);
   }
@@ -73,7 +75,7 @@ const MUST_PASS = [
   [`time -p plugins/x/bin/${BIN} task show T-AB-1`, 'time -p before the launcher by path'],
   [`plugins/x/bin/${BIN} commit --yes`, 'the launcher by a relative path with the commit command'],
   [`./plugins/x/bin/${BIN} report T-AB-1 --from notes.md --yes`, 'the launcher by ./ with the report command'],
-  [`/Users/me/Code/x-wt/T-AB-2/plugins/x/bin/${BIN} commit --message "state: T-AB-1 done" --yes`, 'the launcher of a worktree by an absolute path'],
+  [`${DIR}/plugins/x/bin/${BIN} commit --message "state: T-AB-1 done" --yes`, 'the launcher by an absolute path'],
   [`node plugins/x/bin/${BIN} commit --yes`, 'the launcher behind node'],
   [`plugins/x/bin/${BIN} verify T-AB-1 --yes > out.txt 2>&1; echo $?`, 'the launcher running a gate, its output to a file'],
   [`W=${DIR}/src; cd "$W" && cat a.js`, 'a worktree path in a variable, then cd'],
@@ -153,6 +155,13 @@ const MUST_BLOCK = [
   [`time plugins/x/bin/${BIN} heavy -- npm test | tail -3`, 'TRP-2', 'a pipe after heavy behind time and the launcher path'],
   [`./tools/${BIN} commit --yes`, 'SEC-3', 'a script named like the CLI outside bin/ is a script with a guarded argument'],
   [`node ./tools/${BIN} commit --yes`, 'SEC-3', 'the same behind node'],
+  [`./evil/bin/${BIN} commit --yes`, 'SEC-3', 'a planted script under a bin/ directory is not the launcher: its content differs'],
+  [`node evil/bin/${BIN} commit --yes`, 'SEC-3', 'the same behind node'],
+  [`/nowhere/plugins/x/bin/${BIN} commit --yes`, 'SEC-3', 'a launcher path that does not exist is a script'],
+  [`time X=a git stash`, 'SEC-3', 'an assignment after time (bash reads it as a prefix assignment)'],
+  [`time PATH=/tmp/evil git commit -m x`, 'SEC-3', 'PATH set after time'],
+  [`time ! git stash`, 'SEC-3', 'compound syntax after time'],
+  [`time -- git stash`, 'SEC-3', 'an option after time'],
 ];
 
 test('retro idioms pass: literal variables, loops over literals, the state named in data, reads, script arguments, a pipe after --json', () => {

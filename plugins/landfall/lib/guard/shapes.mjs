@@ -24,9 +24,15 @@ const isPath = (t) => !/\s/.test(t) && !t.startsWith('-') && (t.includes('/') ||
 const KIT_SCRIPT = /(^|\/)(\.workflow\/(bin|routing)|\.githooks)\/[\w.-]+$/;
 const isBin = (w) => w === BIN;
 // The plugin's launcher called by its path (a checkout, a worktree, the plugin cache: `plugins/<p>/bin/<bin> …`, also
-// behind `node`): the own command, not a script with arguments (retro follow-up 2.2.1).
+// behind `node`): the own command, not a script with arguments (retro follow-up 2.2.1). The name alone proves nothing
+// (a planted `evil/bin/<bin>`): the file, resolved from the command's directory, must hold exactly this plugin's
+// launcher; a copy of another version or an unknown directory falls back to the script rules.
 const LAUNCHER = new RegExp(`(^|/)bin/${BIN}$`);
-const isLauncher = (w) => w !== BIN && LAUNCHER.test(w);
+const OWN_LAUNCHER = (() => { try { return readFileSync(new URL(`../../bin/${BIN}`, import.meta.url), 'utf8'); } catch { return null; } })();
+function isLauncher(t, ctx) {
+  if (t === BIN || !LAUNCHER.test(t) || OWN_LAUNCHER === null || typeof ctx.cwd !== 'string') return false;
+  try { const p = resolve(ctx.cwd, t); return statSync(p).isFile() && readFileSync(p, 'utf8') === OWN_LAUNCHER; } catch { return false; }
+}
 const asBin = (c, k) => ({ ...c, words: [{ ...c.words[k], text: BIN }, ...c.words.slice(k + 1)] });
 
 // A gate script run as the program (secrets scan, machine budget).
@@ -190,8 +196,14 @@ export function shape(c, ctx) {
   if (c.words.some((x) => x.q === '?') && b !== 'echo' && b !== 'printf') why('$? outside echo/printf');
   if (c.words.some((x) => x.q === 'msg') && !['git', 'gh', 'echo', 'printf'].includes(b)) why('a $( ) substitution outside a message');
   if (ctx.shadowNames.has(name)) why(`"${short(name)}" redefined earlier in this command (alias or hash -p)`);
-  // `time` (with -p) only measures the command after it, which is judged as if written alone (2.2.1)
-  if (name === 'time') { let k = 1; while (k < w.length && w[k] === '-p') k++; return k < w.length ? shape({ ...c, words: c.words.slice(k) }, ctx) : null; }
+  // `time` (with -p) only measures the command after it, which is judged as if written alone (2.2.1); an assignment, an
+  // option or compound syntax after it has no simple form (bash reads `time X=a cmd` as a prefix assignment)
+  if (name === 'time') {
+    let k = 1; while (k < w.length && w[k] === '-p') k++;
+    if (k >= w.length) return null;
+    if (/^[A-Za-z_]\w*(\[[^\]]*\])?\+?=/.test(w[k]) || KEYWORDS.has(w[k]) || w[k].startsWith('-')) why('time before an assignment, an option or compound syntax');
+    return shape({ ...c, words: c.words.slice(k) }, ctx);
+  }
   if (KEYWORDS.has(name)) why(`compound syntax (${name})`);
   // arithmetic evaluation of a value runs a $(…) stored in it: let, declare -i, an array index in a variable name,
   // [[ … -eq … ]] with a name instead of a number
@@ -218,7 +230,7 @@ export function shape(c, ctx) {
     for (const t of w) if (wordTok(t) && !isPath(t)) why(`"${short(t)}" in the command ${short(b)} outside the list`);
     return null;
   }
-  if (isLauncher(name)) return shape(asBin(c, 0), ctx); // the launcher by its path: the own command
+  if (isLauncher(name, ctx)) return shape(asBin(c, 0), ctx); // the launcher by its path: the own command
   if (base(name) === BIN && name !== BIN) { const gate = pipeAfter(binGate(w), true); if (gate) return gate; } // another path: gates only
   if (isBin(name)) {
     const gate = pipeAfter(binGate(w), true); if (gate) return gate;
@@ -258,7 +270,7 @@ export function shape(c, ctx) {
       if (f) return codeShape(b, t === f ? w[k + 1] ?? '' : t.slice(f.length), w.slice(t === f ? k + 2 : k + 1), ctx);
       if (t === '-m' || t === '--') return scriptShape(w, k + 1 < w.length ? k + 1 : k);
       if (t === '-') why(`${b} reads code from its input`);
-      if (!t.startsWith('-')) return isLauncher(t) ? shape(asBin(c, k), ctx) : scriptShape(w, k);
+      if (!t.startsWith('-')) return isLauncher(t, ctx) ? shape(asBin(c, k), ctx) : scriptShape(w, k);
       if (wordTok(t) || (INTERP_VAL.includes(t) && wordTok(w[k + 1] ?? ''))) why(`an option of ${b} with a guarded word`);
       if (INTERP_VAL.includes(t)) k++;
     }

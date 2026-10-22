@@ -2,7 +2,7 @@
 
 ## 2.2.1
 
-- Bash guard: `time` (with `-p`) before a command judges the command as if written alone, so `time landfall status --json` passes and `time cp … .landfall/…` is still a write; the plugin's launcher called by its path (`plugins/landfall/bin/landfall commit`, a worktree's, behind `node`) is the own command with its own rules, not a script with a guarded argument; a script merely named like the CLI outside `bin/` stays a script.
+- Bash guard: `time` (with `-p`) before a command judges the command as if written alone, so `time landfall status --json` passes and `time cp … .landfall/…` is still a write (an assignment, an option or compound syntax after `time` has no simple form); the plugin's launcher called by its path (`plugins/landfall/bin/landfall commit`, a worktree's, behind `node`) is the own command with its own rules, not a script with a guarded argument, when the file holds exactly this plugin's launcher; a script merely named like the CLI, a copy of another version or a path that does not exist stays a script.
 
 ## 2.2.0
 
