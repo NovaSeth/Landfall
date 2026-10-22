@@ -212,6 +212,17 @@ test('1.x: every state is recorded with author and time in the grammar of the su
   await refused([id, 'blocked', '--reason', 'r'.repeat(201)], 'limit-exceeded', '--reason over 200 characters');
   await refused([id, 'blocked', '--reason', ''], 'invalid-value', 'empty --reason');
 
+  // started --branch <b> --base <sha> [--worktree <path>]: branch and base recorded, the status unchanged (task start)
+  await refused([id, 'started', '--branch', 'task/x'], 'missing-flag', 'started without --base');
+  await refused([id, 'started', '--branch', '-bad', '--base', 'abc1234'], 'invalid-value', 'a branch name git refuses');
+  await refused([id, 'started', '--branch', 'task/x', '--base', 'abc1234', '--worktree', 'relative/path'], 'invalid-value', 'the worktree is an absolute path');
+  res = await set(id, 'started', '--branch', 'task/T-1-x', '--base', 'bcd2345', '--worktree', '/tmp/wt/T-1');
+  doc = r.task(id);
+  assert.deepEqual([res.code, doc.status, doc.branch, doc.base, lastEvent(doc).data], [0, 'implemented', 'task/T-1-x', 'bcd2345', { branch: 'task/T-1-x', base: 'bcd2345', worktree: '/tmp/wt/T-1' }], show(res));
+  // implementer --round <k>: the report of a fix round records the round too
+  res = await set(id, 'implementer', '--report', 'done', '--round', '2');
+  assert.deepEqual([res.code, r.task(id).status, r.task(id).round, lastEvent(r.task(id)).data], [0, 'implemented', 2, { report: 'done', round: 2 }], show(res));
+
   // 1.x: fix-round --round k --addressed a --open o, numbers only
   res = await set(id, 'fix-round', '--round', '1', '--addressed', '3', '--open', '0');
   doc = r.task(id);
@@ -255,7 +266,25 @@ test('1.x: every state is recorded with author and time in the grammar of the su
     assert.match(e.at, ISO_TIME);
   }
   assert.deepEqual(r.task(id).events.map((e) => e.event), ['created', 'dispatched', 'blocked', 'self-verified', 'status-request',
-    'implementer', 'implementer', 'implementer', 'implementer', 'fix-round']);
+    'implementer', 'implementer', 'implementer', 'implementer', 'started', 'implementer', 'fix-round']);
+});
+
+test('task texts: brief, report and the review brief of a round are written whole by the owner; a round outside 1..999 is refused', async (t) => {
+  const r = await active(t);
+  const id = `T-${ME}-1`;
+  await r.run(['task', 'new', 'Texts']);
+  const ctx = { cwd: r.cwd, env: r.env, names };
+  assert.equal(state.taskTextFile('report'), 'report.md');
+  assert.equal(state.taskTextFile('review-brief', { round: 2 }), 'review-r2-brief.md');
+  assert.throws(() => state.taskTextFile('review-brief', { round: 0 }), /round from 1 to 999/);
+  assert.throws(() => state.taskTextFile('diff'), TypeError);
+  const report = state.writeTaskText({ ...ctx, id, name: 'report', text: '---\nred: {}\n---\n# Report\n' });
+  assert.deepEqual([report.outcome, report.file], ['created', join(r.store, 'tasks', id, 'report.md')]);
+  assert.equal(readFileSync(report.file, 'utf8'), '---\nred: {}\n---\n# Report\n');
+  const rb = state.writeTaskText({ ...ctx, id, name: 'review-brief', round: 3, text: '# Review brief\n' });
+  assert.deepEqual([rb.outcome, rb.file], ['created', join(r.store, 'tasks', id, 'review-r3-brief.md')]);
+  assert.equal(state.writeTaskText({ ...ctx, id, name: 'review-brief', round: 3, text: '# Edited\n' }).outcome, 'kept', 'an existing text is kept unless replace allows');
+  assert.equal(state.writeTaskText({ ...ctx, id, name: 'review-brief', round: 3, text: '# Edited\n', replace: () => true }).outcome, 'replaced');
 });
 
 test('1.x: self-verified accepts --round k (r<k> was the ledger spelling and is refused); the default is the current round', async (t) => {

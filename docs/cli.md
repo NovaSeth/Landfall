@@ -1119,15 +1119,16 @@ Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
 Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
 ```
 
-### `landfall task set <id> <state> [--executor <name>] [--base <sha>] [--lane <lane>] [--report <status>] [--reason <text>] [--round <k>] [--addressed <n>] [--open <n>] [--note <text>] [--yes] [--json]`
+### `landfall task set <id> <state> [--executor <name>] [--base <sha>] [--branch <branch>] [--worktree <path>] [--lane <lane>] [--report <status>] [--reason <text>] [--round <k>] [--addressed <n>] [--open <n>] [--note <text>] [--yes] [--json]`
 
 ```text
-usage: landfall task set <id> <state> [--executor <name>] [--base <sha>] [--lane <lane>] [--report <status>] [--reason <text>] [--round <k>] [--addressed <n>] [--open <n>] [--note <text>] [--yes] [--json]
+usage: landfall task set <id> <state> [--executor <name>] [--base <sha>] [--branch <branch>] [--worktree <path>] [--lane <lane>] [--report <status>] [--reason <text>] [--round <k>] [--addressed <n>] [--open <n>] [--note <text>] [--yes] [--json]
 
 Record a state of your task as an event with author and time; it moves the task's status.
-States: dispatched --executor <e> --base <sha> [--lane <l>] · implementer --report done|done-with-concerns|needs-context|blocked
-· blocked --reason <t> · cancelled --reason <t> · fix-round --round <k> --addressed <n> --open <n> · self-verified [--round <k>]
-· status-request. --note <t> fits every state. Only the owner records a state; a done or cancelled task is closed.
+States: started --branch <b> --base <sha> [--worktree <path>] (status unchanged; task start records it) · dispatched --executor <e>
+--base <sha> [--lane <l>] · implementer --report done|done-with-concerns|needs-context|blocked [--round <k>] · blocked --reason <t>
+· cancelled --reason <t> · fix-round --round <k> --addressed <n> --open <n> · self-verified [--round <k>] · status-request.
+--note <t> fits every state. Only the owner records a state; a done or cancelled task is closed.
 done is never set here: a task is done only after a passing verify (GC3). With the lanes capability on, dispatched needs a lane.
 
 Arguments:
@@ -1136,11 +1137,13 @@ Arguments:
 
 Options:
   --executor <name>  dispatched: who implements, such as claude:implementer
-  --base <sha>       dispatched: the commit the work starts from
+  --base <sha>       started, dispatched: the commit the work starts from
+  --branch <branch>  started: the task branch (task merge merges it)
+  --worktree <path>  started: the absolute path of the task worktree
   --lane <lane>      dispatched: the lane, stored on the task
   --report <status>  implementer: done, done-with-concerns, needs-context or blocked
   --reason <text>    blocked: what unblocks it; cancelled: why (at most 200 characters)
-  --round <k>        fix-round: the round delivered; self-verified: the round verified
+  --round <k>        fix-round: the round delivered; implementer: the fix round the report delivers; self-verified: the round verified
   --addressed <n>    fix-round: findings addressed
   --open <n>         fix-round: findings still open
   --note <text>      any state: a note (at most 200 characters)

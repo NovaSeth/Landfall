@@ -16,7 +16,7 @@ export { emailHash, gitIdentity, handleCandidates, registerHandle } from './team
 export { open, unlockStale } from './store.mjs';
 export { machineDataDir, readProjects, resolve, stateDirName, stateMarker, unlockStaleMachine, updateProject } from './resolve.mjs';
 export { activate, activationStep, deactivate, decline } from './activation.mjs';
-export { TASK_TEXTS, createTask, listTasks, setTask, showTask, writeTaskText } from './tasks.mjs';
+export { TASK_TEXTS, createTask, listTasks, setTask, showTask, taskTextFile, writeTaskText } from './tasks.mjs';
 
 // Field errors of a document of `kind` ([] when valid) and its canonical file text.
 export const check = (kind, doc) => validate(kind.spec, doc);
