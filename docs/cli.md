@@ -99,6 +99,7 @@ Commands:
   task new             Create a task with the next ID of your handle (T-<H>-<n>); area gates and releases are --kind gate.
   task set             Record a state of your task as an event with author and time; it moves the task's status.
   task show            Print one task: its fields and events.
+  task start           Create the task's worktree and branch from a base commit and record them (started); the brief carries both.
   tick                 One loop tick: the next steps from the task state; exit ACTION (0), WAIT (3), DONE (4), STALLED (5) or BUDGET (6).
   tier                 Evaluate the project tier (L0-L3) from git history and the state; a change is logged (shadow) or recorded (on).
   verify               Re-run the profile gates, compare the test inventory with the baseline and record verify.json for a task.
@@ -1183,6 +1184,29 @@ Arguments:
   id  task ID such as T-AB-1
 
 Read-only.
+Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
+```
+
+### `landfall task start <id> [--slug <s>] [--from <ref>] [--path <dir>] [--yes] [--json]`
+
+```text
+usage: landfall task start <id> [--slug <s>] [--from <ref>] [--path <dir>] [--yes] [--json]
+
+Create the task's worktree and branch from a base commit and record them (started); the brief carries both.
+Branch task/<id>-<slug> (--slug, else from the title: lower case, non-alphanumerics as -, at most 40 characters) at --from (a commit or
+ref; default HEAD of this checkout); worktree at --path (default <parent of the repository>/<repository name>-wt/<id>), created by
+`git worktree add`, so nothing is written by hand. Then `task set <id> started --branch --base --worktree`: the status does not move.
+Exit 1: the task is closed, --from names no commit, the branch or the path exists; nothing is created then.
+
+Arguments:
+  id  task ID such as T-AB-1
+
+Options:
+  --slug <s>    the branch suffix: [a-z0-9][a-z0-9.-]*, at most 40 characters (default: from the title)
+  --from <ref>  the base commit or ref (default: HEAD)
+  --path <dir>  the worktree directory (default: <repo parent>/<repo name>-wt/<id>)
+
+Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
 Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
 ```
 

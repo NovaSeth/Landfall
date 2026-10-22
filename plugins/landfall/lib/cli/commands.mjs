@@ -477,6 +477,25 @@ const ROWS = [
     load: () => import('./state.mjs').then((m) => m.taskNew),
   },
   {
+    name: 'task start',
+    summary: 'Create the task\'s worktree and branch from a base commit and record them (started); the brief carries both.',
+    details: [
+      'Branch task/<id>-<slug> (--slug, else from the title: lower case, non-alphanumerics as -, at most 40 characters) at --from (a commit or',
+      'ref; default HEAD of this checkout); worktree at --path (default <parent of the repository>/<repository name>-wt/<id>), created by',
+      '`git worktree add`, so nothing is written by hand. Then `task set <id> started --branch --base --worktree`: the status does not move.',
+      'Exit 1: the task is closed, --from names no commit, the branch or the path exists; nothing is created then.',
+    ],
+    args: [{ name: 'id', required: true, summary: 'task ID such as T-AB-1' }],
+    flags: [
+      { flag: '--slug', value: 's', summary: 'the branch suffix: [a-z0-9][a-z0-9.-]*, at most 40 characters (default: from the title)' },
+      { flag: '--from', value: 'ref', summary: 'the base commit or ref (default: HEAD)' },
+      { flag: '--path', value: 'dir', summary: 'the worktree directory (default: <repo parent>/<repo name>-wt/<id>)' },
+    ],
+    exits: ['OK', 'FAIL', 'USAGE', 'REFUSED', 'ENV'],
+    mutating: true,
+    load: () => import('./task-start.mjs').then((m) => m.taskStart),
+  },
+  {
     name: 'task set',
     summary: 'Record a state of your task as an event with author and time; it moves the task\'s status.',
     details: [
