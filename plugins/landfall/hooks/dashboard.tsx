@@ -5,7 +5,7 @@
 // task, round, elapsed time, status and where their result landed, the slots in use and the next step.
 // Data: the plugin's own CLI in the session's working directory (`status --json`, `runs list --json`), the engine's
 // agent list, and the agent spawns and turn ends the hooks see. Nothing is written and no model context is used (GC7).
-// Refreshed on a clock (15 s while the pane shows, 60 s while it does not) and right after a landfall command, an agent
+// Refreshed on a clock (15 s while the pane shows, 60 s while it does not) and right after a command of the plugin's own CLI, an agent
 // spawn or a turn end. `userConfig.dashboard`: `auto` opens the pane at session start, `command` only on
 // /landfall:dashboard, `off` draws nothing and sets no status line.
 // The engine reads this file statically: `$` goes only to functions declared at the top of the file, and every call on
@@ -25,8 +25,10 @@ const RUN_TIMEOUT_MS = 8_000
 const KEEP_AGENTS = 30
 const LIST_GRACE_MS = 30_000
 const TASK_ID = /\bT-[A-Z]{2,4}-\d+\b/
-const ROUND = /(?:review-r|--round[ =]|\bround )(\d+)/i
-const OUT_PATH = /\/[^\s`'"()<>]+\.(?:json|md)\b/g
+// the round of a brief or an answer, the most specific spelling first (review r1 F5: prose says "round" too)
+const ROUNDS = [/\breview-r(\d+)\b/i, /--round[ =](\d+)\b/, /\bfix round (\d+)\b/i, /\bround (\d+)\b/i]
+// an absolute path to a .json or .md file, whole (not the tail of a relative path, review r1 F5)
+const OUT_PATH = /(?<![\w./-])\/[^\s`'"()<>]+\.(?:json|md)\b/g
 const COMMAND_IN_STEP = /`([^`]+)`/
 const RUNNING = new Set(['pending', 'running', 'waiting'])
 const CLOSED = new Set(['done', 'cancelled'])
@@ -75,8 +77,20 @@ function clock(ms: number): string {
 }
 
 function roundOf(text: string): number | null {
-  const m = ROUND.exec(text)
-  return m ? Number(m[1]) : null
+  for (const re of ROUNDS) {
+    const m = re.exec(text)
+    if (m) return Number(m[1])
+  }
+  return null
+}
+
+// The loop record (lib/loop/kind.mjs): `exit` null while it runs, DONE, STALLED or BUDGET once it ended; `ticks` so far.
+function loopText(loop: Json | null): string | null {
+  if (!loop) return null
+  const ticks = num(loop.ticks)
+  const exit = typeof loop.exit === 'string' && loop.exit ? loop.exit.toLowerCase() : null
+  if (exit) return `${exit}${ticks !== null ? ` after ${ticks} tick${ticks === 1 ? '' : 's'}` : ''}`
+  return `running${ticks !== null ? ` · tick ${ticks}` : ''}`
 }
 
 function lastPath(text: string): string | null {
@@ -118,23 +132,28 @@ function tasksOf(data: Json): { rows: TaskRow[]; counts: Snapshot['counts'] } {
   return { rows, counts }
 }
 
-function runsOf(env: Json | null, now: number): RunRow[] {
+// External runs as `runs list --json` summarises them (lib/runs: runId, status, provider, role, task, elapsedMs, tokens,
+// lastLine, outFile, error); a run is live until a terminal status (review r1 F1).
+const RUN_TERMINAL = new Set(['done', 'failed', 'timeout', 'stopped'])
+function runsOf(env: Json | null): RunRow[] {
   const data = env ? obj(env.data) : null
   return list(data?.runs)
     .map(r => {
       const status = str(r.status, 'queued')
-      const ended = status === 'done' || status === 'failed' || status === 'timeout' || typeof r.endedAt === 'string'
-      const from = Date.parse(str(r.startedAt) || str(r.queuedAt))
+      const t = obj(r.tokens)
+      const tokens = num(r.tokens) ?? (t ? (num(t.input) ?? 0) + (num(t.output) ?? 0) + (num(t.cached) ?? 0) : null)
       return {
-        id: str(r.id),
+        id: str(r.runId) || str(r.id),
         provider: str(r.provider, 'external'),
         role: str(r.role, '-'),
         task: str(r.task) || null,
         status,
-        elapsedMs: ended ? (num(r.elapsedMs) ?? 0) : Number.isFinite(from) ? Math.max(0, now - from) : 0,
-        costMicroUsd: num(r.costMicroUsd),
+        elapsedMs: num(r.elapsedMs) ?? 0,
+        tokens: tokens || null,
+        out: str(r.outFile) || null,
+        error: str(r.error) || null,
         lastLine: str(r.lastLine) || null,
-        live: !ended,
+        live: !RUN_TERMINAL.has(status),
       }
     })
     .slice(0, KEEP_AGENTS)
@@ -189,8 +208,6 @@ function nextOf(rows: TaskRow[]): Snapshot['next'] {
 
 function snapshotOf(data: Json, runsEnv: Json | null, agents: AgentRecord[], now: number): Snapshot {
   const tier = obj(data.tier)
-  const loop = obj(data.loop)
-  const ticks = loop ? num(loop.ticks) : null
   const { rows, counts } = tasksOf(data)
   return {
     at: now,
@@ -198,10 +215,10 @@ function snapshotOf(data: Json, runsEnv: Json | null, agents: AgentRecord[], now
     project: baseName(str(data.repo)),
     tier: tier ? str(tier.tier) || null : null,
     tierMode: tier ? str(tier.mode) || null : null,
-    loop: loop ? `${str(loop.status, 'running')}${ticks ? ` · tick ${ticks}` : ''}` : null,
+    loop: loopText(obj(data.loop)),
     counts,
     tasks: rows,
-    runs: runsOf(runsEnv, now),
+    runs: runsOf(runsEnv),
     agents,
     slots: slotsOf(data),
     next: nextOf(rows),
@@ -239,8 +256,9 @@ function runLine(r: RunRow, at: number): AgentLine {
     `${(r.task ?? '-').padEnd(8)}   `,
     clock(r.elapsedMs),
     r.status,
-    ...(r.costMicroUsd === null ? [] : [`$${(r.costMicroUsd / 1e6).toFixed(2)}`]),
-    ...(r.lastLine ? [r.lastLine] : []),
+    ...(r.out ? [`→ ${baseName(r.out)}`] : []),
+    ...(r.tokens ? [`${(r.tokens / 1000).toFixed(1)}k tok`] : []),
+    ...(r.error ? [r.error] : r.lastLine ? [r.lastLine] : []),
   ]
   return { line: { text: parts.join('  '), style: r.live ? 'live' : r.status === 'done' ? 'ok' : 'bad' }, live: r.live, since: at - r.elapsedMs }
 }
@@ -251,7 +269,8 @@ export function linesOf(snap: Snapshot, width: number, rows: number): Line[] {
   const mode = snap.tierMode && snap.tierMode !== 'on' ? ` (${snap.tierMode})` : ''
   out.push({ text: `${snap.project} · ${snap.tier ?? '-'}${mode} · loop ${snap.loop ?? 'off'}`, style: 'head' })
   out.push({ text: `${c.open} open · ${c.active} active · ${c.byStatus.planned ?? 0} planned · ${c.byStatus.new ?? 0} new · ${c.byStatus.done ?? 0} done`, style: 'dim' })
-  const room = Math.max(2, rows - 7)
+  if (snap.error) out.push({ text: `! ${snap.error}: the rows are from the last answer`, style: 'bad' })
+  const room = Math.max(2, rows - 7 - (snap.error ? 1 : 0))
   const taskRoom = Math.max(1, Math.ceil(room * 0.55))
   const agentRoom = Math.max(1, room - taskRoom)
 
@@ -307,12 +326,20 @@ async function refresh($: EngineInterface): Promise<void> {
     const now = await $.clock.now()
     const status = await runCli($, ['status'])
     const data = status ? obj(status.data) : null
-    const active = data !== null && obj(data.state)?.status === 'active'
+    if (data === null) {
+      // the CLI did not answer (slow, killed at the timeout, not found): the last snapshot stands with the error on it
+      // (review r1 F3); a first failure draws the inactive card with the error
+      let shown: Snapshot | null = null
+      await update($, snapshotAtom, s => (shown = s ? { ...s, at: now, error: 'landfall status did not answer' } : inactiveSnapshot(baseName(live.cwd), now, 'landfall status did not answer')))
+      if (shown) $.ui.status(live.shown ? undefined : statusLineOf(shown))
+      return
+    }
+    const active = obj(data.state)?.status === 'active'
     const runsEnv = active ? await runCli($, ['runs', 'list']) : null
     const listed = await $.agent.list()
     let agents: AgentRecord[] = []
     await update($, agentsAtom, rs => (agents = mergeAgents(rs, listed, now)))
-    const snap = active && data ? snapshotOf(data, runsEnv, agents, now) : inactiveSnapshot(baseName(str(data?.repo) || live.cwd), now, status === null ? 'landfall status did not answer' : null)
+    const snap = active ? snapshotOf(data, runsEnv, agents, now) : inactiveSnapshot(baseName(str(data.repo) || live.cwd), now, null)
     await update($, snapshotAtom, () => snap)
     $.ui.status(live.shown ? undefined : statusLineOf(snap))
   } catch {

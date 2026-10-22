@@ -31,13 +31,25 @@ const STATUS = {
       { task: 'T-TU-1', state: 'review r2 approved', step: 'merge origin/main into its branch and verify it again: `{{bin}} verify T-TU-1`; merge it and close it: `{{bin}} task done T-TU-1`', rules: ['REV-11', 'FLW-8'], kind: 'action' },
       { task: 'T-TU-2', state: 'new, not routed', step: 'classify it: `{{bin}} route T-TU-2 --paths <p,…> --loc <n>`', rules: ['FLW-3'], kind: 'action' },
     ],
-    loop: null,
+    // a loop that ended (lib/loop/kind.mjs: exit DONE | STALLED | BUDGET, null while it runs)
+    loop: { schema: 1, startedAt: '2026-10-22T09:00:00.000Z', ticks: 7, exit: 'DONE', exitAt: '2026-10-22T10:00:00.000Z', reason: null },
     leases: [{ id: 'l1', kind: 'heavy', task: 'T-TU-1', status: 'live' }],
   },
   errors: [],
 }
-const RUNS = { ...STATUS, command: 'runs list', data: { runs: [{ id: 'r1', provider: 'codex', role: 'reviewer', task: 'T-TU-1', status: 'running', startedAt: '2026-10-22T10:00:00.000Z', elapsedMs: 0, costMicroUsd: 120000, lastLine: 'reading the diff' }] } }
+// the run summaries as `runs list --json` prints them (lib/runs): a live one and one stopped by the orchestrator
+const RUNS = {
+  ...STATUS,
+  command: 'runs list',
+  data: {
+    runs: [
+      { runId: 'r1', status: 'running', provider: 'codex', role: 'reviewer', task: 'T-TU-1', elapsedMs: 300000, tokens: { input: 1000, output: 200, cached: 0 }, lastLine: 'reading the diff', outFile: '/work/petla/.{{bin}}/local/review/T-TU-1-r1.json', error: null },
+      { runId: 'r2', status: 'stopped', provider: 'codex', role: 'implementer', task: 'T-TU-2', elapsedMs: 61000, tokens: null, lastLine: 'writing', outFile: null, error: 'stopped by the orchestrator' },
+    ],
+  },
+}
 const INACTIVE = { ...STATUS, data: { repo: '/work/other', state: { status: 'inactive', dir: null, linked: false }, tasks: [], steps: [], loop: null, leases: [] } }
+const LOOPING = { ...STATUS, data: { ...STATUS.data, loop: { schema: 1, startedAt: '2026-10-22T10:00:00.000Z', ticks: 3, exit: null, exitAt: null, reason: null } } }
 
 const answer = (doc: unknown) => ({ value: { exitCode: 0, stdout: JSON.stringify(doc), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
 
@@ -46,8 +58,11 @@ function world(on: Parameters<Parameters<typeof test>[1]>[1], { status = STATUS,
   const argvs: string[][] = []
   // the engine's agent list, which a test changes as agents start and end
   const agents: { id: string; description: string; type: string; status: string }[] = [{ id: 'a1', description: 'Review T-TU-1 round 2', type: '{{plugin}}:reviewer', status: 'running' }]
+  // set by a test to make the CLI fail (killed at its timeout, not found)
+  const cli = { fails: false }
   on('process.run', ($, e) => {
     argvs.push([...e.argv])
+    if (cli.fails) return { deny: 'the child was killed at 8000 ms' }
     return answer(e.argv.includes('runs') ? RUNS : status)
   })
   on('agent.list', () => ({ value: agents.map(a => ({ ...a })) }))
@@ -62,7 +77,7 @@ function world(on: Parameters<Parameters<typeof test>[1]>[1], { status = STATUS,
     const { Text } = $.ui.resolve(e)
     return <Text>engine</Text>
   })
-  return { statuses, argvs, agents, clock: mock.clock(on, { now: Date.parse('2026-10-22T10:05:00.000Z') }) }
+  return { statuses, argvs, agents, cli, clock: mock.clock(on, { now: Date.parse('2026-10-22T10:05:00.000Z') }) }
 }
 
 test('the pane says, from general to detail, the project, the tasks with their stage, the agents with role, task, round and time, the slots and the next step', async ($, on) => {
@@ -73,7 +88,7 @@ test('the pane says, from general to detail, the project, the tasks with their s
   expect(w.argvs.some(a => a.includes('runs') && a.includes('list'))).toBe(true)
 
   const ui = await $.ui.mount(PANE)
-  expect((await ui.find({ type: 'Text', text: /^petla/ }))?.text).toBe('petla · L0 (shadow) · loop off')
+  expect((await ui.find({ type: 'Text', text: /^petla/ }))?.text).toBe('petla · L0 (shadow) · loop done after 7 ticks')
   expect((await ui.find({ type: 'Text', text: /open · / }))?.text).toBe('2 open · 1 active · 0 planned · 1 new · 1 done')
   // the active task first, with its round, class and stage; the closed one not at all
   expect((await ui.find({ type: 'Text', text: /T-TU-1 r1/ }))?.text).toBe('▸ T-TU-1 r1 crit  review r2 approved')
@@ -81,7 +96,9 @@ test('the pane says, from general to detail, the project, the tasks with their s
   expect(await ui.find({ type: 'Text', text: /T-TU-3/ })).toBeUndefined()
   // the Claude subagent the engine lists and the external run, each with role, task, time and status
   expect((await ui.find({ type: 'Text', text: /● reviewer/ }))?.text).toBe('● reviewer     T-TU-1   r2  00:00  running')
-  expect((await ui.find({ type: 'Text', text: /codex/ }))?.text).toBe('● codex reviewer  T-TU-1       05:00  running  $0.12  reading the diff')
+  expect((await ui.find({ type: 'Text', text: /codex reviewer/ }))?.text).toBe('● codex reviewer  T-TU-1       05:00  running  → T-TU-1-r1.json  1.2k tok  reading the diff')
+  // a stopped run is not live: its error stands where the last line would
+  expect((await ui.find({ type: 'Text', text: /codex implementer/ }))?.text).toBe('✗ codex implementer  T-TU-2       01:01  stopped  stopped by the orchestrator')
   expect((await ui.find({ type: 'Text', text: /^SLOTS/ }))?.text).toBe('SLOTS heavy 1')
   expect((await ui.find({ type: 'Text', text: /^NEXT/ }))?.text).toBe('NEXT T-TU-1: {{bin}} verify T-TU-1')
   await ui.unmount()
@@ -120,7 +137,7 @@ test('a pane the terminal cannot place leaves the summary in the status line; an
   expect(r.text).toMatch(/110 columns/)
 })
 
-test('an inactive repository draws the project and the hint, and refreshes on the hidden cadence', async ($, on) => {
+test('an inactive repository draws the project and the hint; a placed pane refreshes every 15 s', async ($, on) => {
   const w = world(on, { status: INACTIVE })
   await $.session.start(SESSION)
   await w.clock.settle()
@@ -131,4 +148,35 @@ test('an inactive repository draws the project and the hint, and refreshes on th
   const before = w.argvs.length
   await w.clock.advance(15_000)
   expect(w.argvs.length).toBeGreaterThan(before)
+})
+
+test('a pane that is not placed refreshes every 60 s, not every 15 s; a running loop says its tick', async ($, on) => {
+  const w = world(on, { status: LOOPING, placed: false })
+  await $.session.start(SESSION)
+  await w.clock.settle()
+  const after = w.argvs.length
+  await w.clock.advance(15_000)
+  expect(w.argvs.length).toBe(after)
+  await w.clock.advance(45_000)
+  expect(w.argvs.length).toBeGreaterThan(after)
+  const ui = await $.ui.mount(PANE)
+  expect((await ui.find({ type: 'Text', text: /^petla/ }))?.text).toBe('petla · L0 (shadow) · loop running · tick 3')
+  await ui.unmount()
+})
+
+test('a CLI that does not answer leaves the last rows standing with the error on top', async ($, on) => {
+  const w = world(on)
+  await $.session.start(SESSION)
+  await w.clock.settle()
+  w.cli.fails = true
+  await w.clock.advance(15_000)
+  const ui = await $.ui.mount(PANE)
+  expect((await ui.find({ type: 'Text', text: /did not answer/ }))?.text).toBe('! {{bin}} status did not answer: the rows are from the last answer')
+  expect((await ui.find({ type: 'Text', text: /T-TU-1 r1/ }))?.text).toBe('▸ T-TU-1 r1 crit  review r2 approved')
+  await ui.unmount()
+  w.cli.fails = false
+  await w.clock.advance(15_000)
+  const again = await $.ui.mount(PANE)
+  expect(await again.find({ type: 'Text', text: /did not answer/ })).toBeUndefined()
+  await again.unmount()
 })

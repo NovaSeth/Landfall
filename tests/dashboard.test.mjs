@@ -8,6 +8,12 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isolatedEnv, isolateProcessEnv } from './helpers/isolated-env.mjs';
+
+// Every child of this file (the Claude Code CLI among them) gets a throwaway HOME and environment (S1).
+isolateProcessEnv();
+const ISO = isolatedEnv({ prefix: 'dashboard-' });
+const claudeRun = (args, timeout) => spawnSync('claude', args, { encoding: 'utf8', timeout, env: ISO.env });
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const pluginDir = (() => {
@@ -21,7 +27,7 @@ const hooks = JSON.parse(readFileSync(join(pluginDir, 'hooks', 'hooks.json'), 'u
 const manifest = JSON.parse(readFileSync(join(pluginDir, '.claude-plugin', 'plugin.json'), 'utf8'));
 
 const claude = (() => {
-  const r = spawnSync('claude', ['--version'], { encoding: 'utf8', timeout: 20000 });
+  const r = claudeRun(['--version'], 20000);
   return r.status === 0 && /^\d+\.\d+\.\d+/.test(r.stdout.trim()) ? r.stdout.trim() : null;
 })();
 
@@ -43,10 +49,10 @@ test('hooks.json names the dashboard module next to the command hooks; the modul
 });
 
 test('the engine validates the module and runs the dashboard tests (skipped without Claude Code on PATH)', { skip: claude ? false : 'claude is not on PATH' }, () => {
-  const v = spawnSync('claude', ['plugin', 'validate', pluginDir], { encoding: 'utf8', timeout: 120000 });
+  const v = claudeRun(['plugin', 'validate', pluginDir], 120000);
   assert.equal(v.status, 0, `claude plugin validate (${claude}):\n${v.stdout}\n${v.stderr}`);
   assert.match(v.stdout, /dashboard\.tsx hooks: session\.start/, 'the module is scanned');
-  const t = spawnSync('claude', ['plugin', 'test', pluginDir], { encoding: 'utf8', timeout: 300000 });
+  const t = claudeRun(['plugin', 'test', pluginDir], 300000);
   assert.equal(t.status, 0, `claude plugin test (${claude}):\n${t.stdout}\n${t.stderr}`);
   assert.match(t.stdout, /\n\s*0 fail\b/, t.stdout);
   assert.doesNotMatch(t.stdout, /\(fail\)/, t.stdout);

@@ -18,7 +18,9 @@ export type RunRow = {
   task: string | null
   status: string
   elapsedMs: number
-  costMicroUsd: number | null
+  tokens: number | null
+  out: string | null
+  error: string | null
   lastLine: string | null
   live: boolean
 }
