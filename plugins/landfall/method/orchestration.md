@@ -17,12 +17,13 @@
 **ORC-18.** An implementer never changes shared parts outside a shared task, never merges and never pushes; a reviewer never changes code.
 **ORC-2.** An agent reads its brief first, takes values literally, writes its report to the file the brief names, replies in 5 lines (status, commits or result, tests, concerns, report path) and MUST NOT spawn subagents.
 **ORC-3.** Give a subagent paths and rule IDs, never pasted documents or session history; read the method by rule (CLI `rule`) or by section.
+**ORC-19.** Several agents in one worktree get disjoint file lists and one shared vocabulary (the names, headings and contract terms that must agree) in the brief, and run no git of their own; the orchestrator commits.
 
 ### Brief
 **ORC-4.** A task brief (`templates/brief.md`) MUST contain the executor and task class, worktree, branch, base SHA and dependency state, file scope, cause chain as `file:line`, numbered acceptance points, RED tests, who runs E2E, gate commands with worker limits, rule IDs and the report path.
 **ORC-15.** Write every path in a brief as an absolute path, and mark an authoring task as such, because a brief full of `file:line` reads like a review request.
 **ORC-16.** Before cutting a brief, fast-forward the main checkout from the remote and put the resulting base SHA in the brief.
-**ORC-5.** A review brief MUST require read-only mode and gives the commit range, the task brief, the author's report, the diff saved to a file (`git diff -U10 A..B`), the acceptance points and a targeted risk list.
+**ORC-5.** A review brief MUST require read-only mode and gives the commit range pinned by sha (never "the newest commits"), the task brief, the author's report, the diff saved to a file (`git diff -U10 A..B`), the acceptance points and a targeted risk list; the CLI `review brief` renders it from the state.
 **ORC-6.** A shared brief per task kind holds its binding rules and a task brief references it in one sentence; an error that recurs in reviews a third time (default 3) becomes a shared-brief section with a correct example, a wrong one and a test.
 
 ### Status

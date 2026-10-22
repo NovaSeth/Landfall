@@ -20,6 +20,6 @@
 **FLW-6.** Accept a result only after checking the exit code AND the count of results (tests, files, rows); exit 0 with zero tests or an empty report is not success.
 
 ### Task state
-**FLW-7.** Write task state only through CLI commands and only with evidence (pull request, commit, gate result); MUST NOT edit state files by hand, because the loop reads only what the commands write.
+**FLW-7.** Write task state only through CLI commands and only with evidence (pull request, commit, gate result); MUST NOT edit state files by hand, because the loop reads only what the commands write; the task's documents (brief, report, review brief) are text the CLI stores (`brief --write`, `report`, `review brief --write`).
 **FLW-8.** [always] A task closes only after verify passed for the current HEAD; a model's prose never closes a task.
 **FLW-9.** Every new piece of work (fix, gate, rewiring, follow-up, shared task) gets a task at once, and every task in progress has a live next step (a running agent, a queued run, a pending review); without one it returns to todo or is marked blocked with what unblocks it.
