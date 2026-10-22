@@ -96,11 +96,11 @@ Commands:
   state unlock         Remove a lock left by a process that is gone (store and machine data); writes never take one over.
   status               Show this repository: activation, tier, open tasks with their next step, the loop and leases; the default command.
   task done            Mark your task done; only after a passing verify for the code at HEAD (the only way to status done).
-  task list            List the tasks of this repository: ID, status, kind, lane, title.
+  task list            List the tasks of this repository: ID, status, class, round, kind, lane, branch, title.
   task merge           Merge a task branch with --no-ff --no-commit, run the outcome gates on the merged tree, commit only on pass.
   task new             Create a task with the next ID of your handle (T-<H>-<n>); area gates and releases are --kind gate.
   task set             Record a state of your task as an event with author and time; it moves the task's status.
-  task show            Print one task: its fields and events.
+  task show            Print one task as its resume card: class, branch, base, worktree, verify, reviews, open findings, next step, events.
   task start           Create the task's worktree and branch from a base commit and record them (started); the brief carries both.
   tick                 One loop tick: the next steps from the task state; exit ACTION (0), WAIT (3), DONE (4), STALLED (5) or BUDGET (6).
   tier                 Evaluate the project tier (L0-L3) from git history and the state; a change is logged (shadow) or recorded (on).
@@ -1146,7 +1146,7 @@ Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
 ```text
 usage: landfall task list [--json]
 
-List the tasks of this repository: ID, status, kind, lane, title.
+List the tasks of this repository: ID, status, class, round, kind, lane, branch, title.
 An inactive repository has no tasks; nothing is written.
 
 Read-only.
@@ -1231,7 +1231,7 @@ Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
 ```text
 usage: landfall task show <id> [--json]
 
-Print one task: its fields and events.
+Print one task as its resume card: class, branch, base, worktree, verify, reviews, open findings, next step, events.
 
 Arguments:
   id  task ID such as T-AB-1
