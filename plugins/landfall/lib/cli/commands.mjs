@@ -685,7 +685,7 @@ const ROWS = [
   },
   {
     name: 'report',
-    summary: 'Store a task report from a file: tasks/<id>/report.md with its RED/GREEN frontmatter checked; --round appends a fix round; the implementer event is recorded.',
+    summary: 'Store a task report from a file (RED/GREEN checked); --round appends a fix round; records the implementer event.',
     details: [
       'Without --round the file becomes the report: its frontmatter must hold red and green evidence (as verify reads it) and its last',
       '"Status:" line one of DONE, DONE_WITH_CONCERNS, NEEDS_CONTEXT or BLOCKED; an existing report is replaced only with --force.',

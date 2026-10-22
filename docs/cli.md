@@ -80,7 +80,7 @@ Commands:
   providers            List the provider CLIs for external runs: found on PATH, version, auth, roles and the sandbox per role.
   providers add        Declare another provider CLI (generic adapter): its argv template and the sandbox mode per role.
   receipt              Tokens and estimated cost of a task, one external run, the current loop, or all work since a day by class or executor.
-  report               Store a task report from a file: tasks/<id>/report.md with its RED/GREEN frontmatter checked; --round appends a fix round; the implementer event is recorded.
+  report               Store a task report from a file (RED/GREEN checked); --round appends a fix round; records the implementer event.
   review record        Record a typed review result as the next round tasks/<id>/review-r<k>.json; the Markdown review closes nothing.
   route                Classify a task as trivial, standard or critical from its plan and print its route; the class only rises.
   rule                 Print method rules by ID; a retired ID prints its successor. --core prints the always-on rules.
@@ -836,7 +836,7 @@ Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
 ```text
 usage: landfall report <id> [--from <file>] [--round <k>] [--force] [--yes] [--json]
 
-Store a task report from a file: tasks/<id>/report.md with its RED/GREEN frontmatter checked; --round appends a fix round; the implementer event is recorded.
+Store a task report from a file (RED/GREEN checked); --round appends a fix round; records the implementer event.
 Without --round the file becomes the report: its frontmatter must hold red and green evidence (as verify reads it) and its last
 "Status:" line one of DONE, DONE_WITH_CONCERNS, NEEDS_CONTEXT or BLOCKED; an existing report is replaced only with --force.
 With --round <k> the report must exist: the file's frontmatter (if any) is dropped and its body is appended under "## Fix round <k>"
