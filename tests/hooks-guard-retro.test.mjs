@@ -85,6 +85,8 @@ const MUST_PASS = [
   [`${BIN} verify T-AB-1 --json | head -c 300`, 'the same for verify'],
   // cd then a read, with ; instead of &&
   [`cd src; cat ../${S}/tasks/T-AB-1/report.md`, 'a cd with ; before a read of the state'],
+  [`cat ${S}/tasks/T-AB-1/report.md | grep -v "^$"`, 'a literal $ before the closing quote (an empty-line filter)'],
+  [`grep -c "Status: DONE$" ${S}/tasks/T-AB-1/report.md`, 'a literal $ as an end anchor'],
   [`cd src; ls`, 'a cd with ; before a plain command'],
   // git -C placed
   [`git -C ${DIR} rm --cached src/old.js`, 'git rm in another directory, outside the state'],
@@ -117,6 +119,8 @@ const MUST_BLOCK = [
   [`mv ${S}/tasks/T-AB-1/brief.md /tmp/x`, 'FLW-7', 'a move out of the state removes a document'],
   [`sed -i 's/.*/x/' ${S}/decisions/D-AB-1.md`, 'PRI-8', 'in place on a decision record'],
   [`rm -rf src`, 'PRI-17', 'a tracked directory removed'],
+  [`echo "$HOME" > ${S}/tasks/T-AB-1/report.md`, 'SEC-3', 'a real expansion inside quotes still has no shape'],
+  [`echo "${'$'}{S}" > ${S}/tasks/T-AB-1/report.md`, 'SEC-3', 'a brace expansion inside quotes too'],
 ];
 
 test('retro idioms pass: literal variables, loops over literals, the state named in data, reads, script arguments, a pipe after --json', () => {
@@ -130,7 +134,7 @@ test('what those idioms stood in for still blocks, with the rule that applies', 
   assert.deepEqual(wrong, [], 'every line of the block basket is blocked by its rule');
   assert.equal(blocks.length - before, MUST_BLOCK.length, 'every block is logged');
   const entry = blocks[blocks.length - 1];
-  assert.deepEqual([entry.capability, entry.event, entry.rule], ['guard-bash', 'block', 'PRI-17']);
+  assert.deepEqual([entry.capability, entry.event, entry.rule], ['guard-bash', 'block', 'SEC-3']);
   assert.ok(typeof entry.at === 'string' && entry.command.length <= 200 && entry.cwd === DIR);
 });
 
