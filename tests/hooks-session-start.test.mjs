@@ -91,3 +91,17 @@ test('session context: malformed input → no output (GC8); the launcher prints 
   const r = launch('session-start', { hook_event_name: 'SessionStart', source: 'startup', cwd: f.dir }, { env: f.env, cwd: f.dir });
   assert.equal(r.status, 0); assert.match(r.context, /T-AB-1 dispatched: Launch check/);
 });
+
+test('session context: a due profile scan is one line after the tier; none without it; it yields to the rules when the budget is tight', () => {
+  const base = { bin: names.bin, where: `state in ${names.stateDir}`, tier: 'L1', tasks: [], loop: { exit: null, doc: null }, rules: [] };
+  const due = renderContext({ ...base, scan: { due: true, reason: 'commits' } });
+  assert.ok(due.includes(`Profile: scan due (commits); run \`${names.bin} profile observe\`.`), due);
+  const lines = due.split('\n');
+  assert.match(lines[lines.indexOf('Tier: L1.') + 1], /^Profile: scan due/);
+  assert.ok(!renderContext({ ...base, scan: null }).includes('Profile:'));
+  assert.ok(!renderContext({ ...base }).includes('Profile:'));
+  const rules = [{ id: 'COD-1', text: 'x'.repeat(100) }];
+  const without = renderContext({ ...base, rules, max: 100000 }).length;
+  const tight = renderContext({ ...base, scan: { due: true, reason: 'commits' }, rules, max: without });
+  assert.ok(!tight.includes('Profile:') && tight.includes('COD-1.'), 'the scan line is dropped before a rule');
+});

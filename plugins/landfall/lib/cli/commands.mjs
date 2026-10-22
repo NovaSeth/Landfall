@@ -271,7 +271,7 @@ const ROWS = [
   // Receipts (spec §7.11).
   {
     name: 'receipt',
-    summary: 'Tokens and estimated cost of a task, one external run, the current loop, or all work since a day by class or executor.',
+    summary: 'Tokens and cost of a task, a run, the loop, or all work since a day (default: since activation) by class or executor.',
     details: [
       'Reads the Claude Code transcripts of this repository and its worktrees ($CLAUDE_CONFIG_DIR/projects, default',
       '~/.claude/projects) and the run records. A task gets the requests made while it was active (after a task, route,',
@@ -284,6 +284,7 @@ const ROWS = [
       'counts them; no loop record: exit 1. --since: the saved receipts that ended on or after the day (UTC), their runs',
       'from the current run records, and the other runs that did not end before it, per task class or per executor (agent',
       'type, provider). --loop and --since write nothing (exit 1 with data.partial when a number is a lower bound).',
+      'No selector in an active repository means --since the activation day (data.defaulted); an inactive one exits 2.',
     ],
     args: [],
     flags: [
@@ -361,13 +362,14 @@ const ROWS = [
   },
   {
     name: 'method',
-    summary: 'Print one pack or one section of the method by name: each rule line of it, under its section heading.',
+    summary: 'Print one pack or one section of the method by name, or the names of every pack and section.',
     details: [
       'A pack is a name of the packs table in method/index.json (discovery, team, …); a section is <topic>/<section slug>,',
       'such as coding/tests-first (a slug alone repeats across topics). Reads method/index.json and the topic files; writes',
-      'nothing. An unknown name exits 2 and prints every name (--json: data.names).',
+      'nothing. Without a name it prints every pack and section name (exit 0; --json: data.names). An unknown name exits 2',
+      'and prints every name too.',
     ],
-    args: [{ name: 'name', required: true, summary: 'a pack, or <topic>/<section slug>' }],
+    args: [{ name: 'name', summary: 'a pack, or <topic>/<section slug> (omit to list the names)' }],
     flags: [],
     exits: ['OK', 'USAGE'],
     load: () => import('./method.mjs').then((m) => m.method),
@@ -1046,24 +1048,23 @@ const ROWS = [
   },
   {
     name: 'runs',
-    summary: 'List the external runs of the last 30 days (queued, running, finished); older finished records are deleted.',
-    details: ['Deletes at most 200 finished records (and their logs) older than 30 days per call.'],
+    summary: 'List the external runs: queued, running, finished (newest first).',
+    details: ['Reads only; a finished record older than 30 days is listed with its age (ageDays). `runs prune` deletes them.'],
     args: [],
     flags: [],
     exits: ['OK', 'REFUSED', 'ENV'],
-    mutating: true,
     load: () => import('../providers/runs.mjs').then((m) => m.runsList),
   },
   {
     name: 'runs list',
-    summary: 'List the external runs of the last 30 days (same as runs).',
+    summary: 'List the external runs (same as runs).',
     details: [],
     args: [],
     flags: [],
     exits: ['OK', 'REFUSED', 'ENV'],
-    mutating: true,
     load: () => import('../providers/runs.mjs').then((m) => m.runsList),
   },
+  { name: 'runs prune', summary: 'Delete finished run records (and logs) older than 30 days, at most 200 a call.', details: ['A record naming another path is skipped, never deleted; queued and running records are kept whatever their age.'], args: [], flags: [], exits: ['OK', 'REFUSED', 'ENV'], mutating: true, load: () => import('../providers/runs.mjs').then((m) => m.runsPrune) },
   {
     name: 'runs show',
     summary: 'Print one external run record, or with --summary the short summary.',

@@ -1,5 +1,5 @@
 // SessionStart (startup|resume|clear|compact) → `session-start` (spec §7.2, §7.13, §8.3, SC3, GC7): the session
-// context of an active repository, at most CONTEXT_MAX characters: the state line, the tier when known, the loop state
+// context of an active repository, at most CONTEXT_MAX characters: the state line, the tier when known, the profile scan line when one is due, the loop state
 // (lib/hooks/loop-state.mjs), the active tasks with their next step, the next action ("run `<bin> tick`") and the
 // always rules of the method (up to 8). An inactive, declined or non-git directory gets nothing; nothing is written.
 // Budget: the fixed lines and the rules come first; tasks fill the rest in ID order and the remainder is counted in
@@ -8,6 +8,7 @@
 import { isAbsolute, relative } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { ENGINE_FLAG, lastRecordedChange } from '../engine/index.mjs';
+import { readProfile } from '../profile/index.mjs';
 import { open } from '../state/index.mjs';
 import { getRule, openMethod } from '../method/index.mjs';
 import { forModel } from '../text/clean.mjs';
@@ -44,9 +45,11 @@ const taskLine = (t) => `- ${t.id} ${t.status}${t.round > 0 ? ` r${t.round}` : '
 
 // Pure: the context text, never longer than max. tasks: active task documents in order (more: how many were not
 // read); loop: { doc, exit } | { error }; rules: [{ id, text }].
-export function renderContext({ bin, where, tier = null, tasks = [], more = 0, loop = {}, rules = [], max = CONTEXT_MAX }) {
-  const head = [`${bin} is active here (${where}); task state changes only through \`${bin}\` commands (FLW-7).`];
+export function renderContext({ bin, where, tier = null, scan = null, tasks = [], more = 0, loop = {}, rules = [], max = CONTEXT_MAX }) {
+  let head = [`${bin} is active here (${where}); task state changes only through \`${bin}\` commands (FLW-7).`];
   if (tier) head.push(`Tier: ${clip(oneLine(tier), 10)}.`);
+  const scanLine = scan?.due ? `Profile: scan due (${clip(oneLine(scan.reason ?? 'due'), 40)}); run \`${bin} profile observe\`.` : null;
+  if (scanLine) head.push(scanLine);
   const l = loopLine(loop, bin);
   if (l) head.push(l);
   const next = `Next: run \`${bin} tick\` and do the listed steps.`;
@@ -54,6 +57,7 @@ export function renderContext({ bin, where, tier = null, tasks = [], more = 0, l
   const join = (ls) => ls.join('\n');
   const build = (taskLines, rl) => join([...head, ...taskLines, next, ...(rl.length ? ['Core rules:', ...rl] : [])]);
   // rules first: drop from the end only if even no task fits them
+  if (scanLine && build([], ruleLines).length > max) head = head.filter((x) => x !== scanLine); // the scan line goes before any rule
   let rl = ruleLines;
   while (rl.length && build([], rl).length > max) rl = rl.slice(0, -1);
   const lines = [];
@@ -103,6 +107,15 @@ function tierOf(where, names, env, deadline) {
   } catch { return null; }
 }
 
+// The profile scan trigger (read only): { due: true, reason } or null; an error or a near deadline means no line.
+function scanOf(where, names, env, deadline) {
+  if (performance.now() >= deadline - 2 * READ_MARGIN_MS) return null;
+  try {
+    const { scan } = readProfile(where, { names, env });
+    return scan?.due ? { due: true, reason: scan.reason } : null;
+  } catch { return null; }
+}
+
 // Registry handler: (hook input, { env, deadline }) → { stdout }.
 export function sessionStart(input, { env = process.env, deadline = Infinity } = {}) {
   const cwd = [input.cwd, env.CLAUDE_PROJECT_DIR].find((d) => typeof d === 'string' && isAbsolute(d));
@@ -116,6 +129,7 @@ export function sessionStart(input, { env = process.env, deadline = Infinity } =
   const { tasks, more } = activeTasks(store, deadline);
   const rel = relative(where.worktree, where.dir); // from a linked worktree: the main checkout's state, by its path
   const tier = tierOf(where, names, env, deadline);
-  const text = renderContext({ bin: names.bin, tier, where: `state in ${rel && !rel.startsWith('..') && !isAbsolute(rel) ? rel : where.dir}`, tasks, more, loop, rules: alwaysRules() });
+  const scan = scanOf(where, names, env, deadline);
+  const text = renderContext({ bin: names.bin, tier, scan, where: `state in ${rel && !rel.startsWith('..') && !isAbsolute(rel) ? rel : where.dir}`, tasks, more, loop, rules: alwaysRules() });
   return { stdout: `${JSON.stringify({ hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: forModel(text) } })}\n` };
 }

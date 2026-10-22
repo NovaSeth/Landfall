@@ -71,7 +71,7 @@ Commands:
   loop start           Start a loop with caps (defaults: wallMin=480,ticks=200,usd=25,rounds=2); a running loop is never replaced.
   loop status          Print the loop: ticks, wall time and cost against the caps, the stall count, and the exit once it ended.
   loop stop            End the running loop: exit DONE, so no wakeup is scheduled again; an ended loop is left as it is.
-  method               Print one pack or one section of the method by name: each rule line of it, under its section heading.
+  method               Print one pack or one section of the method by name, or the names of every pack and section.
   migrate              Run the forward migrations on every state file of this repository; --dry-run lists the steps and writes nothing.
   profile gates apply  Replace the profile gates with the candidates the scan detects; only with an active gate-change decision.
   profile gates set    Add a profile gate or replace the one of that name; only with an active gate-change decision.
@@ -80,14 +80,15 @@ Commands:
   profile show         Print the project profile: facts with source and evidence, gates, risk paths, and whether a scan is due.
   providers            List the provider CLIs for external runs: found on PATH, version, auth, roles and the sandbox per role.
   providers add        Declare another provider CLI (generic adapter): its argv template and the sandbox mode per role.
-  receipt              Tokens and estimated cost of a task, one external run, the current loop, or all work since a day by class or executor.
+  receipt              Tokens and cost of a task, a run, the loop, or all work since a day (default: since activation) by class or executor.
   report               Store a task report from a file (RED/GREEN checked); --round appends a fix round; records the implementer event.
   review brief         Review brief of a task: range pinned to HEAD, diff saved to a file, acceptance, risks, output shape; --write saves it.
   review record        Record a typed review result as the next round tasks/<id>/review-r<k>.json; the Markdown review closes nothing.
   route                Classify a task as trivial, standard or critical from its plan and print its route; the class only rises.
   rule                 Print method rules by ID; a retired ID prints its successor. --core prints the always-on rules.
-  runs                 List the external runs of the last 30 days (queued, running, finished); older finished records are deleted.
-  runs list            List the external runs of the last 30 days (same as runs).
+  runs                 List the external runs: queued, running, finished (newest first).
+  runs list            List the external runs (same as runs).
+  runs prune           Delete finished run records (and logs) older than 30 days, at most 200 a call.
   runs show            Print one external run record, or with --summary the short summary.
   runs stop            Stop an external run: SIGTERM to its supervisor, only when the recorded pid and start time still match.
   secrets              Scan for secrets and key files: working tree and index, staged changes, a commit range or a built artifact.
@@ -670,18 +671,19 @@ Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
 Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
 ```
 
-### `landfall method <name> [--json]`
+### `landfall method [<name>] [--json]`
 
 ```text
-usage: landfall method <name> [--json]
+usage: landfall method [<name>] [--json]
 
-Print one pack or one section of the method by name: each rule line of it, under its section heading.
+Print one pack or one section of the method by name, or the names of every pack and section.
 A pack is a name of the packs table in method/index.json (discovery, team, …); a section is <topic>/<section slug>,
 such as coding/tests-first (a slug alone repeats across topics). Reads method/index.json and the topic files; writes
-nothing. An unknown name exits 2 and prints every name (--json: data.names).
+nothing. Without a name it prints every pack and section name (exit 0; --json: data.names). An unknown name exits 2
+and prints every name too.
 
 Arguments:
-  name  a pack, or <topic>/<section slug>
+  name  a pack, or <topic>/<section slug> (omit to list the names)
 
 Read-only.
 Exit codes: 0 OK · 2 USAGE
@@ -834,7 +836,7 @@ Exit codes: 0 OK · 2 USAGE · 7 REFUSED · 8 ENV
 ```text
 usage: landfall receipt [--task <id>] [--run <id>] [--loop] [--since <YYYY-MM-DD>] [--by <class|executor>] [--yes] [--json]
 
-Tokens and estimated cost of a task, one external run, the current loop, or all work since a day by class or executor.
+Tokens and cost of a task, a run, the loop, or all work since a day (default: since activation) by class or executor.
 Reads the Claude Code transcripts of this repository and its worktrees ($CLAUDE_CONFIG_DIR/projects, default
 ~/.claude/projects) and the run records. A task gets the requests made while it was active (after a task, route,
 brief, verify or exec command naming it), the subagents whose description or name holds its ID (and the subagents
@@ -846,6 +848,7 @@ Something unreadable or unpriced: exit 1 with the numbers found (data.receipt.pa
 counts them; no loop record: exit 1. --since: the saved receipts that ended on or after the day (UTC), their runs
 from the current run records, and the other runs that did not end before it, per task class or per executor (agent
 type, provider). --loop and --since write nothing (exit 1 with data.partial when a number is a lower bound).
+No selector in an active repository means --since the activation day (data.defaulted); an inactive one exits 2.
 
 Options:
   --task <id>            the task, such as T-AB-1
@@ -979,24 +982,36 @@ Read-only.
 Exit codes: 0 OK · 2 USAGE
 ```
 
-### `landfall runs [--yes] [--json]`
+### `landfall runs [--json]`
 
 ```text
-usage: landfall runs [--yes] [--json]
+usage: landfall runs [--json]
 
-List the external runs of the last 30 days (queued, running, finished); older finished records are deleted.
-Deletes at most 200 finished records (and their logs) older than 30 days per call.
+List the external runs: queued, running, finished (newest first).
+Reads only; a finished record older than 30 days is listed with its age (ageDays). `runs prune` deletes them.
 
-Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
+Read-only.
 Exit codes: 0 OK · 7 REFUSED · 8 ENV
 ```
 
-### `landfall runs list [--yes] [--json]`
+### `landfall runs list [--json]`
 
 ```text
-usage: landfall runs list [--yes] [--json]
+usage: landfall runs list [--json]
 
-List the external runs of the last 30 days (same as runs).
+List the external runs (same as runs).
+
+Read-only.
+Exit codes: 0 OK · 7 REFUSED · 8 ENV
+```
+
+### `landfall runs prune [--yes] [--json]`
+
+```text
+usage: landfall runs prune [--yes] [--json]
+
+Delete finished run records (and logs) older than 30 days, at most 200 a call.
+A record naming another path is skipped, never deleted; queued and running records are kept whatever their age.
 
 Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
 Exit codes: 0 OK · 7 REFUSED · 8 ENV

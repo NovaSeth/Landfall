@@ -62,3 +62,11 @@ test('3: critical at L1 without a provider takes a claude review; critical at L2
   assert.equal(reviewState(store(t), 'T-AB-1', steps('critical')), 'missing', 'critical at L0 still needs a review');
   assert.equal(reviewState(claude, 'T-AB-1', steps('critical')), 'approved', 'critical at L0 takes any review');
 });
+
+test('4: a review that exists is reported even when the route needs none (trivial at L0); never missing', (t) => {
+  const at = (rounds) => reviewState(store(t, { rounds }), 'T-AB-1', steps('trivial'), { tier: 'L0' });
+  assert.equal(at([]), 'not-required');
+  assert.equal(at([['approved', 'claude']]), 'approved');
+  assert.equal(at([['needs-fixes', 'claude']]), 'not-required');
+  assert.equal(at([['approved', 'claude'], ['needs-fixes', 'claude']]), 'not-required', 'the latest round counts');
+});

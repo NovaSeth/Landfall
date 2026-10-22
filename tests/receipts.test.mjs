@@ -294,7 +294,6 @@ test('partial data: a malformed line or an unpriced model → exit 1 with the nu
 test('usage: exactly one of --task and --run; IDs are checked; an unknown task or run exits 2', async (t) => {
   const p = await project(t);
   for (const [args, code] of [
-    [[], 'missing-flag'],
     [['--task', 'T-TU-1', '--run', 'codex-T-TU-1-reviewer-1'], 'conflicting-flags'],
     [['--task', 'nope'], 'invalid-value'],
     [['--run', '../escape'], 'invalid-value'],
@@ -636,4 +635,23 @@ test('F3 receipt --since: a saved receipt of a newer schema refuses with exit 7 
   writeFileSync(file, '{ not json');
   const bad = await cli(['receipt', '--since', '2026-10-15'], p);
   assert.deepEqual([bad.code, bad.out.data.partial, bad.out.errors[0].code], [1, true, 'state-invalid'], show(bad));
+});
+
+test('receipt without a selector in an active repository means --since the activation day; an inactive one exits 2', async (t) => {
+  const p = await project(t);
+  const { open, resolve } = await lib('state/index.mjs');
+  const where = resolve({ cwd: p.repo, env: p.env, names });
+  const day = open(where.dir, { names }).read('state', null).activatedAt.slice(0, 10);
+  const r = await p.receipt([]);
+  assert.equal(r.code, 0, show(r));
+  assert.equal(r.out.data.since, day);
+  assert.equal(r.out.data.defaulted, true);
+  const explicit = await p.receipt(['--since', day]);
+  assert.notEqual(explicit.out.data.defaulted, true);
+  const plain = join(p.repo, '..', 'plain2');
+  mkdirSync(plain);
+  git(plain, p.env, ['init', '-q']);
+  const none = await cli(['receipt'], { ...p, cwd: plain });
+  assert.equal(none.code, 2, show(none));
+  assert.equal(none.out.errors[0].code, 'missing-flag');
 });
