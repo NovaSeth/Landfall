@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.2.1
+
+- Bash guard: `time` (with `-p`) before a command judges the command as if written alone, so `time landfall status --json` passes and `time cp … .landfall/…` is still a write; the plugin's launcher called by its path (`plugins/landfall/bin/landfall commit`, a worktree's, behind `node`) is the own command with its own rules, not a script with a guarded argument; a script merely named like the CLI outside `bin/` stays a script.
+
 ## 2.2.0
 
 - Dashboard in Claude Code (retro P1-9): a `Landfall` pane beside the transcript, from general to detail: the project, its tier and loop; how many tasks are open, active, planned, new and done; the open tasks with class, round and stage; the agents at work (Claude subagents and external runs) with role, task, round, elapsed time, status, where the result landed and tokens; the slots in use; the next step. It reads `landfall status --json` and `landfall runs list --json` in the session's directory, the engine's agent list and the agent spawns and turn ends it sees; it refreshes every 15 s while shown (60 s hidden) and right after a `landfall` command, an agent spawn or a turn end. `/landfall:dashboard` opens it; while the terminal cannot place it, its one-line summary is in the status bar. `userConfig.dashboard`: `auto` (default), `command`, `off`. Shipped as the plugin's hooks module (`hooks/dashboard.tsx`, tested with `claude plugin test`); a Claude Code without function hooks ignores it.

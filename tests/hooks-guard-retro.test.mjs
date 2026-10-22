@@ -68,6 +68,14 @@ const MUST_PASS = [
   [`F=${S}/tasks/T-AB-1/report.md; grep -n Status "$F"`, 'a path in a variable, then a read of it'],
   [`F=${S}/tasks/T-AB-1/report.md; head -5 $F`, 'the same, unquoted'],
   [`T=T-AB-1; ${BIN} task show "$T" --json`, 'a task ID in a variable'],
+  // 2.2.1: `time` before the own command; the launcher by its path is the own command, whatever its arguments
+  [`time ${BIN} status --json`, 'time before the own command'],
+  [`time -p plugins/x/bin/${BIN} task show T-AB-1`, 'time -p before the launcher by path'],
+  [`plugins/x/bin/${BIN} commit --yes`, 'the launcher by a relative path with the commit command'],
+  [`./plugins/x/bin/${BIN} report T-AB-1 --from notes.md --yes`, 'the launcher by ./ with the report command'],
+  [`/Users/me/Code/x-wt/T-AB-2/plugins/x/bin/${BIN} commit --message "state: T-AB-1 done" --yes`, 'the launcher of a worktree by an absolute path'],
+  [`node plugins/x/bin/${BIN} commit --yes`, 'the launcher behind node'],
+  [`plugins/x/bin/${BIN} verify T-AB-1 --yes > out.txt 2>&1; echo $?`, 'the launcher running a gate, its output to a file'],
   [`W=${DIR}/src; cd "$W" && cat a.js`, 'a worktree path in a variable, then cd'],
   [`for t in T-AB-1 T-AB-2; do ${BIN} task show "$t" --json; done`, 'a for loop over literal IDs'],
   [`for f in src/a.js src/old.js; do git log --oneline -1 -- "$f"; done`, 'a for loop over literal paths with git'],
@@ -139,6 +147,12 @@ const MUST_BLOCK = [
   [`echo x | F=${S}/tasks/T-AB-1/report.md; cat "$F"`, 'SEC-3', 'an assignment in a pipe runs in a subshell'],
   ['PATH=/tmp/evil; git commit -m x', 'SEC-3', 'PATH changes what runs: never a literal of the line'],
   [`IFS=/; F=${S}/tasks/T-AB-1/report.md; cat $F`, 'SEC-3', 'IFS changes word splitting'],
+  // 2.2.1: time launders nothing; a script merely named like the CLI is a script; the launcher still gets the gate rules
+  [`time cp notes.md ${S}/tasks/T-AB-1/report.md`, 'FLW-7', 'time before a write into the state'],
+  [`time ${BIN} verify T-AB-1 | tail -1`, 'TRP-2', 'a pipe after a gate behind time'],
+  [`time plugins/x/bin/${BIN} heavy -- npm test | tail -3`, 'TRP-2', 'a pipe after heavy behind time and the launcher path'],
+  [`./tools/${BIN} commit --yes`, 'SEC-3', 'a script named like the CLI outside bin/ is a script with a guarded argument'],
+  [`node ./tools/${BIN} commit --yes`, 'SEC-3', 'the same behind node'],
 ];
 
 test('retro idioms pass: literal variables, loops over literals, the state named in data, reads, script arguments, a pipe after --json', () => {

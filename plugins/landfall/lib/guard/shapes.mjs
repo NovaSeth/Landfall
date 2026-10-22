@@ -23,6 +23,11 @@ const isPath = (t) => !/\s/.test(t) && !t.startsWith('-') && (t.includes('/') ||
 // Kit scripts (.workflow/bin, .workflow/routing, .githooks): their arguments are data (state notes, IDs, paths).
 const KIT_SCRIPT = /(^|\/)(\.workflow\/(bin|routing)|\.githooks)\/[\w.-]+$/;
 const isBin = (w) => w === BIN;
+// The plugin's launcher called by its path (a checkout, a worktree, the plugin cache: `plugins/<p>/bin/<bin> …`, also
+// behind `node`): the own command, not a script with arguments (retro follow-up 2.2.1).
+const LAUNCHER = new RegExp(`(^|/)bin/${BIN}$`);
+const isLauncher = (w) => w !== BIN && LAUNCHER.test(w);
+const asBin = (c, k) => ({ ...c, words: [{ ...c.words[k], text: BIN }, ...c.words.slice(k + 1)] });
 
 // A gate script run as the program (secrets scan, machine budget).
 const gateScript = (w) => GATES.find((g) => g.script?.test(w)) ?? null;
@@ -185,6 +190,8 @@ export function shape(c, ctx) {
   if (c.words.some((x) => x.q === '?') && b !== 'echo' && b !== 'printf') why('$? outside echo/printf');
   if (c.words.some((x) => x.q === 'msg') && !['git', 'gh', 'echo', 'printf'].includes(b)) why('a $( ) substitution outside a message');
   if (ctx.shadowNames.has(name)) why(`"${short(name)}" redefined earlier in this command (alias or hash -p)`);
+  // `time` (with -p) only measures the command after it, which is judged as if written alone (2.2.1)
+  if (name === 'time') { let k = 1; while (k < w.length && w[k] === '-p') k++; return k < w.length ? shape({ ...c, words: c.words.slice(k) }, ctx) : null; }
   if (KEYWORDS.has(name)) why(`compound syntax (${name})`);
   // arithmetic evaluation of a value runs a $(…) stored in it: let, declare -i, an array index in a variable name,
   // [[ … -eq … ]] with a name instead of a number
@@ -211,7 +218,8 @@ export function shape(c, ctx) {
     for (const t of w) if (wordTok(t) && !isPath(t)) why(`"${short(t)}" in the command ${short(b)} outside the list`);
     return null;
   }
-  if (base(name) === BIN && name !== BIN) { const gate = pipeAfter(binGate(w), true); if (gate) return gate; } // by path: gates only
+  if (isLauncher(name)) return shape(asBin(c, 0), ctx); // the launcher by its path: the own command
+  if (base(name) === BIN && name !== BIN) { const gate = pipeAfter(binGate(w), true); if (gate) return gate; } // another path: gates only
   if (isBin(name)) {
     const gate = pipeAfter(binGate(w), true); if (gate) return gate;
     const { k, words } = binWords(w);
@@ -250,7 +258,7 @@ export function shape(c, ctx) {
       if (f) return codeShape(b, t === f ? w[k + 1] ?? '' : t.slice(f.length), w.slice(t === f ? k + 2 : k + 1), ctx);
       if (t === '-m' || t === '--') return scriptShape(w, k + 1 < w.length ? k + 1 : k);
       if (t === '-') why(`${b} reads code from its input`);
-      if (!t.startsWith('-')) return scriptShape(w, k);
+      if (!t.startsWith('-')) return isLauncher(t) ? shape(asBin(c, k), ctx) : scriptShape(w, k);
       if (wordTok(t) || (INTERP_VAL.includes(t) && wordTok(w[k + 1] ?? ''))) why(`an option of ${b} with a guarded word`);
       if (INTERP_VAL.includes(t)) k++;
     }
