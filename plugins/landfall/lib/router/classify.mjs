@@ -158,13 +158,13 @@ export const pathKey = (path) => `risk-path:${createHash('sha256').update(path).
 
 const strip = ({ code, text, path }) => (path === undefined ? { code, text } : { code, text, path });
 
-// Weightless paths (retro 2026-10 §3.6, §4.3): documentation, images and other binary assets count for the risk globs
-// and the flags, never for the size thresholds. In a 40-task project 37 tasks were critical by size alone, two of them
-// a manual and its translation, one a batch of screenshots. A path is weightless by its extension or by lying under a
-// docs directory; a change made only of weightless paths is `docs-only`: size never raises it above standard.
-const WEIGHTLESS_EXT = /\.(?:md|mdx|markdown|txt|rst|adoc|asciidoc|png|jpe?g|gif|webp|avif|svg|ico|bmp|tiff?|pdf|mp[34]|mov|webm|ogg|wav|woff2?|ttf|otf|eot|zip|gz|tgz|jar|wasm)$/i;
-const DOCS_DIR = /^(?:docs?|documentation)\//i;
-export const weightless = (path) => WEIGHTLESS_EXT.test(path) || DOCS_DIR.test(path);
+// Weightless paths (retro 2026-10 §3.6, §4.3): documentation, images, media and fonts count for the risk globs and the
+// flags, never for the size thresholds. In a 40-task project 37 tasks were critical by size alone, two of them a manual
+// and its translation, one a batch of screenshots. A path is weightless by its extension alone (a script under docs/ is
+// code; archives and executable formats never are); a change made only of weightless paths is `docs-only`: size never
+// raises it above standard.
+const WEIGHTLESS_EXT = /\.(?:md|mdx|markdown|txt|rst|adoc|asciidoc|png|jpe?g|gif|webp|avif|svg|ico|bmp|tiff?|pdf|mp[34]|mov|webm|ogg|wav|woff2?|ttf|otf|eot)$/i;
+export const weightless = (path) => WEIGHTLESS_EXT.test(path);
 
 // { class, reasons: [{ code, text, path? }], all: [{ code, text, path?, level, key }], files, loc, flags }.
 // `riskPaths` are the profile's globs, added to the defaults; `thresholds` are the shipped ones with the repository's

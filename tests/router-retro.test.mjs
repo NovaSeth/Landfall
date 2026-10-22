@@ -123,10 +123,18 @@ test('verify classes a task from its own commits: main merged into the branch br
   const res = await r.cli(['verify', 'T-TU-1', '--yes']);
   assert.equal(res.code, 0, show(res));
   assert.deepEqual([res.env.data.route.actual, res.env.data.route.escalated, res.env.data.class], ['trivial', false, 'trivial'], 'main\'s 20 files are not the task\'s change');
-  // the task's own second commit does count
+  // what a merge commit itself adds beyond its parents (an edit made while merging) is the task's own change
+  r.git('add', '-A');
+  r.git('commit', '-q', '-m', 'state after verify');
+  r.git('switch', '-q', 'main');
+  r.write('src/more.js', 'export const m = 1;\n');
+  r.git('add', '-A');
+  r.git('commit', '-q', '-m', 'main again');
+  r.git('switch', '-q', 'task/T-TU-1-fix');
+  r.git('merge', '-q', '--no-commit', '--no-ff', 'main');
   for (let i = 0; i < 16; i++) r.write(`src/own${i}.js`, 'export const y = 1;\n');
   r.git('add', '-A');
-  r.git('commit', '-q', '-m', 'the task grows');
+  r.git('commit', '-q', '-m', 'merge main, with 16 files slipped into the merge');
   const grown = await r.cli(['verify', 'T-TU-1', '--yes']);
   assert.deepEqual([grown.code, grown.env.data.route.actual, grown.env.data.route.escalated], [1, 'critical', true], show(grown));
 });

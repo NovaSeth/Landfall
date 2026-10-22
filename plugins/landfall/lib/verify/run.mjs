@@ -222,13 +222,20 @@ function lineCount(file) {
 
 // The task's own change since `base` (the state directory left out), or null when git cannot diff against it: the
 // paths its own commits touch (the first-parent line base..HEAD without merge commits, so a `git merge main` into the
-// branch brings none of main's work into the class: retro 2026-10 D-MG-13), plus the uncommitted and untracked
-// changes; the LOC of those paths against the base. Weightless paths (docs, binaries: lib/router) count no LOC.
+// branch brings none of main's work into the class: retro 2026-10 D-MG-13), what its merge commits change beyond
+// every parent (a conflict resolution or an edit made in the merge itself: `git diff-tree --cc`), plus the uncommitted
+// and untracked changes; the LOC of those paths against the base. Weightless paths (docs, images: lib/router) count no LOC.
 function changeSince(where, env, base, scope) {
   const own = gitIn(where, env, ['log', '--first-parent', '--no-merges', '--format=', '--name-only', '-z', `${base}..HEAD`, ...scope]);
   const wt = gitIn(where, env, ['diff', '--name-only', '-z', 'HEAD', ...scope]);
-  if (own.status !== 0 || wt.status !== 0) return null;
+  const merges = gitIn(where, env, ['log', '--first-parent', '--merges', '--format=%H', `${base}..HEAD`]);
+  if (own.status !== 0 || wt.status !== 0 || merges.status !== 0) return null;
   const paths = new Set([...own.stdout.split('\0'), ...wt.stdout.split('\0')].filter(Boolean));
+  for (const sha of merges.stdout.split('\n').filter(Boolean)) {
+    const cc = gitIn(where, env, ['diff-tree', '--cc', '-r', '--name-only', '-z', sha, ...scope]);
+    if (cc.status !== 0) return null;
+    for (const p of cc.stdout.split('\0').filter(Boolean)) if (!/^[0-9a-f]{40}$/.test(p)) paths.add(p);
+  }
   const tracked = [...paths].filter((p) => !UNSAFE_PATH.test(p)).slice(0, MAX_PATHS);
   let loc = 0;
   if (tracked.length) {
