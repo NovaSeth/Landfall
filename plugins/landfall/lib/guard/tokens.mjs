@@ -6,8 +6,10 @@ import { readFileSync } from 'node:fs';
 import { configKey } from './config-keys.mjs';
 import { GIT_ARG, GIT_BUILTINS } from './git-options.mjs';
 
-// The plugin's own command (argv[0] of its CLI), from lib/name.json.
-export const BIN = JSON.parse(readFileSync(new URL('../name.json', import.meta.url), 'utf8')).bin;
+// The plugin's own command (argv[0] of its CLI) and its environment prefix, from lib/name.json.
+const NAMES = JSON.parse(readFileSync(new URL('../name.json', import.meta.url), 'utf8'));
+export const BIN = NAMES.bin;
+export const ENV_PREFIX = NAMES.envPrefix;
 const binRe = BIN.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').toLowerCase();
 
 export const SHELLS = new Set(['bash', 'sh', 'zsh', 'dash', 'ksh', 'fish']);

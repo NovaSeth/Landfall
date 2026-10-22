@@ -124,7 +124,7 @@ const PORTED_BLOCK = [
   ['T=push; make "$T"', UNV], ["S='1e git stash'; sed \"$S\" f", UNV], [`X='import os; os.system("git stash")'; python3 -c "$X"`, UNV],
   ['S=check-secrets; npm run "$S" | tail -1', 'SEC-6'], ["X='-exec git stash ;'; find . $X", UNV], ['x=core.hooksPath; git -c "$x=/dev/null" log', 'SEC-4'],
   // prefixes and wrappers
-  ['time -p git stash', UNV], ['exec -a x git stash', UNV], ['command -p git stash', UNV], ['nice -n10 git stash', UNV],
+  ['time -p git stash', 'ORC-13'], ['exec -a x git stash', UNV], ['command -p git stash', UNV], ['nice -n10 git stash', UNV],
   ['nice -10 git stash', UNV], ['stdbuf -o0 git stash', UNV], ['setsid git stash', 'ORC-13'], ['sudo -E git stash', UNV],
   ['coproc git stash', UNV], ['git "--no-pager" stash', 'ORC-13'], ["env -S 'git stash'", UNV], ['flock /tmp/l git stash', UNV],
   ['watch -n1 git stash', UNV], ['script -q /dev/null git stash', UNV],

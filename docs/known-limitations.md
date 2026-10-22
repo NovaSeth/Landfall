@@ -1,4 +1,4 @@
-# Known limitations (2.2.0)
+# Known limitations (2.2.1)
 
 ## Not in this release
 - The adaptive engine runs in shadow mode: `landfall tier` explains the recommended tier; tier changes are not applied automatically.
@@ -20,6 +20,7 @@
 - Run records are command-owned and the supervisor derives sandbox and cwd from the role; a deliberate rewrite of a record between that check and the spawn is not defended (R90).
 - Bash guard: `mv <dir> …` and `rsync --delete` are not modelled as removals; a state path hidden in `--pathspec-from-file`, created through a link on the same line, or built only from variables is not detected. With the shell's working directory inside the state directory, every non-read command is blocked. The guard is a seat belt, not a security boundary.
 - Bash guard: a push without an explicit `<src>:<dst>` refspec is blocked when an earlier command on the same line may change the branch (for example `npm test && git push origin feat/x`); push in a separate command.
+- Bash guard: the CLI run from a checkout by its path (`plugins/landfall/bin/landfall commit`) is a script with a guarded argument unless the session's environment names that launcher in `LANDFALL_LAUNCHERS` (set it in the shell before starting Claude Code); the installed plugin's own launcher and `landfall` on PATH need nothing.
 - Loop: an agent that runs `landfall deactivate` and then `landfall init` starts a new loop with default caps.
 - State: lock liveness uses the local process id; a reused pid can keep a dead lock looking alive until `landfall state unlock --stale`.
 - State: after a crash right after a multi-file write commits, the next write completes it; a decision file saved in an editor during that recovery can be overwritten, and recovery does not check log schema versions written by a newer plugin version.
