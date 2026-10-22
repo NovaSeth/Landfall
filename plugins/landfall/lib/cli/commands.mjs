@@ -456,7 +456,7 @@ const ROWS = [
   },
   {
     name: 'task list',
-    summary: 'List the tasks of this repository: ID, status, kind, lane, title.',
+    summary: 'List the tasks of this repository: ID, status, class, round, kind, lane, branch, title.',
     details: ['An inactive repository has no tasks; nothing is written.'],
     args: [],
     flags: [],
@@ -528,7 +528,7 @@ const ROWS = [
   },
   {
     name: 'task show',
-    summary: 'Print one task: its fields and events.',
+    summary: 'Print one task as its resume card: class, branch, base, worktree, verify, reviews, open findings, next step, events.',
     details: [],
     args: [{ name: 'id', required: true, summary: 'task ID such as T-AB-1' }],
     flags: [],
