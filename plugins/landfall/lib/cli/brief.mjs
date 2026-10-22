@@ -35,6 +35,9 @@ export function unedited(text) {
   return m !== null && sha256(text.slice(0, m.index)) === m[1];
 }
 
+// The text with its marker line (the review brief ends the same way).
+export const seal = (text, bin) => `${text}${marker(bin, sha256(text))}`;
+
 // The brief text. task: the task document; gates: the gate commands; lease: the lease env ({ name: value }) or null.
 export function renderBrief({ template, task, role, gates, lease, review = null, names }) {
   const last = task.classHistory[task.classHistory.length - 1];

@@ -129,7 +129,6 @@ test('review brief: round 2 starts at the HEAD round 1 pinned and lists the prev
   const p = await project(t);
   await p.run(['review', 'brief', 'T-TU-1', '--write']);
   p.commit('chore: brief');
-  const head1 = p.git('rev-parse', 'HEAD');
   const review = join(p.base, 'review.json');
   writeFileSync(review, JSON.stringify({
     verdict: 'needs-fixes',
@@ -145,7 +144,7 @@ test('review brief: round 2 starts at the HEAD round 1 pinned and lists the prev
   const r = await cli(['review', 'brief', 'T-TU-1', '--yes'], { ...p, json: true });
   assert.equal(r.code, 0, show(r));
   assert.equal(r.out.data.round, 2);
-  assert.deepEqual(r.out.data.range, { from: head1, head: head2 });
+  assert.deepEqual(r.out.data.range, { from: p.head1, head: head2 });
   assert.deepEqual(r.out.data.previous, ['F1', 'F2']);
   const text = await cli(['review', 'brief', 'T-TU-1', '--write', '--yes'], p);
   assert.equal(text.code, 0, show(text));

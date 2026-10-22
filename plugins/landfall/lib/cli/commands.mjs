@@ -668,6 +668,28 @@ const ROWS = [
     load: () => import('../sched/cli.mjs').then((m) => m.heavy),
   },
   {
+    name: 'review brief',
+    summary: 'Render the review brief of a task from the state: the range pinned to HEAD, the diff saved to a file, acceptance points, risks and the output shape; --write saves it.',
+    details: [
+      'Round: --round, else the next after the recorded review rounds. Range: the task base (a later round: the HEAD its previous review',
+      'brief pinned) to HEAD of this checkout, which must be clean (exit 1 dirty-tree: a brief pins a sha). The diff (-U10, the state',
+      'directory left out) goes to local/review/<id>-r<k>.diff in the state directory. The brief lists the changed files, the acceptance',
+      'points of tasks/<id>/brief.md, the risks (profile risk paths the diff touches, the profile\'s review focus, decisions cited in the',
+      'changed files), the previous round\'s findings to re-check (--scope narrows them), the severity rule and the output shape.',
+      '--write saves tasks/<id>/review-r<k>-brief.md; a brief edited by hand is kept unless --force. Exit 1: no such task, not routed, no base.',
+    ],
+    args: [{ name: 'id', required: true, summary: 'task ID such as T-AB-1' }],
+    flags: [
+      { flag: '--round', value: 'k', summary: 'the review round (default: the next one)' },
+      { flag: '--scope', value: 'ids', summary: 'comma-separated finding IDs of the previous round to re-check (default: all of them)' },
+      { flag: '--write', summary: 'save it as tasks/<id>/review-r<k>-brief.md in the state directory (the task\'s owner)' },
+      { flag: '--force', summary: 'with --write: replace a brief written or edited by hand' },
+    ],
+    exits: ['OK', 'FAIL', 'USAGE', 'REFUSED', 'ENV'],
+    mutating: true,
+    load: () => import('./review-brief.mjs').then((m) => m.reviewBrief),
+  },
+  {
     name: 'review record',
     summary: 'Record a typed review result as the next round tasks/<id>/review-r<k>.json; the Markdown review closes nothing.',
     details: [
