@@ -80,6 +80,7 @@ Commands:
   providers            List the provider CLIs for external runs: found on PATH, version, auth, roles and the sandbox per role.
   providers add        Declare another provider CLI (generic adapter): its argv template and the sandbox mode per role.
   receipt              Tokens and estimated cost of a task, one external run, the current loop, or all work since a day by class or executor.
+  report               Store a task report from a file: tasks/<id>/report.md with its RED/GREEN frontmatter checked; --round appends a fix round; the implementer event is recorded.
   review record        Record a typed review result as the next round tasks/<id>/review-r<k>.json; the Markdown review closes nothing.
   route                Classify a task as trivial, standard or critical from its plan and print its route; the class only rises.
   rule                 Print method rules by ID; a retired ID prints its successor. --core prints the always-on rules.
@@ -827,6 +828,31 @@ Options:
   --by <class|executor>  with --since: one row per task class (default) or per executor
 
 Read-only. Changes files with --task, --run: needs a terminal or --yes, otherwise exit 7 REFUSED.
+Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
+```
+
+### `landfall report <id> [--from <file>] [--round <k>] [--force] [--yes] [--json]`
+
+```text
+usage: landfall report <id> [--from <file>] [--round <k>] [--force] [--yes] [--json]
+
+Store a task report from a file: tasks/<id>/report.md with its RED/GREEN frontmatter checked; --round appends a fix round; the implementer event is recorded.
+Without --round the file becomes the report: its frontmatter must hold red and green evidence (as verify reads it) and its last
+"Status:" line one of DONE, DONE_WITH_CONCERNS, NEEDS_CONTEXT or BLOCKED; an existing report is replaced only with --force.
+With --round <k> the report must exist: the file's frontmatter (if any) is dropped and its body is appended under "## Fix round <k>"
+(the heading is added when the body does not start with it); earlier bytes of the report, the frontmatter included, stay as they are.
+Then the task gets the implementer event with the report status (done, done-with-concerns, needs-context or blocked) and the round.
+Exit 1: no evidence, no Status line, the report missing (--round) or present (no --force), the round already in the report, a closed task.
+
+Arguments:
+  id  task ID such as T-AB-1
+
+Options:
+  --from <file>  required: the report text (a regular file of at most 256 KB)
+  --round <k>    the fix round the text reports (1 to 999): appended as a section
+  --force        without --round: replace an existing report
+
+Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
 Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
 ```
 
