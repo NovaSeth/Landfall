@@ -144,8 +144,9 @@ export function parse(src, { tick = () => {}, limit = 65536 } = {}) {
     add(''); i++;
     while (i < n && src[i] !== '"') {
       const d = src[i];
-      // a $ that no expansion can follow (the closing quote, a space, punctuation) is the literal character, as in bash
-      if (d === '`' || (d === '$' && /[A-Za-z_{(@*#?!$0-9-]/.test(src[i + 1] ?? ''))) why('expansion inside quotes');
+      // a $ followed by the closing quote, a blank or one of a few punctuation marks is the literal character, as in bash;
+      // anything else (a name, a brace, a bracket, a backslash that may continue the line) may open an expansion
+      if (d === '`' || (d === '$' && !/^["\s/.:,^;=+%)]$/.test(src[i + 1] ?? ''))) why('expansion inside quotes');
       if (d === '\\') { const x = src[i + 1] ?? ''; if (x !== '\n') add('$`"\\'.includes(x) ? x : d + x); i += 2; continue; }
       add(d); i++;
     }

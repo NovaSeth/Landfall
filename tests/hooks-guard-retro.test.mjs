@@ -121,6 +121,8 @@ const MUST_BLOCK = [
   [`rm -rf src`, 'PRI-17', 'a tracked directory removed'],
   [`echo "$HOME" > ${S}/tasks/T-AB-1/report.md`, 'SEC-3', 'a real expansion inside quotes still has no shape'],
   [`echo "${'$'}{S}" > ${S}/tasks/T-AB-1/report.md`, 'SEC-3', 'a brace expansion inside quotes too'],
+  [`echo "$\\\nHOME" > ${S}/tasks/T-AB-1/report.md`, 'SEC-3', 'a line continuation after the dollar joins it to a name'],
+  [`echo "$[1+1]" > ${S}/tasks/T-AB-1/report.md`, 'SEC-3', 'the old arithmetic form'],
 ];
 
 test('retro idioms pass: literal variables, loops over literals, the state named in data, reads, script arguments, a pipe after --json', () => {

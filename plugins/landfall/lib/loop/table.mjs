@@ -19,6 +19,8 @@
 // "<ref>:" or "<ref> ". The first entry without a task is the next step when none of my tasks is open, else a hint.
 // Outcome: action when any action row exists; wait when work runs (my waiting tasks, live runs, blocked or others'
 // tasks); done otherwise (then the state directory must be committed). Rows: { task, state, step, rules, kind }.
+import { afterOf } from '../state/index.mjs';
+
 export const STATUS_MIN = 20; // ORC-9 default: status request after 20 min without an event
 export const WAIT_S = Object.freeze({ runs: 600, agents: 1800, min: 60, max: 3600 });
 const LIVE = new Set(['queued', 'starting', 'running']);
@@ -126,7 +128,12 @@ export function nextSteps({ tasks = [], runs = [], handles = [], me = null, plan
       if (!open(t)) continue;
       if (!mine(t)) { info.push({ task: t.id, state: `${t.owner}: ${t.status}${t.lane ? ` (lane ${t.lane})` : ''}`, kind: 'others' }); continue; }
       ownOpen++;
-      const r = taskRow(t, { now, bin, lanesOn, caps });
+      // a task created --after others waits, undispatched, until each of them is closed (retro 2026-10 §4.13: a
+      // dependency is state, not a sentence in the brief); an unknown predecessor counts as open
+      const pending = (t.status === 'new' || t.status === 'planned') ? afterOf(t).filter((id) => open(byId.get(id)) || !byId.has(id)) : [];
+      const r = pending.length
+        ? wait(t.id, `waits for ${pending.join(', ')}`, `dispatch nothing until ${pending.length === 1 ? 'it is' : 'they are'} done or cancelled; then route and brief it from the merged base`, ['FLW-9'])
+        : taskRow(t, { now, bin, lanesOn, caps });
       const run = liveOf.get(t.id);
       // a live run of the task is its work in progress: wait for it instead of starting the step again
       if (run && r.kind !== 'blocked') steps.push(wait(t.id, `${r.state}; run ${run.runId} ${run.status}`, 'wait for the run; its record changes when it ends', ['FLW-4']));

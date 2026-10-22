@@ -1196,13 +1196,14 @@ Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
 Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
 ```
 
-### `landfall task new <title> [--kind <kind>] [--lane <lane>] [--yes] [--json]`
+### `landfall task new <title> [--kind <kind>] [--lane <lane>] [--after <ids>] [--yes] [--json]`
 
 ```text
-usage: landfall task new <title> [--kind <kind>] [--lane <lane>] [--yes] [--json]
+usage: landfall task new <title> [--kind <kind>] [--lane <lane>] [--after <ids>] [--yes] [--json]
 
 Create a task with the next ID of your handle (T-<H>-<n>); area gates and releases are --kind gate.
-Exit 7 in an inactive repository (run init first); nothing is written.
+--after names the tasks this one waits for: the loop and status hold it back (no route, no dispatch) until each of them
+is done or cancelled; the brief can then take the merged base. Exit 7 in an inactive repository (run init first); nothing is written.
 
 Arguments:
   title  task title, at most 120 characters
@@ -1210,6 +1211,7 @@ Arguments:
 Options:
   --kind <kind>  task (default), gate or incident
   --lane <lane>  lane: [a-z0-9][a-z0-9._-]{0,39}
+  --after <ids>  comma-separated IDs of existing tasks this one waits for (at most 20)
 
 Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
 Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV

@@ -3,7 +3,7 @@
 ## Not in this release
 - The adaptive engine runs in shadow mode: `landfall tier` explains the recommended tier; tier changes are not applied automatically.
 - No example project; the evaluation covers small tasks only ([evaluation.md](evaluation.md)).
-- Task dependencies live in the brief, not in the state: the loop does not hold a task back until its predecessor is merged.
+- A task created `--after` others waits until they are done or cancelled; the loop does not merge them for it, and the brief's base is still the orchestrator's to fill.
 - No agent-panel rows for Claude subagents (only external runs have them); no `qa` pack or agent; no backlog of minor findings across tasks.
 
 ## Edge cases

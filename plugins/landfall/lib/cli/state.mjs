@@ -89,6 +89,7 @@ function cardOf(t, where, names, env) {
   const openFindings = latest?.verdict === 'needs-fixes' ? latest.findings.filter((f) => f.severity === 'blocking').map((f) => ({ id: f.id, path: f.path, line: f.line, text: f.text })) : [];
   return {
     class: t.class, branch: t.branch, base: t.base, worktree,
+    after: state.afterOf(t).map((id) => ({ id, status: state.open(where.dir, { names }).read('task', id)?.status ?? 'unknown' })),
     verify: v ? { result: v.result, head: v.head, runs: t.events.filter((e) => e.event === 'verify').length, at: v.startedAt } : null,
     reviews: reviews.map(({ findings, ...r }) => r),
     openFindings,
@@ -107,6 +108,7 @@ export function taskShow({ args, names, io }) {
     `${t.id}  ${t.title}`,
     `kind ${t.kind} · status ${t.status} · class ${t.class ?? '-'} · owner ${t.owner} · lane ${t.lane ?? '-'} · round ${t.round}`,
     `branch ${t.branch ?? '-'} · base ${t.base ?? '-'} · worktree ${card.worktree ?? '-'}`,
+    ...(card.after.length ? [`after: ${card.after.map((a) => `${a.id} (${a.status})`).join(', ')}`] : []),
     v ? `verify: ${v.result} at ${v.head ? v.head.slice(0, 12) : 'uncommitted'} (${v.runs} runs, last ${v.at})` : 'verify: none',
     card.reviews.length
       ? `reviews: ${card.reviews.map((r) => `r${r.round} ${r.verdict} (${[r.reviewer, r.blocking ? `${r.blocking} blocking` : null, r.minor ? `${r.minor} minor` : null].filter(Boolean).join(', ')})`).join(', ')}`
@@ -120,8 +122,9 @@ export function taskShow({ args, names, io }) {
 }
 
 export function taskNew({ args, flags, names, io }) {
-  const r = state.createTask({ ...target(io, names), title: args.title, kind: flags.kind, lane: flags.lane });
-  return { data: r, text: `${r.id}\n` };
+  const after = flags.after === undefined ? [] : String(flags.after).split(',').map((s) => s.trim()).filter(Boolean);
+  const r = state.createTask({ ...target(io, names), title: args.title, kind: flags.kind, lane: flags.lane, after });
+  return { data: r, text: `${r.id}${after.length ? ` (after ${after.join(', ')})` : ''}\n` };
 }
 
 export function taskSet({ args, flags, names, io }) {

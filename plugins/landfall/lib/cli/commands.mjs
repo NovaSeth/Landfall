@@ -470,11 +470,15 @@ const ROWS = [
   {
     name: 'task new',
     summary: 'Create a task with the next ID of your handle (T-<H>-<n>); area gates and releases are --kind gate.',
-    details: ['Exit 7 in an inactive repository (run init first); nothing is written.'],
+    details: [
+      '--after names the tasks this one waits for: the loop and status hold it back (no route, no dispatch) until each of them',
+      'is done or cancelled; the brief can then take the merged base. Exit 7 in an inactive repository (run init first); nothing is written.',
+    ],
     args: [{ name: 'title', required: true, summary: 'task title, at most 120 characters' }],
     flags: [
       { flag: '--kind', value: 'kind', summary: 'task (default), gate or incident' },
       { flag: '--lane', value: 'lane', summary: 'lane: [a-z0-9][a-z0-9._-]{0,39}' },
+      { flag: '--after', value: 'ids', summary: 'comma-separated IDs of existing tasks this one waits for (at most 20)' },
     ],
     exits: ['OK', 'FAIL', 'USAGE', 'REFUSED', 'ENV'],
     mutating: true,

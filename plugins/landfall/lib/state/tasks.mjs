@@ -103,12 +103,20 @@ function actor(store, where, env, names) {
 const unknownTask = (id, where, names) => usage('task-unknown', `no task ${id} in ${where.dir}`, `'${names.bin} task list' lists the tasks`);
 const lanesOn = (store) => store.read('config', null)?.flags?.lanes === 'on';
 
-// `task new`: { id, task }.
-export function createTask({ cwd, env, names, title, kind = 'task', lane = null, at = now() } = {}) {
+const AFTER_MAX = 20;
+
+// `task new`: { id, task }. `after`: the IDs of the tasks this one waits for (retro 2026-10 §4.13: dependencies are
+// state, not sentences in a brief); kept in the created event's data, so the loop holds the task back until each
+// predecessor is closed (lib/loop/table.mjs afterOf).
+export function createTask({ cwd, env, names, title, kind = 'task', lane = null, after = [], at = now() } = {}) {
   return guarded(() => {
+    if (!Array.isArray(after) || after.length > AFTER_MAX) throw usage('invalid-value', `--after takes at most ${AFTER_MAX} task IDs`, 'name the tasks this one waits for, comma-separated');
+    for (const id of after) if (!PATTERNS.taskId.test(String(id))) throw usage('invalid-value', `--after ${String(id).slice(0, 40)}: not a task ID`, 'a task ID is T-<handle>-<number>');
     const { where, store } = activeStore({ cwd, env, names });
     const by = actor(store, where, env, names);
-    const build = (id) => ({ id, kind, title, lane: lane ?? null, owner: by, class: null, classHistory: [], status: 'new', round: 0, events: [{ at, by, event: 'created', data: {} }], base: null, branch: null });
+    for (const id of after) if (store.read('task', id) === null) throw unknownTask(id, where, names);
+    const data = after.length ? { after: [...new Set(after)] } : {};
+    const build = (id) => ({ id, kind, title, lane: lane ?? null, owner: by, class: null, classHistory: [], status: 'new', round: 0, events: [{ at, by, event: 'created', data }], base: null, branch: null });
     const probe = `T-${by}-1`;
     checkWrite(KINDS.task, { schema: KINDS.task.version, ...build(probe) }, { where: 'task', key: probe });
     const id = allocateId(store, { prefix: 'T', handle: by, build });
@@ -190,6 +198,12 @@ export function writeTaskText({ cwd, env, names, id, name, round, text, replace 
     return { file: join(where.dir, rel), outcome };
   });
 }
+
+// The IDs a task waits for (the created event's `after`), [] when none.
+export const afterOf = (task) => {
+  const created = task?.events?.find((e) => e.event === 'created');
+  return Array.isArray(created?.data?.after) ? created.data.after.filter((x) => typeof x === 'string') : [];
+};
 
 // `task list`: { repo, dir, active, tasks } (an inactive repository has no tasks).
 export function listTasks({ cwd, env, names } = {}) {

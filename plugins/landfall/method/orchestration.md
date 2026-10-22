@@ -23,6 +23,7 @@
 **ORC-4.** A task brief (`templates/brief.md`) MUST contain the executor and task class, worktree, branch, base SHA and dependency state, file scope, cause chain as `file:line`, numbered acceptance points, RED tests, who runs E2E, gate commands with worker limits, rule IDs and the report path.
 **ORC-15.** Write every path in a brief as an absolute path, and mark an authoring task as such, because a brief full of `file:line` reads like a review request.
 **ORC-16.** Before cutting a brief, fast-forward the main checkout from the remote and put the resulting base SHA in the brief.
+**ORC-20.** A dependency between tasks is state (`task new --after <ids>`), never a sentence in a brief: the loop holds the task undispatched until every predecessor is closed, and the brief then takes the merged base.
 **ORC-5.** A review brief MUST require read-only mode and gives the commit range pinned by sha (never "the newest commits"), the task brief, the author's report, the diff saved to a file (`git diff -U10 A..B`), the acceptance points and a targeted risk list; the CLI `review brief` renders it from the state.
 **ORC-6.** A shared brief per task kind holds its binding rules and a task brief references it in one sentence; an error that recurs in reviews a third time (default 3) becomes a shared-brief section with a correct example, a wrong one and a test.
 
