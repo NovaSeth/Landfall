@@ -719,6 +719,27 @@ const ROWS = [
     load: () => import('../verify/command.mjs').then((m) => m.reviewRecord),
   },
   {
+    name: 'report',
+    summary: 'Store a task report from a file (RED/GREEN checked); --round appends a fix round; records the implementer event.',
+    details: [
+      'Without --round the file becomes the report: its frontmatter must hold red and green evidence (as verify reads it) and its last',
+      '"Status:" line one of DONE, DONE_WITH_CONCERNS, NEEDS_CONTEXT or BLOCKED; an existing report is replaced only with --force.',
+      'With --round <k> the report must exist: the file\'s frontmatter (if any) is dropped and its body is appended under "## Fix round <k>"',
+      '(the heading is added when the body does not start with it); earlier bytes of the report, the frontmatter included, stay as they are.',
+      'Then the task gets the implementer event with the report status (done, done-with-concerns, needs-context or blocked) and the round.',
+      'Exit 1: no evidence, no Status line, the report missing (--round) or present (no --force), the round already in the report, a closed task.',
+    ],
+    args: [{ name: 'id', required: true, summary: 'task ID such as T-AB-1' }],
+    flags: [
+      { flag: '--from', value: 'file', summary: 'required: the report text (a regular file of at most 256 KB)' },
+      { flag: '--round', value: 'k', summary: 'the fix round the text reports (1 to 999): appended as a section' },
+      { flag: '--force', summary: 'without --round: replace an existing report' },
+    ],
+    exits: ['OK', 'FAIL', 'USAGE', 'REFUSED', 'ENV'],
+    mutating: true,
+    load: () => import('../verify/report.mjs').then((m) => m.report),
+  },
+  {
     name: 'baseline show',
     summary: 'Print the pinned test baseline: every test with its skip flag, pinned failures, collector and last pin.',
     details: ['Exit 1 when its sha256 does not match its content (it was edited outside verify and baseline pin). Writes nothing.'],
