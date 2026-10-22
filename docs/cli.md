@@ -80,7 +80,7 @@ Commands:
   profile show         Print the project profile: facts with source and evidence, gates, risk paths, and whether a scan is due.
   providers            List the provider CLIs for external runs: found on PATH, version, auth, roles and the sandbox per role.
   providers add        Declare another provider CLI (generic adapter): its argv template and the sandbox mode per role.
-  receipt              Tokens and estimated cost of a task, one external run, the current loop, or all work since a day by class or executor.
+  receipt              Tokens and cost of a task, a run, the loop, or all work since a day (default: since activation) by class or executor.
   report               Store a task report from a file (RED/GREEN checked); --round appends a fix round; records the implementer event.
   review brief         Review brief of a task: range pinned to HEAD, diff saved to a file, acceptance, risks, output shape; --write saves it.
   review record        Record a typed review result as the next round tasks/<id>/review-r<k>.json; the Markdown review closes nothing.
@@ -831,7 +831,7 @@ Exit codes: 0 OK · 2 USAGE · 7 REFUSED · 8 ENV
 ```text
 usage: landfall receipt [--task <id>] [--run <id>] [--loop] [--since <YYYY-MM-DD>] [--by <class|executor>] [--yes] [--json]
 
-Tokens and estimated cost of a task, one external run, the current loop, or all work since a day by class or executor.
+Tokens and cost of a task, a run, the loop, or all work since a day (default: since activation) by class or executor.
 Reads the Claude Code transcripts of this repository and its worktrees ($CLAUDE_CONFIG_DIR/projects, default
 ~/.claude/projects) and the run records. A task gets the requests made while it was active (after a task, route,
 brief, verify or exec command naming it), the subagents whose description or name holds its ID (and the subagents
@@ -843,6 +843,7 @@ Something unreadable or unpriced: exit 1 with the numbers found (data.receipt.pa
 counts them; no loop record: exit 1. --since: the saved receipts that ended on or after the day (UTC), their runs
 from the current run records, and the other runs that did not end before it, per task class or per executor (agent
 type, provider). --loop and --since write nothing (exit 1 with data.partial when a number is a lower bound).
+No selector in an active repository means --since the activation day (data.defaulted); an inactive one exits 2.
 
 Options:
   --task <id>            the task, such as T-AB-1

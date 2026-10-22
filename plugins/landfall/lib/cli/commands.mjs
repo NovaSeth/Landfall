@@ -271,7 +271,7 @@ const ROWS = [
   // Receipts (spec §7.11).
   {
     name: 'receipt',
-    summary: 'Tokens and estimated cost of a task, one external run, the current loop, or all work since a day by class or executor.',
+    summary: 'Tokens and cost of a task, a run, the loop, or all work since a day (default: since activation) by class or executor.',
     details: [
       'Reads the Claude Code transcripts of this repository and its worktrees ($CLAUDE_CONFIG_DIR/projects, default',
       '~/.claude/projects) and the run records. A task gets the requests made while it was active (after a task, route,',
@@ -284,6 +284,7 @@ const ROWS = [
       'counts them; no loop record: exit 1. --since: the saved receipts that ended on or after the day (UTC), their runs',
       'from the current run records, and the other runs that did not end before it, per task class or per executor (agent',
       'type, provider). --loop and --since write nothing (exit 1 with data.partial when a number is a lower bound).',
+      'No selector in an active repository means --since the activation day (data.defaulted); an inactive one exits 2.',
     ],
     args: [],
     flags: [
