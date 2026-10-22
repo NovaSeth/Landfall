@@ -462,7 +462,7 @@ const ROWS = [
   },
   {
     name: 'task start',
-    summary: 'Create the task\'s worktree and branch from a base commit and record them on the task (started); the brief then carries both.',
+    summary: 'Create the task\'s worktree and branch from a base commit and record them (started); the brief carries both.',
     details: [
       'Branch task/<id>-<slug> (--slug, else from the title: lower case, non-alphanumerics as -, at most 40 characters) at --from (a commit or',
       'ref; default HEAD of this checkout); worktree at --path (default <parent of the repository>/<repository name>-wt/<id>), created by',
