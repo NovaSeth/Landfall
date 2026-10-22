@@ -376,7 +376,8 @@ export function evaluate({ where, names, env, id, mode, handle = null, at = now(
       const anchorDoc = measure ? measured : anchored.doc;
       if (cmp.removed.length && anchorCommit && anchorDoc) {
         const known = new Set(anchorDoc.tests.map((t) => t.id));
-        const candidates = inv.tests.map((t) => t.id).filter((x) => !known.has(x));
+        // only running tests are targets: a removed test paired with a skipped or focused one would hide the skip
+        const candidates = inv.tests.filter((t) => !t.skipped && !t.focused).map((t) => t.id).filter((x) => !known.has(x));
         const readAt = (p) => { const r = gitIn(where, env, ['show', `${anchorCommit}:${p}`]); return r.status === 0 ? r.stdout : null; };
         renamed = candidates.length ? detectRenames({ removed: cmp.removed, added: candidates, files: [...(change?.paths ?? []), ...idFiles(cmp.removed)], readAt, readNow: ctx.read }) : [];
         if (renamed.length) {

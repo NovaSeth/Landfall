@@ -7,7 +7,9 @@
 // %o %O %p %#, $name, $name.path) standing for any text, and its body includes the table, so a changed table is no
 // rename. A test file that moved pairs by title and body across files; within a file the body alone pairs. Only JS and
 // TS sources are read (the collectors that build full titles). Pairing is one to one: the n-th removed case of a
-// template pairs with the n-th added one, so a table that lost a case still shows that case as removed.
+// template pairs with the n-th added one, so a table that lost a case still shows that case as removed. The skip, only
+// and todo markers belong to the body, whitespace inside a string literal counts, and the caller offers only running
+// tests as targets, so a rename never hides a skip or a changed expectation.
 // Limits: titles built at run time, tests declared in loops, a regular-expression literal holding a quote, and
 // template literals with nested braces are not read; such a test stays removed and needs the decision it needs today.
 import { createHash } from 'node:crypto';
@@ -29,6 +31,17 @@ function skipString(text, i) {
     if (q !== '`' && text[j] === '\n') return j;
   }
   return text.length;
+}
+
+// The text without whitespace outside string literals: a space inside an expected string still counts.
+function normalize(text) {
+  let out = '';
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c === '"' || c === "'" || c === '`') { const e = skipString(text, i); out += text.slice(i, e + 1); i = e; continue; }
+    if (!/\s/.test(c)) out += c;
+  }
+  return out;
 }
 
 // The index of the bracket closing the one at `open` (strings skipped), or -1.
@@ -71,7 +84,9 @@ export function jsTestBodies(text) {
     const title = [...frames.map((f) => f.title), t[2]].join(' > ');
     const template = each || frames.some((f) => f.template);
     if (SUITE.test(m[1])) { frames.push({ title: t[2], template, end: close }); continue; }
-    out.push({ title, template, body: hash((table + args.slice(t[0].length)).replace(/\s+/g, '')) });
+    // the skip, only and todo markers are part of the body: it.skip('new', fn) is no rename of it('old', fn)
+    const mark = (m[1][0] === 'x' || m[1][0] === 'f' ? m[1][0] : '') + m[2].replace(/\.(?:each|for)\b/g, '');
+    out.push({ title, template, body: hash(normalize(mark + table + args.slice(t[0].length))) });
   }
   return out;
 }

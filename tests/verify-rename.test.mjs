@@ -101,6 +101,9 @@ test('jsTestBodies: full titles with describe ancestors, bodies by content, para
   assert.deepEqual(renamed.map((b) => b.body), bodies.map((b) => b.body), 'a title change keeps every body');
   assert.notEqual(rename.jsTestBodies(nodeTests({ subBody: 'assert.equal(3 - 1, 2);' }))[1].body, bodies[1].body, 'a changed assertion changes the body');
   assert.equal(rename.jsTestBodies(nodeTests({ subBody: 'assert.equal(2 - 1,   1);' }))[1].body, bodies[1].body, 'whitespace does not count');
+  assert.notEqual(rename.jsTestBodies(nodeTests({ subBody: "assert.equal(join(['a', 'b']), 'a b');" }))[1].body, rename.jsTestBodies(nodeTests({ subBody: "assert.equal(join(['a', 'b']), 'ab');" }))[1].body, 'whitespace inside a string literal counts');
+  assert.notEqual(rename.jsTestBodies(nodeTests().replace("test('subtracts'", "test.skip('subtracts'"))[1].body, bodies[1].body, '.skip is part of the body');
+  assert.notEqual(rename.jsTestBodies(nodeTests().replace("it('inner'", "xit('inner'"))[2].body, bodies[2].body, 'an x prefix is part of the body');
   const each = rename.jsTestBodies("describe('drawGrid', () => {\n  it.each([[light, '#b0'], [dark, '#4a']] as const)('uses the grid color for theme %o', (theme, color) => { expect(grid(theme)).toBe(color); });\n  it('draws dots', () => { expect(1).toBe(1); });\n});\n");
   assert.deepEqual(each.map((b) => [b.title, b.template]), [['drawGrid > uses the grid color for theme %o', true], ['drawGrid > draws dots', false]]);
   const other = rename.jsTestBodies("describe('drawGrid', () => {\n  it.each([[light, '#b0']] as const)('uses the grid color for theme %o', (theme, color) => { expect(grid(theme)).toBe(color); });\n});\n");
@@ -128,6 +131,10 @@ test('a title rename with the same body passes as renamed (node --test), a chang
   assert.match(text.text, /renamed \(same body, no decision needed\)/);
   assert.deepEqual(r.vstore.read('baseline', null).tests.map((x) => x.id), [N('adds'), N('subtracts two numbers'), N('suite > inner case')]);
   r.pin();
+  // a renamed test that is skipped at the same time is no rename: the skip would hide
+  r.write('calc.test.mjs', nodeTests({ sub: 'subtracts whole numbers', inner: 'inner case' }).replace("test('subtracts whole numbers'", "test.skip('subtracts whole numbers'"));
+  res = await run(r);
+  assert.deepEqual([res.code, res.env.data.result, res.env.data.renamed, res.env.data.inventory.removed], [1, 'baseline-shrunk', [], [N('subtracts two numbers')]], show(res));
   // the same title change with a changed assertion: a removal that needs a decision
   r.write('calc.test.mjs', nodeTests({ sub: 'subtracts whole numbers', subBody: 'assert.equal(3 - 1, 2);', inner: 'inner case' }));
   res = await run(r);
