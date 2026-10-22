@@ -361,13 +361,14 @@ const ROWS = [
   },
   {
     name: 'method',
-    summary: 'Print one pack or one section of the method by name: each rule line of it, under its section heading.',
+    summary: 'Print one pack or one section of the method by name, or the names of every pack and section.',
     details: [
       'A pack is a name of the packs table in method/index.json (discovery, team, …); a section is <topic>/<section slug>,',
       'such as coding/tests-first (a slug alone repeats across topics). Reads method/index.json and the topic files; writes',
-      'nothing. An unknown name exits 2 and prints every name (--json: data.names).',
+      'nothing. Without a name it prints every pack and section name (exit 0; --json: data.names). An unknown name exits 2',
+      'and prints every name too.',
     ],
-    args: [{ name: 'name', required: true, summary: 'a pack, or <topic>/<section slug>' }],
+    args: [{ name: 'name', summary: 'a pack, or <topic>/<section slug> (omit to list the names)' }],
     flags: [],
     exits: ['OK', 'USAGE'],
     load: () => import('./method.mjs').then((m) => m.method),

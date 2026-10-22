@@ -71,7 +71,7 @@ Commands:
   loop start           Start a loop with caps (defaults: wallMin=480,ticks=200,usd=25,rounds=2); a running loop is never replaced.
   loop status          Print the loop: ticks, wall time and cost against the caps, the stall count, and the exit once it ended.
   loop stop            End the running loop: exit DONE, so no wakeup is scheduled again; an ended loop is left as it is.
-  method               Print one pack or one section of the method by name: each rule line of it, under its section heading.
+  method               Print one pack or one section of the method by name, or the names of every pack and section.
   migrate              Run the forward migrations on every state file of this repository; --dry-run lists the steps and writes nothing.
   profile gates apply  Replace the profile gates with the candidates the scan detects; only with an active gate-change decision.
   profile gates set    Add a profile gate or replace the one of that name; only with an active gate-change decision.
@@ -665,18 +665,19 @@ Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
 Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
 ```
 
-### `landfall method <name> [--json]`
+### `landfall method [<name>] [--json]`
 
 ```text
-usage: landfall method <name> [--json]
+usage: landfall method [<name>] [--json]
 
-Print one pack or one section of the method by name: each rule line of it, under its section heading.
+Print one pack or one section of the method by name, or the names of every pack and section.
 A pack is a name of the packs table in method/index.json (discovery, team, …); a section is <topic>/<section slug>,
 such as coding/tests-first (a slug alone repeats across topics). Reads method/index.json and the topic files; writes
-nothing. An unknown name exits 2 and prints every name (--json: data.names).
+nothing. Without a name it prints every pack and section name (exit 0; --json: data.names). An unknown name exits 2
+and prints every name too.
 
 Arguments:
-  name  a pack, or <topic>/<section slug>
+  name  a pack, or <topic>/<section slug> (omit to list the names)
 
 Read-only.
 Exit codes: 0 OK · 2 USAGE
