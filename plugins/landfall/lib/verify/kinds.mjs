@@ -89,6 +89,19 @@ export const VERIFY_KINDS = Object.freeze({
       gates: many({ t: 'obj', f: { name: str(40, { min: 1 }), lines: many(str(TAIL_CHARS), TAIL_CHARS) } }, 100),
     },
   }),
+  // The output tails of one run: the n-th write-mode verify of a task (<id>-<n>) or the n-th merge run (<id>-m<n>);
+  // machine-local, kept next to the latest log so a failed run never hides the one before it.
+  verifyAttempt: defineKind('verifyAttempt', 1, {
+    dir: 'local/verify',
+    keyPattern: /^T-[A-Z]{2,4}-[1-9]\d{0,5}-m?[1-9]\d{0,3}$/,
+    file: (k) => `local/verify/${k}.log`,
+    match: /^local\/verify\/(T-[A-Z]{2,4}-[1-9]\d{0,5}-m?[1-9]\d{0,3})\.log$/,
+    fields: {
+      task: str(LIMITS.token, { re: PATTERNS.taskId }),
+      at: time,
+      gates: many({ t: 'obj', f: { name: str(40, { min: 1 }), lines: many(str(TAIL_CHARS), TAIL_CHARS) } }, 100),
+    },
+  }),
   // A passing gate set's runs for one tree (gate-cache.mjs): machine-local, read before the gates run again.
   gateCache: defineKind('gateCache', 1, {
     dir: 'local/gate-cache',

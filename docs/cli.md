@@ -43,6 +43,7 @@ Commands:
   baseline pin         Repair the test baseline: replace it with the inventory collected now, with a gate-change or test-removal decision.
   baseline show        Print the pinned test baseline: every test with its skip flag, pinned failures, collector and last pin.
   brief                Render the brief of a routed task from the brief template and the state; --write saves tasks/<id>/brief.md.
+  commit               Commit the changes under the state directory as one chore commit; the code and the index outside it stay as they are.
   config set           Set one config value: a threshold override (only with an active decision) or the providers of an executor role.
   config show          Show the configuration: threshold overrides with their default and decision, executor preferences, changed flags.
   deactivate           Remove the untracked state of this repository (or the link of its external state) and remember the opt-out.
@@ -167,6 +168,25 @@ Options:
   --force        with --write: replace a brief written or edited by hand
 
 Read-only. Changes files with --write: needs a terminal or --yes, otherwise exit 7 REFUSED.
+Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
+```
+
+### `landfall commit [--message <text>] [--yes] [--json]`
+
+```text
+usage: landfall commit [--message <text>] [--yes] [--json]
+
+Commit the changes under the state directory as one chore commit; the code and the index outside it stay as they are.
+Stages and commits only paths under the state directory (git add -A and git commit with that pathspec), with the message
+"chore(<bin>): <what changed>" (the task IDs, decision IDs and files touched) unless --message says otherwise. The commit runs
+your hooks (a refusing hook: exit 1, the paths stay staged). Nothing changed: exit 0. A state directory outside the repository
+(init --state-dir) has nothing git tracks: exit 0, nothing done. The state is not code: verify and task done ignore it, so one
+commit after a task is enough.
+
+Options:
+  --message <text>  the commit message (one line of at most 200 characters; default: chore(<bin>): <what changed>)
+
+Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
 Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
 ```
 

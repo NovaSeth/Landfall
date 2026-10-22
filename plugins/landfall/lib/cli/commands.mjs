@@ -439,6 +439,22 @@ const ROWS = [
     load: () => import('./state.mjs').then((m) => m.init),
   },
   {
+    name: 'commit',
+    summary: 'Commit the changes under the state directory as one chore commit; the code and the index outside it stay as they are.',
+    details: [
+      'Stages and commits only paths under the state directory (git add -A and git commit with that pathspec), with the message',
+      '"chore(<bin>): <what changed>" (the task IDs, decision IDs and files touched) unless --message says otherwise. The commit runs',
+      'your hooks (a refusing hook: exit 1, the paths stay staged). Nothing changed: exit 0. A state directory outside the repository',
+      '(init --state-dir) has nothing git tracks: exit 0, nothing done. The state is not code: verify and task done ignore it, so one',
+      'commit after a task is enough.',
+    ],
+    args: [],
+    flags: [{ flag: '--message', value: 'text', summary: 'the commit message (one line of at most 200 characters; default: chore(<bin>): <what changed>)' }],
+    exits: ['OK', 'FAIL', 'USAGE', 'REFUSED', 'ENV'],
+    mutating: true,
+    load: () => import('./commit.mjs').then((m) => m.commit),
+  },
+  {
     name: 'task list',
     summary: 'List the tasks of this repository: ID, status, kind, lane, title.',
     details: ['An inactive repository has no tasks; nothing is written.'],

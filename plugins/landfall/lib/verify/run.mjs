@@ -97,18 +97,17 @@ export function gitIn(where, env, args) {
 
 export const commitExists = (where, env, sha) => Boolean(sha) && gitIn(where, env, ['cat-file', '-e', `${sha}^{commit}`]).status === 0;
 
-// The repository as verify sees it: { rel, scope, routeScope, head, dirty }. `scope` (freshness: dirty, done) is the
-// working tree without verify's and the task's own outputs, and without the typed review records (exactly the review
-// kind's names, review-r<1-999>.json), which `task done` reads by value inside its lock: verify → review record →
-// task done needs no second verify. `routeScope` (the change the route classifies) leaves the whole state directory
-// out: process records are not the code change.
-const REVIEW_NAMES = ['[1-9]', '[1-9][0-9]', '[1-9][0-9][0-9]'].map((k) => `review-r${k}.json`);
+// The repository as verify sees it: { rel, scope, routeScope, head, dirty }. `scope` (freshness: dirty, done) and
+// `routeScope` (the change the route classifies) both leave the whole state directory out: the state is not code (a
+// decision recorded, a report stored or a review written between verify and `task done` is no change of the code, and
+// nothing the gates run reads them), so verify → decide → review record → task done needs no commit in between; the
+// typed review records and the baseline are read by value inside the lock of `task done` instead. Before 2.1 only
+// verify's own outputs left the scope, and every state write forced a commit before verify (156 state commits in one
+// 40-task project).
 export function codeState(where, env) {
   const rel = stateRel(where.repo, where.dir);
-  const reviews = rel ? REVIEW_NAMES.map((n) => `:(exclude,glob)${rel}/tasks/*/${n}`) : [];
-  const own = rel ? [`:(exclude)${rel}/local`, `:(exclude,glob)${rel}/tasks/*/verify.json`, `:(exclude,glob)${rel}/tasks/*/task.json`, ...reviews, `:(exclude)${rel}/${VERIFY_KINDS.baseline.path()}`] : [];
-  const scope = ['--', '.', ...own];
-  const routeScope = ['--', '.', ...(rel ? [`:(exclude)${rel}`] : [])];
+  const scope = ['--', '.', ...(rel ? [`:(exclude)${rel}`] : [])];
+  const routeScope = scope;
   const h = gitIn(where, env, ['rev-parse', '--verify', '-q', 'HEAD']);
   const st = gitIn(where, env, ['status', '--porcelain', '--untracked-files=all', ...scope]);
   if (st.status !== 0) throw envError('git-failed', `git status failed in ${where.worktree}`, 'check that the repository is readable');
@@ -415,11 +414,25 @@ export function evaluate({ where, names, env, id, mode, handle = null, at = now(
   if (write && doc.result === 'pass' && inv) grow(store, { inv, preexisting: doc.failures.preexisting, head: code.head, at });
   doc.baselineSha = workingSha(store);
   doc.durationMs = Date.now() - started;
+  // Every run keeps its own log (local/verify/<id>-<n>.log, merge runs <id>-m<n>; machine-local) next to the latest
+  // one, so a failed run never hides the output of the one before it; a write-mode run is also an event of the task
+  // (result, head, attempt), so `task show` lists every attempt.
+  let attempt = null;
   if (write) {
     store.write('verify', id, doc);
     store.write('verifyLog', id, { task: id, at, gates: output });
+    const run = { result: doc.result, head: doc.head, class: doc.class };
+    store.update('task', id, (cur) => {
+      if (cur === null) return undefined;
+      attempt = cur.events.filter((e) => e.event === 'verify').length + 1;
+      return { ...cur, events: [...cur.events, { at, by: handle ?? 'verify', event: 'verify', data: { ...run, attempt } }] };
+    });
+    if (attempt !== null) store.write('verifyAttempt', `${id}-${attempt}`, { task: id, at, gates: output });
+  } else if (mode === 'merge') {
+    const n = store.list('verifyAttempt').filter((k) => k.startsWith(`${id}-m`)).length + 1;
+    store.write('verifyAttempt', `${id}-m${n}`, { task: id, at, gates: output });
   }
-  return { doc, reasons: reasons.map(({ code: c, message, hint }) => ({ code: c, message, hint })), written: write, candidates, output, reused };
+  return { doc, reasons: reasons.map(({ code: c, message, hint }) => ({ code: c, message, hint })), written: write, candidates, output, reused, attempt };
 }
 
 // On pass the baseline is this inventory; written only when its content changed, and only over the baseline this run
@@ -434,11 +447,14 @@ function grow(store, { inv, preexisting, head, at }) {
 }
 
 // `verify <id> [--ci] [--no-cache]`: the owner's verify writes; --ci only reports; --no-cache runs the gates whatever
-// the gate cache holds.
+// the gate cache holds. A closed task (done or cancelled) takes no further state: its verify runs as a check and
+// writes nothing (`closed` in the result), so a later run on another HEAD never replaces the record that closed it.
+const CLOSED = new Set(['done', 'cancelled']);
 export function verifyTask({ cwd, env, names, id, ci = false, cache = true, version = null, at = now() }) {
   const where = activeWhere({ cwd, env, names });
   KINDS.task.path(id);
   let handle = null;
+  let closed = null;
   if (!ci) {
     const store = storeOf(where, names);
     const task = store.read('task', id);
@@ -447,6 +463,7 @@ export function verifyTask({ cwd, env, names, id, ci = false, cache = true, vers
     if (task.owner !== handle) {
       throw new StateError('not-owner', 'REFUSED', `${id} belongs to ${task.owner}; only its owner verifies it with writes`, { hint: `ask ${task.owner}, or check without writing: ${names.bin} verify ${id} --ci` });
     }
+    if (CLOSED.has(task.status)) closed = task.status;
   }
-  return evaluate({ where, names, env, id, mode: ci ? 'ci' : 'write', handle, at, version, cache });
+  return { ...evaluate({ where, names, env, id, mode: ci || closed ? 'ci' : 'write', handle, at, version, cache }), closed };
 }

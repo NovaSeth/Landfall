@@ -254,20 +254,20 @@ test('a review recorded after a passing verify is bound by value: task done clos
   s.vstore.write('review', verify.reviewKey(s.id, 3), REVIEW);
   d = await done(s);
   assert.equal(d.code, 0, show(d));
-  // The review's prose is not bound by value: a Markdown file after verify still needs a new verify.
+  // The state directory is not code: a Markdown review, a decision or any other file written there after verify is no
+  // change of the code (the typed review record is read by value above), so task done closes without a second verify.
   const m = repo(t);
   assert.equal((await run(m)).code, 0);
   m.write(`${names.stateDir}/tasks/${m.id}/review-r1.md`, '**Approved**\n');
+  m.write(`${names.stateDir}/decisions/D-TU-9.md`, '---\nschema: 1\n---\n');
   d = await done(m);
+  assert.equal(d.code, 0, `state files are not code: ${show(d)}`);
+  // A file outside the state directory is a change of the code.
+  const o = repo(t);
+  assert.equal((await run(o)).code, 0);
+  o.write('notes.md', 'later\n');
+  d = await done(o);
   assert.deepEqual([d.code, errorCodes(d)[0]], [1, 'uncommitted-changes'], show(d));
-  // Only the review kind's own file names leave the freshness scope; any other name next to them is a change.
-  for (const name of ['review-r01.json', 'review-rx.json', 'review-r1000.json']) {
-    const o = repo(t);
-    assert.equal((await run(o)).code, 0);
-    o.write(`${names.stateDir}/tasks/${o.id}/${name}`, '{}\n');
-    d = await done(o);
-    assert.deepEqual([d.code, errorCodes(d)[0]], [1, 'uncommitted-changes'], `${name}: ${show(d)}`);
-  }
 });
 
 test('task merge merges a done task (done on its branch, then merged); a cancelled task stays refused', async (t) => {

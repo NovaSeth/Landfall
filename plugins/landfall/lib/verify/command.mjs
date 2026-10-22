@@ -50,9 +50,10 @@ export function renderVerify(doc, reused = null) {
 
 export const verify = typed(({ args, flags, names, version, io }) => {
   const out = verifyTask({ cwd: io.cwd, env: io.env, names, id: args.id, ci: Boolean(flags.ci), cache: !flags.noCache, version: version ?? null });
-  const data = { ...out.doc, written: out.written, ...(out.candidates ? { candidates: out.candidates } : {}), output: out.output, reusedFrom: out.reused };
-  const lines = [...renderVerify(out.doc, out.reused), out.written ? `gate output: local/verify/${out.doc.task}.log in the state directory` : 'nothing written (--ci)'];
-  return { code: exitOf(out.doc.result), data, errors: out.reasons, text: `${forTerminal(lines.join('\n'))}\n` };
+  const data = { ...out.doc, written: out.written, attempt: out.attempt, closed: out.closed, ...(out.candidates ? { candidates: out.candidates } : {}), output: out.output, reusedFrom: out.reused };
+  const tail = out.written ? `gate output: local/verify/${out.doc.task}.log in the state directory (attempt ${out.attempt}: ${out.doc.task}-${out.attempt}.log)`
+    : out.closed ? `nothing written: ${out.doc.task} is ${out.closed}, a closed task takes no further state` : 'nothing written (--ci)';
+  return { code: exitOf(out.doc.result), data, errors: out.reasons, text: `${forTerminal([...renderVerify(out.doc, out.reused), tail].join('\n'))}\n` };
 });
 
 export const taskDone = typed(({ args, names, io }) => {
