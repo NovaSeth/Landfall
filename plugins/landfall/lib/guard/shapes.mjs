@@ -8,14 +8,15 @@
 // broken rule returns its message. A command outside the shapes is blocked by design — no aliases, variables, eval or
 // analysis of code in bash -c. Every simple command is also checked for writes to hook files (SEC-4) and to command-owned
 // state files (FLW-7, protect.mjs); rm -r and find -delete for a tracked top-level directory or the repository (PRI-17).
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { gitShape } from './git-shape.mjs';
 import { GIT_ARG } from './git-options.mjs';
 import { MSG, short } from './messages.mjs';
 import { findDeleteShape, removeShape, stateWrite, writeRedir } from './protect.mjs';
 import { why } from './tokenizer.mjs';
-import { BIN, CODE_RUNNERS, ENV_EXEC, GATES, KEYWORDS, SHELLS, base, gateById, variants, wordTok } from './tokens.mjs';
+import { BIN, CODE_RUNNERS, ENV_EXEC, ENV_PREFIX, GATES, KEYWORDS, SHELLS, base, gateById, variants, wordTok } from './tokens.mjs';
 
 const DEPTH = 10; // package.json scripts calling each other
 const isDir = (p) => { try { return statSync(p).isDirectory(); } catch { return false; } };
@@ -23,15 +24,27 @@ const isPath = (t) => !/\s/.test(t) && !t.startsWith('-') && (t.includes('/') ||
 // Kit scripts (.workflow/bin, .workflow/routing, .githooks): their arguments are data (state notes, IDs, paths).
 const KIT_SCRIPT = /(^|\/)(\.workflow\/(bin|routing)|\.githooks)\/[\w.-]+$/;
 const isBin = (w) => w === BIN;
-// The plugin's launcher called by its path (a checkout, a worktree, the plugin cache: `plugins/<p>/bin/<bin> …`, also
-// behind `node`): the own command, not a script with arguments (retro follow-up 2.2.1). The name alone proves nothing
-// (a planted `evil/bin/<bin>`): the file, resolved from the command's directory, must hold exactly this plugin's
-// launcher; a copy of another version or an unknown directory falls back to the script rules.
+// The plugin's launcher called by its path (`plugins/<p>/bin/<bin> …`, also behind `node`): the own command, not a
+// script with arguments (retro follow-up 2.2.1). The name and even the file's bytes prove nothing about the code the
+// launcher runs (its `../lib`): the path, resolved from the command's directory and through links, must be the
+// launcher of this running plugin, or sit beside this plugin's lib directory, or be named by the operator in the
+// session's environment (`<PREFIX>LAUNCHERS`, a `:`-separated list of launcher paths: a development checkout). Any
+// other copy, another version or a missing file falls back to the script rules.
 const LAUNCHER = new RegExp(`(^|/)bin/${BIN}$`);
-const OWN_LAUNCHER = (() => { try { return readFileSync(new URL(`../../bin/${BIN}`, import.meta.url), 'utf8'); } catch { return null; } })();
+const real = (p) => { try { return realpathSync(p); } catch { return null; } };
+const OWN = (() => {
+  const launcher = real(fileURLToPath(new URL(`../../bin/${BIN}`, import.meta.url)));
+  const lib = real(fileURLToPath(new URL('../', import.meta.url)));
+  return launcher && lib ? { launcher, lib } : null;
+})();
 function isLauncher(t, ctx) {
-  if (t === BIN || !LAUNCHER.test(t) || OWN_LAUNCHER === null || typeof ctx.cwd !== 'string') return false;
-  try { const p = resolve(ctx.cwd, t); return statSync(p).isFile() && readFileSync(p, 'utf8') === OWN_LAUNCHER; } catch { return false; }
+  if (t === BIN || !LAUNCHER.test(t) || OWN === null || typeof ctx.cwd !== 'string') return false;
+  const p = real(resolve(ctx.cwd, t));
+  if (p === null) return false;
+  try { if (!statSync(p).isFile()) return false; } catch { return false; }
+  if (p === OWN.launcher || real(join(dirname(p), '..', 'lib')) === OWN.lib) return true;
+  const trusted = String(ctx.env?.[`${ENV_PREFIX}LAUNCHERS`] ?? '').split(':').filter(Boolean).map(real);
+  return trusted.includes(p);
 }
 const asBin = (c, k) => ({ ...c, words: [{ ...c.words[k], text: BIN }, ...c.words.slice(k + 1)] });
 
