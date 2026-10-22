@@ -14,7 +14,7 @@
 import { existsSync, readdirSync, realpathSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { KINDS } from '../state/index.mjs';
-import { MSG } from './messages.mjs';
+import { MSG, short } from './messages.mjs';
 import { why } from './tokenizer.mjs';
 import { BIN, base } from './tokens.mjs';
 
@@ -149,6 +149,11 @@ const READ_ONLY = new Map(Object.entries({
   rg: /^(--pre|--replace|-[a-zA-Z]*r)/, jq: /^(-[a-zA-Z]*i|--in-place)/, diff: null, cmp: null, echo: null, printf: null, test: null, '[': null, '[[': null,
   cd: null, pushd: null, popd: null,
 }));
+// Programs for which the state's text inside an argument is data, not a path they write: the exact readers, the network
+// and text tools; sed only without an in-place option and without a `w <state path>` command in its program.
+const MENTION_OK = new Set([...READ_ONLY.keys(), 'curl', 'wget', 'sort', 'uniq', 'cut', 'tr', 'sed', 'gsed', 'basename', 'dirname', 'realpath', 'date', 'true', 'false', ':']);
+const sedWrites = (w, text) => w.slice(1).some((t) => /^-[a-zA-Z]*i|^--in-place/.test(t)) || w.slice(1).some((t) => !t.startsWith('-') && new RegExp(`w\\s+\\S*${text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'i').test(t));
+
 function readShape(c, w) {
   if (c.redirs.some((r) => !safeRedir(r))) return false;
   const b = base(w[0]);
@@ -199,11 +204,21 @@ export function stateWrite(c, w, ctx, { args = true } = {}) {
   if (b === 'git' || /^git-[a-z]/.test(b)) return gitState(w, ctx);
   const text = stateText(st);
   let hit = null;
-  for (const word of c.words.slice(1)) {
+  // cp and install write only their destination (the last word, or the -t directory): a state path among the sources
+  // is a read (retro 2026-10 §4.1)
+  let words = c.words.slice(1);
+  if (b === 'cp' || b === 'install') {
+    const t = words.findIndex((x) => x.text === '-t' || x.text === '--target-directory');
+    const last = [...words].reverse().find((x) => !x.text.startsWith('-'));
+    words = [...(t >= 0 && words[t + 1] ? [words[t + 1]] : last ? [last] : []), ...words.filter((x) => /^-t.|^--target-directory=/.test(x.text))];
+  }
+  for (const word of words) {
     const vs = candidates(word.text);
     for (const v of vs) { hit = stateTarget(v, ctx, word.glob); if (hit) break; }
-    // the state named inside a program text (sed 'w …', awk '… > "…"', node -e …), not as a path
-    if (!hit && word.text.toLowerCase().includes(text) && !vs.some((v) => ctx.inDir(ctx.cwd, v) !== null && inside(st.dir, realPath(ctx.inDir(ctx.cwd, v))) !== null)) hit = { rel: '', owned: null };
+    // the state named inside a program text (sed 'w …', awk '… > "…"', node -e …), not as a path: a write for every
+    // program that can write, data for a reader (curl -d, grep, a sed substitution: retro 2026-10 §4.1, 33 blocks)
+    if (!hit && word.text.toLowerCase().includes(text) && !vs.some((v) => ctx.inDir(ctx.cwd, v) !== null && inside(st.dir, realPath(ctx.inDir(ctx.cwd, v))) !== null)
+      && !(MENTION_OK.has(b) && !(/^g?sed$/.test(b) && sedWrites(w, text)))) hit = { rel: '', owned: null };
     if (hit) break;
   }
   const inState = ctx.cwd !== null ? inside(st.dir, realPath(ctx.cwd)) : null;
@@ -229,9 +244,12 @@ function gitState(w, ctx) {
   const st = ctx.state;
   // a pathspec reaches the state (a path inside it) or contains it (an ancestor: `.`, the repository)
   const reaches = (q) => { const r = realPath(q); const rel = inside(st.dir, r); return (rel !== null && !WORKTREES.test(rel)) || inside(r, st.dir) !== null; };
+  // `git -C <dir>` places the pathspecs in <dir> (retro 2026-10 §4.1); --git-dir and --work-tree have no shape
+  const at = global.indexOf('-C');
+  const dir = at >= 0 ? ctx.inDir(ctx.cwd, global[at + 1] ?? '') : ctx.cwd;
   const touches = (p) => {
     if (p.startsWith(':')) return true; // pathspec magic: no proof
-    const abs = ctx.inDir(ctx.cwd, p);
+    const abs = ctx.inDir(dir, p);
     if (abs === null) { if (ctx.stateHit) why('the directory is unknown (an uncertain cd) for a git pathspec'); return false; }
     if (!GLOB.test(p)) return reaches(abs);
     const parts = abs.split(sep);
@@ -242,7 +260,8 @@ function gitState(w, ctx) {
     if (sub === 'clean' && args.some((a) => /^(-[a-zA-Z]*n|--dry-run)$/.test(a))) return null;
     if (sub === 'restore' && indexOnly(dashes >= 0 ? args.slice(0, dashes) : args)) return null;
     const targets = paths.length ? paths : sub === 'clean' ? ['.'] : [];
-    if (targets.length && global.some((g) => g === '-C' || /^--(git-dir|work-tree)/.test(g))) why(`git ${sub} in another directory: its pathspecs cannot be placed`);
+    if (targets.length && global.some((g) => /^--(git-dir|work-tree)/.test(g))) why(`git ${sub} with --git-dir or --work-tree: its pathspecs cannot be placed`);
+    if (targets.length && at >= 0 && dir === null) why(`git -C ${short(global[at + 1] ?? '', 40)} ${sub}: the directory cannot be placed`);
     const hit = targets.find(touches);
     return hit === undefined ? null : MSG.stateGit(sub, hit, BIN);
   }

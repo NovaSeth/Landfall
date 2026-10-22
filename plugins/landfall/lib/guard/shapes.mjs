@@ -110,7 +110,9 @@ const binGate = (w) => {
 };
 
 // A script from a file: its content is outside the guard; the arguments of kit scripts are data, of other scripts a
-// guarded word only in a path. The script itself (the first argument) too: a guarded word only in a file path.
+// guarded word only in a path (the argument invariant of tests/hooks-guard-principle.test.mjs: a sentence with "commit"
+// in it goes to the plugin's own commands, `note` or `report`, not to a script). The script itself (the first argument)
+// too: a guarded word only in a file path.
 function scriptShape(w, k) {
   if (/^(\/dev\/|\/proc\/)|^-$/.test(w[k])) why(`${base(w[0])} reads code from a descriptor`);
   if (wordTok(w[k]) && !isPath(w[k])) why(`script "${short(w[k])}" with a guarded word outside a file path`);
@@ -175,7 +177,9 @@ export function shape(c, ctx) {
   const name = w[0]; const b = base(name);
   const fed = c.pipeIn || c.heredoc !== null || c.redirs.some((r) => r.op.startsWith('<')); // input from a pipe, heredoc or file
   const tok = (k = 1) => w.slice(k).some(wordTok);
-  const pipeAfter = (gate) => (c.pipeOut && gate ? MSG.pipe(gate, w.join(' ')) : null);
+  // a pipe after a gate reports the last command's exit code (TRP-2, SEC-6); the plugin's own command with --json carries
+  // its code in the envelope, so a pipe after it reads data (retro 2026-10 §3.9)
+  const pipeAfter = (gate, jsonOk = false) => (c.pipeOut && gate && !(jsonOk && w.includes('--json')) ? MSG.pipe(gate, w.join(' ')) : null);
   if (c.words.some((x) => x.q === '?') && b !== 'echo' && b !== 'printf') why('$? outside echo/printf');
   if (c.words.some((x) => x.q === 'msg') && !['git', 'gh', 'echo', 'printf'].includes(b)) why('a $( ) substitution outside a message');
   if (ctx.shadowNames.has(name)) why(`"${short(name)}" redefined earlier in this command (alias or hash -p)`);
@@ -205,9 +209,9 @@ export function shape(c, ctx) {
     for (const t of w) if (wordTok(t) && !isPath(t)) why(`"${short(t)}" in the command ${short(b)} outside the list`);
     return null;
   }
-  if (base(name) === BIN && name !== BIN) { const gate = pipeAfter(binGate(w)); if (gate) return gate; } // by path: gates only
+  if (base(name) === BIN && name !== BIN) { const gate = pipeAfter(binGate(w), true); if (gate) return gate; } // by path: gates only
   if (isBin(name)) {
-    const gate = pipeAfter(binGate(w)); if (gate) return gate;
+    const gate = pipeAfter(binGate(w), true); if (gate) return gate;
     const { k, words } = binWords(w);
     if (words[0] !== 'heavy') return null; // the CLI reads its arguments as data, never as shell
     const e = w.indexOf('--', k);
@@ -349,7 +353,11 @@ export function effects(c, w, ctx) {
     const next = certain && p !== null && isDir(p) ? p : null;
     if (next === null) ctx.unsure = true;
     ctx.cwdHint = next === null ? p : null;
-    ctx.cwdConditional = next !== null && c.before === '&&';
+    // a cd after && (or at the start, when a later command follows ; or a newline) may have failed: the command after it
+    // runs where the line began; lib/guard/index.mjs checks that command in both directories
+    ctx.cwdBefore = ctx.cwd;
+    ctx.cwdConditional = next !== null;
+    ctx.alts = [];
     ctx.cwd = next; return;
   }
   const internal = (t) => GIT_INTERNAL.test(ctx.cwd ? resolve(ctx.cwd, t) : t);

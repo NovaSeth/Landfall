@@ -37,7 +37,7 @@ const PLUGIN_ID = `${names.plugin}@${names.marketplace}`;
 const { HOOKS } = await lib('hooks/registry.mjs');
 const EVENTS = [...new Set(HOOKS.map((h) => h.event))];
 
-const ROW_IDS = ['release', 'heartbeat', 'bin-path', 'state', 'profile', 'flags', 'providers', 'scheduler', 'context', 'permissions', 'protection'];
+const ROW_IDS = ['release', 'heartbeat', 'bin-path', 'state', 'profile', 'flags', 'providers', 'scheduler', 'guard', 'context', 'permissions', 'protection'];
 const STATUSES = ['ok', 'warn', 'fail', 'skip'];
 const RULES = [`Bash(${names.bin} exec:*)`, `Bash(${names.bin} wait:*)`]; // U3
 const SYSTEM_DIRS = ['/usr/bin', '/bin'];
