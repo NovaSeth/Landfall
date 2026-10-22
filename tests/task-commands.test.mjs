@@ -138,10 +138,10 @@ test('task list and task show: natural order, the stored document, events with a
   assert.equal(list.code, 0, show(list));
   assert.equal(list.out.data.active, true);
   assert.deepEqual(list.out.data.tasks.map((x) => x.id), Array.from({ length: 11 }, (_, i) => `T-${ME}-${i + 1}`));
-  assert.deepEqual(list.out.data.tasks[0], { id: `T-${ME}-1`, kind: 'task', status: 'new', owner: ME, lane: null, round: 0, title: 'Task 1' });
+  assert.deepEqual(list.out.data.tasks[0], { id: `T-${ME}-1`, kind: 'task', status: 'new', owner: ME, lane: null, round: 0, title: 'Task 1', class: null, branch: null, base: null });
   const text = await cli(['task', 'list'], { ...r, json: false });
   assert.equal(text.out.trim().split('\n').length, 11);
-  assert.match(text.out, new RegExp(`^T-${ME}-10 +new +task +- +Task 10$`, 'm'), 'columns: ID, status, kind, lane (- for none), title');
+  assert.match(text.out, new RegExp(`^T-${ME}-10 +new +- +- +task +- +- +Task 10$`, 'm'), 'columns: ID, status, class, round, kind, lane, branch, title (- for none)');
   await r.run(['task', 'set', `T-${ME}-2`, 'dispatched', '--executor', 'claude:implementer', '--base', 'abc1234']);
   const one = await cli(['task', 'show', `T-${ME}-2`], r);
   assert.equal(one.code, 0, show(one));
@@ -153,6 +153,43 @@ test('task list and task show: natural order, the stored document, events with a
     const res = await cli(['task', 'show', id], r);
     assert.deepEqual([res.code, res.out.errors[0].code], [2, code], `${id}: ${show(res)}`);
   }
+});
+
+test('task show is the resume card after a compaction', async (t) => {
+  const r = await active(t);
+  const id = `T-${ME}-1`;
+  await r.run(['task', 'new', 'Parser']);
+  writeFileSync(join(r.dir, 'a.js'), 'x\n');
+  git(r.dir, r.env, ['add', '.']);
+  git(r.dir, r.env, ['commit', '-q', '-m', 'a']);
+  const sha = git(r.dir, r.env, ['rev-parse', 'HEAD']).trim();
+  const routed = await r.run(['route', id, '--paths', 'a.js', '--loc', '10']);
+  assert.equal(routed.code, 0, show(routed));
+  const started = await r.run(['task', 'set', id, 'started', '--branch', 'task/x', '--base', sha, '--worktree', '/tmp/wt/x']);
+  assert.equal(started.code, 0, show(started));
+  const { openStore } = await lib('verify/index.mjs');
+  const where = state.resolve({ cwd: r.dir, env: r.env, names });
+  openStore(where.dir, names).write('review', `${id}/review-r1`, {
+    verdict: 'needs-fixes', reviewer: { kind: 'claude', id: 'claude:reviewer' },
+    findings: [{ id: 'F1', severity: 'blocking', path: 'a.js', line: 3, rule: null, text: 'off by one' }, { id: 'F2', severity: 'minor', path: null, line: null, rule: null, text: 'naming' }],
+  });
+  const fix = await r.run(['task', 'set', id, 'fix-round', '--round', '1', '--addressed', '0', '--open', '1']);
+  assert.equal(fix.code, 0, show(fix));
+  const text = (await cli(['task', 'show', id], { ...r, json: false })).out;
+  assert.match(text, new RegExp(`^branch task/x · base ${sha} · worktree /tmp/wt/x$`, 'm'));
+  assert.match(text, /^reviews: r1 needs-fixes \(claude, 1 blocking, 1 minor\)$/m);
+  assert.match(text, /^open findings: F1 off by one$/m);
+  assert.match(text, /^next: .*fix round 1 in progress/m);
+  assert.match(text, /^verify: none$/m);
+  assert.ok(text.indexOf('open findings:') < text.indexOf('events:'));
+  const card = (await cli(['task', 'show', id], r)).out.data.card;
+  assert.equal(card.branch, 'task/x');
+  assert.equal(card.base, sha);
+  assert.equal(card.worktree, '/tmp/wt/x');
+  assert.equal(card.verify, null);
+  assert.deepEqual(card.reviews, [{ round: 1, verdict: 'needs-fixes', reviewer: 'claude', blocking: 1, minor: 1 }]);
+  assert.deepEqual(card.openFindings, [{ id: 'F1', path: 'a.js', line: 3, text: 'off by one' }]);
+  assert.match(card.next.state, /fix round 1 in progress/);
 });
 
 // ---- task set: the 1.x task.sh states ----
