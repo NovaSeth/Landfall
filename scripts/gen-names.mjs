@@ -38,22 +38,36 @@ const USAGE = 'usage: node scripts/gen-names.mjs [--check] [--root <dir>]\n';
 
 class Invalid extends Error {}
 
-// Plugin components rendered from templates/<kind>/<name>.md; `existing` lists the names present in the plugin.
+// Plugin components rendered from templates/<kind>/<name><ext>; `existing` lists the names present in the plugin. Skills
+// and agents are Markdown with frontmatter; the hooks module, its test and its state contract are code (templates named
+// .tmpl so that neither the engine nor `claude plugin test` reads the unrendered source).
 const listDir = (dir, keep) => (existsSync(dir) ? readdirSync(dir).filter(keep) : []);
+const CODE = /\.(?:[cm]?[jt]sx?|d\.ts)$/;
 const COMPONENTS = [
-  { kind: 'skills', output: (n) => `skills/${n}/SKILL.md`, existing: (p) => listDir(join(p, 'skills'), (d) => existsSync(join(p, 'skills', d, 'SKILL.md'))) },
-  { kind: 'agents', output: (n) => `agents/${n}.md`, existing: (p) => listDir(join(p, 'agents'), (f) => f.endsWith('.md')).map((f) => f.slice(0, -3)) },
+  { kind: 'skills', ext: '.md', output: (n) => `skills/${n}/SKILL.md`, existing: (p) => listDir(join(p, 'skills'), (d) => existsSync(join(p, 'skills', d, 'SKILL.md'))), render: renderComponent },
+  { kind: 'agents', ext: '.md', output: (n) => `agents/${n}.md`, existing: (p) => listDir(join(p, 'agents'), (f) => f.endsWith('.md')).map((f) => f.slice(0, -3)), render: renderComponent },
+  { kind: 'hooks', ext: '.tmpl', output: (n) => `hooks/${n}`, existing: (p) => listDir(join(p, 'hooks'), (f) => CODE.test(f)), render: renderCode },
+  { kind: 'types', ext: '.tmpl', output: (n) => `types/${n}`, existing: (p) => listDir(join(p, 'types'), (f) => CODE.test(f)), render: renderCode },
 ];
 
-// "{{<key>}}" → the name.json value; the generated marker is a YAML comment after the opening "---", so it costs no
-// context and the frontmatter stays valid.
-function renderComponent(text, names, sourceRel) {
-  if (!text.startsWith('---\n')) throw new Invalid(`${sourceRel}: must start with a "---" frontmatter block`);
-  const rendered = text.replace(/\{\{([^{}]*)\}\}/g, (m, key) => {
+// "{{<key>}}" → the name.json value.
+function fill(text, names, sourceRel) {
+  return text.replace(/\{\{([^{}]*)\}\}/g, (m, key) => {
     if (!Object.hasOwn(KEYS, key)) throw new Invalid(`${sourceRel}: unknown placeholder ${m} (known: ${Object.keys(KEYS).join(', ')})`);
     return names[key];
   });
-  return rendered.replace('---\n', `---\n# Generated from ${sourceRel} by scripts/gen-names.mjs; do not edit.\n`);
+}
+
+// A Markdown component: the generated marker is a YAML comment after the opening "---", so it costs no context and the
+// frontmatter stays valid.
+function renderComponent(text, names, sourceRel) {
+  if (!text.startsWith('---\n')) throw new Invalid(`${sourceRel}: must start with a "---" frontmatter block`);
+  return fill(text, names, sourceRel).replace('---\n', `---\n# Generated from ${sourceRel} by scripts/gen-names.mjs; do not edit.\n`);
+}
+
+// A code component: the marker is the first line.
+function renderCode(text, names, sourceRel) {
+  return `// Generated from ${sourceRel} by scripts/gen-names.mjs; do not edit.\n${fill(text, names, sourceRel)}`;
 }
 
 const json = (value) => `${JSON.stringify(value, null, 2)}\n`;
@@ -100,7 +114,20 @@ async function plan(root) {
   if (launchers.length !== 1) throw new Invalid(`plugins/${dir}/bin must hold exactly one launcher, found ${launchers.length}`);
   if (launchers[0] !== names.bin) moves.push([`${pluginRel}/bin/${launchers[0]}`, `${pluginRel}/bin/${names.bin}`]);
 
-  const manifest = { name: names.plugin, version: pkg.version, description: DESCRIPTION, author: OWNER, license: pkg.license };
+  // `types` is the state contract of the hooks module (plugins/<plugin>/types/index.d.ts); `userConfig.dashboard` the pane's mode.
+  const manifest = {
+    name: names.plugin, version: pkg.version, description: DESCRIPTION, author: OWNER, license: pkg.license,
+    types: './types/index.d.ts',
+    userConfig: {
+      dashboard: {
+        type: 'string',
+        title: 'Dashboard pane',
+        description: `auto opens the ${names.displayName} dashboard beside the transcript when a session starts; command opens it only on /${names.plugin}:dashboard; off draws nothing and sets no status line.`,
+        default: 'auto',
+        options: ['auto', 'command', 'off'],
+      },
+    },
+  };
   const marketplace = {
     name: names.marketplace,
     description: `${names.displayName} plugin marketplace.`,
@@ -126,13 +153,13 @@ async function plan(root) {
   files.set(`${pluginRel}/settings.json`, json({ subagentStatusLine: { type: 'command', command: `\${CLAUDE_PLUGIN_ROOT}/bin/${names.bin} ui rows` } }));
   const pluginPath = join(root, 'plugins', dir);
   for (const c of COMPONENTS) {
-    const sources = listDir(join(pluginPath, 'templates', c.kind), (f) => f.endsWith('.md')).sort();
+    const sources = listDir(join(pluginPath, 'templates', c.kind), (f) => f.endsWith(c.ext)).sort();
     for (const f of sources) {
       const sourceRel = `templates/${c.kind}/${f}`;
-      files.set(`${pluginRel}/${c.output(f.slice(0, -3))}`, renderComponent(readFileSync(join(pluginPath, sourceRel), 'utf8'), names, sourceRel));
+      files.set(`${pluginRel}/${c.output(f.slice(0, -c.ext.length))}`, c.render(readFileSync(join(pluginPath, sourceRel), 'utf8'), names, sourceRel));
     }
     for (const name of c.existing(pluginPath)) {
-      if (!sources.includes(`${name}.md`)) throw new Invalid(`plugins/${dir}/${c.output(name)} has no source templates/${c.kind}/${name}.md; add the source or delete the file`);
+      if (!sources.includes(`${name}${c.ext}`)) throw new Invalid(`plugins/${dir}/${c.output(name)} has no source templates/${c.kind}/${name}${c.ext}; add the source or delete the file`);
     }
   }
   return { moves, files };

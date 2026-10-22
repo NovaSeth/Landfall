@@ -1,0 +1,62 @@
+// Generated from templates/types/index.d.ts.tmpl by scripts/gen-names.mjs; do not edit.
+// The dashboard's state contract: what the hooks module keeps in `$.state` under the plugin's name (hooks/dashboard.tsx).
+export type TaskRow = {
+  id: string
+  title: string
+  status: string
+  cls: string | null
+  round: number
+  state: string
+  step: string | null
+  kind: string
+}
+
+export type RunRow = {
+  id: string
+  provider: string
+  role: string
+  task: string | null
+  status: string
+  elapsedMs: number
+  tokens: number | null
+  out: string | null
+  error: string | null
+  lastLine: string | null
+  live: boolean
+}
+
+export type AgentRecord = {
+  id: string
+  type: string
+  role: string
+  description: string
+  task: string | null
+  round: number | null
+  out: string | null
+  status: string
+  startedAt: number
+  endedAt: number | null
+  tokens: number | null
+}
+
+export type Snapshot = {
+  at: number
+  active: boolean
+  project: string
+  tier: string | null
+  tierMode: string | null
+  loop: string | null
+  counts: { open: number; active: number; byStatus: Record<string, number> }
+  tasks: TaskRow[]
+  runs: RunRow[]
+  agents: AgentRecord[]
+  slots: Record<string, number>
+  next: { task: string; state: string; command: string | null } | null
+  error: string | null
+}
+
+declare module 'claude-code' {
+  interface PluginState {
+    landfall: { snapshot: Snapshot | null; agents: AgentRecord[] }
+  }
+}

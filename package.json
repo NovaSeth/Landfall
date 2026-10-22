@@ -1,6 +1,6 @@
 {
   "name": "coding-agents-workflow",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "private": true,
   "description": "Claude Code plugin that sizes the process to each coding task and checks outcomes in code: verify, decisions, a loop that always ends.",
   "license": "MIT",
