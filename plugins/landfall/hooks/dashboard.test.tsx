@@ -13,6 +13,13 @@ const PANE = {
   props: { title: 'Landfall', isFocused: false, bodyColumns: 96, placement: 'dock', scroll: { offset: 0, bodyRows: 30 }, view: {} },
 } as const
 
+const BAND = {
+  plugin: PLUGIN,
+  component: 'AbovePrompt',
+  surface: 'terminal',
+  props: { hasSurvey: false, isWorking: false, maxRows: 6, bodyColumns: 120, scroll: { offset: 0, bodyRows: 6 }, view: {} },
+} as const
+
 const STATUS = {
   cli: 1,
   command: 'status',
@@ -50,11 +57,14 @@ const RUNS = {
   },
 }
 const INACTIVE = { ...STATUS, data: { repo: '/work/other', state: { status: 'inactive', dir: null, linked: false }, tasks: [], steps: [], loop: null, leases: [] } }
+const BLOCKED = { ...STATUS, data: { ...STATUS.data, steps: [...STATUS.data.steps.slice(0, 1), { task: 'T-TU-2', state: 'blocked: waiting for the API key', step: '', rules: [], kind: 'blocked' }] } }
+const OVER = { ...STATUS, data: { ...STATUS.data, loop: { schema: 1, startedAt: '2026-10-22T09:00:00.000Z', ticks: 7, exit: 'BUDGET', exitAt: '2026-10-22T10:00:00.000Z', reason: null } } }
+const IDLE = { ...STATUS, data: { ...STATUS.data, tasks: [], steps: [], leases: [] } }
 const LOOPING = { ...STATUS, data: { ...STATUS.data, loop: { schema: 1, startedAt: '2026-10-22T10:00:00.000Z', ticks: 3, exit: null, exitAt: null, reason: null } } }
 
 const answer = (doc: unknown) => ({ value: { exitCode: 0, stdout: JSON.stringify(doc), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
 
-function world(on: Parameters<Parameters<typeof test>[1]>[1], { status = STATUS, placed = true }: { status?: unknown; placed?: boolean } = {}) {
+function world(on: Parameters<Parameters<typeof test>[1]>[1], { status = STATUS, runs = RUNS, placed = true }: { status?: unknown; runs?: unknown; placed?: boolean } = {}) {
   const statuses: (string | undefined)[] = []
   const argvs: string[][] = []
   // the engine's agent list, which a test changes as agents start and end
@@ -64,7 +74,7 @@ function world(on: Parameters<Parameters<typeof test>[1]>[1], { status = STATUS,
   on('process.run', ($, e) => {
     argvs.push([...e.argv])
     if (cli.fails) return { deny: 'the child was killed at 8000 ms' }
-    return answer(e.argv.includes('runs') ? RUNS : status)
+    return answer(e.argv.includes('runs') ? runs : status)
   })
   on('agent.list', () => ({ value: agents.map(a => ({ ...a })) }))
   on('command.register', () => ({ value: { command: 'dashboard' } }))
@@ -129,13 +139,73 @@ test('a spawned agent is a row with the task, round and output file of its promp
   await ui.unmount()
 })
 
-test('a pane the terminal cannot place leaves the summary in the status line; an inactive repository says so', async ($, on) => {
+test('a pane the terminal cannot place leaves the summary in a dim band above the prompt, without the plugin name twice; the status stays clear', async ($, on) => {
   const w = world(on, { placed: false })
   await $.session.start(SESSION)
   await w.clock.settle()
-  expect(w.statuses[w.statuses.length - 1]).toBe('landfall · 1 active of 2 open · 2 agents running · next T-TU-1: review r2 approved')
+  // a normal state is no engine notice: the host would draw it as a yellow warning prefixed with the plugin name
+  expect(w.statuses.every(s => s === undefined)).toBe(true)
+  const ui = await $.ui.mount(BAND)
+  const line = await ui.find({ type: 'Text', text: /^landfall · / })
+  expect(line?.text).toBe('landfall · 2 agents running · next T-TU-1: review r2 approved')
+  expect(line?.props?.dimColor).toBe(true)
+  await ui.unmount()
   const r = await $.command.run({ command: 'dashboard', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 100 } })
   expect(r.text).toMatch(/110 columns/)
+})
+
+test('the band is empty while the pane shows', async ($, on) => {
+  const w = world(on)
+  await $.session.start(SESSION)
+  await w.clock.settle()
+  const ui = await $.ui.mount(BAND)
+  expect(await ui.find({ type: 'Text', text: /^landfall · / })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('the band is empty while a survey holds it', async ($, on) => {
+  const w = world(on, { placed: false })
+  await $.session.start(SESSION)
+  await w.clock.settle()
+  const ui = await $.ui.mount({ ...BAND, props: { ...BAND.props, hasSurvey: true } })
+  expect(await ui.find({ type: 'Text', text: /^landfall · / })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('the band is empty when there are no open tasks and no agents', async ($, on) => {
+  const w = world(on, { status: IDLE, runs: { ...RUNS, data: { runs: [] } }, placed: false })
+  w.agents.length = 0
+  await $.session.start(SESSION)
+  await w.clock.settle()
+  const ui = await $.ui.mount(BAND)
+  expect(await ui.find({ type: 'Text', text: /^landfall · / })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('the status line says a blocked task needs the person, without the plugin name', async ($, on) => {
+  const w = world(on, { status: BLOCKED, placed: false })
+  await $.session.start(SESSION)
+  await w.clock.settle()
+  const last = w.statuses[w.statuses.length - 1]
+  expect(last).toBe('T-TU-2 needs you: blocked: waiting for the API key')
+  expect(last).not.toMatch(/^landfall/i)
+})
+
+test('the status line says a loop stopped over budget', async ($, on) => {
+  const w = world(on, { status: OVER, placed: false })
+  await $.session.start(SESSION)
+  await w.clock.settle()
+  const last = w.statuses[w.statuses.length - 1]
+  expect(last).toBe('loop stopped over budget after 7 ticks')
+  expect(last).not.toMatch(/^landfall/i)
+})
+
+test('a normal state clears the status line', async ($, on) => {
+  const w = world(on, { status: STATUS, placed: false })
+  await $.session.start(SESSION)
+  await w.clock.settle()
+  const last = w.statuses[w.statuses.length - 1]
+  expect(last).toBe(undefined)
 })
 
 test('an inactive repository draws the project and the hint; a placed pane refreshes every 15 s', async ($, on) => {
