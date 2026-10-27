@@ -30,5 +30,12 @@
     "**/security/**",
     ".github/workflows/**",
     "**/*.sql"
+  ],
+  "lightPaths": [
+    "mockups/",
+    "prototype/",
+    "prototypes/",
+    "**/*.stories.*",
+    "**/storybook/**"
   ]
 }
