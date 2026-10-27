@@ -1,5 +1,5 @@
-// The {{displayName}} dashboard (retro 2026-10 P1-9): a pane beside the transcript, and a status line while the pane is not
-// placed, that says from general to detail what goes on while {{displayName}} runs: the project and its tier, the loop, how
+// The {{displayName}} dashboard (retro 2026-10 P1-9): a pane beside the transcript, and a dim band above the prompt while the pane is not
+// placed (and a status notice only for what needs the person), that says from general to detail what goes on while {{displayName}} runs: the project and its tier, the loop, how
 // many tasks are open and in which stage, the agents at work (Claude subagents and external runs) with their role,
 // task, round, elapsed time, status and where their result landed, the slots in use and the next step.
 // Data: the plugin's own CLI in the session's working directory (`status --json`, `runs list --json`), the engine's
@@ -297,11 +297,26 @@ export function linesOf(snap: Snapshot, width: number, rows: number): Line[] {
   return out.map(l => ({ ...l, text: cut(l.text, width) }))
 }
 
-export function statusLineOf(snap: Snapshot): string {
-  if (!snap.active) return `{{bin}} · ${snap.error ?? 'not active here'}`
+// The calm one-line summary for the band above the prompt: no plugin name twice, nothing when there is nothing to say.
+export function bandLineOf(snap: Snapshot): string | null {
+  if (!snap.active) return null
   const running = snap.agents.filter(a => RUNNING.has(a.status)).length + snap.runs.filter(r => r.live).length
-  const next = snap.next ? ` · next ${snap.next.task}: ${snap.next.state}` : ''
-  return cut(`{{bin}} · ${snap.counts.active} active of ${snap.counts.open} open · ${running} agent${running === 1 ? '' : 's'} running${next}`, 120)
+  const parts: string[] = []
+  if (running > 0) parts.push(`${running} agent${running === 1 ? '' : 's'} running`)
+  if (snap.next) parts.push(`next ${snap.next.task}: ${snap.next.state}`)
+  else if (snap.counts.open > 0) parts.push(`${snap.counts.open} open`)
+  if (parts.length === 0) return null
+  return cut(`{{bin}} · ${parts.join(' · ')}`, 120)
+}
+
+// The engine notice (the host draws it as a yellow warning with the plugin name in front) is only for what needs the
+// person: a blocked task, a loop that ended over budget. It does not start with the name; undefined clears it.
+export function statusLineOf(snap: Snapshot): string | undefined {
+  if (!snap.active) return undefined
+  const blocked = snap.tasks.find(t => t.kind === 'blocked')
+  if (blocked) return cut(`${blocked.id} needs you: ${blocked.state}`, 120)
+  if (snap.loop?.startsWith('budget')) return `loop stopped over budget${snap.loop.slice('budget'.length)}`
+  return undefined
 }
 
 // ---- the work: the CLI read, the refresh and its cadence ---------------------------------------------------------
@@ -449,6 +464,18 @@ export const register: Register = (on, options) => {
     const ran = await next(e)
     if (live.mode !== 'off' && /(?:^|[\s/]){{bin}}\s/.test(e.command)) refreshSoon($)
     return ran
+  }).catch(($, e, next) => next(e))
+
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    const snap = live.shown || e.props.hasSurvey ? null : await read($, snapshotAtom)
+    const line = snap ? bandLineOf(snap) : null
+    if (line === null) return next(e)
+    const { Box, Text } = $.ui.resolve(e)
+    return (
+      <Box>
+        <Text dimColor>{line}</Text>
+      </Box>
+    )
   }).catch(($, e, next) => next(e))
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
