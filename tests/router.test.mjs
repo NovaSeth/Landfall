@@ -85,6 +85,14 @@ const TABLE = [
   ['a flag on docs is still a flag', { paths: ['docs/a.md', 'docs/b.md', 'docs/c.md'], loc: 900, flags: ['new-dependency'] }, 'standard', ['docs-only', 'flag']],
   ['16 code files plus 20 images: the images weigh nothing (16 files > 15 by the code alone)', { paths: [...many(16), ...many(20, 'assets').map((p) => p.replace('.js', '.png'))], loc: 100 }, 'critical', ['files-over']],
   ['15 code files plus 20 images: standard, not critical', { paths: [...many(15), ...many(20, 'assets').map((p) => p.replace('.js', '.png'))], loc: 100 }, 'standard', ['files-over-trivial', 'loc-over-trivial']],
+  // light paths (incident 2026-10-27): throwaway prototypes never raise a task above standard by size
+  ['mockups only, 1500 LOC: light-only standard', { paths: ['mockups/app.js', 'mockups/app.css', 'mockups/index.html'], loc: 1500 }, 'standard', ['light-only']],
+  ['mockups plus a risk path stays critical', { paths: ['mockups/app.js', 'src/auth/x.js'], loc: 1500 }, 'critical', ['risk-path', 'loc-over']],
+  ['nested mockups path is light', { paths: ['mockups/js/app.js', 'mockups/css/app.css'], loc: 1500 }, 'standard', ['light-only']],
+  ['mockups small: trivial', { paths: ['mockups/app.css'], loc: 5 }, 'trivial', ['small']],
+  ['mockupsX is not a light path', { paths: ['mockupsX/a.js'], loc: 1500 }, 'critical', ['loc-over']],
+  ['a stories file is light, docs mixed in', { paths: ['src/ui/Button.stories.tsx', 'docs/a.md'], loc: 900 }, 'standard', ['light-only']],
+  ['a flag on mockups is still a flag', { paths: ['mockups/a.js'], loc: 900, flags: ['new-dependency'] }, 'standard', ['light-only', 'flag']],
   // every reason is listed, critical ones first
   ['risk path, risk flag and size together', { paths: ['src/auth/a.js', ...many(16)], loc: 500, flags: ['migration', 'new-dependency'] }, 'critical', ['risk-path', 'risk-flag', 'files-over', 'loc-over']],
   // duplicate paths count once
@@ -126,6 +134,7 @@ test('classifier: thresholds and default risk globs are data with the spec value
   assert.deepEqual(data.criticalFlags, ['migration', 'public-api', 'security', 'data-write', 'irreversible']);
   assert.deepEqual(data.flags, [...data.criticalFlags, 'new-dependency']);
   assert.deepEqual(data.riskPaths, ['**/auth/**', '**/payment*/**', '**/migrations/**', '**/security/**', '.github/workflows/**', '**/*.sql']);
+  assert.deepEqual(data.lightPaths, ['mockups/', 'prototype/', 'prototypes/', '**/*.stories.*', '**/storybook/**']);
   assert.deepEqual(router.THRESHOLDS, data, 'the router reads exactly this file');
 });
 

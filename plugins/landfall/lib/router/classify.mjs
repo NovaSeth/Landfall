@@ -26,6 +26,7 @@ export const THRESHOLDS = Object.freeze(JSON.parse(readFileSync(new URL('./thres
 export const FLAGS = Object.freeze([...THRESHOLDS.flags]);
 export const CRITICAL_FLAGS = Object.freeze([...THRESHOLDS.criticalFlags]);
 export const DEFAULT_RISK_PATHS = Object.freeze([...THRESHOLDS.riskPaths]);
+export const DEFAULT_LIGHT_PATHS = Object.freeze([...(THRESHOLDS.lightPaths ?? [])]);
 // Input limits: paths per plan; risk globs per list (spec §5.1 profile riskPaths: <= 50 globs of <= 120 chars).
 export const MAX_PATHS = 10000;
 export const MAX_RISK_GLOBS = 50;
@@ -116,6 +117,7 @@ export const globMatch = (glob, path) => matchSegments(compileGlob(glob), path.s
 
 const compile = (globs) => globs.map((glob) => ({ glob, segs: compileGlob(glob) }));
 const DEFAULT_GLOBS = compile(DEFAULT_RISK_PATHS);
+const DEFAULT_LIGHT = compile(DEFAULT_LIGHT_PATHS);
 
 function checkPaths(paths) {
   if (!Array.isArray(paths) || paths.length === 0) throw usage('missing-paths', 'name at least one path the plan touches', 'pass --paths <p,…> (repository-relative)');
@@ -166,6 +168,12 @@ const strip = ({ code, text, path }) => (path === undefined ? { code, text } : {
 const WEIGHTLESS_EXT = /\.(?:md|mdx|markdown|rst|adoc|asciidoc|png|jpe?g|gif|webp|avif|ico|bmp|tiff?|pdf|mp[34]|mov|webm|ogg|wav|woff2?|ttf|otf|eot)$/i;
 export const weightless = (path) => WEIGHTLESS_EXT.test(path);
 
+// Light paths (incident 2026-10-27: a project whose only code was a throwaway UI prototype under mockups/ had every
+// change over 400 LOC routed critical by size alone): globs from thresholds.json lightPaths, matched like risk globs.
+// Like weightless paths they never count for the size thresholds, but risk globs and flags still apply to them. A
+// change made only of weightless and light paths (at least one light) is `light-only`: trivial when small, else
+// standard. In a mixed change only the other paths count for the file threshold; LOC is one estimate for the whole
+// plan, so when any counted path exists the LOC rule stays as it is today.
 // { class, reasons: [{ code, text, path? }], all: [{ code, text, path?, level, key }], files, loc, flags }.
 // `riskPaths` are the profile's globs, added to the defaults; `thresholds` are the shipped ones with the repository's
 // overrides (lib/config thresholdsOf), the shipped ones when omitted. Size thresholds count the paths that carry weight;
@@ -176,8 +184,11 @@ export function classify({ paths, loc, flags = [], riskPaths = [], thresholds = 
   const declared = checkFlags(flags);
   const globs = checkGlobs(riskPaths);
   const { trivial, critical } = thresholds;
-  const sized = files.filter((p) => !weightless(p));
+  const lights = Array.isArray(thresholds.lightPaths) ? (thresholds === THRESHOLDS ? DEFAULT_LIGHT : compile(thresholds.lightPaths)) : [];
+  const light = (p) => { const names = p.split('/'); return lights.some((g) => matchSegments(g.segs, names)); };
+  const sized = files.filter((p) => !weightless(p) && !light(p));
   const docsOnly = sized.length === 0;
+  const lightOnly = docsOnly && files.some(light);
 
   const all = [];
   const add = (level, code, text, key, path) => all.push(path === undefined ? { code, text, level, key } : { code, text, path, level, key });
@@ -190,7 +201,8 @@ export function classify({ paths, loc, flags = [], riskPaths = [], thresholds = 
   if (sized.length > critical.overFiles) add('critical', 'files-over', `${sized.length} files > ${critical.overFiles}`, 'files-over');
   if (!docsOnly && loc > critical.overLoc) add('critical', 'loc-over', `${loc} LOC > ${critical.overLoc}`, 'loc-over');
   const big = files.length > trivial.maxFiles || loc > trivial.maxLoc;
-  if (docsOnly && big) add('standard', 'docs-only', `${files.length} documentation or binary ${files.length === 1 ? 'file' : 'files'}, ${loc} LOC: size never raises docs above standard`, 'docs-only');
+  if (lightOnly && big) add('standard', 'light-only', `${files.length} ${files.length === 1 ? 'file' : 'files'}, ${loc} LOC: size never raises prototype or mockup paths above standard`, 'light-only');
+  else if (docsOnly && big) add('standard', 'docs-only', `${files.length} documentation or binary ${files.length === 1 ? 'file' : 'files'}, ${loc} LOC: size never raises docs above standard`, 'docs-only');
   if (!docsOnly && files.length > trivial.maxFiles) add('standard', 'files-over-trivial', `${files.length} files > ${trivial.maxFiles}`, 'files-over-trivial');
   if (!docsOnly && loc > trivial.maxLoc) add('standard', 'loc-over-trivial', `${loc} LOC > ${trivial.maxLoc}`, 'loc-over-trivial');
   for (const f of declared) if (!CRITICAL_FLAGS.includes(f)) add('standard', 'flag', `flag ${f}`, `flag:${f}`);
