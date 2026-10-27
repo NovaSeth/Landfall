@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.3.0
+
+Changes from a mockup project on 2026-10-27. Its routing ceremony, slow handoffs and wrong kind of deliverable cost hours.
+
+- **Router:** `lightPaths` in `thresholds.json` lists `mockups/`, `prototype/`, `prototypes/`, `**/*.stories.*` and `**/storybook/**`. These paths never raise a task above standard by size (reason `light-only`). Risk globs and flags still apply, and a mixed change counts only its other paths for the file threshold.
+- **Loop:** `status` and `tick` flag a dispatched task whose last `dispatched` or `fix-round` event is older than its brief's `Budget: <n> minutes` (default 15). The row then says "over budget: … → ask the executor for status (ORC-9), cut scope or split the task (ORC-11)". Exit codes are unchanged. The brief is read only as a regular file and only its first 64 KiB, without following a link or blocking on a FIFO.
+- **Method:**
+  - ORC-21: executor by work kind. A mechanical edit goes to the orchestrator or a fast-model implementer, a survey to a cheap read-only agent (never the designer), and slices and reviews to the other provider when it is available.
+  - ORC-22: user-facing work is cut into slices the human sees within one budget; when the human changes direction, running agents stop at once.
+  - ORC-23: a brief states the deliverable kind in the human's words and its sources. An element that traces to no source is a scope change, reported and not built; a review fails work of another kind.
+  - The dispatch skill cites all three.
+- **Dashboard:** the one-line summary is a dim band above the prompt (`landfall · 2 agents running · next T-1: …`), empty when there is nothing to say. The engine's status notice, which the host draws as a yellow warning with the plugin name in front, is used only for a task that needs the person or a loop that stopped over budget.
+
 ## 2.2.1
 
 - Bash guard: `time` (with `-p`) before a command judges the command as if written alone, so `time landfall status --json` passes and `time cp … .landfall/…` is still a write (an assignment, an option or compound syntax after `time` has no simple form); the plugin's launcher called by its path (also behind `node`) is the own command with its own rules, not a script with a guarded argument, when the path resolves to the running plugin's launcher or is named in `LANDFALL_LAUNCHERS` (a `:`-separated list in the session's environment, for a development checkout: `plugins/landfall/bin/landfall commit`); any other file named like the CLI stays a script.
