@@ -10,7 +10,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { appendFileSync, chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -88,6 +88,23 @@ test('budgetOf reads "Budget: <n> minutes" from a brief; absent or unreadable â†
   writeFileSync(join(dir, 'tasks', 'T-TU-1', 'brief.md'), '# t\nBudget: 30 minutes\n');
   const b = loop.readBudgets(dir, [task('T-TU-1', 'dispatched'), task('T-TU-2', 'dispatched')]);
   assert.deepEqual(b, { 'T-TU-1': 30, 'T-TU-2': 15 });
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('readBudgets reads only a regular brief, at most 64 KiB: a symlink, a FIFO or a directory â†’ 15; a huge brief is not read whole', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'lf-budget-'));
+  const brief = id => { mkdirSync(join(dir, 'tasks', id), { recursive: true }); return join(dir, 'tasks', id, 'brief.md'); };
+  writeFileSync(join(dir, 'target.md'), 'Budget: 40 minutes\n');
+  symlinkSync(join(dir, 'target.md'), brief('T-TU-1'));
+  const fifo = spawnSync('mkfifo', [brief('T-TU-2')]);
+  mkdirSync(brief('T-TU-3'));
+  writeFileSync(brief('T-TU-4'), 'Budget: 35 minutes\n' + 'x'.repeat(2 * 1024 * 1024));
+  const tasks = ['T-TU-1', 'T-TU-2', 'T-TU-3', 'T-TU-4'].map(id => task(id, 'dispatched'));
+  const b = loop.readBudgets(dir, tasks);
+  assert.equal(b['T-TU-1'], 15);
+  if (fifo.status === 0) assert.equal(b['T-TU-2'], 15);
+  assert.equal(b['T-TU-3'], 15);
+  assert.equal(b['T-TU-4'], 35);
   rmSync(dir, { recursive: true, force: true });
 });
 
