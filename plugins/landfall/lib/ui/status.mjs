@@ -10,7 +10,7 @@
 import { join } from 'node:path';
 import { TIER_NAMES, evaluate } from '../engine/index.mjs';
 import { describe } from '../loop/command.mjs';
-import { DEFAULT_CAPS, LOOP, STORE_KINDS, nextSteps } from '../loop/index.mjs';
+import { DEFAULT_CAPS, LOOP, STORE_KINDS, nextSteps, readBudgets } from '../loop/index.mjs';
 import { readRuns } from '../receipts/index.mjs';
 import { snapshot } from '../sched/index.mjs';
 import { StateError, emailHash, gitIdentity, open, resolve } from '../state/index.mjs';
@@ -53,7 +53,7 @@ function tasksOf(where, names, env) {
   const doc = store.read(LOOP.name, null);
   const table = nextSteps({
     tasks: all, runs: readRuns(join(where.local, 'runs')).runs, handles: team.map((d) => d.handle), me: team.find((d) => d.emailSha256 === hash)?.handle ?? null,
-    plan: null, lanesOn: store.read('config', null)?.flags?.lanes === 'on', caps: doc?.caps ?? DEFAULT_CAPS, now: Date.now(), bin: names.bin, problem: null, dirty: () => [],
+    plan: null, lanesOn: store.read('config', null)?.flags?.lanes === 'on', caps: doc?.caps ?? DEFAULT_CAPS, now: Date.now(), bin: names.bin, budgets: readBudgets(where.dir, all), problem: null, dirty: () => [],
   });
   return { all, open: all.filter((t) => !CLOSED.has(t.status)), rows: [...table.steps, ...table.info], loop: doc };
 }

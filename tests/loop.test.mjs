@@ -52,6 +52,45 @@ const table = (tasks, opts = {}) => loop.nextSteps({
 });
 const row = (r, id) => r.steps.find((s) => s.task === id);
 
+test('over budget: a dispatched task older than its brief budget carries the signal (ORC-9, ORC-11) and keeps its kind', () => {
+  const dispatched = task('T-TU-1', 'dispatched', { events: [ev('dispatched', 1, { executor: 'x' })] });
+  let s = row(table([dispatched], { now: T0 + 41 * MIN, budgets: { 'T-TU-1': 15 } }), 'T-TU-1');
+  assert.match(s.step, /over budget: dispatched 40 min ago, budget 15 min/);
+  assert.match(s.step, /ORC-9/);
+  assert.match(s.step, /ORC-11/);
+  assert.ok(s.rules.includes('ORC-9') && s.rules.includes('ORC-11'));
+  // between the budget and the 20-min status threshold the row still waits: tick keeps its WAIT exit
+  s = row(table([dispatched], { now: T0 + 18 * MIN, budgets: { 'T-TU-1': 10 } }), 'T-TU-1');
+  assert.equal(s.kind, 'wait');
+  assert.match(s.step, /over budget: dispatched 17 min ago, budget 10 min/);
+  assert.equal(table([dispatched], { now: T0 + 18 * MIN, budgets: { 'T-TU-1': 10 } }).outcome, 'wait');
+  // 10 min old, budget 15: no signal
+  s = row(table([dispatched], { now: T0 + 11 * MIN, budgets: { 'T-TU-1': 15 } }), 'T-TU-1');
+  assert.doesNotMatch(s.step, /over budget/);
+  // no brief (no budgets entry): the default 15
+  s = row(table([dispatched], { now: T0 + 17 * MIN }), 'T-TU-1');
+  assert.match(s.step, /over budget: dispatched 16 min ago, budget 15 min/);
+  s = row(table([dispatched], { now: T0 + 14 * MIN }), 'T-TU-1');
+  assert.doesNotMatch(s.step, /over budget/);
+  // a fix round restarts the clock
+  const fix = task('T-TU-1', 'fix-round', { round: 1, events: [ev('dispatched', 1), ev('fix-round', 30, { round: 1, addressed: 0, open: 2 })] });
+  assert.doesNotMatch(row(table([fix], { now: T0 + 35 * MIN }), 'T-TU-1').step, /over budget/);
+  assert.match(row(table([fix], { now: T0 + 50 * MIN }), 'T-TU-1').step, /over budget: dispatched 20 min ago/);
+});
+
+test('budgetOf reads "Budget: <n> minutes" from a brief; absent or unreadable → 15; readBudgets reads tasks/<id>/brief.md', () => {
+  assert.equal(loop.budgetOf('x\nBudget: 25 minutes (default 15)\n'), 25);
+  assert.equal(loop.budgetOf('Budget: <minutes> minutes'), 15);
+  assert.equal(loop.budgetOf(null), 15);
+  assert.equal(loop.budgetOf('Budget: 0 minutes'), 15);
+  const dir = mkdtempSync(join(tmpdir(), 'lf-budget-'));
+  mkdirSync(join(dir, 'tasks', 'T-TU-1'), { recursive: true });
+  writeFileSync(join(dir, 'tasks', 'T-TU-1', 'brief.md'), '# t\nBudget: 30 minutes\n');
+  const b = loop.readBudgets(dir, [task('T-TU-1', 'dispatched'), task('T-TU-2', 'dispatched')]);
+  assert.deepEqual(b, { 'T-TU-1': 30, 'T-TU-2': 15 });
+  rmSync(dir, { recursive: true, force: true });
+});
+
 test('1.x brief not dispatched → dispatch step (FLW-3, ORC-4); not routed → route step; lanes on → --lane', () => {
   let r = table([task('T-TU-1', 'new')]);
   assert.equal(r.outcome, 'action');
@@ -78,7 +117,7 @@ test('1.x implementer working → WAIT 1800 s; after 20 min without an event →
   r = table([working], { now: T0 + 45 * MIN });
   assert.equal(r.outcome, 'action');
   const s = row(r, 'T-TU-1');
-  assert.deepEqual(s.rules, ['ORC-9']);
+  assert.deepEqual(s.rules, ['ORC-9', 'ORC-11'], 'past the default 15-min budget too');
   assert.match(s.state, /45 min since its last event/);
   assert.match(s.step, new RegExp(`${BIN} task set T-TU-1 status-request`));
   const asked = { ...working, events: [...working.events, ev('status-request', 40)] };

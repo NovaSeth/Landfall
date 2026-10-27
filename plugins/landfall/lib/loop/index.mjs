@@ -20,8 +20,10 @@ import { costSince, readRuns } from '../receipts/index.mjs';
 import { KINDS, StateError, emailHash, open, resolve } from '../state/index.mjs';
 import { cheapCap, decide, newLoop, parseCaps } from './decide.mjs';
 import { CAP_RANGE, CARRIED_PLAN, DEFAULT_CAPS, LOOP, LOOP_ID, STALL, TERMINAL, UNMEASURED, fixedPrompt } from './kind.mjs';
+import { DEFAULT_BUDGET_MIN, budgetOf, readBudgets } from './budget.mjs';
 import { STATUS_MIN, TABLE_RULES, WAIT_S, nextSteps, parsePlan } from './table.mjs';
 
+export { DEFAULT_BUDGET_MIN, budgetOf, readBudgets };
 export { CAP_RANGE, CARRIED_PLAN, DEFAULT_CAPS, LOOP, LOOP_ID, STALL, STATUS_MIN, TABLE_RULES, TERMINAL, UNMEASURED, WAIT_S, cheapCap, decide, fixedPrompt, newLoop, nextSteps, parseCaps, parsePlan };
 export const STORE_KINDS = Object.freeze({ ...KINDS, [LOOP.name]: LOOP });
 
@@ -169,7 +171,7 @@ export function tickStore(store, { where, names, now, plan = null, probe }) {
     const me = snap.team.find((d) => d.emailSha256 === hash)?.handle ?? null;
     const table = nextSteps({
       tasks: snap.tasks, runs: snap.runs, handles: snap.team.map((d) => d.handle), me, plan, lanesOn: snap.lanesOn,
-      caps: loop.caps, now, bin: names.bin, problem: snap.problem, dirty: probe.dirty,
+      caps: loop.caps, now, bin: names.bin, budgets: readBudgets(where.dir, snap.tasks), problem: snap.problem, dirty: probe.dirty,
     });
     const d = decide(loop, {
       now, fingerprint: fingerprint(heads, snap.files, snap.runs), costMicroUsd: cost?.costMicroUsd ?? null, unmeasurable: cost?.unmeasurable === true,

@@ -20,6 +20,7 @@
 // Outcome: action when any action row exists; wait when work runs (my waiting tasks, live runs, blocked or others'
 // tasks); done otherwise (then the state directory must be committed). Rows: { task, state, step, rules, kind }.
 import { afterOf } from '../state/index.mjs';
+import { DEFAULT_BUDGET_MIN } from './budget.mjs';
 
 export const STATUS_MIN = 20; // ORC-9 default: status request after 20 min without an event
 export const WAIT_S = Object.freeze({ runs: 600, agents: 1800, min: 60, max: 3600 });
@@ -31,7 +32,7 @@ const MIN_MS = 60000;
 
 // Every rule ID this table cites (tests check that each resolves in the method).
 export const TABLE_RULES = Object.freeze(['FLW-3', 'ORC-4', 'FLW-4', 'ORC-9', 'FLW-6', 'PRI-6', 'ORC-5', 'REV-6', 'REV-20', 'REV-7', 'REV-5',
-  'REV-11', 'FLW-8', 'ORC-7', 'SPC-1', 'SPC-2', 'SPC-11', 'FLW-9', 'PRI-1', 'COL-24', 'FLW-7']);
+  'REV-11', 'FLW-8', 'ORC-7', 'ORC-11', 'SPC-1', 'SPC-2', 'SPC-11', 'FLW-9', 'PRI-1', 'COL-24', 'FLW-7']);
 
 const natural = (a, b) => a.localeCompare(b, 'en', { numeric: true });
 const cell = (s) => String(s).replace(/[|\r\n]+/g, '/');
@@ -55,12 +56,21 @@ export function parsePlan(text) {
 
 const belongs = (t, ref) => t.id === ref || t.title === ref || t.title.startsWith(`${ref}:`) || t.title.startsWith(`${ref} `);
 
-function taskRow(t, { now, bin, lanesOn, caps }) {
+function taskRow(t, { now, bin, lanesOn, caps, budget = DEFAULT_BUDGET_MIN }) {
   const id = t.id;
   const age = Math.floor((now - lastEvent(t)) / MIN_MS);
-  const working = (state) => (age >= STATUS_MIN
-    ? action(id, `${state} (${age} min since its last event)`, `ask the executor for a 5-line status; check git, processes and logs; record it: \`${bin} task set ${id} status-request\``, ['ORC-9'])
-    : wait(id, state, 'wait for the executor; its completion notice is the main signal', ['FLW-4']));
+  // over budget (ORC-9, ORC-11): the last dispatched or fix-round event is older than the brief's budget. A visible
+  // signal in the row, not a new exit: the kind stays what the status request rule (20 min) makes it.
+  const sent = t.events.reduce((m, e) => (e.event === 'dispatched' || e.event === 'fix-round' ? Math.max(m, timeOf(e)) : m), 0);
+  const sentAge = sent ? Math.floor((now - sent) / MIN_MS) : 0;
+  const over = sent && sentAge > budget
+    ? `over budget: dispatched ${sentAge} min ago, budget ${budget} min → ask the executor for status (ORC-9), cut scope or split the task (ORC-11)` : null;
+  const working = (state) => {
+    if (age >= STATUS_MIN) {
+      return action(id, `${state} (${age} min since its last event)`, `${over ? `${over}; ` : ''}ask the executor for a 5-line status; check git, processes and logs; record it: \`${bin} task set ${id} status-request\``, over ? ['ORC-9', 'ORC-11'] : ['ORC-9']);
+    }
+    return wait(id, state, over ?? 'wait for the executor; its completion notice is the main signal', over ? ['ORC-9', 'ORC-11'] : ['FLW-4']);
+  };
   // a review dispatched to an in-session agent is visible only once recorded: the task then waits as dispatched
   const record = `record it: \`${bin} task set ${id} dispatched --executor <reviewer> --base <sha>\``;
   const approved = (state) => action(id, state, `merge origin/main into its branch and verify it again: \`${bin} verify ${id}\`; merge it (a squashed pull request, or locally without a remote) and close it: \`${bin} task done ${id}\``, ['REV-11', 'FLW-8']);
@@ -117,7 +127,7 @@ function taskRow(t, { now, bin, lanesOn, caps }) {
   }
 }
 
-export function nextSteps({ tasks = [], runs = [], handles = [], me = null, plan = null, lanesOn = false, caps, now, bin, problem = null, dirty = () => [] }) {
+export function nextSteps({ tasks = [], runs = [], handles = [], me = null, plan = null, lanesOn = false, caps, now, bin, budgets = {}, problem = null, dirty = () => [] }) {
   const steps = [];
   const info = [];
   const multi = handles.length > 1;
@@ -145,7 +155,7 @@ export function nextSteps({ tasks = [], runs = [], handles = [], me = null, plan
       const pending = (t.status === 'new' || t.status === 'planned') ? afterOf(t).filter((id) => open(byId.get(id)) || !byId.has(id)) : [];
       const r = pending.length
         ? wait(t.id, `waits for ${pending.join(', ')}`, `dispatch nothing until ${pending.length === 1 ? 'it is' : 'they are'} done or cancelled; then route and brief it from the merged base`, ['FLW-9'])
-        : taskRow(t, { now, bin, lanesOn, caps });
+        : taskRow(t, { now, bin, lanesOn, caps, budget: budgets[t.id] ?? DEFAULT_BUDGET_MIN });
       const run = liveOf.get(t.id);
       // a live run of the task is its work in progress: wait for it instead of starting the step again
       if (run && r.kind !== 'blocked') steps.push(wait(t.id, `${r.state}; run ${run.runId} ${run.status}`, 'wait for the run; its record changes when it ends', ['FLW-4']));
