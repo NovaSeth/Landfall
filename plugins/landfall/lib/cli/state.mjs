@@ -9,7 +9,7 @@
 //   init · decline · deactivate: the activation lifecycle (lib/state/activation.mjs).
 //   task new · list · show · set: task state (lib/state/tasks.mjs).
 import { join } from 'node:path';
-import { DEFAULT_CAPS, LOOP, STORE_KINDS, nextSteps } from '../loop/index.mjs';
+import { DEFAULT_CAPS, LOOP, STORE_KINDS, nextSteps, readBudgets } from '../loop/index.mjs';
 import { readRuns } from '../receipts/index.mjs';
 import * as state from '../state/index.mjs';
 import { openStore } from '../verify/index.mjs';
@@ -71,7 +71,7 @@ function nextOf(where, names, env, t) {
   const hash = email ? state.emailHash(email) : null;
   const table = nextSteps({
     tasks: [t], runs: readRuns(join(where.local, 'runs')).runs, handles: team.map((d) => d.handle), me: team.find((d) => d.emailSha256 === hash)?.handle ?? null,
-    plan: null, lanesOn: store.read('config', null)?.flags?.lanes === 'on', caps: store.read(LOOP.name, null)?.caps ?? DEFAULT_CAPS, now: Date.now(), bin: names.bin, problem: null, dirty: () => [],
+    plan: null, lanesOn: store.read('config', null)?.flags?.lanes === 'on', caps: store.read(LOOP.name, null)?.caps ?? DEFAULT_CAPS, now: Date.now(), bin: names.bin, budgets: readBudgets(where.dir, [t]), problem: null, dirty: () => [],
   });
   const row = [...table.steps, ...table.info].find((x) => x.task === t.id);
   return row ? { state: row.state, step: row.step ?? null, rules: row.rules ?? [] } : null;
