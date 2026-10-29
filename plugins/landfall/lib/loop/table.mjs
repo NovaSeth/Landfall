@@ -21,7 +21,7 @@
 // tasks); done otherwise (then the state directory must be committed). Rows: { task, state, step, rules, kind }.
 import { afterOf } from '../state/index.mjs';
 import { identify, judge } from '../sched/index.mjs';
-import { dataLine, shellQuote } from '../text/data.mjs';
+import { codeText, dataLine, shellQuote } from '../text/data.mjs';
 import { DEFAULT_BUDGET_MIN } from './budget.mjs';
 
 export const STATUS_MIN = 20; // ORC-9 default: status request after 20 min without an event
@@ -194,14 +194,14 @@ export function nextSteps({ tasks = [], runs = [], handles = [], me = null, plan
       } else if (FINISHED.has(r.status) && r.endedAt && Date.parse(r.endedAt) > lastEvent(t) && !tasks.some((x) => belongs(x, r.runId))) {
         // collected: an event of its task after it ended, or (a closed task takes no further state) a task named after it
         const record = open(t) ? `then record ${t.id}'s state`
-          : `${t.id} is ${t.status}, so record it as a task named after the run: \`${bin} task new ${shellQuote(`${dataLine(r.runId)}: <what follows>`)}\` (cancel that task with the reason when nothing follows)`;
+          : `${t.id} is ${t.status}, so record it as a task named after the run: \`${bin} task new ${shellQuote(`${codeText(r.runId)}: <what follows>`)}\` (cancel that task with the reason when nothing follows)`;
         steps.push(action(r.runId, `run ${r.status}${r.exit === null || r.exit === undefined ? '' : `, exit ${r.exit}`} for ${t.id}`, `collect its result: check the exit code and the result count, ${record}`, ['FLW-6']));
       }
     }
     if (plan) {
       const next = plan.entries.find((e) => !tasks.some((t) => belongs(t, e.ref)));
       if (plan.entries.length === 0) steps.push(action('-', `${cell(plan.path)} has no "### Task <id>: <title>" entries`, 'give the plan its task headings, or tick without --plan', ['SPC-11']));
-      else if (next && ownOpen === 0) steps.push(action(next.ref, `next in ${cell(plan.path)}`, `create its task: \`${bin} task new ${shellQuote(dataLine(`${next.ref}: ${next.title}`))}\``, ['SPC-11', 'FLW-9']));
+      else if (next && ownOpen === 0) steps.push(action(next.ref, `next in ${cell(plan.path)}`, `create its task: \`${bin} task new ${shellQuote(codeText(`${next.ref}: ${next.title}`))}\``, ['SPC-11', 'FLW-9']));
       else if (next) info.push({ task: next.ref, state: `next in ${cell(plan.path)} when a slot frees: ${cell(next.title)}`, kind: 'plan' });
     } else if (tasks.length === 0) {
       steps.push(action('START', 'no tasks yet', `write the spec and the plan (\`${bin} rule SPC-1 SPC-2\`), then create the first task: \`${bin} task new "<title>"\``, ['SPC-1', 'SPC-2']));

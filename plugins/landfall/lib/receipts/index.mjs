@@ -124,7 +124,7 @@ export function runReceipt(id, { cwd, env, names }) {
     if (bad) throw new StateError(bad.code, 'FAIL', bad.message, { hint: bad.hint });
     throw usage('run-unknown', `no run record ${id} in ${join(where.local, 'runs')}`, 'external runs are recorded by the exec command');
   }
-  const { startedAt, endedAt, ...rest } = run;
+  const { startedAt, endedAt, pid, pidStart, pidMethod, capS, queuedAt, ...rest } = run; // the loop's live-run fields stay out
   return { run: rest };
 }
 

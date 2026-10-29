@@ -9,12 +9,12 @@
 // lib/cli/output.mjs.
 import { EXIT } from '../cli/commands.mjs';
 import { getRule, openMethod } from '../method/index.mjs';
-import { DATA_MARKER } from '../text/data.mjs';
+import { DATA_MARKER, dataLine } from '../text/data.mjs';
 import { CARRIED_PLAN, UNMEASURED, fixedPrompt, parseCaps, showLoop, startLoop, stopLoop, tick as runTick } from './index.mjs';
 
 const CODE = Object.freeze({ ACTION: EXIT.OK, WAIT: EXIT.WAIT, DONE: EXIT.DONE, STALLED: EXIT.STALLED, BUDGET: EXIT.BUDGET });
 const usd = (micro) => `$${(micro / 1e6).toFixed(2)}`;
-const cell = (s) => String(s).replace(/[|\r\n]+/g, '/');
+const cell = (s) => dataLine(s).replace(/\|/g, '/'); // one data line first (SEC-14): U+2028 and other separators too
 const minutes = (loop, now) => Math.max(0, Math.floor((now - Date.parse(loop.startedAt)) / 60000));
 
 // The loop document as data (every field the hooks and the user see).
