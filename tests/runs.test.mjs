@@ -112,7 +112,7 @@ test('a fake-provider run: starting → running → done with tokens and lastLin
   assert.ok(seen.has('running'), `statuses seen: ${[...seen].join(' → ')}`);
   const rec = p.record(id);
   assert.deepEqual(Object.keys(rec), ['schema', 'runId', 'task', 'role', 'provider', 'adapterVersion', 'model', 'sandbox', 'cwd', 'pid', 'pidStart', 'pidMethod', 'lease',
-    'status', 'queuedAt', 'startedAt', 'endedAt', 'elapsedMs', 'capS', 'tokens', 'tokensReason', 'costMicroUsd', 'lastLine', 'unknownEvents', 'outFile', 'exit', 'error', 'bin', 'outDirId']);
+    'status', 'queuedAt', 'startedAt', 'endedAt', 'elapsedMs', 'capS', 'tokens', 'tokensReason', 'costMicroUsd', 'lastLine', 'unknownEvents', 'outFile', 'exit', 'error', 'bin', 'outDirId', 'briefSha256']);
   assert.equal(rec.bin, process.execPath, 'the program is the absolute path exec resolved (B-2)');
   assert.equal(rec.status, 'done');
   assert.equal(rec.exit, 0);
@@ -299,6 +299,23 @@ test('a queued reviewer keeps the review brief pinned at exec after the stored b
   const rec = await p.ended(second);
   assert.equal(rec.status, 'done');
   assert.equal(readFileSync(`${rec.outFile}.prompt`, 'utf8'), `${before}\n${externalSection('fakeok', 'T-TU-2')}`);
+});
+
+test('F3 (T-MG-96): a reviewer brief replaced in a queued run is run-tampered after the wait, and the provider does not start', async (t) => {
+  const p = await project(t);
+  sched.calibrate({ names, env: p.env, max: { external: 1 } });
+  const first = (await p.ok(['exec', '--task', 'T-TU-1', '--role', 'reviewer', '--provider', 'fakegate'])).e.data.runId;
+  await p.until('the first run to run', () => p.record(first).status === 'running');
+  const second = (await p.ok(['exec', '--task', 'T-TU-2', '--role', 'reviewer', '--provider', 'fakeok'])).e.data.runId;
+  await p.until('the second run to queue', () => p.record(second).status === 'queued');
+  const { outFile } = p.record(second);
+  writeFileSync(join(dirname(outFile), 'brief.md'), 'replaced instructions\n', { mode: 0o600 });
+  writeFileSync(`${p.record(first).outFile}.go`, '');
+  assert.equal((await p.ended(first)).status, 'done');
+  const rec = await p.ended(second);
+  assert.equal(rec.status, 'failed');
+  assert.equal(rec.error, 'run-tampered');
+  assert.equal(existsSync(`${outFile}.args`), false, 'no provider was started');
 });
 
 for (const kind of ['symlink', 'missing', 'directory']) {

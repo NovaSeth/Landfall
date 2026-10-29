@@ -355,6 +355,72 @@ test('SF-AB-10: an out file that is a link is run-tampered', async (t) => {
   assert.equal(readFileSync(join(rec.cwd, 'a.txt'), 'utf8'), 'a\n');
 });
 
+// ---- T-MG-96 (review of 2.5.0): F1 JSON-escaped secrets, F2 probe environment, F3 the reviewer brief pinned ----
+
+// A fake codex on PATH: `--version` and `login status` answer and append their environment to <base>/probe-env.jsonl;
+// `exec` reads the brief and prints `lines` (Codex --json events), writes the review to -o and exits 0.
+function fakeCodex(p, lines = []) {
+  const binDir = join(p.base, 'bin');
+  mkdirSync(binDir, { recursive: true });
+  const envLog = join(p.base, 'probe-env.jsonl');
+  writeFileSync(join(binDir, 'codex'), `#!${process.execPath}
+const { appendFileSync, writeFileSync } = require('node:fs');
+const args = process.argv.slice(2);
+if (args[0] === '--version' || args[0] === 'login') {
+  appendFileSync(${JSON.stringify(envLog)}, JSON.stringify({ args, env: process.env }) + '\\n');
+  process.stdout.write(args[0] === 'login' ? 'Logged in\\n' : 'codex-cli 0.160.0\\n');
+  process.exit(0);
+}
+const out = args[args.indexOf('-o') + 1];
+process.stdin.on('data', () => {});
+process.stdin.on('end', () => {
+  for (const l of ${JSON.stringify(lines)}) process.stdout.write(l + '\\n');
+  writeFileSync(out, JSON.stringify({ verdict: 'approved', reviewer: { kind: 'external', id: 'codex:reviewer' }, findings: [] }));
+  setTimeout(() => process.exit(0), 50);
+});
+`, { mode: 0o700 });
+  p.env.PATH = `${binDir}:${p.env.PATH}`;
+  return { envLog };
+}
+
+test('F1: a secret inside a JSON-escaped Codex event reaches neither the log nor, as a prefix, lastLine', async (t) => {
+  const p = await project(t);
+  const value = ['SYN', 'TH_abcdefghijklmnopqrstuv'].join(''); // built at run time: no literal for the secrets scan
+  const text = `${'x'.repeat(135)} password="${value}"`;
+  fakeCodex(p, [JSON.stringify({ type: 'item.completed', item: { id: 'i1', type: 'agent_message', text } })]);
+  const r = await p.ok(['exec', '--task', 'T-TU-1', '--role', 'reviewer', '--provider', 'codex']);
+  const rec = await p.ended(r.e.data.runId);
+  assert.equal(rec.status, 'done', JSON.stringify(rec));
+  const log = JSON.stringify(p.log(rec.runId).lines);
+  assert.ok(!log.includes(value), `the log holds the value: ${log}`);
+  assert.ok(!log.includes(value.slice(0, 6)), `the log holds a prefix: ${log}`);
+  assert.ok(!String(rec.lastLine).includes(value.slice(0, 6)), `lastLine holds a prefix: ${rec.lastLine}`);
+  assert.match(rec.lastLine, /^x+/, 'the visible part of the message is kept');
+});
+
+test('F2: the detection probes (--version, login status) get the provider allowlist, never GITHUB_TOKEN, AWS_SECRET_ACCESS_KEY or NODE_OPTIONS', async (t) => {
+  const p = await project(t, { envExtra: { GITHUB_TOKEN: 'SYNTH-not-a-token', AWS_SECRET_ACCESS_KEY: 'SYNTH-not-a-key', NODE_OPTIONS: '--no-warnings', OPENAI_API_KEY: 'SYNTH-own' } });
+  const { envLog } = fakeCodex(p);
+  registry.detectProviders({ names, env: p.env, refresh: true, write: false });
+  const probes = readFileSync(envLog, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  assert.deepEqual(probes.map((x) => x.args[0]).sort(), ['--version', 'login']);
+  for (const { args, env } of probes) {
+    for (const k of ['GITHUB_TOKEN', 'AWS_SECRET_ACCESS_KEY', 'NODE_OPTIONS', 'CLAUDE_PLUGIN_DATA']) assert.equal(env[k], undefined, `${args[0]}: ${k} must not pass`);
+    assert.equal(env.OPENAI_API_KEY, 'SYNTH-own', `${args[0]}: the adapter's own variables pass`);
+    assert.equal(env.HOME, p.env.HOME);
+  }
+});
+
+test('F3: exec pins the reviewer brief by its sha256; a replaced pinned brief is run-tampered and no provider starts', async (t) => {
+  const p = await project(t);
+  const rec = await runTo(p, 'fakeok');
+  assert.match(rec.briefSha256 ?? '', /^[0-9a-f]{64}$/, 'a reviewer record carries briefSha256');
+  const { r, rec: bad, outFile } = await rewritten(t, (q, outDir) => { writeFileSync(join(outDir, 'brief.md'), 'replaced instructions\n'); return {}; });
+  assert.equal(r.code, 1, show(r));
+  assert.equal(bad.error, 'run-tampered');
+  assert.equal(existsSync(`${outFile}.args`), false, 'no provider was started');
+});
+
 // ---- SF-AB-1: the review brief is never read through a link ----
 
 const linkBrief = (p) => {

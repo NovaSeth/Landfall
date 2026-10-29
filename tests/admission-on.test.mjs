@@ -4,10 +4,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, readdirSync, mkdirSync, rmSync } from 'node:fs';
+import { spawn } from 'node:child_process';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { isolateProcessEnv } from './helpers/isolated-env.mjs';
 import { CALL_WALL_GUARD_MS, cpuTimed } from './helpers/cpu-time.mjs';
-import { hook, lib, names, repo } from './helpers/hook-fixture.mjs';
+import { hook, lib, names, pluginDir, repo } from './helpers/hook-fixture.mjs';
 
 isolateProcessEnv();
 
@@ -109,4 +111,42 @@ test('perf: the heartbeat adds under 50 ms p95 with a lease present', (t) => {
   const withBeat = run({ agent_id: 'agent-abc' });
   t.diagnostic(`p95 base ${base.toFixed(1)} ms, with heartbeat ${withBeat.toFixed(1)} ms`);
   assert.ok(withBeat - base < 50, `heartbeat adds ${(withBeat - base).toFixed(1)} ms`);
+});
+
+// ---- T-MG-96 (review of 2.5.0, F4, F5) ----
+
+test('F4: a Bash event without agent_id refreshes nothing; an unbound lease of another session stays unrefreshed', (t) => {
+  const f = repo(t);
+  admit(f, 1); // unbound: no PostToolUse bound an agent ID to it
+  age(f);
+  assert.equal(bash(f, { session_id: 'sess-2' }).decision, 'allow');
+  assert.equal(beat(f), OLD, 'no agent_id: the unbound lease is not refreshed');
+  for (const agentId of ['', 'undefined', 'null', 7, null]) {
+    bash(f, { session_id: 'sess-2', agent_id: agentId });
+    assert.equal(beat(f), OLD, `agent_id ${JSON.stringify(agentId)} refreshes no unbound lease`);
+  }
+});
+
+const sleepMs = (ms) => { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); }; // sleeps, no CPU load
+
+test('F5: with a 450 ms evaluation and the normal 500 ms budget, a busy heartbeat never turns the allow into a block', async (t) => {
+  const f = repo(t);
+  admit(f, 1); bind(f, 1, 'agent-abc');
+  age(f);
+  // Another process holds the scheduler lock, so a heartbeat would wait its whole lock timeout.
+  const lock = join(f.env.CLAUDE_PLUGIN_DATA, 'leases', 'lock');
+  const fsx = pathToFileURL(join(pluginDir, 'lib', 'fsx', 'index.mjs')).href;
+  const holder = spawn(process.execPath, ['--input-type=module', '-e',
+    `import { withLock } from ${JSON.stringify(fsx)}; withLock(${JSON.stringify(lock)}, () => { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 4000); });`],
+  { stdio: 'ignore', env: f.env });
+  t.after(() => { try { holder.kill('SIGKILL'); } catch { /* gone */ } });
+  const owner = () => { try { return JSON.parse(readFileSync(join(lock, 'owner.json'), 'utf8')).pid; } catch { return null; } };
+  for (const end = Date.now() + 10000; owner() !== holder.pid;) {
+    assert.ok(Date.now() < end, 'the lock holder did not start');
+    await new Promise((r) => { setTimeout(r, 20); });
+  }
+  const v = hook('guard-bash', { hook_event_name: 'PreToolUse', tool_name: 'Bash', session_id: 'sess-1', cwd: f.dir, agent_id: 'agent-abc',
+    tool_input: { command: 'echo commit' } }, { env: f.env, deadline: undefined, readGuardExtra: () => { sleepMs(450); return null; } });
+  assert.equal(v.code, 0, `${v.decision}: ${v.stderr}`);
+  assert.equal(v.decision, 'allow');
 });
