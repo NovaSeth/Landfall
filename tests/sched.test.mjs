@@ -782,11 +782,12 @@ test('review r1 7: the reaper ends the members a gone leader left in its process
   t.after(() => { try { process.kill(-leader.pid, 'SIGKILL'); } catch { /* gone */ } });
   await untilFile(member);
   const leaderId = idOf(leader.pid);
+  const memberPid = Number(readFileSync(member, 'utf8'));
+  const members = [{ pid: memberPid, start: idOf(memberPid).start }]; // recorded while the leader runs (SF-AB-9)
   writeFileSync(exitFile, '');
   await new Promise((r) => { leader.once('exit', r); });
-  const memberPid = Number(readFileSync(member, 'utf8'));
   assert.doesNotThrow(() => process.kill(memberPid, 0), 'the member outlived its leader');
-  plantLease(s.data, 'heavy-1', { owner: oldId(deadPid()), child: leaderId });
+  plantLease(s.data, 'heavy-1', { owner: oldId(deadPid()), child: leaderId, members });
   assert.equal(sched.acquire('heavy', s.ctx()).ok, true);
   assert.equal(await gone(memberPid), true, 'the member left in the group is ended');
 });
@@ -798,7 +799,7 @@ test('review r1 7: group membership is verified: an id that leads another proces
   const alive = (pid) => pid === M || pid === OLDER || realAlive(pid);
   let termed = false;
   const left = fakeSystem(() => tableOf('ps', termed ? [] : [[M, '1005', FAKE]]), { alive, onKill: (sig) => { if (sig === 'SIGTERM') termed = true; } });
-  plantLease(s.data, 'heavy-1', { owner: oldId(deadPid()), child });
+  plantLease(s.data, 'heavy-1', { owner: oldId(deadPid()), child, members: [{ pid: M, start: '1005' }] });
   const a = sched.acquire('heavy', s.ctx({ system: left.system }));
   assert.equal(a.ok, true);
   assert.deepEqual(left.calls, [[-FAKE, 'SIGTERM']], 'the leader is gone, its member is not: SIGTERM to the group; gone after it, no SIGKILL');
@@ -825,6 +826,61 @@ test('attachChild records the child with its start time; a live holder keeps its
   assert.deepEqual(leaseDoc(s.data, 'heavy-1').child, idOf(child));
   assert.equal(sched.acquire('heavy', s.ctx({ cwd: s.dir('wt-b') })).ok, false);
   assert.doesNotThrow(() => process.kill(child, 0));
+});
+
+// ---- SF-AB-9: group identity after the leader is gone ----
+
+const machine = await import(pathToFileURL(join(pluginDir, 'lib', 'sched', 'machine.mjs')).href);
+const groupTable = (rows) => ({ method: 'ps', rows: new Map(rows.map(([pid, start, pgid, zombie = false]) => [pid, { pgid, zombie, start }])) });
+
+test('SF-AB-9: a gone leader with no recorded member identity: no member is returned (no signal), even for a newer member', () => {
+  const child = { pid: 500, start: '1000', method: 'ps' };
+  assert.deepEqual(machine.groupMembers(child, groupTable([[501, '1005', 500]])), [], 'a reused group id: its newer member is not ours');
+  assert.deepEqual(machine.groupMembers(child, groupTable([[500, '1000', 500], [501, '1005', 500]])), [500, 501], 'the leader verifies its group');
+});
+
+test('SF-AB-9: a gone leader with a recorded member identity: only while that pid and start still match', () => {
+  const child = { pid: 500, start: '1000', method: 'ps', members: [{ pid: 501, start: '1005' }] };
+  assert.deepEqual(machine.groupMembers(child, groupTable([[501, '1005', 500], [502, '1010', 500]])), [501, 502], 'a recorded member still runs: the group is ours');
+  assert.deepEqual(machine.groupMembers(child, groupTable([[501, '2000', 500], [502, '1010', 500]])), [], 'the pid now names another process');
+  assert.deepEqual(machine.groupMembers(child, groupTable([[502, '1010', 500]])), [], 'the recorded member is gone');
+  assert.deepEqual(machine.groupMembers(child, groupTable([[501, '1005', 777], [502, '1010', 500]])), [], 'the recorded member left the group');
+});
+
+test('SF-AB-9: the reaper signals a gone leader\'s group only through a matching recorded member; otherwise reaper-skip', (t) => {
+  const s = sandbox(t);
+  const child = { pid: FAKE, start: '1000', method: 'ps' };
+  const M = FAKE + 1;
+  const alive = (pid) => pid === M || realAlive(pid);
+  for (const [why, members, rows, reason] of [
+    ['no recorded members (an old lease)', undefined, [[M, '1005', FAKE]], 'no-recorded-member'],
+    ['no recorded members', [], [[M, '1005', FAKE]], 'no-recorded-member'],
+    ['the member pid was reused', [{ pid: M, start: '1005' }], [[M, '2000', FAKE]], 'no-recorded-member-matches'],
+  ]) {
+    const sys = fakeSystem(() => tableOf('ps', rows), { alive });
+    plantLease(s.data, 'heavy-1', { owner: oldId(deadPid()), child, ...(members ? { members } : {}) });
+    const seen = sched.snapshot(s.ctx({ system: sys.system })).leases.find((l) => l.kind === 'heavy');
+    assert.equal(seen.status, 'stale', `${why}: the lease is stale`);
+    assert.equal(seen.orphan, false, `${why}: not an orphan of ours`);
+    assert.equal(seen.reaperSkip, reason, `${why}: the skip reason is recorded`);
+    const r = sched.acquire('heavy', s.ctx({ system: sys.system }));
+    assert.equal(r.ok, true, `${why}: the lease is reaped`);
+    assert.deepEqual(sys.calls, [], `${why}: no signal`);
+    sched.release(r.lease, s.ctx());
+  }
+});
+
+test('SF-AB-9: attachChild records the member identities of the child\'s group, read like the reaper reads them', (t) => {
+  const s = sandbox(t);
+  const [L, M, OLDER, OTHER, Z] = [FAKE, FAKE + 1, FAKE + 2, FAKE + 3, FAKE + 4];
+  const rows = [[L, '1000'], [M, '1005', L], [OLDER, '900', L], [OTHER, '1006', FAKE + 9], [Z, '1007', L, true]];
+  const sys = fakeSystem(() => tableOf('ps', rows), { alive: (pid) => pid !== Z });
+  const r = sched.acquire('heavy', s.ctx());
+  assert.equal(sched.attachChild(r.lease, L, s.ctx({ system: sys.system })), true);
+  const doc = leaseDoc(s.data, 'heavy-1');
+  assert.deepEqual(doc.child, { pid: L, start: '1000', method: 'ps' });
+  assert.deepEqual(doc.members, [{ pid: M, start: '1005' }], 'newer live members of the group only; not the leader, an older one, another group or a zombie');
+  assert.deepEqual(sys.calls, []);
 });
 
 // ---- supervised run (§7.8a: hard time limit, no-output limit) ----
