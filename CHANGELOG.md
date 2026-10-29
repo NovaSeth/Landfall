@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Dashboard:** TASKS lists the open tasks, those being worked on first (`▶ working`), then those paused or waiting (`⏸ waiting`); AGENTS lists only the agents and runs at work. `runs list --json` carries `endedAt`.
+
 ## 2.4.0
 
 Security review on the OWASP lists, for web code and for code that calls a model or runs agents.
