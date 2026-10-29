@@ -21,7 +21,7 @@ import { admissionReasons, rateLimitReasons } from './admission.mjs';
 import { ensureCalibration } from './calibration.mjs';
 import { dataDirOf, entries, locked, readDoc, toText } from './files.mjs';
 import { DEFAULTS, FIFO_KINDS, KIND_NAMES, LEASE, MAX_SLOTS, TASK, TICKET, blockOf, portsOf } from './kinds.mjs';
-import { SYSTEM, groupCheck, groupMembers, identify, identityIn, judge, memberIdentities, readings, recordOf } from './machine.mjs';
+import { MAX_MEMBERS, SYSTEM, groupCheck, groupMembers, identify, identityIn, judge, memberIdentities, readings, recordOf } from './machine.mjs';
 
 const sha = (s) => createHash('sha256').update(s).digest('hex');
 const iso = (ms) => new Date(ms).toISOString();
@@ -325,7 +325,10 @@ function update(opts, kinds, match, change) {
 }
 
 // Releases the lease if the file still holds it (same id); true when removed.
-export const release = (lease, opts = {}) => update(opts, [lease.kind], (d) => d.id === lease.id && d.slot === lease.slot, () => null);
+export function release(lease, opts = {}) {
+  for (const [pid, a] of attached) if (a.lease.id === lease.id) attached.delete(pid);
+  return update(opts, [lease.kind], (d) => d.id === lease.id && d.slot === lease.slot, () => null);
+}
 
 // Records the child process the holder runs under the lease, with its identity and the identities of its group's
 // members (SF-AB-9), from one reading of the process table, for the orphan reaper.
@@ -336,7 +339,43 @@ export function attachChild(lease, pid, opts = {}) {
   const id = identityIn(table, pid, system.alive);
   const child = recordOf(id);
   const members = id.state === 'running' ? memberIdentities(child, table) : [];
-  return update(opts, [lease.kind], (d) => d.id === lease.id, (d) => ({ ...d, child, members }));
+  const ok = update(opts, [lease.kind], (d) => d.id === lease.id, (d) => ({ ...d, child, members }));
+  if (ok) attached.set(pid, { lease, opts });
+  return ok;
+}
+
+// Children recorded by attachChild in this process: pid → { lease, opts }, so supervise refreshes their lease
+// (T-MG-88) without its callers passing the lease. supervise forgets its child when it returns; release forgets too.
+const attached = new Map();
+export const forgetAttached = (pid) => { attached.delete(pid); };
+
+// While the recorded child still runs (same pid, start and method), merges the identities of its group's members that
+// are not recorded yet (the reaper's rule, memberIdentities) into the lease, at most MAX_MEMBERS, recorded ones first
+// (T-MG-88: attach usually sees only the leader). Writes only when the set grew; true when written. The scheduler lock
+// is waited for at most 250 ms, so a busy lock delays a refresh instead of the supervised run.
+export function refreshMembers(lease, pid, opts = {}) {
+  const system = opts.system ?? SYSTEM;
+  const table = system.table();
+  const id = identityIn(table, pid, system.alive);
+  if (id.state !== 'running') return false;
+  let wrote = false;
+  update({ ...opts, lockTimeoutMs: Math.min(opts.lockTimeoutMs ?? 250, 250) }, [lease.kind], (d) => d.id === lease.id && d.child?.pid === pid, (d) => {
+    if (judge(d.child, id) !== 'same') return undefined;
+    const recorded = Array.isArray(d.members) ? d.members : [];
+    const known = new Set(recorded.map((m) => `${m.pid}:${m.start}`));
+    const fresh = memberIdentities(d.child, table).filter((m) => !known.has(`${m.pid}:${m.start}`));
+    const members = [...recorded, ...fresh].slice(0, MAX_MEMBERS);
+    if (members.length === recorded.length) return undefined;
+    wrote = true;
+    return { ...d, members };
+  });
+  return wrote;
+}
+
+// The refresh of a child recorded by attachChild in this process; false when none is.
+export function refreshAttached(pid) {
+  const a = attached.get(pid);
+  return a ? refreshMembers(a.lease, pid, a.opts) : false;
 }
 
 // Agent leases (spec §7.8 admission points): PostToolUse binds the agentId to the lease keyed by tool_use_id;
