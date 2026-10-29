@@ -21,7 +21,7 @@ import { admissionReasons, rateLimitReasons } from './admission.mjs';
 import { ensureCalibration } from './calibration.mjs';
 import { dataDirOf, entries, locked, readDoc, toText } from './files.mjs';
 import { DEFAULTS, FIFO_KINDS, KIND_NAMES, LEASE, MAX_SLOTS, TASK, TICKET, blockOf, portsOf } from './kinds.mjs';
-import { SYSTEM, groupMembers, identify, identityIn, judge, readings, recordOf } from './machine.mjs';
+import { SYSTEM, groupCheck, groupMembers, identify, identityIn, judge, memberIdentities, readings, recordOf } from './machine.mjs';
 
 const sha = (s) => createHash('sha256').update(s).digest('hex');
 const iso = (ms) => new Date(ms).toISOString();
@@ -89,11 +89,15 @@ function leaseStatus(l, ids, table, now) {
   if (holder === 'same') return 'live';
   if (holder === 'unknown') return expired ? 'stale' : 'live';
   if (!child) return 'stale';
-  const members = groupMembers(child, table);
-  if (members === null) return expired ? 'stale' : 'live';
-  l.orphan = members.length > 0;
+  const group = groupCheck(childOf(l.doc), table);
+  if (group === null) return expired ? 'stale' : 'live';
+  l.orphan = group.members.length > 0;
+  if (group.skip) l.reaperSkip = group.skip;
   return 'stale';
 }
+
+// The recorded child with the member identities recorded at attach (SF-AB-9), as groupCheck reads it.
+const childOf = (doc) => (doc.child ? { ...doc.child, members: doc.members ?? [] } : null);
 
 // Every lease and ticket with its status: live · stale (gone holder or TTL) · invalid · newer (never touched).
 function scan(dir, now, system) {
@@ -147,7 +151,7 @@ function endGroup(child, system) {
 
 function reap(dir, state, system) {
   for (const l of state.leases.filter((x) => x.status === 'stale' || x.status === 'invalid')) {
-    if (l.orphan) endGroup(l.doc.child, system);
+    if (l.orphan) endGroup(childOf(l.doc), system);
     removeTree(l.file);
   }
   for (const t of state.tickets.filter((x) => x.status === 'stale' || x.status === 'invalid')) removeTree(t.file);
@@ -323,11 +327,16 @@ function update(opts, kinds, match, change) {
 // Releases the lease if the file still holds it (same id); true when removed.
 export const release = (lease, opts = {}) => update(opts, [lease.kind], (d) => d.id === lease.id && d.slot === lease.slot, () => null);
 
-// Records the child process the holder runs under the lease, with its identity, for the orphan reaper.
+// Records the child process the holder runs under the lease, with its identity and the identities of its group's
+// members (SF-AB-9), from one reading of the process table, for the orphan reaper.
 export function attachChild(lease, pid, opts = {}) {
   if (!Number.isInteger(pid) || pid <= 0) throw usage('invalid-value', `pid ${pid}: expected a positive integer`);
-  const child = recordOf(identify([pid], opts.system ?? SYSTEM).get(pid));
-  return update(opts, [lease.kind], (d) => d.id === lease.id, (d) => ({ ...d, child }));
+  const system = opts.system ?? SYSTEM;
+  const table = system.table();
+  const id = identityIn(table, pid, system.alive);
+  const child = recordOf(id);
+  const members = id.state === 'running' ? memberIdentities(child, table) : [];
+  return update(opts, [lease.kind], (d) => d.id === lease.id, (d) => ({ ...d, child, members }));
 }
 
 // Agent leases (spec §7.8 admission points): PostToolUse binds the agentId to the lease keyed by tool_use_id;
@@ -341,7 +350,7 @@ export const releaseAgent = (agentId, opts = {}) => update(opts, ['agent'], (d) 
 export function snapshot(opts = {}) {
   const state = scan(dataDirOf(opts), Date.now(), opts.system ?? SYSTEM);
   const leases = state.leases.map((l) => (l.doc && !l.newer && !l.invalid
-    ? { ...l.doc, schema: undefined, status: l.status, orphan: Boolean(l.orphan) }
+    ? { ...l.doc, schema: undefined, status: l.status, orphan: Boolean(l.orphan), ...(l.reaperSkip ? { reaperSkip: l.reaperSkip } : {}) }
     : { kind: l.kind, slot: l.slot, status: l.status }));
   const queues = Object.fromEntries(FIFO_KINDS.map((kind) => {
     const live = queueOf(state, kind);
