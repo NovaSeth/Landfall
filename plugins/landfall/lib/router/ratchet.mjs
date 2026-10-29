@@ -169,7 +169,7 @@ export function thresholdsWithOverrides(unit, defaults, store) {
 }
 export const routerThresholds = (store) => thresholdsWithOverrides('router', THRESHOLDS, store);
 // The reason line route prints when overrides were left out (none when every override counts).
-const ignoredReasons = (store) => {
+export const ignoredReasons = (store) => {
   const { ignored } = countedOverrides(store);
   return ignored ? [{ code: 'overrides-ignored', text: `threshold overrides ignored: ${ignored}` }] : [];
 };

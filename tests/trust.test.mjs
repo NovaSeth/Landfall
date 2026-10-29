@@ -329,3 +329,16 @@ test('T-MG-85: a failed trust write leaves no empty --state-dir directory that t
   assert.notEqual(r2.code, 0, r2.text);
   assert.equal(existsSync(kept), true, 'a directory that existed stays');
 });
+
+test('T-MG-85: route --probe prints the "threshold overrides ignored" reason, as route <id> does', async (t) => {
+  const r = repo(t);
+  mkdirSync(join(r.stateDir, 'decisions'), { recursive: true });
+  writeFileSync(join(r.stateDir, 'decisions', 'D-AA-1.md'), `---\nschema: 1\nid: D-AA-1\ntitle: Use tabs\nstatus: active\nkind: general\ndate: 2026-01-01\nauthor: AA\nsupersedes: []\nsupersededBy: null\nscope: []\nallowsTestRemoval: []\n---\n\n## What\n\nUse tabs.\n\n## Why\n\nStyle.\n\n## Cost if wrong\n\nNone.\n`);
+  const thresholds = { 'router.trivial.maxLoc': { value: 1000000000, decision: 'D-AA-1', at: AT } };
+  writeFileSync(join(r.stateDir, 'config.json'), `${JSON.stringify({ schema: 1, thresholds }, null, 2)}\n`);
+  const task = await cli(['route', r.id, '--paths', 'calc.test.mjs', '--loc', '5', '--yes'], r);
+  assert.ok(task.env.data.reasons.some((x) => /^threshold overrides ignored: /.test(x.text)), task.text);
+  const probe = await cli(['route', '--probe', '--paths', 'calc.test.mjs', '--loc', '5'], r);
+  assert.equal(probe.code, 0, probe.text);
+  assert.ok(probe.env.data.reasons.some((x) => /^threshold overrides ignored: /.test(x.text)), probe.text);
+});
