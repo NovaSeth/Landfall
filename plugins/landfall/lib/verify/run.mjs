@@ -303,7 +303,10 @@ function reroute({ store, task, id, write, handle, riskPaths, change, at }) {
 // output, reused (the time of the gate runs reused from the gate cache, else null) }. `anchor`: the commit whose
 // baseline is the accepted inventory (merge mode: the target tip); `merged`: the commit a merge brings onto it (merge
 // mode). `version`: the plugin version (part of the gate cache key); `cache` false runs the gates whatever is stored.
-export function evaluate({ where, names, env, id, mode, handle = null, at = now(), anchor = null, merged = null, version = null, cache = true }) {
+// memo (a batch gate run, T-MG-80 fix round 1): one object shared by the evaluations of the tasks of one integrated tree;
+// the gate runs and the base measurement of the first are reused by the others, so the suite runs once and each task is
+// checked against that inventory with its own report, baseline and class.
+export function evaluate({ where, names, env, id, mode, handle = null, at = now(), anchor = null, merged = null, version = null, cache = true, memo = null }) {
   const started = Date.now();
   const write = mode === 'write';
   const store = storeOf(where, names);
@@ -349,14 +352,16 @@ export function evaluate({ where, names, env, id, mode, handle = null, at = now(
     // passed is stored (not in ci mode, which writes nothing).
     const tree = treeOf((a) => gitIn(where, env, a), { staged: mode === 'merge' });
     const key = tree ? cacheKey({ tree, gatesSha: doc.gatesSha, version }) : null;
-    const hit = key && cache ? lookup(store, { key, tree, gatesSha: doc.gatesSha, version, gates: profile.gates, at }) : null;
-    const runs = hit ? hit.runs : runHeavy(profile.gates, { names, env, cwd: where.worktree, task: id }, (g) => redacted(runGate(g, { cwd: where.worktree, env })));
+    const shared = memo?.runs ?? null;
+    const hit = shared === null && key && cache ? lookup(store, { key, tree, gatesSha: doc.gatesSha, version, gates: profile.gates, at }) : null;
+    const runs = shared ?? (hit ? hit.runs : runHeavy(profile.gates, { names, env, cwd: where.worktree, task: id }, (g) => redacted(runGate(g, { cwd: where.worktree, env }))));
+    if (memo) memo.runs = runs;
     reused = hit?.at ?? null;
     doc.gates = runs.map((r) => r.gate);
     output = runs.map((r) => ({ name: r.gate.name, lines: tailLines(r.output) }));
     ctx = context(where, env, code.rel);
     inv = inventoryOf(runs, ctx);
-    if (key && !hit && mode !== 'ci') {
+    if (key && !hit && shared === null && mode !== 'ci') {
       const report = (r) => {
         const part = inv.parts.find((p) => p.run === r);
         if (!part) return null;
@@ -383,7 +388,8 @@ export function evaluate({ where, names, env, id, mode, handle = null, at = now(
     if (anchored.problem) {
       say('fail', 'baseline-unanchored', `the baseline at ${anchorCommit.slice(0, 12)} is ${anchored.problem}, though its history has one: there is no accepted inventory to compare with`, 'restore the baseline on the target branch (git), or pin one with a decision');
     } else if (measure) {
-      const m = measureAt({ where, env, names, task: id, commit: anchorCommit, gates: profile.gates, gitIn, inventory: (runs, dir) => inventoryOf(runs, context({ ...where, worktree: dir }, env, code.rel)) });
+      const m = memo?.measured ?? measureAt({ where, env, names, task: id, commit: anchorCommit, gates: profile.gates, gitIn, inventory: (runs, dir) => inventoryOf(runs, context({ ...where, worktree: dir }, env, code.rel)) });
+      if (memo) memo.measured = m;
       if (m.error) say('error', 'base-gate-error', `${m.error}: there is no reference to compare with`, 'make the gates run at the base (install what they run), or pin a baseline (' + names.bin + ' baseline pin --decision <D>), then verify again');
       measured = m.doc;
     }

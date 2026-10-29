@@ -129,13 +129,21 @@ export function mergeTask({ cwd, env, names, id, branch, version = null, at = ne
   return { ...base, merged: true, commit, result: 'pass', verify: out.doc, output: out.output, event: record.event, reasons: [], exit: 'OK' };
 }
 
+// Whether the worktree still holds `commit` exactly: HEAD is it, the index and the working tree match it in `scope`, and
+// nothing untracked is there (fix round 1, F1 F2: the gates verified what is recorded or merged).
+export const treeHeld = (where, env, scope, commit) => gitIn(where, env, ['rev-parse', 'HEAD']).stdout.trim() === commit
+  && gitIn(where, env, ['diff', '--quiet', '--cached', commit, ...scope]).status === 0
+  && gitIn(where, env, ['diff', '--quiet', ...scope]).status === 0
+  && gitIn(where, env, ['ls-files', '--others', '--exclude-standard', ...scope]).stdout.trim() === '';
+
 // The name of the checked-out branch (the target), or HEAD when it is detached.
 export const targetOf = (where, env) => gitIn(where, env, ['symbolic-ref', '-q', '--short', 'HEAD']).stdout.trim() || 'HEAD';
 
 // `task merge --adopt <ids…>` (T-MG-80): tasks merged by hand are recorded after one gate run on the target HEAD
 // (evaluate in merge mode, anchored at HEAD, under the heavy lease like every gate run). On pass each task whose recorded
 // branch tip is an ancestor of HEAD gets a `merged` event with adopted: true; the others are reported (not-ancestor,
-// no-branch, unknown-branch, not-owner, task-unknown) and not recorded. On a failing gate nothing is recorded.
+// no-branch, unknown-branch, not-owner, task-unknown) and not recorded. On a failing gate nothing is recorded; nor when
+// the gate changed HEAD, the index or the working tree (`merge-tree-changed`, fix round 1 F2).
 export function adoptMerged({ cwd, env, names, ids, version = null, at = new Date().toISOString() }) {
   const where = activeWhere({ cwd, env, names });
   for (const id of ids) KINDS.task.path(id);
@@ -148,21 +156,25 @@ export function adoptMerged({ cwd, env, names, ids, version = null, at = new Dat
     throw fail('dirty-tree', 'the working tree has changes; the gates must run on the target HEAD only', 'commit or remove them first');
   }
   const tip = gitIn(where, env, ['rev-parse', 'HEAD']).stdout.trim();
+  const tree = gitIn(where, env, ['rev-parse', `${tip}^{tree}`]).stdout.trim();
   const target = targetOf(where, env);
   const tasks = ids.map((id) => {
     const task = store.read('task', id);
     if (task === null) return { task: id, adopted: false, why: 'task-unknown' };
     if (task.owner !== handle) return { task: id, adopted: false, why: 'not-owner' };
     if (!task.branch) return { task: id, adopted: false, why: 'no-branch' };
+    if (task.branch.startsWith('-')) return { task: id, adopted: false, branch: task.branch, why: 'unknown-branch' };
     const sha = gitIn(where, env, ['rev-parse', '--verify', '-q', `${task.branch}^{commit}`]).stdout.trim();
     if (!sha) return { task: id, adopted: false, branch: task.branch, why: 'unknown-branch' };
-    const ancestor = gitIn(where, env, ['merge-base', '--is-ancestor', sha, tip]).status === 0;
+    const ancestor = gitIn(where, env, ['merge-base', '--is-ancestor', '--end-of-options', sha, tip]).status === 0;
     return { task: id, adopted: false, branch: task.branch, tip: sha, why: ancestor ? null : 'not-ancestor' };
   });
   const out = evaluate({ where, names, env, id: tasks.find((t) => t.why === null)?.task ?? ids[0], mode: 'merge', at, anchor: tip, merged: tip, version });
   const verified = { target, commit: tip, result: out.doc.result, verify: out.doc, output: out.output };
   if (out.doc.result !== 'pass') return { ...verified, tasks, reasons: out.reasons, exit: out.doc.result === 'error' ? 'ENV' : 'FAIL' };
-  const tree = gitIn(where, env, ['rev-parse', `${tip}^{tree}`]).stdout.trim();
+  if (!treeHeld(where, env, scope, tip)) {
+    return { ...verified, tasks, reasons: [{ code: 'merge-tree-changed', message: 'HEAD, the index or the working tree changed while the gates ran: they did not verify what would be recorded; nothing was recorded', hint: 'find what writes to tracked files or commits during the gates, restore the tree, then adopt again' }], exit: 'FAIL' };
+  }
   const ok = tasks.filter((t) => t.why === null);
   if (ok.length) recordMerged({ cwd, env, names, at, entries: ok.map((t) => ({ id: t.task, data: { commit: tip, target, batch: null, adopted: true, verify: tree } })) });
   for (const t of ok) t.adopted = true;

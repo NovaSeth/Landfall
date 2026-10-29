@@ -6,20 +6,28 @@
 //   2. A temporary branch `<codename>/batch-<UTC yyyymmddThhmmss>` starts at the target tip in a temporary worktree under
 //      os.tmpdir() (outside the repository: no state or code of the project holds it). Each task branch merges with
 //      --no-ff in order; a conflict is aborted there and that task is left out (`conflict`).
-//   3. The gates run once through evaluate in merge mode, anchored at the target tip (the gate set, the test baseline
-//      and the heavy lease as for one task). On a failing batch the culprit is found by binary search over the prefixes
-//      (⌈log2 N⌉ runs), then one confirming run on the batch without it; if that one fails too, only the prefix before
-//      the culprit (a passing run) merges and the tasks after it are skipped.
-//   4. On pass the target is fast-forwarded (`git merge --ff-only`, never a reset) when it has not moved since step 2;
-//      otherwise nothing changes (`target-moved`). Each merged task gets a `merged` event with the batch id.
+//   3. A gate run: the integration worktree is checked out again (-f) and cleaned, its HEAD and `git write-tree` are recorded, the suite
+//      runs once (evaluate in merge mode, anchored at the target tip: the gate set, the test baseline and the heavy
+//      lease as for one task) and every task of the set is checked against that one inventory with its own artifacts
+//      (report evidence, its own last baseline, the class rules; fix round 1, F3). After the run HEAD, the index and the
+//      working tree must be what was recorded; otherwise nothing merges (`merge-tree-changed`, F1). On a failing batch
+//      the culprit is found by binary search over the prefixes (⌈log2 N⌉ runs), then one confirming run on the batch
+//      without it; if that one fails too, only the prefix before the culprit (a passing run) merges and the tasks after
+//      it are skipped.
+//   4. On pass the target is fast-forwarded to the commit recorded before that passing run (`git merge --ff-only`, never
+//      a reset), only when the checkout still holds the same branch (`git symbolic-ref`) at the same tip and the final
+//      integrated profile does not change the gates (F5); otherwise nothing changes (`target-moved`,
+//      `gate-change-required`). Each merged task gets a `merged` event with the batch id.
 //   5. The temporary worktree and branch are removed in every case.
+// Values from the state reach git only after a check: a done head is an object id, a branch never starts with "-", and
+// revisions follow --end-of-options (AR-2).
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { authorHandle } from '../decisions/index.mjs';
 import { KINDS, StateError } from '../state/index.mjs';
 import { mergedOf, recordMerged } from '../state/tasks.mjs';
-import { changesGates, profileOf, targetOf } from './merge.mjs';
+import { changesGates, profileOf, targetOf, treeHeld } from './merge.mjs';
 import { activeWhere, codeState, evaluate, gitIn, stateAt, storeOf } from './run.mjs';
 
 const fail = (code, message, hint = '') => new StateError(code, 'FAIL', message, { hint });
@@ -29,6 +37,9 @@ const order = (a, b) => {
   const [pb, nb] = [b.replace(/-\d+$/, ''), Number(b.match(/(\d+)$/)?.[1] ?? 0)];
   return pa === pb ? na - nb : pa < pb ? -1 : 1;
 };
+const OBJECT_ID = /^[0-9a-f]{40,64}$/;
+// A gate run that changed HEAD, the index or the working tree of the integration worktree (F1): nothing merges.
+class TreeChanged extends Error {}
 
 // The IDs `--ready` takes: the caller's done tasks with a recorded branch and no merged event, in task order.
 export function readyIds(store, handle) {
@@ -52,6 +63,8 @@ export function batchMerge({ cwd, env, names, ids = null, ready = false, version
   const head = () => gitIn(where, env, ['rev-parse', 'HEAD']).stdout.trim();
   const tip = head();
   const target = targetOf(where, env);
+  const symbolic = () => gitIn(where, env, ['symbolic-ref', '-q', 'HEAD']).stdout.trim() || null;
+  const targetRef = symbolic(); // F5: the branch the checkout holds (null: detached), checked again before the fast-forward
   const targetProfile = stateAt(where, env, tip, 'profile.json');
 
   // 1. The checks; a task that fails one is skipped with its reason.
@@ -65,12 +78,13 @@ export function batchMerge({ cwd, env, names, ids = null, ready = false, version
     if (task.status !== 'done') return skip(`not done (${task.status})`);
     if (mergedOf(task) !== null) return skip('already merged');
     if (!task.branch) return skip('no branch');
-    const sha = gitIn(where, env, ['rev-parse', '--verify', '-q', `${task.branch}^{commit}`]).stdout.trim();
-    if (!sha) return skip(`unknown branch ${task.branch}`);
-    if (gitIn(where, env, ['merge-base', '--is-ancestor', sha, tip]).status === 0) return skip(`already in ${target} (${names.bin} task merge --adopt ${id})`);
+    if (typeof task.branch !== 'string' || task.branch.startsWith('-')) return skip('the branch name starts with "-" (no ref git can merge safely)');
     const done = [...task.events].reverse().find((e) => e.event === 'done')?.data?.head ?? null;
-    if (!done) return skip('no done record at a commit');
-    if (done !== sha && gitIn(where, env, ['diff', '--quiet', done, sha, ...scope]).status !== 0) return skip(`the branch changed since done at ${done.slice(0, 12)} (verify it again)`);
+    if (typeof done !== 'string' || !OBJECT_ID.test(done)) return skip('no done record at a commit');
+    const sha = gitIn(where, env, ['rev-parse', '--verify', '-q', `${task.branch}^{commit}`]).stdout.trim();
+    if (!OBJECT_ID.test(sha)) return skip(`unknown branch ${task.branch}`);
+    if (gitIn(where, env, ['merge-base', '--is-ancestor', '--end-of-options', sha, tip]).status === 0) return skip(`already in ${target} (${names.bin} task merge --adopt ${id})`);
+    if (done !== sha && gitIn(where, env, ['diff', '--quiet', '--end-of-options', done, sha, ...scope]).status !== 0) return skip(`the branch changed since done at ${done.slice(0, 12)} (verify it again)`);
     if (targetProfile.rel !== null && changesGates(profileOf(targetProfile.text), profileOf(stateAt(where, env, sha, 'profile.json').text))) return skip('changes the gates (merge it alone)');
     return { ...t, sha, outcome: null };
   });
@@ -97,30 +111,44 @@ export function batchMerge({ cwd, env, names, ids = null, ready = false, version
     const build = (set) => {
       const key = set.map((t) => t.task).join(' ');
       if (built?.key === key) return built.ok;
-      gitIn(here, env, ['reset', '-q', '--hard', tip]);
+      gitIn(here, env, ['checkout', '-q', '-f', '-B', branch, tip]); // the integration branch back at the target tip, local changes dropped
       gitIn(here, env, ['clean', '-q', '-fd']);
       const ok = [];
       for (const t of set) {
-        const m = gitIn(here, env, ['merge', '--no-ff', '--no-edit', '-q', '-m', `Merge branch '${t.branch}' (${t.task}, ${batch})`, t.sha]);
+        const m = gitIn(here, env, ['merge', '--no-ff', '--no-edit', '-q', '-m', `Merge branch '${t.branch}' (${t.task}, ${batch})`, '--end-of-options', t.sha]);
         if (m.status === 0) { ok.push(t); continue; }
         t.conflicts = gitIn(here, env, ['diff', '--name-only', '-z', '--diff-filter=U']).stdout.split('\0').filter(Boolean).sort();
         gitIn(here, env, ['merge', '--abort']);
-        gitIn(here, env, ['reset', '-q', '--hard', 'HEAD']);
+        gitIn(here, env, ['checkout', '-q', '-f', '-B', branch, 'HEAD']);
         t.outcome = 'conflict';
         t.why = t.conflicts.length ? `conflicts in ${t.conflicts.join(', ')}` : `git merge failed: ${(m.stderr || m.stdout).trim().split('\n')[0] ?? ''}`.slice(0, 300);
       }
       built = { key: ok.map((t) => t.task).join(' '), ok };
       return ok;
     };
+    // One gate run on the set as built (F1, F3): the worktree checked out again and cleaned, its commit and index tree recorded, the
+    // suite run once and each task checked against it with its own artifacts; HEAD, index and tree checked after it.
+    const scopeHere = codeState(here, env).scope;
+    const passed = new Map(); // the set key of a passing run → the commit it verified
     const gates = (set) => {
+      gitIn(here, env, ['checkout', '-q', '-f', '-B', branch, 'HEAD']);
+      gitIn(here, env, ['clean', '-q', '-fd']);
+      const commit = gitIn(here, env, ['rev-parse', 'HEAD']).stdout.trim();
+      const tree = gitIn(here, env, ['write-tree']).stdout.trim();
       result.gateRuns += 1;
-      const out = evaluate({ where: here, names, env, id: set[0].task, mode: 'merge', at, anchor: tip, merged: gitIn(here, env, ['rev-parse', 'HEAD']).stdout.trim(), version });
-      return out;
+      const memo = {};
+      const byTask = new Map(set.map((t) => [t.task, evaluate({ where: here, names, env, id: t.task, mode: 'merge', at, anchor: tip, merged: commit, version, memo })]));
+      if (!treeHeld(here, env, scopeHere, commit) || gitIn(here, env, ['write-tree']).stdout.trim() !== tree) throw new TreeChanged();
+      const all = [...byTask.values()];
+      const worst = all.find((o) => o.doc.result === 'error') ?? all.find((o) => o.doc.result !== 'pass') ?? all[0];
+      if (worst.doc.result === 'pass') passed.set(set.map((t) => t.task).join(' '), commit);
+      return { ...worst, commit, byTask };
     };
     let set = build(candidates);
     if (set.length === 0) return finish(result);
     let out = gates(set);
     let final = set;
+    let integrated = out.commit;
     if (out.doc.result === 'error') return finish(errored(result, out, set));
     if (out.doc.result !== 'pass') {
       // Binary search over the prefixes: prefix(k) = set[0..k]; prefix(-1) is the target tip, prefix(N-1) failed.
@@ -136,34 +164,46 @@ export function batchMerge({ cwd, env, names, ids = null, ready = false, version
         else { hi = mid; failedRun = r; }
       }
       const culprit = set[lo];
+      // the culprit's own check when it failed (its report, its baseline), else the run's first failure
+      const own = failedRun.byTask.get(culprit.task);
+      const blame = own && own.doc.result !== 'pass' ? own : failedRun;
       culprit.outcome = 'failed';
-      culprit.tests = failedRun.doc.failures.new.slice(0, 10);
-      culprit.why = culprit.tests.length ? `new failing tests: ${culprit.tests.join(', ')}` : (failedRun.reasons.find((x) => x.level === 'fail')?.message ?? 'the gates fail').slice(0, 300);
-      result.verify = failedRun.doc;
-      result.output = failedRun.output;
+      culprit.tests = blame.doc.failures.new.slice(0, 10);
+      culprit.why = culprit.tests.length ? `new failing tests: ${culprit.tests.join(', ')}` : (blame.reasons.find((x) => x.code !== 'gate-error')?.message ?? 'the gates fail').slice(0, 300);
+      result.verify = blame.doc;
+      result.output = blame.output;
       const rest = set.filter((t) => t !== culprit);
       final = rest.length ? build(rest) : [];
+      integrated = null;
       if (final.length) {
         const confirm = gates(final);
-        if (confirm.doc.result !== 'pass') {
+        if (confirm.doc.result === 'pass') integrated = confirm.commit;
+        else {
           // A second failure among the rest: only the prefix before the culprit (a passing run) merges.
           const after = set.slice(lo + 1);
           for (const t of after) if (t.outcome === null) { t.outcome = 'skipped'; t.why = `not verified: the batch fails also without ${culprit.task} (merge them again)`; }
-          final = lo > 0 ? build(set.slice(0, lo)) : [];
+          final = lo > 0 ? set.slice(0, lo) : [];
+          integrated = final.length ? passed.get(final.map((t) => t.task).join(' ')) ?? null : null;
+          if (integrated === null) final = [];
         }
       }
       if (final.length === 0) return finish(result);
     }
     set = final;
-    // 4. Fast-forward the target, only when it has not moved.
-    const integrated = gitIn(here, env, ['rev-parse', 'HEAD']).stdout.trim();
-    if (head() !== tip) {
-      for (const t of set) { t.outcome = 'skipped'; t.why = 'target-moved'; }
-      result.reasons.push({ code: 'target-moved', message: `${target} moved from ${tip.slice(0, 12)} while the gates ran; nothing was merged`, hint: `${names.bin} task merge ${ready ? '--ready' : list.join(' ')}` });
+    // 4. The final integrated profile must not change the target's gates (each branch was checked alone in step 1).
+    if (targetProfile.rel !== null && changesGates(profileOf(targetProfile.text), profileOf(stateAt(where, env, integrated, 'profile.json').text))) {
+      for (const t of set) { t.outcome = 'skipped'; t.why = 'gate-change-required'; }
+      result.reasons.push({ code: 'gate-change-required', message: 'the integrated batch changes the target\'s gates or drops one of its risk paths; nothing was merged', hint: `merge the tasks one by one: ${names.bin} task merge <id>` });
       return finish(result);
     }
-    const ff = gitIn(where, env, ['merge', '--ff-only', '-q', integrated]);
-    if (ff.status !== 0 || head() !== integrated) {
+    // Fast-forward the target to the verified commit, only when the checkout holds the same branch at the same tip (F5).
+    if (symbolic() !== targetRef || head() !== tip || (targetRef !== null && gitIn(where, env, ['rev-parse', '--verify', '-q', targetRef]).stdout.trim() !== tip)) {
+      for (const t of set) { t.outcome = 'skipped'; t.why = 'target-moved'; }
+      result.reasons.push({ code: 'target-moved', message: `${target} moved from ${tip.slice(0, 12)}, or the checkout changed branch, while the gates ran; nothing was merged`, hint: `${names.bin} task merge ${ready ? '--ready' : list.join(' ')}` });
+      return finish(result);
+    }
+    const ff = gitIn(where, env, ['merge', '--ff-only', '-q', '--end-of-options', integrated]);
+    if (ff.status !== 0 || head() !== integrated || symbolic() !== targetRef) {
       for (const t of set) { t.outcome = 'skipped'; t.why = 'ff-failed'; }
       result.reasons.push({ code: 'ff-failed', message: `git merge --ff-only failed: ${(ff.stderr || ff.stdout).trim().split('\n')[0] ?? ''}`.slice(0, 300), hint: 'check the working tree of the target, then merge again' });
       return finish(result);
@@ -173,6 +213,11 @@ export function batchMerge({ cwd, env, names, ids = null, ready = false, version
     recordMerged({ cwd, env, names, at, entries: set.map((t) => ({ id: t.task, data: { commit: integrated, target, batch, adopted: false, verify: tree } })) });
     for (const t of set) { t.outcome = 'merged'; t.why = null; }
     if (!result.verify) { result.verify = out.doc; result.output = out.output; }
+    return finish(result);
+  } catch (err) {
+    if (!(err instanceof TreeChanged)) throw err;
+    for (const t of tasks) if (t.outcome === null || t.outcome === 'failed') { t.outcome = 'skipped'; t.why = 'merge-tree-changed'; }
+    result.reasons.push({ code: 'merge-tree-changed', message: 'HEAD, the index or the working tree of the integration worktree changed while the gates ran: they did not verify what would be merged; nothing was merged', hint: 'find what writes to tracked files or commits during the gates (a formatter, a build into the tree), then merge again' });
     return finish(result);
   } finally {
     if (created) gitIn(where, env, ['worktree', 'remove', '--force', wt]);

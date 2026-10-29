@@ -69,6 +69,7 @@ export const taskMerge = typed(({ args, flags, names, version, io }) => {
   const ids = [].concat(args.id ?? []);
   if (flags.adopt) {
     if (flags.branch !== undefined) return { code: EXIT.USAGE, errors: [{ code: 'unexpected-flag', message: '--branch does not apply to --adopt', hint: `${names.bin} task merge --adopt <id…>` }] };
+    if (flags.ready) return { code: EXIT.USAGE, errors: [{ code: 'unexpected-flag', message: '--ready does not apply to --adopt', hint: `${names.bin} task merge --adopt <id…>` }] };
     const a = adoptMerged({ cwd: io.cwd, env: io.env, names, ids, version: version ?? null });
     const { exit, reasons, ...data } = a;
     const lines = a.result === 'pass'

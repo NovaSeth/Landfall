@@ -29,9 +29,10 @@ function configPair(v, where) {
   return null;
 }
 
-// A ref argument naming a task branch: task/T-…, also refs/heads/ or a remote in front. Words after "--" are paths.
+// A ref argument naming a task branch: task/T-…, also refs/heads/ or a remote in front, or a forced refspec (+…). For
+// merge and pull "--" only ends the options: the words after it are still refs (fix round 1, F4), so every word counts.
 const TASK_REF = /^(refs\/(heads|remotes\/[^/]+)\/|[^/\s-][^/\s]*\/)?task\/T-[A-Za-z0-9]/;
-const namesTaskBranch = (args) => args.slice(0, args.includes('--') ? args.indexOf('--') : args.length).some((a) => TASK_REF.test(a));
+const namesTaskBranch = (args) => args.some((a) => TASK_REF.test(a.replace(/^\+/, '')));
 const MERGE_TASK = 'ORC-25: blocked a plain `git merge` of a task branch into the target. Instead merge task branches with '
   + '`landfall task merge <ids…>` (one gate for the batch, recorded in the state).';
 

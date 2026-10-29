@@ -33,7 +33,7 @@ const MIN_MS = 60000;
 
 // Every rule ID this table cites (tests check that each resolves in the method).
 export const TABLE_RULES = Object.freeze(['FLW-3', 'ORC-4', 'FLW-4', 'ORC-9', 'FLW-6', 'PRI-6', 'ORC-5', 'REV-6', 'REV-20', 'REV-7', 'REV-5',
-  'REV-11', 'FLW-8', 'ORC-7', 'ORC-11', 'SPC-1', 'SPC-2', 'SPC-11', 'FLW-9', 'PRI-1', 'COL-24', 'FLW-7', 'ORC-24']);
+  'REV-11', 'FLW-8', 'ORC-7', 'ORC-11', 'SPC-1', 'SPC-2', 'SPC-11', 'FLW-9', 'PRI-1', 'COL-24', 'FLW-7', 'ORC-24', 'ORC-25']);
 
 const HEAVY_WAIT_MIN = 10;
 
@@ -153,6 +153,9 @@ function taskRow(t, { now, bin, lanesOn, caps, budget = DEFAULT_BUDGET_MIN }) {
   }
 }
 
+// The most outside merges listed as steps; the rest are one "… n more" note (every eligible task is still checked).
+export const OUTSIDE_MAX = 50;
+
 export function nextSteps({ tasks = [], runs = [], handles = [], me = null, plan = null, lanesOn = false, caps, now, bin, budgets = {}, problem = null, dirty = () => [], outside = [], watch = [] }) {
   const steps = [];
   const info = [];
@@ -201,10 +204,11 @@ export function nextSteps({ tasks = [], runs = [], handles = [], me = null, plan
       }
     }
     // done tasks whose branch was merged by hand: the merge is not in the state (T-MG-80)
-    for (const id of outside) {
+    for (const id of outside.slice(0, OUTSIDE_MAX)) {
       const t = byId.get(id);
       if (t && mine(t)) steps.push(action(id, 'merged outside landfall', `${bin} task merge --adopt ${id}`, []));
     }
+    if (outside.length > OUTSIDE_MAX) info.push({ task: '…', state: `… ${outside.length - OUTSIDE_MAX} more merged outside ${bin}`, step: null, rules: ['ORC-25'], kind: 'others' });
     if (plan) {
       const next = plan.entries.find((e) => !tasks.some((t) => belongs(t, e.ref)));
       if (plan.entries.length === 0) steps.push(action('-', `${cell(plan.path)} has no "### Task <id>: <title>" entries`, 'give the plan its task headings, or tick without --plan', ['SPC-11']));

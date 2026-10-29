@@ -21,7 +21,7 @@ import { KINDS, StateError, emailHash, open, resolve } from '../state/index.mjs'
 import { cheapCap, decide, newLoop, parseCaps } from './decide.mjs';
 import { CAP_RANGE, CARRIED_PLAN, DEFAULT_CAPS, LOOP, LOOP_ID, STALL, TERMINAL, UNMEASURED, fixedPrompt } from './kind.mjs';
 import { DEFAULT_BUDGET_MIN, budgetOf, readBudgets } from './budget.mjs';
-import { STATUS_MIN, TABLE_RULES, WAIT_S, nextSteps, parsePlan, readWatch } from './table.mjs';
+import { OUTSIDE_MAX, STATUS_MIN, TABLE_RULES, WAIT_S, nextSteps, parsePlan, readWatch } from './table.mjs';
 
 export { DEFAULT_BUDGET_MIN, budgetOf, readBudgets };
 export { CAP_RANGE, CARRIED_PLAN, DEFAULT_CAPS, LOOP, LOOP_ID, STALL, STATUS_MIN, TABLE_RULES, TERMINAL, UNMEASURED, WAIT_S, cheapCap, decide, fixedPrompt, newLoop, nextSteps, parseCaps, parsePlan };
@@ -121,17 +121,20 @@ function stateChanges(where, env) {
 
 // Tasks merged outside landfall (T-MG-80): done, a recorded branch, no `merged` event, and the branch tip is an ancestor of
 // the target. The target is what `task merge` merges into: HEAD of the main checkout (the first worktree), asked there and
-// never in a task worktree, where its own branch is always an ancestor of HEAD. At most OUTSIDE_MAX candidates per call.
-export const OUTSIDE_MAX = 50;
+// never in a task worktree, where its own branch is always an ancestor of HEAD. Every candidate is checked with one git
+// call (the branches merged into HEAD, then a set lookup; fix round 1, F6); only the display is limited (OUTSIDE_MAX).
+export { OUTSIDE_MAX };
 export function outsideMerges({ where, env, tasks }) {
   const candidates = tasks.filter((t) => t.status === 'done' && t.branch && !(t.events ?? []).some((e) => e.event === 'merged'))
-    .sort((a, b) => a.id.localeCompare(b.id, 'en', { numeric: true })).slice(0, OUTSIDE_MAX);
+    .sort((a, b) => a.id.localeCompare(b.id, 'en', { numeric: true }));
   if (candidates.length === 0) return [];
   const list = git(['worktree', 'list', '--porcelain'], { cwd: where.repo, env });
   const main = list.status === 0 ? /^worktree (.+)$/m.exec(list.stdout)?.[1] : null;
   if (!main) return [];
-  return candidates.filter((t) => !t.branch.startsWith('-')
-    && git(['merge-base', '--is-ancestor', `refs/heads/${t.branch}`, 'HEAD'], { cwd: main, env }).status === 0).map((t) => t.id);
+  const merged = git(['for-each-ref', '--merged=HEAD', '--format=%(refname)', 'refs/heads/'], { cwd: main, env });
+  if (merged.status !== 0) return [];
+  const set = new Set(merged.stdout.split('\n').filter(Boolean));
+  return candidates.filter((t) => typeof t.branch === 'string' && !t.branch.startsWith('-') && set.has(`refs/heads/${t.branch}`)).map((t) => t.id);
 }
 
 // Step 1 of the tick, measured in the repository.
