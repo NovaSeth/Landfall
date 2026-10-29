@@ -246,3 +246,58 @@ test('overrides citing a route-override decision and written on this machine are
   const th = overrides(t, { kind: 'route-override', byHand: false });
   assert.equal(th.trivial.maxLoc, 1000000000);
 });
+
+// ---- fix round 2: AR-3 (a link created by init --state-dir comes with a trust entry, so it is never adopted) ----
+
+test('AR-3: init --state-dir on a fresh repository that ships a state dir with gates: verify refuses gates-untrusted, nothing runs', async (t) => {
+  const base = realpathSync(mkdtempSync(join(tmpdir(), 'trust-')));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  const dir = join(base, 'repo');
+  mkdirSync(dir);
+  const env = { ...ISO.env };
+  const git = (...a) => gitIn(dir, env, ...a);
+  git('-c', 'init.defaultBranch=main', 'init', '-q');
+  git('config', 'user.name', 'Test User');
+  git('config', 'user.email', 'test@example.com');
+  writeFileSync(join(dir, 'calc.test.mjs'), TESTS);
+  const ext = join(dir, 'ci-state');
+  mkdirSync(ext);
+  const ran = join(base, 'ran');
+  writeFileSync(join(ext, 'profile.json'), `${JSON.stringify({ ...profile.emptyProfile(), gates: [{ name: 'test', cmd: `touch '${ran}'`, timeoutS: 60, kind: 'test' }] }, null, 2)}\n`);
+  git('add', '-A');
+  git('commit', '-q', '-m', 'ships a state dir');
+  const head = git('rev-parse', 'HEAD');
+  rmSync(trustFile(), { force: true });
+  t.after(() => state.updateProject({ repo: dir, dataDir: dataDir(), names, patch: { stateDir: null } }));
+  const init = await cli(['init', '--state-dir', ext, '--handle', 'AB', '--yes'], { dir, env });
+  assert.equal(init.code, 0, init.text + init.stderr);
+  assert.equal(state.readProjects(dataDir(), names).projects[dir]?.stateDir, ext, 'linked');
+  const key = state.repoKey(ext);
+  const entry = state.readTrust(dataDir(), names).repos[key];
+  assert.deepEqual(entry, { gates: [], overrides: [] }, 'an empty trust entry is recorded with the link');
+  const store = state.open(ext, { names });
+  const id = state.allocateId(store, {
+    prefix: 'T', handle: 'AB',
+    build: (tid) => ({ id: tid, kind: 'task', title: 'a task', lane: null, owner: 'AB', class: 'trivial', classHistory: [{ class: 'trivial', reason: 'trivial: test', at: AT }], status: 'dispatched', round: 0, events: [], base: head, branch: null }),
+  });
+  const res = await cli(['verify', id, '--ci', '--yes'], { dir, env });
+  assert.deepEqual([res.code, codes(res)], [7, ['gates-untrusted']], JSON.stringify(res.env.errors));
+  assert.equal(existsSync(ran), false);
+  assert.equal(state.readTrust(dataDir(), names).repos[key]?.adoptedAt, undefined, 'not adopted');
+});
+
+test('AR-3: an existing link without a trust entry is adopted once; a gate changed by hand afterwards is not adopted again', async (t) => {
+  const r = repo(t);
+  rmSync(join(r.stateDir, 'local', '.machine'));
+  rmSync(trustFile(), { force: true });
+  state.updateProject({ repo: r.dir, dataDir: dataDir(), names, patch: { stateDir: r.stateDir } }); // a link from before this release
+  t.after(() => state.updateProject({ repo: r.dir, dataDir: dataDir(), names, patch: { stateDir: null } }));
+  const first = await verifyCi(r);
+  assert.notEqual(first.code, 7, JSON.stringify(first.env.errors));
+  assert.equal(existsSync(r.ran), true);
+  rmSync(r.ran);
+  writeProfile(r, [{ name: 'test', cmd: `touch '${r.ran}' && node --test --test-reporter=dot`, timeoutS: 120, kind: 'test' }]);
+  const second = await verifyCi(r);
+  assert.deepEqual([second.code, codes(second)], [7, ['gates-untrusted']], JSON.stringify(second.env.errors));
+  assert.equal(existsSync(r.ran), false);
+});

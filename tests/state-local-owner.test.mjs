@@ -289,3 +289,64 @@ test('F5: a write that moves local/ aside first adds local.foreign-*/ to an olde
   assert.equal(foreignDirs(store).length, 1);
   assert.ok(readFileSync(join(store, '.gitignore'), 'utf8').split('\n').includes('local.foreign-*/'));
 });
+
+// ---- fix round 2: F1 (the non-adoption entry is written before the rename; a failed trust write aborts the move) ----
+
+test('F1 r2: a trust.json write failure on the move path aborts the move with an error naming trust.json; a retry of isTrusted does not adopt', async (t) => {
+  const { dir, store } = await shippedClone(t);
+  writeFileSync(join(store, 'profile.json'), `${JSON.stringify({ schema: 1, gates: GATES }, null, 2)}\n`);
+  state.updateProject({ repo: dir, dataDir: dataDirOf(), names, patch: { stateDir: store } });
+  t.after(() => state.updateProject({ repo: dir, dataDir: dataDirOf(), names, patch: { stateDir: null } }));
+  const file = join(dataDirOf(), 'trust.json');
+  const saved = existsSync(file) ? readFileSync(file, 'utf8') : null;
+  rmSync(file, { force: true });
+  mkdirSync(file); // the injected failure: trust.json cannot be read or replaced
+  t.after(() => { rmSync(file, { recursive: true, force: true }); if (saved !== null) writeFileSync(file, saved); });
+  assert.throws(() => state.open(store, { names }).write('config', null, { flags: { engine: 'on' } }), (err) => /trust\.json/.test(err.message), 'the write refuses, naming trust.json');
+  assert.equal(foreignDirs(store).length, 0, 'nothing was moved aside');
+  assert.ok(existsSync(join(store, 'local', 'loop.json')), 'the shipped local/ is still in place');
+  assert.equal(existsSync(join(store, 'config.json')), false, 'nothing was written');
+  rmSync(file, { recursive: true, force: true });
+  const retry = state.isTrusted({ dir: store, dataDir: dataDirOf(), names, kind: 'gates', sha: state.gatesShaOf(GATES) });
+  assert.deepEqual([retry.trusted, retry.adopted], [false, false], 'adopted after a failed trust write');
+});
+
+test('F1 r2: while a move-aside is paused before its rename, the non-adoption entry already exists; isTrusted during and after the move never adopts', async (t) => {
+  const { base, dir, store } = await shippedClone(t);
+  writeFileSync(join(store, 'profile.json'), `${JSON.stringify({ schema: 1, gates: GATES }, null, 2)}\n`);
+  state.updateProject({ repo: dir, dataDir: dataDirOf(), names, patch: { stateDir: store } });
+  t.after(() => state.updateProject({ repo: dir, dataDir: dataDirOf(), names, patch: { stateDir: null } }));
+  const signals = join(base, 'signals');
+  mkdirSync(signals);
+  writeFileSync(join(base, 'w.mjs'), `const s = await import(${JSON.stringify(lib('state/index.mjs'))});\nconst names = ${JSON.stringify(names)};\ns.open(${JSON.stringify(store)}, { names }).write('config', null, ${JSON.stringify(config)});\n`);
+  const w = new Promise((done) => {
+    const p = spawn(process.execPath, [join(base, 'w.mjs')], { env: { ...ISO.env, [`${names.envPrefix}TEST_MOVE_PAUSE`]: signals }, stdio: ['ignore', 'pipe', 'pipe'] });
+    let err = '';
+    p.stderr.on('data', (d) => { err += d; });
+    p.on('close', (code) => done({ code, err }));
+  });
+  for (let i = 0; i < 200 && !existsSync(join(signals, 'paused')); i++) await sleep(25);
+  assert.ok(existsSync(join(signals, 'paused')), 'the writer paused inside the move-aside');
+  const sha = state.gatesShaOf(GATES);
+  const key = state.repoKey(store);
+  const entry = state.readTrust(dataDirOf(), names).repos[key];
+  const during = state.isTrusted({ dir: store, dataDir: dataDirOf(), names, kind: 'gates', sha });
+  writeFileSync(join(signals, 'go'), '');
+  const res = await w;
+  assert.equal(res.code, 0, res.err);
+  assert.ok(entry, 'the non-adoption entry is written before the rename');
+  assert.equal(entry.adoptedAt, undefined);
+  assert.deepEqual([during.trusted, during.adopted], [false, false]);
+  assert.equal(foreignDirs(store).length, 1);
+  const after = state.isTrusted({ dir: store, dataDir: dataDirOf(), names, kind: 'gates', sha });
+  assert.deepEqual([after.trusted, after.adopted], [false, false]);
+  assert.equal(state.readTrust(dataDirOf(), names).repos[key]?.adoptedAt, undefined);
+});
+
+test('F1 r2: the move lock (.local-move.lock) is gitignored: in a new .gitignore and added to an older one', async (t) => {
+  const { store } = await shippedClone(t);
+  assert.ok(readFileSync(join(store, '.gitignore'), 'utf8').split('\n').includes('.local-move.lock'), 'init writes it');
+  writeFileSync(join(store, '.gitignore'), 'local/\n.*.tmp\n');
+  state.open(store, { names }).write('config', null, config);
+  assert.ok(readFileSync(join(store, '.gitignore'), 'utf8').split('\n').includes('.local-move.lock'), 'an older .gitignore gains it');
+});
