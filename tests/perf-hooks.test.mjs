@@ -110,13 +110,15 @@ const p95 = (xs) => { const s = [...xs].sort((a, b) => a - b); return s[Math.min
 
 // The judge itself, driven with fakes: a machine that is slow in wall time but not in CPU passes, a hook that burns CPU or hangs fails.
 test('the budget judges CPU time: slow wall time alone passes, CPU over the limit or a hang fails', () => {
+  // the judge itself, with an explicit limit: CI sets PERF_P95_MS for the measured run, never for this check
+  const limit = { p95Ms: 300 };
   const fine = { cpuMs: 90, wallMs: 100 };
-  assert.deepEqual(judgeBudget({ h: Array.from({ length: 20 }, () => fine) }), []);
-  assert.deepEqual(judgeBudget({ h: Array.from({ length: 20 }, () => ({ cpuMs: 90, wallMs: 4000 })) }), [], 'a loaded machine: wall time 40x, same CPU');
-  assert.match(judgeBudget({ h: Array.from({ length: 20 }, () => ({ cpuMs: 400, wallMs: 450 })) })[0], /CPU p95 400 ms > 300 ms/);
-  assert.match(judgeBudget({ h: [...Array.from({ length: 19 }, () => fine), { cpuMs: 1200, wallMs: 1300 }] }).join('\n'), /CPU max 1200 ms/);
-  assert.match(judgeBudget({ h: [fine, { cpuMs: 10, wallMs: 6000 }] })[0], /hang guard/);
-  assert.match(judgeBudget({ h: [{ cpuMs: NaN, wallMs: 10 }] })[0], /not reported/);
+  assert.deepEqual(judgeBudget({ h: Array.from({ length: 20 }, () => fine) }, limit), []);
+  assert.deepEqual(judgeBudget({ h: Array.from({ length: 20 }, () => ({ cpuMs: 90, wallMs: 4000 })) }, limit), [], 'a loaded machine: wall time 40x, same CPU');
+  assert.match(judgeBudget({ h: Array.from({ length: 20 }, () => ({ cpuMs: 400, wallMs: 450 })) }, limit)[0], /CPU p95 400 ms > 300 ms/);
+  assert.match(judgeBudget({ h: [...Array.from({ length: 19 }, () => fine), { cpuMs: 1200, wallMs: 1300 }] }, limit).join('\n'), /CPU max 1200 ms/);
+  assert.match(judgeBudget({ h: [fine, { cpuMs: 10, wallMs: 6000 }] }, limit)[0], /hang guard/);
+  assert.match(judgeBudget({ h: [{ cpuMs: NaN, wallMs: 10 }] }, limit)[0], /not reported/);
 });
 
 test('hook latency on a 10,000-file repository: p95 ≤ 300 ms, max < 1 s of CPU per hook (wall clock only as a 5 s hang guard)', async (t) => {

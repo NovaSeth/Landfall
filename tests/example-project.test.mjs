@@ -5,10 +5,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { isolatedEnv } from './helpers/isolated-env.mjs';
 
-const root = join(import.meta.dirname, '..');
+const root = join(dirname(fileURLToPath(import.meta.url)), '..'); // import.meta.dirname needs Node 20.11 (GC10: 18)
 const example = join(root, 'examples', 'notes-api');
 const walk = (dir) => readdirSync(dir).flatMap((n) => (statSync(join(dir, n)).isDirectory() ? walk(join(dir, n)) : [join(dir, n)]));
 
