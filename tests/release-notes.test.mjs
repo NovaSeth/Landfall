@@ -25,7 +25,7 @@ test('docs/known-limitations.md names the package version in its title', () => {
 test('the README heading shows the package version, and its What\'s new names it', () => {
   const readme = read('README.md');
   const heading = readme.split('\n').find((l) => /^# /.test(l));
-  assert.match(heading, new RegExp(`<sup>${version.replace(/\./g, '\\.')}</sup>`), `the first heading shows ${version}: ${heading}`);
+  assert.equal(heading.replace(/^# \S+ /, ''), `(${version})`, `the first heading shows ${version} in parentheses, level with the title: ${heading}`);
   assert.ok(readme.includes(`## What's new in ${version}`), `a What's new section for ${version}`);
 });
 
