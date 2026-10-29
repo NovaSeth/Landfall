@@ -69,8 +69,10 @@ export function renderBrief({ template, task, role, gates, lease, review = null,
     filled.add(m);
     return fills[m];
   }).split('\n');
-  // after the Executor line, below the review and the focus: lessons that match the title and the executor numbers
-  const extra = [...(lessons ? [`Lessons: ${lessons}`] : []), ...(evidence ? [`Executor evidence: ${evidence}`] : [])];
+  // after the Executor line, below the review and the focus: lessons that match the title and the executor numbers;
+  // both come from state text (lesson records, executor labels): quoted data in a text fence (SEC-14)
+  const extra = [...(lessons ? ['Lessons (state records matched to the title):', FENCE_MARKER, '```text', fenceLine(`- ${dataLine(lessons)}`), '```'] : []),
+    ...(evidence ? ['Executor evidence (receipts):', FENCE_MARKER, '```text', fenceLine(`- ${dataLine(evidence)}`), '```'] : [])];
   if (extra.length) lines.splice(lines.findIndex((l) => l.startsWith('Executor: ')) + 1, 0, ...extra);
   if (lease) lines.splice(lines.findIndex((l) => l.startsWith(WORKTREE)) + 1, 0, `Lease env (the scheduler's slot for this task): ${Object.entries(lease).map(([k, v]) => `${k}=${v}`).join(' ')}`);
   if (review) lines.splice(lines.findIndex((l) => l.startsWith('Executor: ')) + 1, 0, `Review: ${review.text}`);
