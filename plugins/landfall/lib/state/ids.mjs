@@ -13,6 +13,7 @@ import { format } from './schema.mjs';
 
 const SERIES = {
   B: { dir: 'findings', file: (id) => `findings/${id}.json`, kind: 'finding', entry: (h) => new RegExp(`^B-${h}-([1-9]\\d{0,5})\\.json$`) },
+  L: { dir: 'lessons', file: (id) => `lessons/${id}.json`, kind: 'lesson', entry: (h) => new RegExp(`^L-${h}-([1-9]\\d{0,5})\\.json$`) },
   T: { dir: 'tasks', file: (id) => `tasks/${id}/task.json`, kind: 'task', entry: (h) => new RegExp(`^T-${h}-([1-9]\\d{0,5})$`) },
   D: { dir: 'decisions', file: (id) => `decisions/${id}.md`, kind: null, entry: (h) => new RegExp(`^D-${h}-([1-9]\\d{0,5})\\.md$`) },
 };
@@ -24,7 +25,7 @@ function highest(store, prefix, handle) {
   for (const name of store.entries(series.dir)) {
     const m = entry.exec(name);
     if (!m) continue;
-    const id = prefix === 'D' ? name.slice(0, -3) : prefix === 'B' ? name.slice(0, -5) : name;
+    const id = prefix === 'D' ? name.slice(0, -3) : prefix === 'B' || prefix === 'L' ? name.slice(0, -5) : name;
     if (store.readText(series.file(id)) !== null) top = Math.max(top, Number(m[1]));
   }
   const tomb = new RegExp(`^${prefix}-${handle}-([1-9]\\d{0,5})\\.json$`);
@@ -51,14 +52,14 @@ function render(store, series, id, content) {
 
 function checkSeries(prefix, handle) {
   const series = Object.hasOwn(SERIES, prefix) ? SERIES[prefix] : null;
-  if (!series) throw new StateError('invalid-value', 'USAGE', `${JSON.stringify(prefix)} is not an ID prefix (T, D or B)`);
+  if (!series) throw new StateError('invalid-value', 'USAGE', `${JSON.stringify(prefix)} is not an ID prefix (T, D, B or L)`);
   if (typeof handle !== 'string' || !PATTERNS.handle.test(handle)) throw new StateError('invalid-value', 'USAGE', `${JSON.stringify(handle)} is not a handle (2-4 letters A-Z)`);
   return series;
 }
 
 const exhausted = (prefix, handle) => new StateError('id-space-exhausted', 'USAGE', `the ${prefix}-${handle} series is past ${LIMITS.idNumber}`, { hint: 'register another handle for new IDs' });
 
-// Allocates the next ID of `prefix` (T, D or B) for a registered `handle`; build(id) gives the object's content
+// Allocates the next ID of `prefix` (T, D, B or L) for a registered `handle`; build(id) gives the object's content
 // (a task document for T, the decision text for D). Returns the ID.
 export function allocateId(store, { prefix, handle, build }) {
   const series = checkSeries(prefix, handle);
