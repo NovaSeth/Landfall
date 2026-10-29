@@ -175,6 +175,7 @@ function endDq(s, i, d) {
     const c = s[j];
     if (c === '\\') j += 2;
     else if (c === '"') return j + 1;
+    else if (c === '$' && s[j + 1] === '$') j += 2;
     else if (c === '`') { j = endTick(s, j + 1); if (j < 0) return j; }
     else if (c === '$' && (s[j + 1] === '(' || s[j + 1] === '{')) { j = endSub(s, j + 2, s[j + 1], d + 1); if (j < 0) return j; }
     else j++;
@@ -190,7 +191,9 @@ function endSub(s, i, open, d) {
     const c = s[j];
     const start = j === i || WORD_START.test(s[j - 1]);
     if (c === '\\') { j += 2; continue; }
-    if (c === "'") j = s[j - 1] === '$' ? endAnsi(s, j + 1) : endSq(s, j + 1);
+    if (c === '$' && s[j + 1] === '$') { j += 2; continue; }
+    if (c === '$' && s[j + 1] === "'") j = endAnsi(s, j + 2);
+    else if (c === "'") j = endSq(s, j + 1);
     else if (c === '"') j = endDq(s, j + 1, d);
     else if (c === '`') j = endTick(s, j + 1);
     else if (c === '$' && (s[j + 1] === '(' || s[j + 1] === '{')) j = endSub(s, j + 2, s[j + 1], d + 1);
@@ -204,24 +207,61 @@ function endSub(s, i, open, d) {
   return -1;
 }
 // The raw text with every $(…) and `…` removed with its body, read with the shell's quoting (single quotes keep a
-// substitution as text, quoted and escaped parentheses do not end one: F1); uncertain when an end cannot be found
-// with certainty (the rest is dropped and the text is a guarded hit); one unclosed at the end drops the rest (the
-// other variants keep it).
+// substitution as text, quoted and escaped parentheses do not end one: F1; a quote after an escaped $ or after $$ is no
+// $'…': R2F1); a top-level comment is dropped to its newline and a heredoc body is data (AR-1). uncertain when an end
+// cannot be found with certainty, or when an unclosed construct has a newline after its opening (fail closed: AR-1);
+// one unclosed on the last line drops the rest (bash refuses the text; the other variants keep it).
 export function subsDropped(s) {
-  let out = ''; let dq = false;
+  let out = ''; let dq = false; const docs = [];
+  const unclosed = (k, j) => ({ text: out, uncertain: k === -2 || s.indexOf('\n', j) >= 0 });
   for (let j = 0; j < s.length;) {
     const c = s[j];
     if (c === '\\') { out += s.slice(j, j + 2); j += 2; continue; }
-    if (c === "'" && !dq) {
-      const k = s[j - 1] === '$' ? endAnsi(s, j + 1) : endSq(s, j + 1);
+    if (c === '$' && s[j + 1] === '$') { out += '$$'; j += 2; continue; }
+    if ((c === "'" || (c === '$' && s[j + 1] === "'")) && !dq) {
+      const k = c === '$' ? endAnsi(s, j + 2) : endSq(s, j + 1);
       if (k < 0) { out += s.slice(j); break; }
       out += s.slice(j, k); j = k; continue;
     }
     if (c === '"') { dq = !dq; out += c; j++; continue; }
     if (c === '`' || (c === '$' && s[j + 1] === '(')) {
       const k = c === '`' ? endTick(s, j + 1) : endSub(s, j + 2, '(', 1);
-      if (k < 0) return { text: out, uncertain: k === -2 };
+      if (k < 0) return unclosed(k, j);
       j = k; continue;
+    }
+    if (!dq && c === '#' && (j === 0 || WORD_START.test(s[j - 1]))) { const k = s.indexOf('\n', j); if (k < 0) break; j = k; continue; }
+    if (!dq && c === '<' && s[j + 1] === '<' && s[j + 2] !== '<' && s[j - 1] !== '<') {
+      let k = j + 2; const strip = s[k] === '-'; if (strip) k++;
+      while (s[k] === ' ' || s[k] === '\t') k++;
+      const w0 = k; while (k < s.length && !/[\s;&|()<>]/.test(s[k])) k++;
+      const word = s.slice(w0, k);
+      if (word) docs.push({ delim: word.replace(/['"\\]/g, ''), strip, quoted: /['"\\]/.test(word) });
+      out += s.slice(j, k); j = k; continue;
+    }
+    if (!dq && c === '\n' && docs.length) {
+      out += c; j++;
+      for (const d of docs.splice(0)) {
+        while (j < s.length) {
+          let e = s.indexOf('\n', j); if (e < 0) e = s.length;
+          const line = s.slice(j, e);
+          if ((d.strip ? line.replace(/^\t+/, '') : line) === d.delim) { out += s.slice(j, e + 1); j = e + 1; break; }
+          if (d.quoted) out += s.slice(j, e + 1);
+          else {
+            for (let i = j; i < e;) {
+              if (s[i] === '\\') { out += s.slice(i, i + 2); i += 2; continue; }
+              if (s[i] === '`' || (s[i] === '$' && s[i + 1] === '(')) {
+                const k = s[i] === '`' ? endTick(s, i + 1) : endSub(s, i + 2, '(', 1);
+                if (k < 0 || k > e) return { text: out, uncertain: true };
+                i = k; continue;
+              }
+              out += s[i++];
+            }
+            if (e < s.length) out += '\n';
+          }
+          j = e + 1;
+        }
+      }
+      continue;
     }
     out += c; j++;
   }
@@ -236,11 +276,14 @@ export function stripParams(s) {
   const n = s.length;
   const nextOf = (ch) => { const a = new Int32Array(n + 1).fill(-1); for (let i = n - 1; i >= 0; i--) a[i] = s[i] === ch ? i : a[i + 1]; return a; };
   const rb = nextOf(']'); const cb = nextOf('}');
+  // the end of the word run and of the operator run that start at i, once per text (each opening is O(1): R2F2)
+  const runEnd = (inRun) => { const a = new Int32Array(n + 1); a[n] = n; for (let i = n - 1; i >= 0; i--) a[i] = inRun(i) ? a[i + 1] : i; return a; };
+  const we = runEnd((i) => isWord(s.charCodeAt(i))); const oe = runEnd((i) => PARAM_OPS.includes(s[i]));
   const tryAt = (j) => {
-    while (j < n && isWord(s.charCodeAt(j))) j++;
+    j = we[Math.min(j, n)];
     if (s[j] === '[') { const k = rb[j + 1]; if (k < 0) return null; j = k + 1; }
     let k = j; if (s[k] === ':') k++;
-    let m = k; while (m < n && PARAM_OPS.includes(s[m])) m++;
+    const m = oe[Math.min(k, n)];
     if (m > k && cb[m] >= 0) return [cb[m] + 1, s.slice(m, cb[m])];
     return s[j] === '}' ? [j + 1, ''] : null;
   };
