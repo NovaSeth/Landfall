@@ -1,8 +1,10 @@
-# Known limitations (2.4.1)
+# Known limitations (2.5.0)
 
 ## Not in this release
 - The adaptive engine runs in shadow mode: `landfall tier` explains the recommended tier; tier changes are not applied automatically.
-- No example project; the evaluation covers small tasks only ([evaluation.md](evaluation.md)).
+- The evaluation covers small tasks only ([evaluation.md](evaluation.md)); the outcome benchmark against other frameworks is pre-registered ([benchmark.md](benchmark.md)) and runs after this release.
+- Context headroom warnings run in shadow (they are logged, not shown) until a decision turns them on; the native task mirror is off by default (`landfall flags set task-mirror on`).
+- Lessons become active only through `landfall lessons promote`, which needs 20 or more receipts on each side; matching lessons appear in briefs only, not at edit time.
 - A task created `--after` others waits until they are done or cancelled; the loop does not merge them for it, and the brief's base is still the orchestrator's to fill.
 - Dashboard: rows only, no buttons; no round-by-round view of a task's findings; no agent transcript opened from the pane; no band above the prompt.
 - No `qa` pack or agent.
@@ -21,6 +23,9 @@
 - Profile scan: `llm` is read from dependency manifests by a section-aware reader, not a TOML parser; a malformed pyproject.toml may still yield the fact, and multi-line inline tables or arrays inside inline tables are not read. Override with `landfall profile set llm true|false`.
 - Scheduler admission is available in on mode (a full agent table denies a spawn and names `landfall slots`). The default stays shadow, where a would-be denial is logged to `local/shadow.jsonl` and spawns are not refused, until the 50-spawn false-deny check.
 - Run records are command-owned and the supervisor derives sandbox and cwd from the role; a deliberate rewrite of a record between that check and the spawn is not defended (R90).
+- External runs: Gemini as an implementer (`auto_edit`) is tested with a fake provider only; an implementer run does not check that the worktree is on the task's branch or clean; run temp directories are not removed. A provider binary replaced at the same path between the check and the spawn is not detected.
+- Leases and run records gained optional fields (`bin`, `outDirId`, `briefSha256`, `members`) without a schema bump (D-MG-24): with two plugin versions on one machine while runs are live, the older one drops such records and can admit one run too many.
+- GitHub mirror: the issue label and marker derive from the plugin's name, so after a rename the mirror creates new issues instead of updating the old ones.
 - Bash guard: a seat belt, not a security boundary.
   - `mv <dir> …` and `rsync --delete` are not modelled as removals; a state path hidden in `--pathspec-from-file`, created through a link on the same line, or built only from variables is not detected. With the shell's working directory inside the state directory, every non-read command is blocked.
   - A push without an explicit `<src>:<dst>` refspec is blocked when an earlier command on the same line may change the branch (for example `npm test && git push origin feat/x`); push in a separate command.

@@ -1,8 +1,35 @@
 # Changelog
 
-## Unreleased
+## 2.5.0
 
-- **External implementers:** `exec --role implementer [--brief <file>]` runs another provider in the task's worktree (recorded by `task start`) under its write sandbox, fed the task brief or the given file, and the run shows in the dashboard's AGENTS like a review. ORC-26: another provider runs only through `exec`, never by hand.
+The backlog is closed: every open task of the plan is built, and the part of the 2.4.0 security audit that 2.4.1 missed (external runs) is fixed. Each change has a test that failed first.
+
+- **External runs, hardened** (audit area B):
+  - Provider output is cleaned, redacted with the built-in and the project's patterns, and split per stream with at most 64 KiB pending. A provider printing escapes, tabs or megabytes without a newline can no longer stall the supervisor or reach state raw, and an unreadable project pattern file stops the run before a provider starts.
+  - The provider starts by the absolute path exec resolved and recorded, with only absolute PATH entries, so a `./codex` shipped in a repository never runs. A run record whose model, out directory, binary or brief does not match what exec bound is refused as tampered.
+  - The provider gets a minimal environment: the base variables, the lease variables and its own login variables. `providers add --env` names a declared provider's own, and names that change how a program loads (NODE_OPTIONS, LD_*, DYLD_*, GIT_* and similar) are refused.
+  - Every load of providers.json checks declared providers again. `{sandbox}` is mandatory, and a reviewer mapped to a write mode loses the role.
+  - Briefs are read without following links; each run is bound to its own 0700 temp directory by device and inode.
+  - The orphan reaper signals a process group only through a member identity it recorded (refreshed while the leader lives), so a reused group id never gets a signal.
+- **External implementers (ORC-26):** `exec --role implementer [--brief <file>]` runs Codex, Gemini or a declared provider in the task's worktree under its write sandbox, with the brief's sha pinned, and the run shows in the dashboard like a review. Another provider runs only through `exec`.
+- **External reviews:** `review record --kind external --run <run ID>` records an external review only from a done reviewer run of the task, with the run ID and the out file's sha256. A review file that claims an external reviewer is refused, and a round stored without its run no longer counts.
+- **Lessons:** `landfall lessons add|list|show|retire|find|promote` record evidence-gated lessons, with a cue, a lesson naming a component, and evidence that exists in the state. Admission is code and lists every problem at once. A lesson starts in shadow and becomes active only when 20 or more receipts on each side show the effect. Matching lessons appear in the brief as fenced data. PRI-9 points at it.
+- **Executor suggestion:** `route --executor` suggests an executor for the task's class once two executors have 20 or more receipts each and their first-pass intervals separate; the brief carries the numbers.
+- **Context headroom (shadow):** a hook warns once at 35 % and once more at 25 % context left. It detects a 200k or 1M window from the transcript; `LANDFALL_CONTEXT_WINDOW` overrides.
+- **Native task mirror (opt-in):** with `task-mirror` on, dispatched tasks are mirrored in Claude Code's task list, and completing one there needs Landfall's `task done` first.
+- **GitHub mirror:** `landfall mirror github [--repo <owner/name>] [--dry-run]` writes one issue per task, one way and idempotently, and never reads issues back.
+- **1.x import:** `landfall import-1x [--dry-run]` imports a 1.x ledger once: rulings become decisions, tasks keep their status, shared tasks and findings come along, and the 1.x files are listed for you to remove. Nothing is deleted.
+- **Admission on mode:** with `admission` on, a full agent table denies a spawn and names `landfall slots`; guard-bash keeps a working agent's lease alive. The default stays shadow.
+- **Example project:** `examples/notes-api`, a small JSON service built end to end with Landfall, its state committed next to the code.
+- **Smaller fixes:**
+  - `landfall secrets` in a task worktree scans that worktree.
+  - The text tick keeps a step command byte-exact.
+  - `findings take` is atomic.
+  - `doctor` warns below git 2.24.
+  - A failed trust write leaves no empty state directory.
+  - `route --probe` says when threshold overrides are ignored.
+- **Dashboard:** unrouted new tasks fold into one `⏸ <n> in backlog` line.
+- **Tests:** timing tests judge CPU time, run deadlines on an injected clock, and e2e flows have timeouts that fit a busy machine.
 
 ## 2.4.1
 

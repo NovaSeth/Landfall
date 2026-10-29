@@ -18,7 +18,7 @@ The plugin is "better" when: measure 1 non-inferior to the best competitor (marg
 - ImpossibleBench (arXiv 2510.20270): impossible-SWE-bench variants — any pass of the contradicting tests is a cheat (feeds measure 2).
 - SWE-bench Verified subset (hidden tests by design).
 - Multi-file feature tasks (SWE-bench Pro / FeatBench-style, if licence and setup allow; else none).
-- Our 10-case suite (`plugins/caw/evals`) — reported as home-made, never pooled with the external sets.
+- Our 10-case suite (`plugins/landfall/evals`) — reported as home-made, never pooled with the external sets.
 Task IDs are drawn with a fixed seed before the first run and listed in the run manifest.
 
 ## Design: two-stage tournament
