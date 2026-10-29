@@ -267,3 +267,18 @@ test('F5: a change of the project pattern file reruns the gates instead of reusi
   assert.ok(p.runs() > n, 'the gate ran again');
   assert.equal(v.out.data.reusedFrom ?? null, null);
 });
+
+// Fix round 2 (review r2, F6): a merged span is masked completely, no prefix of one pattern inside another's match.
+test('F6: overlapping matches of two patterns are masked completely (no visible prefix)', () => {
+  const extra = secretsLib.projectPatterns('4826\n[0-9]{16}').patterns;
+  const out = redactLib.redact('4826123456789012', extra);
+  assert.ok(!/[0-9]/.test(out.replace(/\(\d+ chars\)/g, '')), out);
+  assert.match(out, /^\*{8,} \(16 chars\)$/);
+});
+
+test('F6: three overlapping patterns are masked completely over the union', () => {
+  const extra = secretsLib.projectPatterns('48261\n1234567890\n6789012').patterns;
+  const out = redactLib.redact('id 4826123456789012 end', extra);
+  assert.ok(!/[0-9]/.test(out.replace(/\(\d+ chars\)/g, '')), out);
+  assert.match(out, /^id \*{8,} \(16 chars\) end$/);
+});
