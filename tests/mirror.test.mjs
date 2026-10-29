@@ -105,7 +105,7 @@ test('a second run with no changes makes zero writes', async (t) => {
   const r = setup(t, TASKS);
   await cli(r, ['mirror', 'github', '--repo', 'acme/widgets', '--yes']);
   listed(r);
-  rmSync(r.log);
+  rmSync(r.log, { force: true });
   const res = await cli(r, ['mirror', 'github', '--repo', 'acme/widgets', '--yes']);
   assert.equal(res.code, 0, res.stderr);
   assert.deepEqual(res.env.data.plan.map((p) => p.action), ['none', 'none']);
@@ -116,7 +116,7 @@ test('a title change edits the existing issue by number; nothing is created', as
   const r = setup(t, TASKS);
   await cli(r, ['mirror', 'github', '--repo', 'acme/widgets', '--yes']);
   listed(r);
-  rmSync(r.log);
+  rmSync(r.log, { force: true });
   r.store.write('task', 'T-MG-1', { ...r.store.read('task', 'T-MG-1'), title: 'renamed task' });
   const res = await cli(r, ['mirror', 'github', '--repo', 'acme/widgets', '--yes']);
   assert.equal(res.code, 0, res.stderr);
@@ -130,7 +130,7 @@ test('a task turned done closes its open issue', async (t) => {
   const r = setup(t, TASKS);
   await cli(r, ['mirror', 'github', '--repo', 'acme/widgets', '--yes']);
   listed(r);
-  rmSync(r.log);
+  rmSync(r.log, { force: true });
   r.store.write('task', 'T-MG-1', { ...r.store.read('task', 'T-MG-1'), status: 'done' });
   await cli(r, ['mirror', 'github', '--repo', 'acme/widgets', '--yes']);
   const w = writes(r);
