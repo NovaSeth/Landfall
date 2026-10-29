@@ -89,7 +89,9 @@ const done = (r) => cli(['task', 'done', r.id, '--yes'], r);
 const show = (res) => `${res.text}\n${res.stderr}`;
 const errorCodes = (res) => res.env.errors.map((e) => e.code);
 const setGates = (r, gates) => profile.openStore(r.stateDir, names).write('profile', null, { ...profile.emptyProfile(), gates });
-const review = (r, round, verdict, kind = 'claude') => r.vstore.write('review', verify.reviewKey(r.id, round), { verdict, reviewer: { kind, id: kind === 'claude' ? 'claude:reviewer' : 'codex' }, findings: [] });
+// An external round counts only with the run it came from and its out file's sha256 (T-MG-91; review record --run).
+const review = (r, round, verdict, kind = 'claude') => r.vstore.write('review', verify.reviewKey(r.id, round), { verdict, reviewer: { kind, id: kind === 'claude' ? 'claude:reviewer' : 'codex' }, findings: [],
+  ...(kind === 'external' ? { run: `codex-${r.id}-reviewer-${round}`, sha256: 'a'.repeat(64) } : {}) });
 const commitAll = (r, msg = 'work') => { r.git('add', '-A'); r.git('commit', '-q', '-m', msg); return r.git('rev-parse', 'HEAD'); };
 function snapshot(dir) {
   const files = {};
