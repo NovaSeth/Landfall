@@ -28,6 +28,7 @@ import { flagsOf, readConfig } from '../config/index.mjs';
 import { trackedSideFiles } from '../gen/index.mjs';
 import { git } from '../git/index.mjs';
 import { HOOKS } from '../hooks/registry.mjs';
+import { STORE_KINDS, outsideMerges } from '../loop/index.mjs';
 import { run } from '../proc/index.mjs';
 import { detectProviders } from '../providers/index.mjs';
 import { readProfile } from '../profile/index.mjs';
@@ -140,6 +141,21 @@ function releaseRow({ names, io, id, installed, marketplaces }) {
 }
 
 // Read-only (write: false): the providers found with their auth; none found → warn.
+// Done tasks whose branch was merged by hand (T-MG-80): a row only when there are some, with the count.
+function outsideRows({ names, io }) {
+  try {
+    const where = resolveRepo({ cwd: io.cwd, env: io.env, names });
+    if (!where.active) return [];
+    const store = openStore(where.dir, { names, kinds: STORE_KINDS });
+    const ids = outsideMerges({ where, env: io.env, tasks: store.list('task').map((t) => store.read('task', t)) });
+    if (ids.length === 0) return [];
+    return [row('outside-merges', 'warn', `${ids.length} done task(s) merged outside ${names.bin}: ${ids.slice(0, 5).join(', ')}${ids.length > 5 ? ', …' : ''}`,
+      `one batch records them: ${names.bin} task merge --adopt ${ids.join(' ')}`)];
+  } catch {
+    return [];
+  }
+}
+
 function providersRow({ names, io }) {
   try {
     const detected = detectProviders({ names, env: io.env, write: false, cacheOnly: true });
@@ -407,6 +423,7 @@ export function doctor({ names, io, version, pluginRoot }) {
     row('heartbeat', 'skip', 'not recorded: no hook writes a heartbeat in this version', 'nothing to fix; if hooks seem inactive, run /reload-plugins or restart Claude Code'),
     binRow({ names, io, pluginRoot }),
     ...repo.rows,
+    ...outsideRows({ names, io }),
     providersRow({ names, io }),
     schedulerRow({ names, io }),
     guardRow({ names, io }),

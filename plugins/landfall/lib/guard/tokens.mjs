@@ -98,6 +98,7 @@ export const GUARDED = Object.freeze([
   { id: 'check-secrets', word: /check-secrets/ },
   { id: 'hook files', word: /\.githooks|\.husky|\.git\/hooks|(^|[\s/=])\.git\/?($|\s)/ },
   { id: 'commit', word: /commit/ },
+  { id: 'task branch', word: /task\/t-\w/ }, // git merge / pull of a task branch into the target (git-shape.mjs, T-MG-80)
   { id: 'alias', word: /alias/ },
   { id: 'eval', word: /(^|[^\w-])eval($|[^\w-])/ },
   { id: 'exec env var', cased: ENV_WORD },

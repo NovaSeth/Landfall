@@ -12,7 +12,7 @@ import { join } from 'node:path';
 import { findingCounts } from '../findings/index.mjs';
 import { TIER_NAMES, evaluate } from '../engine/index.mjs';
 import { describe } from '../loop/command.mjs';
-import { DEFAULT_CAPS, LOOP, STORE_KINDS, nextSteps, readBudgets } from '../loop/index.mjs';
+import { DEFAULT_CAPS, LOOP, STORE_KINDS, nextSteps, outsideMerges, readBudgets } from '../loop/index.mjs';
 import { readWatch } from '../loop/table.mjs';
 import { readRuns } from '../receipts/index.mjs';
 import { snapshot } from '../sched/index.mjs';
@@ -54,11 +54,12 @@ function tasksOf(where, names, env) {
   const { email } = gitIdentity(where.repo, { env });
   const hash = email ? emailHash(email) : null;
   const doc = store.read(LOOP.name, null);
+  const outside = outsideMerges({ where, env, tasks: all });
   const table = nextSteps({
     tasks: all, runs: readRuns(join(where.local, 'runs')).runs, handles: team.map((d) => d.handle), me: team.find((d) => d.emailSha256 === hash)?.handle ?? null,
-    plan: null, lanesOn: store.read('config', null)?.flags?.lanes === 'on', caps: doc?.caps ?? DEFAULT_CAPS, now: Date.now(), bin: names.bin, budgets: readBudgets(where.dir, all), problem: null, dirty: () => [],
+    plan: null, lanesOn: store.read('config', null)?.flags?.lanes === 'on', caps: doc?.caps ?? DEFAULT_CAPS, now: Date.now(), bin: names.bin, budgets: readBudgets(where.dir, all), problem: null, dirty: () => [], outside,
   });
-  return { all, open: all.filter((t) => !CLOSED.has(t.status)), rows: [...table.steps, ...table.info], loop: doc };
+  return { all, open: all.filter((t) => !CLOSED.has(t.status)), rows: [...table.steps, ...table.info], outside, loop: doc };
 }
 
 const rowText = (r, status) => {
@@ -74,7 +75,7 @@ export function status({ names, io }) {
   const where = resolve({ cwd, env, names });
   const state = stateLine(where, names.bin);
   const tier = tierOf(where, names, env);
-  const t = where.active ? tasksOf(where, names, env) : { all: [], open: [], rows: [], loop: null };
+  const t = where.active ? tasksOf(where, names, env) : { all: [], open: [], rows: [], outside: [], loop: null };
   const leases = where.dataDir ? snapshot({ names, env }).leases.filter((l) => l.project === where.worktree) : []; // leases name their checkout (lib/sched)
 
   const watch = where.dataDir ? readWatch({ names, env, readings: io.readings ?? null }) : []; // ORC-24
@@ -104,6 +105,7 @@ export function status({ names, io }) {
       tier: tier.tier,
       tasks: t.open.map(summary),
       steps: t.rows,
+      outsideMerges: t.outside,
       loop: t.loop,
       leases,
       watch,

@@ -93,3 +93,16 @@ test('a short gate takes no lease', async (t) => {
   assert.equal(v.code, 0, v.text.slice(0, 1500));
   assert.doesNotMatch(readFileSync(s.probe, 'utf8'), /heavy-1/);
 });
+
+// T-MG-80: every full gate of verify runs under the heavy lease, the base measurement too (a base without a stored
+// baseline runs the suite again in a temporary worktree: lib/verify/base.mjs).
+test('the base measurement runs its long gate under the heavy lease as well', async (t) => {
+  const s = await setup(t, { timeoutS: 120, cmd: 'PLACEHOLDER' });
+  profile.openStore(s.stateDir, names).write('profile', null, { ...profile.emptyProfile(), gates: [{ name: 'test', cmd: `echo RUN >> ${s.probe}; ${probeCmd(s.probe)}`, timeoutS: 120, kind: 'test' }] });
+  const v = await s.run(['verify', s.id, '--yes', '--json']);
+  assert.equal(v.code, 0, v.text.slice(0, 1500));
+  const runs = readFileSync(s.probe, 'utf8').split('RUN\n').filter(Boolean);
+  assert.ok(runs.length >= 2, `the gate ran at HEAD and at the base: ${runs.length} runs`);
+  runs.forEach((r, k) => assert.match(r, /heavy-1/, `run ${k + 1} held the lease`));
+  assert.deepEqual(heavyLeases(s.data), [], 'released after');
+});

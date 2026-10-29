@@ -36,7 +36,7 @@ const LIVE_GRACE_S = 120; // a live-status run past capS + this is not live: its
 
 // Every rule ID this table cites (tests check that each resolves in the method).
 export const TABLE_RULES = Object.freeze(['FLW-3', 'ORC-4', 'FLW-4', 'ORC-9', 'FLW-6', 'PRI-6', 'ORC-5', 'REV-6', 'REV-20', 'REV-7', 'REV-5',
-  'REV-11', 'FLW-8', 'ORC-7', 'ORC-11', 'SPC-1', 'SPC-2', 'SPC-11', 'FLW-9', 'PRI-1', 'COL-24', 'FLW-7', 'ORC-24']);
+  'REV-11', 'FLW-8', 'ORC-7', 'ORC-11', 'SPC-1', 'SPC-2', 'SPC-11', 'FLW-9', 'PRI-1', 'COL-24', 'FLW-7', 'ORC-24', 'ORC-25']);
 
 const HEAVY_WAIT_MIN = 10;
 
@@ -179,7 +179,10 @@ function isLive(r, now, alive) {
   return alive(r);
 }
 
-export function nextSteps({ tasks = [], runs = [], handles = [], me = null, plan = null, lanesOn = false, caps, now, bin, budgets = {}, problem = null, dirty = () => [], watch = [], alive = supervisorAlive }) {
+// The most outside merges listed as steps; the rest are one "… n more" note (every eligible task is still checked).
+export const OUTSIDE_MAX = 50;
+
+export function nextSteps({ tasks = [], runs = [], handles = [], me = null, plan = null, lanesOn = false, caps, now, bin, budgets = {}, problem = null, dirty = () => [], outside = [], watch = [], alive = supervisorAlive }) {
   const steps = [];
   const info = [];
   const multi = handles.length > 1;
@@ -227,6 +230,11 @@ export function nextSteps({ tasks = [], runs = [], handles = [], me = null, plan
         steps.push(action(r.runId, `run ${r.status}${r.exit === null || r.exit === undefined ? '' : `, exit ${r.exit}`} for ${t.id}`, `collect its result: check the exit code and the result count, ${record}`, ['FLW-6']));
       }
     }
+    // done tasks whose branch was merged by hand: the merge is not in the state (T-MG-80)
+    // (fix round 2, F8: the caller's own are filtered first, so others' merges never push them past the cap)
+    const adoptable = outside.filter((id) => byId.has(id) && mine(byId.get(id)));
+    for (const id of adoptable.slice(0, OUTSIDE_MAX)) steps.push(action(id, 'merged outside landfall', `${bin} task merge --adopt ${id}`, []));
+    if (adoptable.length > OUTSIDE_MAX) info.push({ task: '…', state: `… ${adoptable.length - OUTSIDE_MAX} more merged outside ${bin}`, step: null, rules: ['ORC-25'], kind: 'others' });
     if (plan) {
       const next = plan.entries.find((e) => !tasks.some((t) => belongs(t, e.ref)));
       if (plan.entries.length === 0) steps.push(action('-', `${cell(plan.path)} has no "### Task <id>: <title>" entries`, 'give the plan its task headings, or tick without --plan', ['SPC-11']));

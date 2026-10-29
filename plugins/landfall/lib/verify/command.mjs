@@ -1,5 +1,5 @@
 // Commands of the verify unit (spec §8.1, §8.2), loaded by their rows in lib/cli/commands.mjs: `verify <id> [--ci]`,
-// `task done <id>`, `task merge <id> [--branch <b>]`, `review record <id> --from <file>`, `baseline show`,
+// `task done <id>`, `task merge <id> [--branch <b>]` (several IDs or --ready: a batch, batch.mjs), `review record <id> --from <file>`, `baseline show`,
 // `baseline pin --decision <D>`. Context comes from io (cwd, env), never from process state (REV-58). A typed error
 // of lib/state, lib/router or lib/profile becomes its exit code with message and hint.
 // Exit: verify and task merge by result (pass 0 · error 8 · any other 1); task done 0 when done; review record 0
@@ -10,8 +10,9 @@ import { ProfileError } from '../profile/index.mjs';
 import { RouteError } from '../router/index.mjs';
 import { StateError } from '../state/index.mjs';
 import { forTerminal } from '../text/clean.mjs';
+import { batchMerge } from './batch.mjs';
 import { markDone } from './done.mjs';
-import { mergeTask } from './merge.mjs';
+import { adoptMerged, mergeTask } from './merge.mjs';
 import { pinBaseline, showBaseline } from './pin.mjs';
 import { recordReview } from './review.mjs';
 import { verifyTask } from './run.mjs';
@@ -65,7 +66,28 @@ export const taskDone = typed(({ args, names, io }) => {
 });
 
 export const taskMerge = typed(({ args, flags, names, version, io }) => {
-  const r = mergeTask({ cwd: io.cwd, env: io.env, names, id: args.id, branch: flags.branch, version: version ?? null });
+  const ids = [].concat(args.id ?? []);
+  if (flags.adopt) {
+    if (flags.branch !== undefined) return { code: EXIT.USAGE, errors: [{ code: 'unexpected-flag', message: '--branch does not apply to --adopt', hint: `${names.bin} task merge --adopt <id…>` }] };
+    if (flags.ready) return { code: EXIT.USAGE, errors: [{ code: 'unexpected-flag', message: '--ready does not apply to --adopt', hint: `${names.bin} task merge --adopt <id…>` }] };
+    const a = adoptMerged({ cwd: io.cwd, env: io.env, names, ids, version: version ?? null });
+    const { exit, reasons, ...data } = a;
+    const lines = a.result === 'pass'
+      ? [`gates pass on ${a.target} at ${a.commit.slice(0, 12)}`, ...a.tasks.map((t) => `${t.task}  ${t.adopted ? 'adopted' : `not adopted: ${t.why}`}`)]
+      : [`gates ${a.result} on ${a.target} at ${a.commit.slice(0, 12)}: nothing recorded`, ...renderVerify(a.verify).slice(1)];
+    return { code: EXIT[exit], data, errors: reasons, text: `${forTerminal(lines.join('\n'))}\n` };
+  }
+  if (flags.ready && ids.length) return { code: EXIT.USAGE, errors: [{ code: 'unexpected-argument', message: '--ready takes the ready tasks itself: give no IDs', hint: `${names.bin} task merge --ready` }] };
+  if (!flags.ready && ids.length === 0) return { code: EXIT.USAGE, errors: [{ code: 'missing-argument', message: 'task merge: missing <id>', hint: `${names.bin} task merge <id…> | --ready` }] };
+  if (flags.ready || ids.length > 1) {
+    if (flags.branch !== undefined) return { code: EXIT.USAGE, errors: [{ code: 'unexpected-flag', message: '--branch applies to one ID only', hint: `${names.bin} task merge <id> --branch <branch>` }] };
+    const b = batchMerge({ cwd: io.cwd, env: io.env, names, ids, ready: Boolean(flags.ready), version: version ?? null });
+    const { exit, reasons, ...data } = b;
+    const lines = b.tasks.length === 0 ? ['no task is ready to merge'] : b.tasks.map((t) => `${t.task}  ${t.outcome === 'merged' ? 'merged' : `${t.outcome}: ${t.why}`}`);
+    if (b.tasks.length) lines.push(`gate runs: ${b.gateRuns} · batch ${b.batch}${b.commit ? ` · ${b.target} at ${b.commit.slice(0, 12)}` : ''}`);
+    return { code: EXIT[exit], data, errors: reasons, text: `${forTerminal(lines.join('\n'))}\n` };
+  }
+  const r = mergeTask({ cwd: io.cwd, env: io.env, names, id: ids[0], branch: flags.branch, version: version ?? null });
   const { exit, reasons, ...data } = r;
   let lines;
   if (r.merged) lines = [`merged ${r.branch} for ${r.task} as ${r.commit.slice(0, 12)}`, ...renderVerify(r.verify).slice(1)];

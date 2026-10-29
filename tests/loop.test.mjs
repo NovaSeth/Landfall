@@ -45,7 +45,7 @@ const CAPS = loop.DEFAULT_CAPS;
 
 const ev = (event, min, data = {}, by = 'TU') => ({ at: at(min), by, event, data });
 function task(id, status, { round = 0, cls = 'standard', owner = 'TU', kind = 'task', lane = null, title = `Task ${id}`, events = [] } = {}) {
-  return { schema: 1, id, kind, title, lane, owner, class: cls, classHistory: [], status, round, events: [ev('created', 0, {}, owner), ...events], base: null, branch: null };
+  return { schema: state.KINDS.task.version, id, kind, title, lane, owner, class: cls, classHistory: [], status, round, events: [ev('created', 0, {}, owner), ...events], base: null, branch: null };
 }
 const table = (tasks, opts = {}) => loop.nextSteps({
   tasks, runs: [], handles: ['TU'], me: 'TU', plan: null, lanesOn: false, caps: CAPS, now: T0 + 5 * MIN, bin: BIN, problem: null, dirty: () => [], ...opts,

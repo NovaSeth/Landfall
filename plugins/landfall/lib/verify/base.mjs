@@ -6,10 +6,12 @@
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { fingerprint } from './baseline.mjs';
+import { runHeavy } from './heavy.mjs';
 import { projectRedactions, runRedacted } from './redact.mjs';
 
 // `inventory(runs, worktree)`: the run's own collector over the gates' outputs in `worktree`.
-export function measureAt({ where, env, commit, gates, gitIn, inventory }) {
+// `names`, `task`: the heavy lease's owner (T-MG-80: a long base gate is a full suite, so it queues like every other).
+export function measureAt({ where, env, names, task = null, commit, gates, gitIn, inventory }) {
   const local = join(where.dir, 'local');
   mkdirSync(local, { recursive: true });
   const dir = mkdtempSync(join(local, 'base-'));
@@ -17,7 +19,7 @@ export function measureAt({ where, env, commit, gates, gitIn, inventory }) {
     const add = gitIn(where, env, ['worktree', 'add', '--detach', '-q', dir, commit]);
     if (add.status !== 0) return { doc: null, error: `git cannot check out the base ${commit.slice(0, 12)} (${String(add.stderr).trim().slice(0, 200)})` };
     const extra = projectRedactions(where);
-    const runs = gates.filter((g) => g.kind === 'test').map((g) => runRedacted(g, { cwd: dir, env, extra }));
+    const runs = runHeavy(gates.filter((g) => g.kind === 'test'), { names, env, cwd: dir, task }, (g) => runRedacted(g, { cwd: dir, env, extra }));
     const broken = runs.find((r) => r.gate.result === 'error' || r.gate.result === 'timeout');
     if (broken) return { doc: null, error: `gate ${broken.gate.name} could not run at the base ${commit.slice(0, 12)} (${broken.gate.result}, exit ${broken.gate.exit ?? '-'})` };
     const inv = inventory(runs, dir);
