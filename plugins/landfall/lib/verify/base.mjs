@@ -6,7 +6,7 @@
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { fingerprint } from './baseline.mjs';
-import { runGate } from './gates.mjs';
+import { projectRedactions, runRedacted } from './redact.mjs';
 
 // `inventory(runs, worktree)`: the run's own collector over the gates' outputs in `worktree`.
 export function measureAt({ where, env, commit, gates, gitIn, inventory }) {
@@ -16,7 +16,8 @@ export function measureAt({ where, env, commit, gates, gitIn, inventory }) {
   try {
     const add = gitIn(where, env, ['worktree', 'add', '--detach', '-q', dir, commit]);
     if (add.status !== 0) return { doc: null, error: `git cannot check out the base ${commit.slice(0, 12)} (${String(add.stderr).trim().slice(0, 200)})` };
-    const runs = gates.filter((g) => g.kind === 'test').map((g) => runGate(g, { cwd: dir, env }));
+    const extra = projectRedactions(where);
+    const runs = gates.filter((g) => g.kind === 'test').map((g) => runRedacted(g, { cwd: dir, env, extra }));
     const broken = runs.find((r) => r.gate.result === 'error' || r.gate.result === 'timeout');
     if (broken) return { doc: null, error: `gate ${broken.gate.name} could not run at the base ${commit.slice(0, 12)} (${broken.gate.result}, exit ${broken.gate.exit ?? '-'})` };
     const inv = inventory(runs, dir);

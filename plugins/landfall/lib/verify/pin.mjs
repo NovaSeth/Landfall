@@ -17,8 +17,9 @@ import { readRecords } from '../decisions/index.mjs';
 import { emptyProfile } from '../profile/index.mjs';
 import { PATTERNS, StateError } from '../state/index.mjs';
 import { baselineSha, excusable, fingerprint } from './baseline.mjs';
-import { runGate, tailLines } from './gates.mjs';
+import { tailLines } from './gates.mjs';
 import { byCodeUnit } from './inventory.mjs';
+import { projectRedactions, runRedacted } from './redact.mjs';
 import { activeWhere, codeState, context, inventoryOf, storeOf } from './run.mjs';
 
 export const PIN_KINDS = Object.freeze(['gate-change', 'test-removal']);
@@ -63,7 +64,8 @@ export function pinBaseline({ cwd, env, names, decision, at = new Date().toISOSt
   const profile = store.read('profile', null) ?? emptyProfile();
   if (profile.gates.length === 0) throw fail('no-gates', 'the profile has no gates, so nothing collects the tests to pin', `${names.bin} profile observe detects them`);
   const code = codeState(where, env);
-  const runs = profile.gates.filter((g) => g.kind === 'test').map((g) => runGate(g, { cwd: where.worktree, env }));
+  const extra = projectRedactions(where);
+  const runs = profile.gates.filter((g) => g.kind === 'test').map((g) => runRedacted(g, { cwd: where.worktree, env, extra }));
   const output = runs.map((r) => ({ name: r.gate.name, lines: tailLines(r.output) }));
   for (const { gate } of runs) {
     if (gate.result === 'error') throw envError('gate-error', `gate ${gate.name} could not run (exit ${gate.exit ?? '-'}); nothing was pinned`, 'install what the gate runs, or fix its command in the profile');

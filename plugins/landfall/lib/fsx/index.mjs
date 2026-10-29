@@ -19,7 +19,7 @@
 // Acquiring a lock this process already holds (under any spelling of its path) fails with EREENTRANT: a nested
 // critical section is a programming error.
 import { randomBytes } from 'node:crypto';
-import { closeSync, constants, fstatSync, fsyncSync, linkSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmSync, rmdirSync, writeFileSync, writeSync } from 'node:fs';
+import { closeSync, constants, fstatSync, fsyncSync, linkSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, renameSync, rmSync, rmdirSync, writeFileSync, writeSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { performance } from 'node:perf_hooks';
@@ -342,5 +342,49 @@ export function appendLine(file, bytes, { mode = 0o644, before } = {}) {
     writeSync(fd, bytes);
   } finally {
     closeSync(fd);
+  }
+}
+
+// The bytes of a regular file of at most `max` bytes named by a user (a --from <file>): a Buffer, or an error with
+// code ENOTREGULAR (a link, FIFO, device, directory), ETOOBIG, or the system's (ENOENT, EACCES). The file is opened
+// without following a link and without blocking (O_NOFOLLOW, O_NONBLOCK) and judged by fstat of the descriptor, so
+// a swap between the check and the read changes nothing; where O_NOFOLLOW does not exist, lstat of the path is
+// compared with fstat of the descriptor (same device and inode). The descriptor is read in chunks to its end or to
+// max + 1 bytes, whatever fstat said: a file that grew after fstat is read whole or refused, never cut at its old
+// size. `fs`: the file operations (tests replace them).
+const FILE_OPS = Object.freeze({ openSync, fstatSync, lstatSync, readSync, closeSync });
+export function readRegularFile(path, { max, fs = FILE_OPS }) {
+  const refuse = (code, message) => Object.assign(new Error(`${path}: ${message}`), { code });
+  const noFollow = constants.O_NOFOLLOW;
+  let linked = null;
+  if (noFollow === undefined) {
+    linked = fs.lstatSync(path);
+    if (!linked.isFile()) throw refuse('ENOTREGULAR', 'not a regular file');
+  }
+  let fd;
+  try {
+    fd = fs.openSync(path, constants.O_RDONLY | (noFollow ?? 0) | (constants.O_NONBLOCK ?? 0));
+  } catch (err) {
+    if (err.code === 'ELOOP' || err.code === 'EMLINK') throw refuse('ENOTREGULAR', 'a symbolic link');
+    throw err;
+  }
+  try {
+    const st = fs.fstatSync(fd);
+    if (!st.isFile()) throw refuse('ENOTREGULAR', 'not a regular file');
+    if (linked && (linked.dev !== st.dev || linked.ino !== st.ino)) throw refuse('ENOTREGULAR', 'changed while it was opened');
+    if (st.size > max) throw refuse('ETOOBIG', `${st.size} bytes, the limit is ${max}`);
+    const chunks = [];
+    let got = 0;
+    for (;;) {
+      const buf = Buffer.alloc(Math.min(65536, max + 1 - got)); // at most one byte past max: enough to refuse
+      const n = fs.readSync(fd, buf, 0, buf.length, null);
+      if (n === 0) break;
+      chunks.push(buf.subarray(0, n));
+      got += n;
+      if (got > max) throw refuse('ETOOBIG', `more than ${max} bytes`);
+    }
+    return Buffer.concat(chunks, got);
+  } finally {
+    quiet(() => fs.closeSync(fd));
   }
 }

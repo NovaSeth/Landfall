@@ -1,9 +1,9 @@
 // `report <id> --from <file> [--round <k>] [--force]`: stores the task report (tasks/<id>/report.md) for the task's owner.
 // Round 0 checks the RED/GREEN frontmatter and the Status line; --round appends a fix round and keeps earlier bytes.
 // Context comes from io (cwd, env), never from process state.
-import { lstatSync, readFileSync } from 'node:fs';
 import { isAbsolute, resolve as resolvePath } from 'node:path';
 import { EXIT } from '../cli/commands.mjs';
+import { readRegularFile } from '../fsx/index.mjs';
 import { KINDS, StateError, setTask, writeTaskText } from '../state/index.mjs';
 import { reportHasEvidence } from './artifacts.mjs';
 import { activeWhere, storeOf, unknownTask } from './run.mjs';
@@ -26,9 +26,7 @@ const fail = (id, code, message, hint) => ({ code: EXIT.FAIL, data: { task: id, 
 function readFrom(file, io) {
   const path = isAbsolute(file) ? file : resolvePath(io.cwd, file);
   try {
-    const st = lstatSync(path);
-    if (!st.isFile() || st.size > FROM_MAX) return null;
-    return readFileSync(path, 'utf8');
+    return readRegularFile(path, { max: FROM_MAX }).toString('utf8');
   } catch {
     return null;
   }

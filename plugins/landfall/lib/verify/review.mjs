@@ -8,9 +8,10 @@
 //     event `review` { round, verdict, reviewer: kind }.
 // The validator knows exactly the JSON Schema keywords the schema uses; any other keyword is an error, never ignored.
 // Known limit: the reviewer's kind and id are what the file says.
-import { lstatSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
 import { authorHandle, stateRel } from '../decisions/index.mjs';
+import { readRegularFile } from '../fsx/index.mjs';
 import { KINDS, StateError } from '../state/index.mjs';
 import { VERIFY_KINDS, reviewKey } from './kinds.mjs';
 import { activeWhere, storeOf, unknownTask } from './run.mjs';
@@ -70,12 +71,10 @@ function readInput(cwd, from) {
   const file = isAbsolute(from) ? from : join(cwd, from);
   let text;
   try {
-    const st = lstatSync(file);
-    if (!st.isFile()) throw usage('review-unreadable', `${from} is not a regular file`, 'give the path of the review JSON file (links are not followed)');
-    if (st.size > INPUT_MAX) throw usage('review-unreadable', `${from} has ${st.size} bytes, the limit is ${INPUT_MAX}`, 'a review holds at most 1000 findings');
-    text = readFileSync(file, 'utf8');
+    text = readRegularFile(file, { max: INPUT_MAX }).toString('utf8');
   } catch (err) {
-    if (err instanceof StateError) throw err;
+    if (err.code === 'ENOTREGULAR') throw usage('review-unreadable', `${from} is not a regular file`, 'give the path of the review JSON file (links are not followed)');
+    if (err.code === 'ETOOBIG') throw usage('review-unreadable', `${from} is over the limit of ${INPUT_MAX} bytes`, 'a review holds at most 1000 findings');
     throw usage('review-unreadable', `${from} cannot be read (${err.code ?? err.message})`, 'give the path of the review JSON file');
   }
   try {
