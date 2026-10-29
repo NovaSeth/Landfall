@@ -6,6 +6,7 @@
 // (guard-bash blocks it whatever the content, the others allow). A hook's warnings go to stderr; a hook that blocks
 // without a decision JSON (the guard could not verify a command, lib/hooks/registry.mjs onError) ends with exit 2.
 import { INPUT_DEADLINE_MS, runHook } from '../hooks/registry.mjs';
+import { setForeignLocal } from '../state/index.mjs';
 
 const MAX_INPUT_BYTES = 16 * 1024 * 1024;
 
@@ -36,7 +37,9 @@ export function readInput(stdin, { deadlineMs = INPUT_DEADLINE_MS, maxBytes = MA
   });
 }
 
+// A hook never moves a foreign local/ aside (T-MG-77): its state writes there are skipped, only a command's write moves it.
 export async function hook({ args, io }) {
+  setForeignLocal('skip');
   const { text, oversize, incomplete } = io.stdinIsTTY ? { text: null, oversize: false, incomplete: false } : await readInput(io.stdin);
   const r = runHook(args.name, text, { oversize, incomplete });
   return { text: r.stdout, stderr: r.stderr, hookExit: r.code === 2 ? 2 : 0 }; // written unchanged by lib/cli/output.mjs

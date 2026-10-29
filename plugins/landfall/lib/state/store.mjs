@@ -25,14 +25,12 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSy
 import { hostname } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
 import { appendLine, createExclusive, isAlive, makeDirs, moveTree, removeEmptyDirs, sweepTemps, unlockStale as fsxUnlockStale, withLock, writeAtomic } from '../fsx/index.mjs';
-import { git } from '../git/index.mjs';
 import { checkWrite, invalidState, parseDoc, requireArg } from './document.mjs';
 import { StateError, newerSchema } from './errors.mjs';
 import { KINDS, LOGS } from './kinds.mjs';
-import { ensureMachineId, readMachineId } from './machine.mjs';
+import { MARKER, forgetShipped, localForeign, machineId } from './machine.mjs';
 import { MIGRATIONS } from './migrations/index.mjs';
 import { format, validate } from './schema.mjs';
-import { machineDataDir, resolvedDataDir } from './resolve.mjs';
 import { upgradeDoc } from './upgrade.mjs';
 
 // The most bytes of one appended line (PIPE_BUF on Linux): one write() of this size is never split.
@@ -46,30 +44,31 @@ function pauseUntilSignalled(dir) {
 const natural = (a, b) => a.localeCompare(b, 'en', { numeric: true });
 const missing = (err) => err.code === 'ENOENT' || err.code === 'ENOTDIR';
 
-export function open(dir, { names, kinds = KINDS, migrations = MIGRATIONS, lockTimeoutMs = 10000, dataDir } = {}) {
+// What a write does with a foreign local/ (T-MG-77): 'move' (a command: move it aside, then write) or 'skip' (a hook:
+// write nothing, the lock section does not run). The hook entry (lib/cli/hook.mjs) sets 'skip' for its process.
+const FOREIGN = ['move', 'skip'];
+let foreignDefault = 'move';
+export function setForeignLocal(mode) {
+  if (!FOREIGN.includes(mode)) throw new TypeError(`state.setForeignLocal: ${mode} is not one of ${FOREIGN.join('|')}`);
+  foreignDefault = mode;
+}
+
+export function open(dir, { names, kinds = KINDS, migrations = MIGRATIONS, lockTimeoutMs = 10000, foreignLocal } = {}) {
   requireArg(names, 'names', 'open');
   if (typeof dir !== 'string' || !isAbsolute(dir)) throw new TypeError(`state.open: the state directory must be an absolute path, got ${dir}`);
-  return new Store(dir, { names, kinds, migrations, lockTimeoutMs, dataDir });
+  if (foreignLocal !== undefined && !FOREIGN.includes(foreignLocal)) throw new TypeError(`state.open: foreignLocal ${foreignLocal} is not one of ${FOREIGN.join('|')}`);
+  return new Store(dir, { names, kinds, migrations, lockTimeoutMs, foreignLocal: foreignLocal ?? foreignDefault });
 }
 
 // The absolute path of `rel` in the state directory `dir` after the store's checks (no symbolic link, no case alias
 // from dir inclusive), for the units that read the state directory's files themselves (lib/decisions).
 export function checkedPath(dir, rel) {
   if (typeof dir !== 'string' || !isAbsolute(dir)) throw new TypeError(`state.checkedPath: the state directory must be an absolute path, got ${dir}`);
-  return new Store(dir, { names: {}, kinds: KINDS, migrations: MIGRATIONS, lockTimeoutMs: 0, dataDir: null }).abs(rel);
+  return new Store(dir, { names: {}, kinds: KINDS, migrations: MIGRATIONS, lockTimeoutMs: 0, foreignLocal: 'skip' }).abs(rel);
 }
 
-// local/ ownership (T-MG-77): local/.machine names the machine that owns local/. Whether git tracks anything under a
-// state directory's local/ is asked at most once per process (only while the marker is missing).
-export const MARKER = 'local/.machine';
-const trackedLocal = new Map();
-function tracksLocal(dir) {
-  if (trackedLocal.has(dir)) return trackedLocal.get(dir);
-  const r = git(['ls-files', '-z', '--', 'local'], { cwd: dir, env: { ...process.env, LC_ALL: 'C' }, timeoutMs: 5000 });
-  const tracked = !r.error && r.status === 0 && r.stdout.length > 0;
-  trackedLocal.set(dir, tracked);
-  return tracked;
-}
+// local/ ownership (T-MG-77): lib/state/machine.mjs localForeign; local/.machine names the machine that owns local/.
+export { MARKER };
 const isLocal = (rel) => rel === 'local' || rel.startsWith('local/');
 // <UTC yyyymmddThhmmss>
 const stampOf = (d) => d.toISOString().replace(/[-:]/g, '').slice(0, 15);
@@ -113,9 +112,10 @@ export const unsafe = (path, why) => new StateError('state-invalid', 'FAIL', `${
 
 // Public: active, read, list, write, create, update, append. The other methods are internal to lib/state.
 export class Store {
-  constructor(dir, { names, kinds, migrations, lockTimeoutMs, dataDir }) {
+  constructor(dir, { names, kinds, migrations, lockTimeoutMs, foreignLocal }) {
     this.dir = dir;
-    this.dataDir = dataDir;
+    this.foreignLocal = foreignLocal;
+    this.skipped = false; // a write a hook left out because local/ is foreign
     this.localState = undefined;
     this.movedAside = null;
     this.wrote = false; // a file was written in the current lock section (markLocal)
@@ -182,35 +182,19 @@ export class Store {
 
   // ---- local/ ownership (T-MG-77) ----
 
-  // The machine data directory: open({ dataDir }), else the one resolve() last found for this state directory in this
-  // process (the command's environment), else the one of this process's environment; null: unknown.
-  machineDir() {
-    if (this.dataDir === undefined) this.dataDir = resolvedDataDir(this.dir) ?? machineDataDir(this.names, process.env);
-    return this.dataDir;
-  }
-
-  // 'absent' (no local/) · 'mine' (this machine's marker; also when no machine data directory is known, or it holds
-  // no id yet and git tracks nothing under local/, so no owner can be told) · 'adopt' (no marker and nothing under local/ tracked by git: an existing user's local/, marked at
-  // the next write) · 'foreign' (another machine's marker, or no marker and git tracks something under local/).
+  // 'absent' (no local/) · 'mine' (this machine's marker; also when the path check of local/ fails: the reader's own
+  // check reports it) · 'adopt' (no marker and nothing shipped: an existing user's local/, marked at the next write) ·
+  // 'foreign' (shipped: tracked by git, or another machine's marker).
   localStatus() {
     if (this.localState === undefined) this.localState = this.ownerOfLocal();
     return this.localState;
   }
 
   ownerOfLocal() {
-    const dataDir = this.machineDir();
-    if (!dataDir) return 'mine';
-    let local;
-    try { local = this.abs('local'); } catch { return 'mine'; } // the reader's own path check reports it
-    if (!lstatSync(local, { throwIfNoEntry: false })?.isDirectory()) return 'absent';
-    let marker = null;
-    try { marker = readFileSync(join(local, '.machine'), 'utf8').trim(); } catch (err) { if (!missing(err)) throw err; }
-    if (marker === null) return tracksLocal(this.dir) ? 'foreign' : 'adopt';
-    const id = readMachineId(dataDir, this.names);
-    if (id) return marker === id ? 'mine' : 'foreign';
-    // This machine data directory holds no id yet (another CLAUDE_CONFIG_DIR, an unwritable one): it cannot tell a
-    // marker of this machine from another's, so only git can (a tracked local/ is foreign); the marker is kept.
-    return tracksLocal(this.dir) ? 'foreign' : 'mine';
+    try { this.abs('local'); } catch { return 'mine'; }
+    const { foreign, why } = localForeign(this.dir);
+    if (foreign) return 'foreign';
+    return { absent: 'absent', ours: 'mine' }[why] ?? 'adopt';
   }
 
   // Before a write: a foreign local/ is moved aside to local.foreign-<stamp>/ (one rename; the store lock lives inside
@@ -235,19 +219,17 @@ export class Store {
     } catch (err) {
       if (!missing(err)) throw err;
     }
-    trackedLocal.set(this.dir, false); // what git tracks under local/ was moved aside with it
+    forgetShipped(this.dir); // what git tracks under local/ was moved aside with it
     this.localState = undefined;
   }
 
-  // After a write succeeded (under the lock; a section that wrote nothing marks nothing): local/ carries this machine's marker. Best effort: an unwritable machine
-  // data directory leaves local/ unmarked (adopted again next time).
+  // After a write succeeded (under the lock; a section that wrote nothing marks nothing): local/ carries this machine's
+  // marker. Best effort: a marker that cannot be written leaves local/ unmarked (adopted again next time).
   markLocal() {
-    const dataDir = this.machineDir();
-    if (!dataDir || !this.active) return; // deactivate removed the state: nothing to mark
+    if (!this.active) return; // deactivate removed the state: nothing to mark
     try {
       if (this.readText(MARKER) !== null && this.localStatus() === 'mine') return;
-      const id = ensureMachineId(dataDir, this.names);
-      writeAtomic(this.abs(MARKER), `${id}\n`);
+      writeAtomic(this.abs(MARKER), `${machineId()}\n`);
       this.localState = 'mine';
     } catch { /* best effort */ }
   }
@@ -315,9 +297,13 @@ export class Store {
 
   // ---- the store lock ----
 
-  // Runs fn while holding the store lock (not re-entrant).
+  // Runs fn while holding the store lock (not re-entrant). A hook's store (foreignLocal 'skip') with a foreign local/
+  // runs nothing and writes nothing (not even the lock, which lives in local/): undefined, store.skipped set.
   locked(fn) {
-    this.claimLocal();
+    if (this.foreignLocal === 'skip') {
+      this.localState = undefined;
+      if (this.localStatus() === 'foreign') { this.skipped = true; return undefined; }
+    } else this.claimLocal();
     try {
       return withLock(this.abs('local/lock'), () => {
         this.wrote = false;

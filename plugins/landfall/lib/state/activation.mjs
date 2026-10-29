@@ -25,7 +25,7 @@ import { gitIdentity, handleCandidates, registerHandle } from './team.mjs';
 
 const CLASSES = ['trivial', 'standard', 'critical'];
 // The state directory's .gitignore: machine-local state and temporary files of interrupted atomic writes.
-const IGNORED = ['local/', '.*.tmp'];
+const IGNORED = ['local/', 'local.foreign-*/', '.*.tmp'];
 const now = () => new Date().toISOString();
 const inRepo = (where, names) => join(where.repo, names.stateDir);
 

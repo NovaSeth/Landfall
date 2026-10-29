@@ -160,14 +160,6 @@ export const MACHINE_KINDS = Object.freeze({
       },
     },
   }),
-  // T-MG-77: this machine's id, a random 128-bit hex value written once (mode 0600); local/.machine of a state
-  // directory names the machine that owns its local/ (store.mjs).
-  machine: defineKind('machine', 1, {
-    dir: '',
-    file: () => 'machine.json',
-    match: /^machine\.json$/,
-    fields: { id: str(32, { re: /^[0-9a-f]{32}$/ }) },
-  }),
   machineConfig: defineKind('machineConfig', 1, {
     dir: '',
     file: () => 'config.json',

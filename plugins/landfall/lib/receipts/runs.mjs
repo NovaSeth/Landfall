@@ -6,7 +6,8 @@
 // reported" when its record gives none), so every run of a task appears in the task's receipt. A record that does
 // not fit is a problem (the totals are then a lower bound). Text fields (lastLine, error) are never read.
 import { lstatSync, readFileSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
+import { localForeign } from '../state/index.mjs';
 import { label } from './sessions.mjs';
 
 export const RUN_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
@@ -41,9 +42,12 @@ function entry(doc, runId) {
 }
 
 // { runs: [entry] sorted by runId, problems: [{ code, message, hint }] } of the run directory `dir`.
+// The runs of a foreign local/ (<state dir>/local/runs shipped in the repository, lib/state localForeign) are none of
+// this machine's: every reader (status, ui, receipts, the loop) sees none.
 export function readRuns(dir) {
   const runs = [];
   const problems = [];
+  if (basename(dir) === 'runs' && basename(dirname(dir)) === 'local' && localForeign(dirname(dirname(dir))).foreign) return { runs, problems };
   let names;
   try {
     if (lstatSync(dir).isSymbolicLink()) return { runs, problems: [{ code: 'run-invalid', message: `${dir} is a symbolic link; run records are never read through links`, hint: 'replace it with a plain directory' }] };
