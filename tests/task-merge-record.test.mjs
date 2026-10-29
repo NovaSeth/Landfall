@@ -156,3 +156,24 @@ test('task merge takes --branch only with one ID (several IDs are a batch)', asy
   assert.equal(res.code, 2);
   assert.equal(res.env.errors[0].code, 'unexpected-flag');
 });
+
+test('fix round 1 (F2): task merge --adopt whose gate changes tracked code records nothing (merge-tree-changed)', async (t) => {
+  const r = repo(t, { gate: "node --test; s=$?; case \"$PWD\" in */repo) echo '// changed' >> calc.test.mjs;; esac; exit $s" });
+  r.branch('feat/a', 'a.test.mjs');
+  const a = r.task('feat/a');
+  r.git('add', '-A');
+  r.git('commit', '-q', '-m', 'task');
+  r.git('merge', '-q', '--no-ff', '-m', 'by hand', 'feat/a');
+  const res = await cli(['task', 'merge', '--adopt', a, '--yes'], r);
+  assert.equal(res.code, 1, JSON.stringify(res.env.errors));
+  assert.ok(res.env.errors.some((e) => e.code === 'merge-tree-changed'), JSON.stringify(res.env.errors));
+  assert.equal(merges(r, a).length, 0, 'nothing is recorded');
+  assert.equal(r.store.read('task', a).mergedAt, undefined);
+});
+
+test('fix round 1: --adopt and --ready together are a usage error', async (t) => {
+  const r = repo(t);
+  const res = await cli(['task', 'merge', '--adopt', '--ready', '--yes'], r);
+  assert.equal(res.code, 2);
+  assert.equal(res.env.errors[0].code, 'unexpected-flag');
+});

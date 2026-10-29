@@ -150,3 +150,19 @@ test('guard: with the current branch undeterminable, a merge of a task branch is
   spawnSync('git', ['-C', detached, 'checkout', '-q', '--detach']);
   assert.ok(verdict(detached, 'git merge task/T-AB-3').deny);
 });
+
+test('fix round 1 (F6): every eligible task is checked, only the display is limited', async (t) => {
+  const p = await fixture(t);
+  const where = state.resolve({ cwd: p.cwd, env: p.env, names });
+  const store = state.open(where.dir, { names, kinds: state.KINDS });
+  const real = store.list('task').map((id) => store.read('task', id));
+  // 60 done tasks without a merged event that sort before T-TU-1, the one merged by hand
+  const fake = Array.from({ length: 60 }, (_, k) => ({ id: `T-AA-${k + 1}`, owner: real[0].owner, status: 'done', branch: `task/T-AA-${k + 1}`, events: [] }));
+  assert.deepEqual(loop.outsideMerges({ where, env: p.env, tasks: [...fake, ...real] }), ['T-TU-1']);
+  // a branch merged by hand for each of the 60: all are found; the steps list the first OUTSIDE_MAX and one "… n more" note
+  const many = fake.map((x) => x.id);
+  const table = loop.nextSteps({ tasks: fake, caps: loop.DEFAULT_CAPS, now: Date.now(), bin: BIN, outside: many });
+  const adopt = table.steps.filter((s) => /task merge --adopt/.test(s.step));
+  assert.equal(adopt.length, loop.OUTSIDE_MAX);
+  assert.ok(table.info.some((x) => x.state === `… ${60 - loop.OUTSIDE_MAX} more merged outside ${BIN}`), JSON.stringify(table.info));
+});

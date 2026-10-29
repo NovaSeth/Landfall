@@ -439,10 +439,12 @@ test('verify, task done and task merge are command rows that change files; help 
   for (const name of ['verify', 'task done', 'task merge']) {
     assert.ok(row(name) && !row(name).hidden, name);
     assert.equal(row(name).mutating, true, `${name}: changes files`);
-    assert.deepEqual(row(name).args.map((a) => [a.name, Boolean(a.required)]), [['id', true]], name);
   }
+  for (const name of ['verify', 'task done']) assert.deepEqual(row(name).args.map((a) => [a.name, Boolean(a.required)]), [['id', true]], name);
+  // T-MG-80: task merge takes several IDs (a batch, --adopt) or none (--ready)
+  assert.deepEqual(row('task merge').args.map((a) => [a.name, Boolean(a.required), Boolean(a.variadic)]), [['id', false, true]]);
   assert.deepEqual(row('verify').flags.map((f) => f.flag), ['--ci', '--no-cache']);
-  assert.deepEqual(row('task merge').flags.map((f) => f.flag), ['--branch', '--adopt']);
+  assert.deepEqual(row('task merge').flags.map((f) => f.flag), ['--branch', '--ready', '--adopt']);
   assert.deepEqual(row('verify').exits, ['OK', 'FAIL', 'USAGE', 'REFUSED', 'ENV']);
   const r = repo(t);
   const help = await cli(['--help'], { ...r, json: false });

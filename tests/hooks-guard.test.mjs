@@ -358,6 +358,9 @@ const ACCEPTED_FP = [
 const NEW_BLOCK = [
   // a task branch merged by hand into the target (T-MG-80; guard/git-shape.mjs)
   ['git merge --no-ff task/T-AB-3', 'ORC-25', 'main'], ['git pull origin task/T-AB-3', 'ORC-25', 'main'],
+  // fix round 1 (F4): "--" ends the options of merge and pull, the refs after it are still refs; an unreadable branch blocks
+  ['git merge -- task/T-AB-3', 'ORC-25', 'main'], ['git pull -- origin task/T-AB-3', 'ORC-25', 'main'], ['git pull origin +task/T-AB-3:x', 'ORC-25', 'main'],
+  ['git merge -- task/T-AB-3', 'cannot tell the current branch'], ['git pull -- origin task/T-AB-3', 'cannot tell the current branch'],
   // a pipe after an outcome-gate command (TRP-2; the secrets scan SEC-6): one list, GATES in lib/guard/tokens.mjs; test runs
   // are no gate (ruling R60: verify re-runs the gates itself)
   ['bash .workflow/bin/budget.sh agent | tail -1', 'TRP-2'], ['.workflow/bin/budget.sh agent | tail -1', 'TRP-2'], ['env bash .workflow/bin/budget.sh e2e | cat', 'TRP-2'],

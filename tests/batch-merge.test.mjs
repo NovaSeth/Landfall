@@ -63,10 +63,12 @@ function repo(t, { extra = '' } = {}) {
   git('add', '-A');
   git('commit', '-q', '-m', 'state');
   // A done task (its done event at the branch tip) on a branch from main with one new test file.
-  const task = (name, file, body = "test('ok', () => {});", { status = 'done' } = {}) => {
+  // onBranch: called on the branch before its commit (it may change the state directory there, such as the profile).
+  const task = (name, file, body = "test('ok', () => {});", { status = 'done', onBranch = null } = {}) => {
     git('checkout', '-q', '-b', name, 'main');
     write(file, `import { test } from 'node:test';\n${body}\n`);
-    git('add', '-A', '--', '.', `:(exclude)${names.stateDir}`);
+    if (onBranch) onBranch();
+    git('add', '-A', '--', '.', ...(onBranch ? [] : [`:(exclude)${names.stateDir}`]));
     git('commit', '-q', '-m', name);
     const sha = git('rev-parse', 'HEAD');
     git('checkout', '-q', 'main');
@@ -218,4 +220,118 @@ test('the text output has one line per task, the gate runs and the batch id', as
   assert.match(res.out, new RegExp(`^${b}  merged$`, 'm'));
   assert.match(res.out, new RegExp(`^${c}  conflict`, 'm'));
   assert.match(res.out, /gate runs: 1 · batch batch-\d{8}T\d{6}/);
+});
+
+// ---- fix round 1 (review r1 F1 F3 F5, automated review AR-1 AR-2 AR-3) ----
+const IN_BATCH = (cmd) => `case "$PWD" in *-batch-*) ${cmd};; esac;`;
+const nothingMoved = (r, tip, ids) => {
+  assert.equal(r.git('rev-parse', 'main'), tip, 'the target did not move');
+  for (const id of ids) assert.equal(merges(r, id).length, 0, `${id}: nothing is recorded`);
+};
+
+test('F1: a gate that changes tracked code in the integration worktree merges nothing (merge-tree-changed)', async (t) => {
+  const r = repo(t, { extra: IN_BATCH("echo '// changed' >> calc.test.mjs") });
+  const ids = [r.task('feat/a', 'a.test.mjs'), r.task('feat/b', 'b.test.mjs')];
+  const tip = r.git('rev-parse', 'HEAD');
+  const res = await cli(['task', 'merge', ...ids, '--yes'], r);
+  assert.equal(res.code, 1, JSON.stringify(res.env.errors));
+  assert.ok(res.env.errors.some((e) => e.code === 'merge-tree-changed'), JSON.stringify(res.env.errors));
+  nothingMoved(r, tip, ids);
+  cleaned(r, res);
+});
+
+test('F1: a gate that commits in the integration worktree merges nothing; the target never gets the unverified commit', async (t) => {
+  const r = repo(t, { extra: IN_BATCH('git commit -q --allow-empty -m sneaky') });
+  const ids = [r.task('feat/a', 'a.test.mjs'), r.task('feat/b', 'b.test.mjs')];
+  const tip = r.git('rev-parse', 'HEAD');
+  const res = await cli(['task', 'merge', ...ids, '--yes'], r);
+  assert.equal(res.code, 1, JSON.stringify(res.env.errors));
+  assert.ok(res.env.errors.some((e) => e.code === 'merge-tree-changed'), JSON.stringify(res.env.errors));
+  assert.notEqual(r.git('log', '-1', '--format=%s', 'main'), 'sneaky');
+  nothingMoved(r, tip, ids);
+  cleaned(r, res);
+});
+
+test('F3: each task of the batch is checked against its own artifacts: a task whose report has no evidence is not merged', async (t) => {
+  const r = repo(t);
+  const a = r.task('feat/a', 'a.test.mjs');
+  const b = r.task('feat/b', 'b.test.mjs');
+  writeFileSync(join(r.stateDir, 'tasks', b, 'report.md'), '# Report\n\nno evidence\n');
+  r.git('add', '-A');
+  r.git('commit', '-q', '-m', 'report without evidence');
+  const res = await cli(['task', 'merge', a, b, '--yes'], r);
+  assert.equal(res.code, 1, JSON.stringify(res.env.errors));
+  const out = Object.fromEntries(outcomes(res));
+  assert.equal(out[a], 'merged');
+  assert.ok(['failed', 'skipped'].includes(out[b]), JSON.stringify(res.env.data.tasks));
+  assert.match(res.env.data.tasks.find((x) => x.task === b).why, /report/);
+  assert.equal(merges(r, b).length, 0);
+  assert.equal(merges(r, a).length, 1);
+  cleaned(r, res);
+});
+
+test('F5: the checkout switched to another branch at the same tip during the gate is target-moved; no branch moves', async (t) => {
+  const r = repo(t, { extra: IN_BATCH('git -C "$TARGET_DIR" checkout -q -b other') });
+  const ids = [r.task('feat/a', 'a.test.mjs'), r.task('feat/b', 'b.test.mjs')];
+  const tip = r.git('rev-parse', 'HEAD');
+  r.env.TARGET_DIR = r.dir;
+  const res = await cli(['task', 'merge', ...ids, '--yes'], r);
+  assert.equal(res.code, 1, JSON.stringify(res.env.errors));
+  assert.ok(res.env.errors.some((e) => e.code === 'target-moved'), JSON.stringify(res.env.errors));
+  assert.equal(r.git('rev-parse', 'other'), tip, 'the branch checked out meanwhile is not fast-forwarded');
+  nothingMoved(r, tip, ids);
+  cleaned(r, res);
+});
+
+test('AR-2: a done head that is no object id is skipped before any git call (a branch starting with "-" is refused by the task schema)', async (t) => {
+  const r = repo(t);
+  const a = r.task('feat/a', 'a.test.mjs');
+  const b = r.task('feat/b', 'b.test.mjs');
+  const c = r.task('feat/c', 'c.test.mjs');
+  r.store.update('task', a, (cur) => ({ ...cur, events: cur.events.map((e) => (e.event === 'done' ? { ...e, data: { head: '--output=x' } } : e)) }));
+  assert.throws(() => r.store.update('task', b, (cur) => ({ ...cur, branch: '--orphan' })), /does not match/);
+  r.git('add', '-A');
+  r.git('commit', '-q', '-m', 'odd records');
+  const res = await cli(['task', 'merge', a, b, c, '--yes'], r);
+  assert.equal(res.code, 1);
+  const by = Object.fromEntries(res.env.data.tasks.map((x) => [x.task, x]));
+  assert.equal(by[a].outcome, 'skipped');
+  assert.match(by[a].why, /done record/);
+  assert.equal(by[b].outcome, 'merged');
+  assert.equal(by[c].outcome, 'merged');
+  assert.ok(!existsSync(join(r.dir, 'x')), 'no file was written by an option');
+  cleaned(r, res);
+});
+
+test('a branch that changes the gates is skipped from the batch (merge it alone)', async (t) => {
+  const r = repo(t);
+  const a = r.task('feat/a', 'a.test.mjs');
+  const g = r.task('feat/g', 'g.test.mjs', undefined, {
+    onBranch: () => {
+      const st = profile.openStore(r.stateDir, names);
+      const cur = st.read('profile', null);
+      st.write('profile', null, { ...cur, gates: cur.gates.map((x) => ({ ...x, timeoutS: 31 })) });
+    },
+  });
+  const res = await cli(['task', 'merge', a, g, '--yes'], r);
+  assert.equal(res.code, 1);
+  assert.deepEqual(outcomes(res), [[a, 'merged'], [g, 'skipped']]);
+  assert.match(res.env.data.tasks.find((x) => x.task === g).why, /changes the gates/);
+  assert.equal(merges(r, g).length, 0);
+  cleaned(r, res);
+});
+
+test('a second failure after the culprit: only the prefix before the culprit merges, the rest are skipped', async (t) => {
+  const r = repo(t);
+  const a = r.task('feat/a', 'a.test.mjs');
+  const b = r.task('feat/b', 'b.test.mjs', "test('breaks', () => { throw new Error('boom'); });");
+  const c = r.task('feat/c', 'c.test.mjs', "test('breaks too', () => { throw new Error('boom'); });");
+  const res = await cli(['task', 'merge', a, b, c, '--yes'], r);
+  assert.equal(res.code, 1);
+  assert.deepEqual(outcomes(res), [[a, 'merged'], [b, 'failed'], [c, 'skipped']]);
+  assert.match(res.env.data.tasks.find((x) => x.task === c).why, /not verified/);
+  assert.equal(merges(r, a).length, 1);
+  assert.equal(merges(r, b).length + merges(r, c).length, 0);
+  r.git('merge-base', '--is-ancestor', 'feat/a', 'HEAD');
+  cleaned(r, res);
 });
