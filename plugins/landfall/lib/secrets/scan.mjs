@@ -478,7 +478,7 @@ export function scanSecrets({ cwd, env, names, mode = 'tree', revs = [], artifac
   const skipped = new Map();
   const cap = (limit) => limit % (1024 * 1024) === 0 ? `${limit / (1024 * 1024)} MiB` : `${limit} bytes`;
   const ctx = {
-    repo: where.repo, cwd, env, extra, tmp, blobMax, fileMax: Math.max(1, Math.min(FILE_MAX, fileMax)), incomplete: false, outputs: 0, files: 0, lines: 0, exempted: new Set(),
+    repo: where.worktree, cwd, env, extra, tmp, blobMax, fileMax: Math.max(1, Math.min(FILE_MAX, fileMax)), incomplete: false, outputs: 0, files: 0, lines: 0, exempted: new Set(),
     add: (f) => { const w = whereOf(f); if (!found.has(w)) found.set(w, { where: w, ...f }); },
     skip: ({ path, commit, size, limit = blobMax }) => { const k = `${commit ?? ''}:${path}`; if (!skipped.has(k)) skipped.set(k, { path, commit, size, reason: `over ${cap(limit)}` }); },
   };
