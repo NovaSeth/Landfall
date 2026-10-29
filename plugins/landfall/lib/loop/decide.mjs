@@ -17,20 +17,34 @@ const MIN_MS = 60000;
 const iso = (ms) => new Date(ms).toISOString();
 const usd = (micro) => `$${(micro / 1e6).toFixed(2)}`;
 
-// A loop document that starts now with `caps` (the defaults when omitted).
-export function newLoop({ now, caps = DEFAULT_CAPS, id = null }) {
+export const USER_START = 'caps raised at the loop start by the user';
+export const SKEW_MS = 5 * MIN_MS; // a startedAt later than now + this is not a record this clock wrote
+
+// A loop document that starts now with `caps` (the defaults when omitted). byUser (startLoop's terminal check): the
+// caps raised above their defaults are recorded as the user's start, an extension; only then do they count.
+export function newLoop({ now, caps = DEFAULT_CAPS, id = null, byUser = false }) {
   const stamp = iso(now).replace(/\D/g, '').slice(0, 14);
   const suffix = id ?? Math.floor(Math.random() * 0x1000000).toString(16).padStart(6, '0');
+  const raised = Object.fromEntries(Object.entries(caps).filter(([k, v]) => v > DEFAULT_CAPS[k]));
   return {
     schema: 1, id: `L-${stamp}-${suffix}`, startedAt: iso(now), caps: { ...caps }, ticks: 0, fingerprint: null, sameCount: 0, sameSince: null,
-    costMicroUsd: 0, unmeasured: 0, exit: null, exitAt: null, reason: null, extensions: [],
+    costMicroUsd: 0, unmeasured: 0, exit: null, exitAt: null, reason: null,
+    extensions: byUser && Object.keys(raised).length ? [{ at: iso(now), caps: raised, reason: USER_START }] : [],
   };
+}
+
+// The caps that count (audit 2.4.0 F2-2): a cap above its default only when the user's recorded start raised it to
+// that value; otherwise the default. A cap at or below its default always counts.
+export function effectiveCaps(loop) {
+  const starts = (loop.extensions ?? []).filter((e) => e?.reason === USER_START && e.caps && typeof e.caps === 'object');
+  return Object.fromEntries(Object.entries(loop.caps).map(([k, v]) => [k,
+    v > DEFAULT_CAPS[k] && !starts.some((e) => e.caps[k] === v) ? DEFAULT_CAPS[k] : v]));
 }
 
 // The wall time or tick cap the next tick of `loop` reaches at `now`, as a reason, or null. Nothing here can fail, so
 // the tick checks these caps before it measures the cost or reads anything else (GC4).
 export function cheapCap(loop, now) {
-  const { caps } = loop;
+  const caps = effectiveCaps(loop);
   const wallMin = Math.floor((now - Date.parse(loop.startedAt)) / MIN_MS);
   if (wallMin >= caps.wallMin) return `wall time cap reached: ${wallMin} of ${caps.wallMin} min`;
   const ticks = loop.ticks + 1;
@@ -51,8 +65,14 @@ export function decide(loop, { now, fingerprint, costMicroUsd = null, unmeasurab
     sameSince: same ? loop.sameSince : iso(now),
   };
   const end = (result, reason) => ({ doc: { ...doc, exit: result, exitAt: iso(now), reason }, result, reason, nextTickS: null, repeated: false });
+  // a startedAt in the future would make the wall time negative and the cost window empty: the record is invalid
+  const started = Date.parse(loop.startedAt);
+  if (!Number.isFinite(started) || started > now + SKEW_MS) {
+    return end('STALLED', `the loop record ${loop.id} is invalid: its startedAt ${String(loop.startedAt).slice(0, 40)} is later than now, so no cap could end it`);
+  }
+  const costCap = effectiveCaps(loop).costMicroUsd;
   const cap = cheapCap(loop, now)
-    ?? (doc.costMicroUsd >= loop.caps.costMicroUsd ? `cost cap reached: ${usd(doc.costMicroUsd)} of ${usd(loop.caps.costMicroUsd)} (estimate)` : null)
+    ?? (doc.costMicroUsd >= costCap ? `cost cap reached: ${usd(doc.costMicroUsd)} of ${usd(costCap)} (estimate)` : null)
     ?? (doc.unmeasured >= UNMEASURED ? `cost-unmeasurable: the cost since the start could not be measured for ${doc.unmeasured} ticks in a row` : null);
   if (cap) return end('BUDGET', cap);
   const quietMin = Math.floor((now - Date.parse(doc.sameSince)) / MIN_MS);

@@ -17,8 +17,12 @@ import { CHECKLISTS, globMatch, recordedKeys, reviewFocus } from '../router/inde
 import { KINDS, open, resolve, writeTaskText } from '../state/index.mjs';
 import { codeState } from '../verify/run.mjs';
 import { openStore } from '../verify/index.mjs';
+import { dataLine, fenceLine } from '../text/data.mjs';
 import { seal, unedited } from './brief.mjs';
 import { EXIT } from './commands.mjs';
+
+// One line of a fenced data list (SEC-14): repository text on one line that cannot close the template's fence.
+const quoted = (s) => fenceLine(dataLine(s));
 
 const DIFF_MAX = 4 * 1024 * 1024;
 const DECISION_LINES = 20;
@@ -105,7 +109,7 @@ export function reviewBrief({ args, flags, names, io, pluginRoot }) {
     }
     rows = all.filter((f) => !scope || scope.includes(f.id));
     for (const f of rows) previous.push(f.id);
-    rows = rows.map((f) => `| ${f.id} | ${f.severity} | ${f.path}:${f.line ?? '?'} | ${String(f.text).replace(/\|/g, '\\|').replace(/\s*\n\s*/g, ' ')} |`);
+    rows = rows.map((f) => `| ${dataLine(f.id)} | ${dataLine(f.severity)} | ${dataLine(f.path).replace(/\|/g, '\\|')}:${f.line ?? '?'} | ${dataLine(f.text).replace(/\|/g, '\\|')} |`);
   }
 
   const acceptance = acceptanceOf(store.readText(`tasks/${id}/brief.md`));
@@ -140,7 +144,7 @@ export function reviewBrief({ args, flags, names, io, pluginRoot }) {
   const rules = briefRules({ cls: task.class, role: review.focus === 'security' ? 'security-reviewer' : 'reviewer' });
   const template = readFileSync(join(pluginRoot, 'templates', 'task', 'review-brief.md'), 'utf8');
   const body = renderReviewBrief(template, {
-    '<Task title>': task.title,
+    '<Task title>': dataLine(task.title),
     '<task ID>': id,
     '<k>': String(round),
     '<trivial | standard | critical>': task.class,
@@ -151,10 +155,10 @@ export function reviewBrief({ args, flags, names, io, pluginRoot }) {
     '<report path>': existsSync(reportFile) ? reportFile : '(none yet)',
     '<diff path>': diffFile,
     '<rule IDs>': rules.join(' '),
-    '<changed files>': files.length ? files.map((f) => `- ${f}`).join('\n') : '(none)',
-    '<acceptance>': acceptance.length ? acceptance.join('\n') : NO_ACCEPTANCE,
-    '<previous findings>': round > 1 ? ['| ID | Severity | Where | Finding |', '|---|---|---|---|', ...rows].join('\n') : '(first review: no previous findings)',
-    '<risks>': risks.map((r) => `- ${r}`).join('\n'),
+    '<changed files>': files.length ? files.map((f) => quoted(`- ${f}`)).join('\n') : '(none)',
+    '<acceptance>': acceptance.length ? acceptance.map(quoted).join('\n') : NO_ACCEPTANCE,
+    '<previous findings>': round > 1 ? ['| ID | Severity | Where | Finding |', '|---|---|---|---|', ...rows].map(quoted).join('\n') : '(first review: no previous findings)',
+    '<risks>': risks.map((r) => quoted(`- ${r}`)).join('\n'),
     '<schema path>': join(pluginRoot, 'templates', 'review.schema.json'),
     '<reviewer agent>': review.focus === 'security' ? 'security-reviewer' : 'reviewer',
     '<reviewer id>': review.focus === 'security' ? 'claude:security-reviewer' : 'claude:reviewer',

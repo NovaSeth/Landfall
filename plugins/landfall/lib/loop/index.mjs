@@ -18,7 +18,7 @@ import { isAbsolute, join, relative, sep } from 'node:path';
 import { git } from '../git/index.mjs';
 import { costSince, readRuns } from '../receipts/index.mjs';
 import { KINDS, StateError, emailHash, open, resolve } from '../state/index.mjs';
-import { cheapCap, decide, newLoop, parseCaps } from './decide.mjs';
+import { cheapCap, decide, effectiveCaps, newLoop, parseCaps } from './decide.mjs';
 import { CAP_RANGE, CARRIED_PLAN, DEFAULT_CAPS, LOOP, LOOP_ID, STALL, TERMINAL, UNMEASURED, fixedPrompt } from './kind.mjs';
 import { DEFAULT_BUDGET_MIN, budgetOf, readBudgets } from './budget.mjs';
 import { STATUS_MIN, TABLE_RULES, WAIT_S, nextSteps, parsePlan, readWatch } from './table.mjs';
@@ -171,7 +171,7 @@ export function tickStore(store, { where, names, now, plan = null, probe, watch 
     const me = snap.team.find((d) => d.emailSha256 === hash)?.handle ?? null;
     const table = nextSteps({
       tasks: snap.tasks, runs: snap.runs, handles: snap.team.map((d) => d.handle), me, plan, lanesOn: snap.lanesOn,
-      caps: loop.caps, now, bin: names.bin, budgets: readBudgets(where.dir, snap.tasks), problem: snap.problem, dirty: probe.dirty, watch,
+      caps: effectiveCaps(loop), now, bin: names.bin, budgets: readBudgets(where.dir, snap.tasks), problem: snap.problem, dirty: probe.dirty, watch,
     });
     const d = decide(loop, {
       now, fingerprint: fingerprint(heads, snap.files, snap.runs), costMicroUsd: cost?.costMicroUsd ?? null, unmeasurable: cost?.unmeasurable === true,
@@ -203,7 +203,7 @@ export function startLoop({ cwd, env, names, now = Date.now(), caps = {}, byUser
     if (cur && !cur.exit) throw new StateError('loop-running', 'FAIL', `loop ${cur.id} is running (tick ${cur.ticks} of ${cur.caps.ticks})`, { hint: `'${names.bin} loop stop' ends it first` });
     if (cur && !byUser) throw userDecision(`the last loop ended with ${cur.exit}: a new loop after an ended one is the user's decision`);
     replaced = cur;
-    return newLoop({ now, caps: { ...DEFAULT_CAPS, ...caps } });
+    return newLoop({ now, caps: { ...DEFAULT_CAPS, ...caps }, byUser });
   });
   return { where, loop, replaced };
 }

@@ -9,11 +9,12 @@
 // lib/cli/output.mjs.
 import { EXIT } from '../cli/commands.mjs';
 import { getRule, openMethod } from '../method/index.mjs';
+import { DATA_MARKER, dataLine } from '../text/data.mjs';
 import { CARRIED_PLAN, UNMEASURED, fixedPrompt, parseCaps, showLoop, startLoop, stopLoop, tick as runTick } from './index.mjs';
 
 const CODE = Object.freeze({ ACTION: EXIT.OK, WAIT: EXIT.WAIT, DONE: EXIT.DONE, STALLED: EXIT.STALLED, BUDGET: EXIT.BUDGET });
 const usd = (micro) => `$${(micro / 1e6).toFixed(2)}`;
-const cell = (s) => String(s).replace(/[|\r\n]+/g, '/');
+const cell = (s) => dataLine(s).replace(/\|/g, '/'); // one data line first (SEC-14): U+2028 and other separators too
 const minutes = (loop, now) => Math.max(0, Math.floor((now - Date.parse(loop.startedAt)) / 60000));
 
 // The loop document as data (every field the hooks and the user see).
@@ -52,6 +53,7 @@ function render(r, rules, names, now, carried) {
   const partial = r.costPartial ? ' · the cost is partial: a lower bound' : '';
   const out = [`TICK ${new Date(now).toISOString().slice(0, 16)}Z — ${r.result}${!ended && actions ? ` (${actions})` : ''} · loop ${r.loop.id}: ${usage(r.loop, now)}${partial}`];
   if (ended) out.push(`The loop ended (${r.result}${r.repeated ? `, recorded ${r.loop.exitAt}` : ''}): ${r.reason}.`);
+  if (r.steps.length || r.info.length) out.push(DATA_MARKER); // the rows carry titles and states from repository files
   const head = ended ? '| left open | state | next step | rules |' : '| task | state | next step | rules |';
   if (r.steps.length) out.push(table(r.steps, head));
   const sections = [['blocked', 'Blocked (informational):'], ['others', 'Others (informational):'], ['plan', 'Next in the plan (informational):'], ['watch', 'Watch (informational, ORC-24):']];
