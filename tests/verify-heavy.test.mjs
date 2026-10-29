@@ -59,6 +59,8 @@ async function setup(t, { timeoutS, cmd }) {
   return { run, id, stateDir, env, data, probe: join(iso.base, 'probe') };
 }
 const heavyLeases = (data) => (existsSync(join(data, 'leases')) ? readdirSync(join(data, 'leases'), { recursive: true }).filter((f) => /heavy-\d/.test(f)) : []);
+// The lease entry as ls -R lists it: a line of its own. A path line such as /tmp/verify-heavy-1AB/data: never counts.
+const LEASE_ENTRY = /^heavy-1\b/m;
 const probeCmd = (probe, extra = '') => `ls -R "$CLAUDE_PLUGIN_DATA" >> ${probe}; ${extra}node --test`;
 
 test('a gate printing a key: verify.json, the log and the CLI output hold the masked value, never the key', async (t) => {
@@ -86,7 +88,7 @@ test('a long gate runs while verify holds the heavy lease, and the lease is rele
   trustWith(state, s.stateDir, names, s.env);
   const v = await s.run(['verify', s.id, '--yes', '--json']);
   assert.equal(v.code, 0, v.text.slice(0, 1500));
-  assert.match(readFileSync(s.probe, 'utf8'), /heavy-1/, 'the lease was held during the gate');
+  assert.match(readFileSync(s.probe, 'utf8'), LEASE_ENTRY, 'the lease was held during the gate');
   assert.deepEqual(heavyLeases(s.data), [], 'released after');
 });
 
@@ -96,7 +98,7 @@ test('a short gate takes no lease', async (t) => {
   trustWith(state, s.stateDir, names, s.env);
   const v = await s.run(['verify', s.id, '--yes', '--json']);
   assert.equal(v.code, 0, v.text.slice(0, 1500));
-  assert.doesNotMatch(readFileSync(s.probe, 'utf8'), /heavy-1/);
+  assert.doesNotMatch(readFileSync(s.probe, 'utf8'), LEASE_ENTRY);
 });
 
 // T-MG-80: every full gate of verify runs under the heavy lease, the base measurement too (a base without a stored
@@ -109,6 +111,6 @@ test('the base measurement runs its long gate under the heavy lease as well', as
   assert.equal(v.code, 0, v.text.slice(0, 1500));
   const runs = readFileSync(s.probe, 'utf8').split('RUN\n').filter(Boolean);
   assert.ok(runs.length >= 2, `the gate ran at HEAD and at the base: ${runs.length} runs`);
-  runs.forEach((r, k) => assert.match(r, /heavy-1/, `run ${k + 1} held the lease`));
+  runs.forEach((r, k) => assert.match(r, LEASE_ENTRY, `run ${k + 1} held the lease`));
   assert.deepEqual(heavyLeases(s.data), [], 'released after');
 });

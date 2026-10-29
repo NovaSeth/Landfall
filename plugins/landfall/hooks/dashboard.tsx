@@ -35,13 +35,30 @@ const CLOSED = new Set(['done', 'cancelled'])
 const ACTIVE = new Set(['dispatched', 'in-review', 'implemented', 'fix-round', 'verified'])
 const KIND_ORDER: Record<string, number> = { action: 0, blocked: 1, wait: 2, info: 3 }
 const CLASS_TAG: Record<string, string> = { critical: 'crit', standard: 'std', trivial: 'triv' }
+const PULSE_MS = 1_000
+const BAR_CELLS = 10
+// The time box of a Claude agent: the dispatch method's default (no setting exposes another); an external run has its own `capS`.
+const AGENT_LIMIT_S = 15 * 60
+const AGENT_LIMIT_MS = AGENT_LIMIT_S * 1000
+// The one place that maps use of the time limit to a colour: blue to 60 %, then blending to orange at 100 %, red past it.
+const HEAT = { calm: [74, 144, 226], hot: [245, 158, 11], over: '#e5484d', from: 0.6 } as const
+function heatColor(ratio: number): string {
+  if (ratio > 1) return HEAT.over
+  const k = Math.min(1, Math.max(0, (ratio - HEAT.from) / (1 - HEAT.from)))
+  const [r, g, b] = HEAT.calm.map((c, i) => Math.round(c + (HEAT.hot[i] - c) * k))
+  return `#${[r, g, b].map(x => x.toString(16).padStart(2, '0')).join('')}`
+}
+// A task counts as touched when something happened to it since this module started, or an agent or run names it.
+const SESSION_START = Date.now()
+// the timing fields `status --json` gives a task (slice A); an older CLI gives none of them
+type TaskView = TaskRow & { startedAt?: string | null; lastEventAt?: string | null; expectedMs?: number | null; expectedFrom?: 'history' | 'default' }
 
 // the state references are literals: the engine lists what the module reads and writes from the source
 const snapshotAtom = atom({ plugin: 'landfall', key: 'snapshot' } as const, null)
 const agentsAtom = atom({ plugin: 'landfall', key: 'agents' } as const, [])
 
 // The module's own variables: lost on a hot reload, which `session.start` then sets again.
-const live = { mode: 'auto', cwd: '', root: '', busy: false, queued: false, pending: false, shown: false, cancel: null as unknown }
+const live = { mode: 'auto', cwd: '', root: '', busy: false, queued: false, pending: false, shown: false, cancel: null as unknown, pulse: null as unknown }
 
 // What `$.clock.every` handed back: a function, or a handle with `cancel`.
 function stopTimer(handle: unknown): void {
@@ -107,10 +124,10 @@ function lastPath(text: string): string | null {
 
 // ---- the snapshot: what the CLI says, read into rows ---------------------------------------------------------------
 
-function tasksOf(data: Json): { rows: TaskRow[]; counts: Snapshot['counts'] } {
+function tasksOf(data: Json): { rows: TaskView[]; counts: Snapshot['counts'] } {
   const steps = new Map(list(data.steps).map(s => [str(s.task), s]))
   const counts: Snapshot['counts'] = { open: 0, active: 0, byStatus: {} }
-  const rows: TaskRow[] = []
+  const rows: TaskView[] = []
   for (const t of list(data.tasks)) {
     const status = str(t.status, 'unknown')
     counts.byStatus[status] = (counts.byStatus[status] ?? 0) + 1
@@ -127,6 +144,10 @@ function tasksOf(data: Json): { rows: TaskRow[]; counts: Snapshot['counts'] } {
       state: str(s?.state, status),
       step: s ? str(s.step) || null : null,
       kind: str(s?.kind, 'info'),
+      startedAt: str(t.startedAt) || null,
+      lastEventAt: str(t.lastEventAt) || null,
+      expectedMs: num(t.expectedMs),
+      expectedFrom: t.expectedFrom === 'history' ? 'history' : 'default',
     })
   }
   rows.sort(
@@ -142,7 +163,8 @@ function tasksOf(data: Json): { rows: TaskRow[]; counts: Snapshot['counts'] } {
 // External runs as `runs list --json` summarises them (lib/runs: runId, status, provider, role, task, elapsedMs, tokens,
 // lastLine, outFile, error); a run is live until a terminal status (review r1 F1).
 const RUN_TERMINAL = new Set(['done', 'failed', 'timeout', 'stopped'])
-function runsOf(env: Json | null): RunRow[] {
+type RunView = RunRow & { capS?: number | null }
+function runsOf(env: Json | null): RunView[] {
   const data = env ? obj(env.data) : null
   return list(data?.runs)
     .map(r => {
@@ -161,6 +183,7 @@ function runsOf(env: Json | null): RunRow[] {
         error: str(r.error) || null,
         lastLine: str(r.lastLine) || null,
         live: !RUN_TERMINAL.has(status),
+        capS: num(r.capS),
         endedAt: Date.parse(str(r.endedAt)) || null,
       }
     })
@@ -240,10 +263,11 @@ function inactiveSnapshot(project: string, now: number, error: string | null): S
 
 // ---- the drawing -------------------------------------------------------------------------------------------------
 
-type Line = { text: string; style: 'head' | 'dim' | 'section' | 'row' | 'live' | 'ok' | 'bad' | 'next' }
+type Line = { text: string; style: 'head' | 'dim' | 'section' | 'row' | 'live' | 'ok' | 'bad' | 'next'; color?: string }
 type AgentLine = { line: Line; live: boolean; since: number; endedAt: number | null; failed: boolean }
 
-function agentLine(r: AgentRecord, at: number): AgentLine {
+function agentLine(r: AgentRecord, now: number): AgentLine {
+  const at = now
   const running = RUNNING.has(r.status)
   const glyph = running ? '●' : r.status === 'completed' ? '✓' : r.status === 'idle' ? '○' : '✗'
   const parts = [
@@ -254,24 +278,70 @@ function agentLine(r: AgentRecord, at: number): AgentLine {
     ...(r.out ? [`→ ${baseName(r.out)}`] : []),
     ...(r.tokens ? [`${(r.tokens / 1000).toFixed(1)}k tok`] : []),
   ]
-  return { line: { text: parts.join('  '), style: running ? 'live' : r.status === 'completed' ? 'ok' : r.status === 'idle' ? 'dim' : 'bad' }, live: running, since: r.startedAt, endedAt: r.endedAt, failed: !running && r.status !== 'completed' && r.status !== 'idle' }
+  return { line: { text: parts.join('  '), style: running ? 'live' : r.status === 'completed' ? 'ok' : r.status === 'idle' ? 'dim' : 'bad', ...(running ? { color: heatColor(((r.endedAt ?? at) - r.startedAt) / AGENT_LIMIT_MS) } : {}) }, live: running, since: r.startedAt, endedAt: r.endedAt, failed: !running && r.status !== 'completed' && r.status !== 'idle' }
 }
 
-function runLine(r: RunRow, at: number): AgentLine {
+// `taken` is when the snapshot was taken, `now` the time of the render: the elapsed time of a live run grows by the difference.
+function runLine(r: RunView, taken: number, now: number): AgentLine {
+  const at = taken
+  const elapsed = r.live ? r.elapsedMs + Math.max(0, now - taken) : r.elapsedMs
   const glyph = r.live ? '●' : r.status === 'done' ? '✓' : '✗'
   const parts = [
     `${glyph} ${`${r.provider} ${r.role}`.padEnd(11)}`,
     `${(r.task ?? '-').padEnd(8)}   `,
-    clock(r.elapsedMs),
+    clock(elapsed),
     r.status,
     ...(r.out ? [`→ ${baseName(r.out)}`] : []),
     ...(r.tokens ? [`${(r.tokens / 1000).toFixed(1)}k tok`] : []),
     ...(r.error ? [r.error] : r.lastLine ? [r.lastLine] : []),
   ]
-  return { line: { text: parts.join('  '), style: r.live ? 'live' : r.status === 'done' ? 'ok' : 'bad' }, live: r.live, since: at - r.elapsedMs, endedAt: r.endedAt, failed: !r.live && r.status !== 'done' }
+  return { line: { text: parts.join('  '), style: r.live ? 'live' : r.status === 'done' ? 'ok' : 'bad', ...(r.live ? { color: heatColor(elapsed / ((r.capS ?? AGENT_LIMIT_S) * 1000)) } : {}) }, live: r.live, since: at - r.elapsedMs, endedAt: r.endedAt, failed: !r.live && r.status !== 'done' }
 }
 
-export function linesOf(snap: Snapshot, width: number, rows: number): Line[] {
+const minutes = (ms: number): string => {
+  const m = Math.max(0, Math.floor(ms / 60_000))
+  return m >= 60 ? `${Math.floor(m / 60)}h${pad2(m % 60)}m` : `${m}m`
+}
+
+// `[■■■■■□□□□□] 12m/45m` and the expected finish (`~HH:MM`, or `+Nm over` once past); null without a start or an estimate.
+function barOf(t: TaskView, now: number): { bar: string; clock: string } | null {
+  const started = Date.parse(t.startedAt ?? '')
+  const expected = t.expectedMs
+  if (!Number.isFinite(started) || typeof expected !== 'number' || !(expected > 0)) return null
+  const spent = Math.max(0, now - started)
+  const filled = Math.round(Math.min(1, spent / expected) * BAR_CELLS)
+  const finish = started + expected
+  const d = new Date(finish)
+  return {
+    bar: `[${'■'.repeat(filled)}${'□'.repeat(BAR_CELLS - filled)}] ${minutes(spent)}/${minutes(expected)}`,
+    clock: finish > now ? `~${pad2(d.getHours())}:${pad2(d.getMinutes())}` : `+${minutes(now - finish)} over`,
+  }
+}
+
+// One task on one line: icon, id, round, class, the title, the bar and clock, the stage last. Narrow: the stage is cut first,
+// then dropped, then the clock, then the bar; the title is shortened last.
+function taskText(t: TaskView, icon: string, stage: string, now: number, width: number): string {
+  const head = `${icon} ${t.id}${t.round ? ` r${t.round}` : ''} ${t.cls ? CLASS_TAG[t.cls] ?? t.cls : '-'}`
+  const title = t.title ? ` ${t.title}` : ''
+  const b = barOf(t, now)
+  const variants: { mid: string; stage: boolean }[] = [
+    { mid: b ? `  ${b.bar} ${b.clock}` : '', stage: true },
+    { mid: b ? `  ${b.bar} ${b.clock}` : '', stage: false },
+    { mid: b ? `  ${b.bar}` : '', stage: false },
+    { mid: '', stage: false },
+  ]
+  for (const v of variants) {
+    const base = `${head}${title}${v.mid}`
+    if (v.stage) {
+      const room = width - [...base].length - 2
+      if (room >= 8) return `${base}  ${cut(stage, room)}`
+    } else if ([...base].length <= width) return base
+  }
+  return cut(`${head}${title}`, width)
+}
+
+// `now` is the time of the render, so every clock counts live between two refreshes of the data.
+export function linesOf(snap: Snapshot, width: number, rows: number, now: number = snap.at): Line[] {
   const out: Line[] = []
   const c = snap.counts
   const mode = snap.tierMode && snap.tierMode !== 'on' ? ` (${snap.tierMode})` : ''
@@ -288,17 +358,24 @@ export function linesOf(snap: Snapshot, width: number, rows: number): Line[] {
   for (const a of snap.agents) if (RUNNING.has(a.status) && a.task) named.add(a.task)
   for (const r of snap.runs) if (r.live && r.task) named.add(r.task)
   const working = (t: TaskRow) => ACTIVE.has(t.status) || named.has(t.id)
+  // touched: an event since this session began, or any agent or run (live or ended) names it
+  const touchedIds = new Set<string>()
+  for (const a of snap.agents) if (a.task) touchedIds.add(a.task)
+  for (const r of snap.runs) if (r.task) touchedIds.add(r.task)
+  const touched = (t: TaskView) => touchedIds.has(t.id) || Date.parse(t.lastEventAt ?? '') >= SESSION_START
+  const beat = Math.floor(now / PULSE_MS) % 2 === 0
   // a new task nobody routed (and no --after holds, nothing blocks) is backlog: one dim line, not a row
   const backlog = (t: TaskRow) => !working(t) && t.status === 'new' && t.cls === null && t.kind !== 'blocked' && !t.state.startsWith('waits for')
   const rowsOf = snap.tasks.filter(t => !backlog(t))
   const folded = snap.tasks.length - rowsOf.length
   const ordered = [...rowsOf.filter(working), ...rowsOf.filter(t => !working(t))]
   const shownTasks = ordered.slice(0, ordered.length > taskRoom ? taskRoom - 1 : taskRoom)
-  for (const t of shownTasks) {
+  for (const t of shownTasks as TaskView[]) {
     const w = working(t)
     const blocked = t.kind === 'blocked'
     const stage = blocked ? `blocked · ${t.state.replace(/^blocked:\s*/, '')}` : `${w ? 'working' : 'waiting'} · ${t.state}`
-    out.push({ text: `${w ? '▶' : '⏸'} ${t.id}${t.round ? ` r${t.round}` : ''} ${t.cls ? CLASS_TAG[t.cls] ?? t.cls : '-'}  ${stage}`, style: blocked ? 'bad' : w ? 'row' : 'dim' })
+    const seen = w || touched(t)
+    out.push({ text: taskText(t, w ? '▶' : seen ? '⏸' : '■', stage, now, width), style: blocked ? 'bad' : w ? (beat ? 'live' : 'row') : seen ? 'row' : 'dim' })
   }
   if (ordered.length > shownTasks.length) out.push({ text: `  … ${ordered.length - shownTasks.length} more (landfall task list)`, style: 'dim' })
   if (folded > 0) out.push({ text: `⏸ ${folded} in backlog (landfall task list)`, style: 'dim' })
@@ -306,7 +383,7 @@ export function linesOf(snap: Snapshot, width: number, rows: number): Line[] {
 
   out.push({ text: 'AGENTS', style: 'section' })
   // only the agents and runs at work
-  const shown = [...snap.agents.map(r => agentLine(r, snap.at)), ...snap.runs.map(r => runLine(r, snap.at))].filter(a => a.live).sort((a, b) => b.since - a.since)
+  const shown = [...snap.agents.map(r => agentLine(r, now)), ...snap.runs.map(r => runLine(r, snap.at, now))].filter(a => a.live).sort((a, b) => b.since - a.since)
   const shownAgents = shown.slice(0, shown.length > agentRoom ? Math.max(0, agentRoom - 1) : agentRoom)
   for (const a of shownAgents) out.push(a.line)
   if (shown.length > shownAgents.length) out.push({ text: `  … ${shown.length - shownAgents.length} more`, style: 'dim' })
@@ -399,9 +476,21 @@ function refreshSoon($: EngineInterface): void {
   })
 }
 
+// Only a redraw: the snapshot carries the time of the beat, which makes the pane render again with the time of the render.
+async function beatPane($: EngineInterface): Promise<void> {
+  try {
+    const now = await $.clock.now()
+    await update($, snapshotAtom, s => (s ? ({ ...s, beat: now } as Snapshot) : s))
+  } catch {
+    // the module is unloading
+  }
+}
+
 function arm($: EngineInterface): void {
   stopTimer(live.cancel)
+  stopTimer(live.pulse)
   live.cancel = $.clock.every(live.shown ? POLL_SHOWN_MS : POLL_HIDDEN_MS, () => void refresh($))
+  live.pulse = live.shown ? $.clock.every(PULSE_MS, () => void beatPane($)) : null
 }
 
 async function openPane($: EngineInterface): Promise<boolean> {
@@ -504,6 +593,7 @@ export const register: Register = (on, options) => {
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Text } = $.ui.resolve(e)
     const snap = await read($, snapshotAtom)
+    const now = await $.clock.now()
     const width = Math.max(20, Math.floor(e.props.bodyColumns))
     const rows = Math.max(8, Math.floor(e.props.scroll.bodyRows))
     if (snap === null) {
@@ -523,8 +613,10 @@ export const register: Register = (on, options) => {
     }
     return (
       <Box flexDirection="column">
-        {linesOf(snap, width, rows).map(l =>
-          l.style === 'head' ? (
+        {linesOf(snap, width, rows, now).map(l =>
+          l.color ? (
+            <Text color={l.color}>{l.text}</Text>
+          ) : l.style === 'head' ? (
             <Text bold>{l.text}</Text>
           ) : l.style === 'section' ? (
             <Text bold dimColor>

@@ -1,6 +1,6 @@
 {
   "name": "landfall",
-  "version": "2.5.0",
+  "version": "2.5.1",
   "description": "Sizes the process to each coding task and checks the outcome in code: a task is done only when its gates pass again.",
   "author": {
     "name": "NovaSeth",
