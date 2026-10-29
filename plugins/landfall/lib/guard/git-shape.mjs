@@ -66,7 +66,11 @@ function scanArgs(sub, args) {
 
 // Git: global options from the list, then the subcommand's shape. ctx: { cwd, unsure, branch(dir), teamMode() }.
 export function gitShape(c, w, ctx) {
-  if (c.words.some((x) => x.glob)) why('a glob in a git command');
+  if (c.words.some((x) => x.glob)) {
+    // the first word that is no option (or an option's value) is the subcommand place (A-2)
+    let k = 1; while (k < w.length && w[k].startsWith('-')) k += GIT_ARG.has(w[k]) || w[k] === '-c' || w[k] === '-C' ? 2 : 1;
+    why(c.words[k]?.glob ? 'a glob in the git subcommand: write the subcommand literally' : 'a glob in a git command');
+  }
   let i = 1; let dir = ctx.cwd; let inline = false;
   while (i < w.length && w[i].startsWith('-')) {
     const t = w[i];

@@ -38,7 +38,12 @@ export const GATES = Object.freeze([
 ]);
 export const gateById = (id) => GATES.find((g) => g.id === id);
 // A segment with a pipe that names a gate command, a package manager or the plugin's gate subcommands.
-const GATE_LINE = new RegExp(`(^|[\\s/])(check-secrets|budget\\.sh|npm|pnpm|yarn|bun)(\\s|$|\\.|:)|(^|[\\s/])${binRe}\\s(.*\\s)?(secrets|verify|slot|heavy)(\\s|$)`);
+// Linear (A-1): the first occurrence of the plugin's command, then a gate subcommand word anywhere after it.
+const GATE_NAME = /(^|[\s/])(check-secrets|budget\.sh|npm|pnpm|yarn|bun)(\s|$|\.|:)/;
+const BIN_WORD = new RegExp(`(^|[\\s/])${binRe}\\s`);
+const GATE_SUB = /\s(secrets|verify|slot|heavy)(\s|$)/;
+const after = (s, head, tail) => { const m = head.exec(s); return m !== null && tail.test(s.slice(m.index + m[0].length - 1)); };
+const GATE_LINE = { test: (s) => GATE_NAME.test(s) || after(s, BIN_WORD, GATE_SUB) };
 
 // The first command word of a segment (after assignments, keywords and wrappers).
 function commandWord(seg) {
@@ -60,7 +65,10 @@ function gitAliasCandidate(seg) {
     if (!/^(?:.*\/)?git$/.test(ws[k])) continue;
     let j = k + 1;
     while (j < ws.length && ws[j].startsWith('-')) j += GIT_ARG.has(ws[j]) ? 2 : 1;
-    if (j < ws.length && /^[\w-]+$/.test(ws[j]) && !GIT_BUILTINS.has(ws[j])) return true;
+    if (j >= ws.length) continue;
+    // a glob or a substitution in the subcommand word: bash may turn it into any subcommand (A-2)
+    if (/[*?[$`]/.test(ws[j])) return true;
+    if (/^[\w-]+$/.test(ws[j]) && !GIT_BUILTINS.has(ws[j])) return true;
   }
   return false;
 }
@@ -69,8 +77,13 @@ const gitConfigKey = (s) => /(^|[\s/])git(-config)?(\s|$)/.test(s) && /(^|[\s/-]
   && s.split(' ').some((w) => configKey(w.split('=')[0]) !== null || /^(--ren|rename-section)/.test(w));
 
 // operators glued to the command (a|rm, a;rm, a&&rm) count: the leading class holds | ; & ( / and whitespace
-const RM_RECURSIVE = /(^|[\s/(|;&])rm\s(.*\s)?(-[a-z]*r[a-z]*|--r[a-z]*)(\s|$)/;
-const FIND_DELETE = /(^|[\s/(|;&])find(\s.*)?\s(-delete|-(exec|execdir|ok|okdir)\s+(\S*\/)?rm)(\s|$)/;
+// Linear (A-1): the first rm / find word, then the option word anywhere after it (no `(.*\s)?` that backtracks per start).
+const RM_WORD = /(^|[\s/(|;&])rm\s/;
+const RM_FLAG = /\s(-[a-qs-z]*r[a-z]*|--r[a-z]*)(\s|$)/;
+const FIND_WORD = /(^|[\s/(|;&])find\s/;
+const FIND_FLAG = /\s(-delete|-(exec|execdir|ok|okdir)\s+(\S*\/)?rm)(\s|$)/;
+const RM_RECURSIVE = { test: (s) => after(s, RM_WORD, RM_FLAG) };
+const FIND_DELETE = { test: (s) => after(s, FIND_WORD, FIND_FLAG) };
 
 // The tokens. Checked on the normalized variants of the text: word — a word anywhere (lowercase); cased — a word with its
 // case kept; line — a construct on a segment between ; and & that may build a guarded operation from content outside
@@ -80,7 +93,8 @@ export const GUARDED = Object.freeze([
   { id: 'push', word: /push/ },
   { id: '--no-verify', word: /no-ver/ },
   { id: 'hooksPath', word: /hookspath/ },
-  { id: 'include.path', word: /include[^\s=]*\.path/ },
+  // include and .path within one run of non-space, non-= characters (linear: the first include of each run, A-1)
+  { id: 'include.path', word: { test: (v) => v.split(/[\s=]/).some((w) => { const k = w.indexOf('include'); return k >= 0 && w.indexOf('.path', k + 7) >= 0; }) } },
   { id: 'check-secrets', word: /check-secrets/ },
   { id: 'hook files', word: /\.githooks|\.husky|\.git\/hooks|(^|[\s/=])\.git\/?($|\s)/ },
   { id: 'commit', word: /commit/ },
@@ -129,12 +143,137 @@ const ansiDecoded = (text) => text.replace(/\$'((?:[^'\\]|\\[\s\S])*)'?/g, (_, b
 const flat = (s) => s.replace(/\\\r?\n/g, '').replace(/['"\\]/g, '').replace(/\s+/g, ' ');
 // Variants with the case kept (project rules, cased tokens): no quotes and backslashes, $'…' and \xHH decoded.
 export const caseVariants = (text) => { const a = ansiDecoded(text); return [flat(a), flat(decodeEscapes(a))]; };
-// Variants for the tokens (lowercase): also ${X:-default} → default, no $X / $(…) / `…`, and no {,}.
-export function variants(text) {
-  const [v1, v2] = caseVariants(text).map((s) => s.toLowerCase());
-  const v3 = v2.replace(/\$\{[#!]?\w*(?:\[[^\]]*\])?(?::?[-=+?#%/^,]+([^}]*))?\}/g, '$1').replace(/\$(?:\w+|[@*#?$!-])/g, '').replace(/[`$()]/g, '');
-  return [v1, v2, v3, v3.replace(/[{},]/g, '')];
+// The text with every $(…) and `…` removed with its body (nesting counted, one pass): an empty substitution that splits
+// a word (.land$(:)fall) leaves the word whole (A-3). An unclosed one runs to the end.
+export function dropSubs(s) {
+  let out = ''; let depth = 0; let tick = false;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (tick) { if (c === '`') tick = false; continue; }
+    if (c === '$' && s[i + 1] === '(') { depth++; i++; continue; }
+    if (depth > 0) { if (c === '(') depth++; else if (c === ')') depth--; continue; }
+    if (c === '`') { tick = true; continue; }
+    out += c;
+  }
+  return out;
 }
+// The end (the index after it) of a shell construct whose body starts at i; -1: unclosed at the end of the text (bash
+// refuses the text, GC8: no hit by itself); -2: the end cannot be found with certainty (a comment or a case inside a
+// substitution, nesting deeper than MAX_NEST). One forward pass (F1).
+const MAX_NEST = 64;
+function endTick(s, i) {
+  for (let j = i; j < s.length; j++) { if (s[j] === '\\') j++; else if (s[j] === '`') return j + 1; }
+  return -1;
+}
+function endAnsi(s, i) {
+  for (let j = i; j < s.length; j++) { if (s[j] === '\\') j++; else if (s[j] === "'") return j + 1; }
+  return -1;
+}
+const endSq = (s, i) => { const k = s.indexOf("'", i); return k < 0 ? -1 : k + 1; };
+function endDq(s, i, d) {
+  for (let j = i; j < s.length;) {
+    const c = s[j];
+    if (c === '\\') j += 2;
+    else if (c === '"') return j + 1;
+    else if (c === '$' && s[j + 1] === '$') j += 2;
+    else if (c === '`') { j = endTick(s, j + 1); if (j < 0) return j; }
+    else if (c === '$' && (s[j + 1] === '(' || s[j + 1] === '{')) { j = endSub(s, j + 2, s[j + 1], d + 1); if (j < 0) return j; }
+    else j++;
+  }
+  return -1;
+}
+const WORD_START = /[\s;&|()]/;
+// The body of $( (open '(') or ${ (open '{') starts at i.
+function endSub(s, i, open, d) {
+  if (d > MAX_NEST) return -2;
+  let depth = 1;
+  for (let j = i; j < s.length;) {
+    const c = s[j];
+    const start = j === i || WORD_START.test(s[j - 1]);
+    if (c === '\\') { j += 2; continue; }
+    if (c === '$' && s[j + 1] === '$') { j += 2; continue; }
+    if (c === '$' && s[j + 1] === "'") j = endAnsi(s, j + 2);
+    else if (c === "'") j = endSq(s, j + 1);
+    else if (c === '"') j = endDq(s, j + 1, d);
+    else if (c === '`') j = endTick(s, j + 1);
+    else if (c === '$' && (s[j + 1] === '(' || s[j + 1] === '{')) j = endSub(s, j + 2, s[j + 1], d + 1);
+    else if (open === '{') { if (c === '}') return j + 1; j++; continue; }
+    else if (c === '(') { depth++; j++; continue; }
+    else if (c === ')') { if (--depth === 0) return j + 1; j++; continue; }
+    else if (start && (c === '#' || (s.startsWith('case', j) && /^case(\s|$)/.test(s.slice(j, j + 5))))) return -2;
+    else { j++; continue; }
+    if (j < 0) return j;
+  }
+  return -1;
+}
+// The raw text with every $(…) and `…` removed with its body, read with the shell's quoting (single quotes keep a
+// substitution as text, quoted and escaped parentheses do not end one: F1; a quote after an escaped $ or after $$ is no
+// $'…': R2F1). No comment or heredoc parsing (AR2): every character outside a substitution is kept. An unclosed $( or
+// backtick is kept as text and the scan goes on; uncertain when an end cannot be found with certainty, or when a newline
+// follows an unclosed opening (fail closed).
+export function subsDropped(s) {
+  let out = ''; let dq = false; let uncertain = false; const lastNl = s.lastIndexOf('\n');
+  for (let j = 0; j < s.length;) {
+    const c = s[j];
+    if (c === '\\') { out += s.slice(j, j + 2); j += 2; continue; }
+    if (c === '$' && s[j + 1] === '$') { out += '$$'; j += 2; continue; }
+    if ((c === "'" || (c === '$' && s[j + 1] === "'")) && !dq) {
+      const k = c === '$' ? endAnsi(s, j + 2) : endSq(s, j + 1);
+      if (k < 0) { out += s.slice(j); break; }
+      out += s.slice(j, k); j = k; continue;
+    }
+    if (c === '"') { dq = !dq; out += c; j++; continue; }
+    if (c === '`' || (c === '$' && s[j + 1] === '(')) {
+      const k = c === '`' ? endTick(s, j + 1) : endSub(s, j + 2, '(', 1);
+      if (k >= 0) { j = k; continue; }
+      if (k === -2 || lastNl > j) uncertain = true;
+      const n = c === '`' ? 1 : 2;
+      out += s.slice(j, j + n); j += n; continue;
+    }
+    out += c; j++;
+  }
+  return { text: out, uncertain };
+}
+// ${X…} expansions in one pass (F2), as /\$\{[#!]?\w*(?:\[[^\]]*\])?(?::?[-=+?#%/^,]+(?![-=+?#%/^,])([^}]*))?\}/g
+// replaced with '$1' would give: ${X:-default} → default, ${X} → nothing; the next ] and } come from a table.
+const PARAM_OPS = '-=+?#%/^,';
+const isWord = (k) => (k >= 48 && k <= 57) || (k >= 65 && k <= 90) || (k >= 97 && k <= 122) || k === 95;
+export function stripParams(s) {
+  if (!s.includes('${')) return s;
+  const n = s.length;
+  const nextOf = (ch) => { const a = new Int32Array(n + 1).fill(-1); for (let i = n - 1; i >= 0; i--) a[i] = s[i] === ch ? i : a[i + 1]; return a; };
+  const rb = nextOf(']'); const cb = nextOf('}');
+  // the end of the word run and of the operator run that start at i, once per text (each opening is O(1): R2F2)
+  const runEnd = (inRun) => { const a = new Int32Array(n + 1); a[n] = n; for (let i = n - 1; i >= 0; i--) a[i] = inRun(i) ? a[i + 1] : i; return a; };
+  const we = runEnd((i) => isWord(s.charCodeAt(i))); const oe = runEnd((i) => PARAM_OPS.includes(s[i]));
+  const tryAt = (j) => {
+    j = we[Math.min(j, n)];
+    if (s[j] === '[') { const k = rb[j + 1]; if (k < 0) return null; j = k + 1; }
+    let k = j; if (s[k] === ':') k++;
+    const m = oe[Math.min(k, n)];
+    if (m > k && cb[m] >= 0) return [cb[m] + 1, s.slice(m, cb[m])];
+    return s[j] === '}' ? [j + 1, ''] : null;
+  };
+  let out = ''; let last = 0; let i = 0;
+  while ((i = s.indexOf('${', i)) >= 0) {
+    const r = ((s[i + 2] === '#' || s[i + 2] === '!') && tryAt(i + 3)) || tryAt(i + 2);
+    if (r) { out += s.slice(last, i) + r[1]; i = last = r[0]; } else i++;
+  }
+  return out + s.slice(last);
+}
+const noExpansions = (v) => stripParams(v).replace(/\$(?:\w+|[@*#?$!-])/g, '').replace(/[`$()]/g, '');
+// Variants for the tokens (lowercase): also ${X:-default} → default, no $X / $(…) / `…`, and no {,}; and the text without
+// the substitutions and their bodies (on the flattened text, and on the raw text read with its quoting). uncertain:
+// a substitution whose end cannot be found with certainty.
+function variantsOf(text) {
+  const [v1, v2] = caseVariants(text).map((s) => s.toLowerCase());
+  const v3 = noExpansions(v2);
+  const d = subsDropped(text);
+  const a = ansiDecoded(d.text);
+  return { vs: [v1, v2, v3, v3.replace(/[{},]/g, ''), dropSubs(v2), flat(decodeEscapes(a)).toLowerCase(), flat(a).toLowerCase()], uncertain: d.uncertain };
+}
+export const variants = (text) => variantsOf(text).vs;
+const UNCERTAIN = 'a substitution without a certain end';
 
 // A text longer than this gets a coarse prescan in linear time: the word tokens on the same variants as below (raw
 // and decoded, without expansions, without braces), and any trigger of a line token (git, a pipe, $, a backtick, <(,
@@ -144,8 +283,11 @@ const ROUGH = /(^|[\s/])git|\||[$`]|<\(|xargs|config|-section|(^|[\s/(;&])rm\s|\
 function coarse(text, literals) {
   const strip = (s) => s.replace(/\\\r?\n|['"\\]/g, '');
   const a = ansiDecoded(text); const c1 = strip(a); const c2 = strip(decodeEscapes(a));
-  const v3 = c2.toLowerCase().replace(/\$\{[#!]?\w*(?:\[[^\]]*\])?(?::?[-=+?#%/^,]+([^}]*))?\}/g, '$1').replace(/\$(?:\w+|[@*#?$!-])/g, '').replace(/[`$()]/g, '');
-  const vs = [c1.toLowerCase(), c2.toLowerCase(), v3, v3.replace(/[{},]/g, '')]; const cs = [c1, c2]; const hits = new Set();
+  const v3 = noExpansions(c2.toLowerCase());
+  const d = subsDropped(text);
+  const vs = [c1.toLowerCase(), c2.toLowerCase(), v3, v3.replace(/[{},]/g, ''), dropSubs(c2.toLowerCase()), strip(decodeEscapes(ansiDecoded(d.text))).toLowerCase()];
+  const cs = [c1, c2]; const hits = new Set();
+  if (d.uncertain) hits.add(UNCERTAIN);
   for (const g of GUARDED) if ((g.word && vs.some((v) => g.word.test(v))) || (g.cased && cs.some((v) => g.cased.test(v)))) hits.add(g.id);
   if (vs.some((v) => ROUGH.test(v))) hits.add('a line-token trigger in a long text');
   for (const l of literals) if (vs.some((v) => v.includes(l))) hits.add(`project rule literal "${l}"`);
@@ -154,7 +296,8 @@ function coarse(text, literals) {
 // Prescan: the tokens (and the literals of project rules) present in a command.
 export function prescan(text, literals = []) {
   if (text.length > LONG_TEXT) return coarse(text, literals);
-  const vs = variants(text); const hits = new Set(); let cs = null;
+  const { vs, uncertain } = variantsOf(text); const hits = new Set(); let cs = null;
+  if (uncertain) hits.add(UNCERTAIN);
   for (const g of GUARDED) {
     if (g.word && vs.some((v) => g.word.test(v))) hits.add(g.id);
     if (g.cased && (cs ??= caseVariants(text)).some((v) => g.cased.test(v))) hits.add(g.id);
