@@ -15,6 +15,8 @@ import { isAbsolute, relative } from 'node:path';
 import { EXIT } from '../cli/commands.mjs';
 import { openStore, riskGlobsOf } from '../profile/index.mjs';
 import { StateError, emailHash, gitIdentity, open, resolve } from '../state/index.mjs';
+import { cellStats, suggestExecutors } from '../receipts/executors.mjs';
+import { executorRecords } from '../receipts/index.mjs';
 import { reviewShown } from '../verify/artifacts.mjs';
 import { classify } from './classify.mjs';
 import { RouteError, usage } from './errors.mjs';
@@ -109,12 +111,27 @@ const HEADLINE = {
   probed: () => ' (probe: nothing written)',
 };
 
-function render(d) {
+const fixed = (x) => x.toFixed(2);
+function executorData(cls, { io, names }) {
+  const cells = cellStats(executorRecords({ cwd: io.cwd, env: io.env, names }), { seed: 1 }).filter((c) => c.class === cls);
+  return { seed: 1, resamples: 1000, results: suggestExecutors(cells, cls) };
+}
+
+function executorLines(ex) {
+  return ex.results.map((r) => {
+    if (r.executor === null) return `executor ${r.role}: role defaults (${r.reason})`;
+    const c = r.cells.find((x) => x.executor === r.executor);
+    return `executor ${r.role}: ${r.executor} (first pass ${fixed(c.firstPass.rate)}, 90% ${fixed(c.firstPass.lo)}-${fixed(c.firstPass.hi)}, ${c.tasks} tasks)`;
+  });
+}
+
+function render(d, ex) {
   const lines = [`${d.task ?? 'plan'}: ${d.class}${HEADLINE[d.outcome](d)}`, `route: ${d.route.steps.join(' > ')}`];
   lines.push(`review: ${d.review.text}`);
   if (d.addedSteps.length) lines.push(`adds: ${d.addedSteps.join(', ')}`);
   lines.push(`outcome gates (the same for every class): ${d.route.gates.join(', ')}`, 'reasons:');
   for (const r of d.reasons) lines.push(`  - ${r.path ? `${r.path}: ` : ''}${r.text}`);
+  if (ex) lines.push(...executorLines(ex));
   return `${lines.join('\n')}\n`;
 }
 
@@ -133,7 +150,8 @@ export function makeRoute({ readProfileRiskPaths: readRisk = readProfileRiskPath
         data = { probe: false, ...out, review: reviewShown(store, out.class, { names, env: io.env }) };
       }
       data = { task: data.task, probe: data.probe, class: data.class, computed: data.computed, previous: data.previous, outcome: data.outcome, escalated: data.escalated, reasons: data.reasons, route: data.route, addedSteps: data.addedSteps, decision: data.decision, review: data.review, input: data.input };
-      return { data, text: render(data) };
+      if (flags.executor) data.executor = executorData(data.class, { io, names });
+      return { data, text: render(data, data.executor) };
     } catch (err) {
       if (err instanceof RouteError || err instanceof StateError) return { code: EXIT[err.exit], errors: [err] };
       throw err;

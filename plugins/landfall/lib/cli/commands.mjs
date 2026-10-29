@@ -252,6 +252,7 @@ const ROWS = [
       { flag: '--loc', value: 'n', summary: 'estimated lines changed' },
       { flag: '--flags', value: 'f,…', summary: 'risk flags, comma-separated: migration, public-api, security, data-write, irreversible, new-dependency' },
       { flag: '--probe', summary: 'classify the plan only: no task, nothing written' },
+      { flag: '--executor', summary: 'add a line per role: the executor the receipts favour for the class (two cells of 20+ tasks, separated 90% first-pass intervals), else the role defaults' },
       { flag: '--override', value: 'class', summary: 'set the class on the user\'s word (lowering records a decision): trivial, standard, critical' },
       { flag: '--by', value: 'who', summary: 'who decided the override; only user is accepted' },
       { flag: '--quote', value: 'text', summary: 'the user\'s own words, at most 300 characters, kept in the decision' },

@@ -1047,10 +1047,10 @@ Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
 Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
 ```
 
-### `landfall route [<task>] [--paths <p,…>] [--loc <n>] [--flags <f,…>] [--probe] [--override <class>] [--by <who>] [--quote <text>] [--yes] [--json]`
+### `landfall route [<task>] [--paths <p,…>] [--loc <n>] [--flags <f,…>] [--probe] [--executor] [--override <class>] [--by <who>] [--quote <text>] [--yes] [--json]`
 
 ```text
-usage: landfall route [<task>] [--paths <p,…>] [--loc <n>] [--flags <f,…>] [--probe] [--override <class>] [--by <who>] [--quote <text>] [--yes] [--json]
+usage: landfall route [<task>] [--paths <p,…>] [--loc <n>] [--flags <f,…>] [--probe] [--executor] [--override <class>] [--by <who>] [--quote <text>] [--yes] [--json]
 
 Classify a task as trivial, standard or critical from its plan and print its route; the class only rises.
 Critical: a path matching a risk glob, a risk flag, or a large change; trivial: a small change without flags.
@@ -1068,6 +1068,7 @@ Options:
   --loc <n>           estimated lines changed
   --flags <f,…>       risk flags, comma-separated: migration, public-api, security, data-write, irreversible, new-dependency
   --probe             classify the plan only: no task, nothing written
+  --executor          add a line per role: the executor the receipts favour for the class (two cells of 20+ tasks, separated 90% first-pass intervals), else the role defaults
   --override <class>  set the class on the user's word (lowering records a decision): trivial, standard, critical
   --by <who>          who decided the override; only user is accepted
   --quote <text>      the user's own words, at most 300 characters, kept in the decision

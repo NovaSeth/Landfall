@@ -251,3 +251,31 @@ export function totalsSince(day, by, { cwd, env, names }) {
   const total = { tokens: list.reduce((sum, g) => add(sum, g.tokens), zero()), costMicroUsd: list.reduce((sum, g) => sum + g.costMicroUsd, 0) };
   return { where, since: day, by, groups: list, total, receipts: receipts.length, runs: extra.length, partial: problems.length > 0, problems };
 }
+
+// The records behind the executor suggestion (SD-42), one per task with a saved receipt, a dispatch and a verify: its
+// class (as saved), the executor of its last dispatch, whether its first verify passed, its cost. A file that cannot be
+// read is left out (a lower bound). Reads only; [] outside a tracked repository.
+export function executorRecords({ cwd, env, names }) {
+  let where;
+  try { where = resolve({ cwd, env, names }); } catch (err) {
+    if (err instanceof StateError && err.exit === 'ENV') return []; // outside git: no receipts
+    throw err;
+  }
+  if (!where.active) return [];
+  const store = open(where.dir, { names, kinds: STORE_KINDS });
+  const out = [];
+  for (const id of store.list(RECEIPT.name)) {
+    try {
+      const receipt = store.read(RECEIPT.name, id);
+      const task = store.read('task', id);
+      if (!receipt?.class || !task) continue;
+      const dispatch = task.events.filter((e) => e.event === 'dispatched').pop();
+      const verify = task.events.find((e) => e.event === 'verify');
+      if (!dispatch?.data?.executor || !verify) continue;
+      out.push({ task: id, class: receipt.class, executor: dispatch.data.executor, firstPass: verify.data?.result === 'pass', costMicroUsd: receipt.costMicroUsd ?? 0 });
+    } catch (err) {
+      if (!(err instanceof StateError) || err.exit !== 'FAIL') throw err;
+    }
+  }
+  return out;
+}
