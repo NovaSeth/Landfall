@@ -95,6 +95,14 @@ const TABLE = [
   ['a flag on mockups is still a flag', { paths: ['mockups/a.js'], loc: 900, flags: ['new-dependency'] }, 'standard', ['light-only', 'flag']],
   // every reason is listed, critical ones first
   ['risk path, risk flag and size together', { paths: ['src/auth/a.js', ...many(16)], loc: 500, flags: ['migration', 'new-dependency'] }, 'critical', ['risk-path', 'risk-flag', 'files-over', 'loc-over']],
+  // T-MG-74 F1-5: agent instructions are risk paths, never weightless
+  ['CLAUDE.md alone is critical', { paths: ['CLAUDE.md'], loc: 2 }, 'critical', ['risk-path']],
+  ['a SKILL.md in a subdirectory is critical', { paths: ['plugins/x/skills/y/SKILL.md'], loc: 2 }, 'critical', ['risk-path']],
+  ['an agent definition is critical', { paths: ['agents/reviewer.md'], loc: 2 }, 'critical', ['risk-path']],
+  ['a prompt file is critical', { paths: ['app/prompts/system.txt'], loc: 2 }, 'critical', ['risk-path']],
+  ['.claude settings are critical', { paths: ['.claude/settings.json'], loc: 2 }, 'critical', ['risk-path']],
+  ['AGENTS.md and GEMINI.md are critical', { paths: ['AGENTS.md', 'sub/GEMINI.md'], loc: 2 }, 'critical', ['risk-path', 'risk-path']],
+  ['a large change to CLAUDE.md is no docs-only', { paths: ['CLAUDE.md', 'docs/a.md'], loc: 900 }, 'critical', ['risk-path', 'loc-over']],
   // duplicate paths count once
   ['the same file three times is one file', { paths: ['a.js', './a.js', 'x/../a.js'], loc: 3 }, 'trivial', ['small']],
 ];
