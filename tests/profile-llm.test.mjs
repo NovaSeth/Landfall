@@ -73,3 +73,13 @@ test('llm: go.mod module paths match an entry exactly or continue with a slash',
   assert.equal(scan(t, { 'go.mod': 'module x\n\nrequire github.com/openai/openai-go-evil v1.0.0\n' }), undefined);
   assert.equal(scan(t, { 'go.mod': 'module x\n\nrequire github.com/openai/openai-go/v2 v2.0.0\n' }).value, true);
 });
+
+test('llm: pyproject.toml keys and headers are decoded; a poetry key needs a value', (t) => {
+  const py = (text) => scan(t, { 'pyproject.toml': text });
+  assert.equal(py('[tool.poetry.dependencies]\nopenai =\n'), undefined, 'no value is no dependency');
+  assert.equal(py('[tool.poetry.dependencies]\nopenai = {version = "^1"}\n').value, true);
+  assert.equal(py('[project]\n"dependencies" = ["openai"]\n').evidence, 'pyproject.toml: openai');
+  assert.equal(py('project.dependencies = ["anthropic"]\n').evidence, 'pyproject.toml: anthropic');
+  assert.equal(py('[tool."poetry".dependencies]\nopenai = "^1"\n').evidence, 'pyproject.toml: openai');
+  assert.equal(py('[project]\n"keywords" = ["mcp"]\n'), undefined);
+});
