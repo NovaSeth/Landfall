@@ -191,3 +191,79 @@ test('D8: review record and report refuse a FIFO without waiting for it', { time
   assert.equal(rep.code, 2, show(rep));
   assert.equal(rep.out.errors[0].code, 'report-unreadable');
 });
+
+// Fix round 1 (review r1, F1 F3 F4 F5).
+const redactLib = await lib('verify/redact.mjs');
+const secretsLib = await lib('secrets/index.mjs');
+
+test('F1: a project pattern that matches its own mask ends (redaction never re-matches the replacement)', () => {
+  const href = new URL(`file://${join(dirname(new URL(import.meta.url).pathname), '..', 'plugins', 'landfall', 'lib')}/`).href;
+  const script = `const r = await import(${JSON.stringify(`${href}verify/redact.mjs`)}); const s = await import(${JSON.stringify(`${href}secrets/index.mjs`)});
+const out = r.redact('a tok_1234567890123456 b', s.projectPatterns('tok_.*').patterns); process.stdout.write(out);`;
+  const c = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', timeout: 1500 });
+  assert.equal(c.error?.code ?? null, null, 'redact ended within 1500 ms');
+  assert.equal(c.status, 0, c.stderr);
+  assert.ok(!c.stdout.includes('1234567890123456'), c.stdout);
+  assert.match(c.stdout, /^a tok_\*{8} \(\d+ chars\)$/);
+});
+
+test('F1: overlapping and repeated matches are each masked once, on the original text', () => {
+  const extra = secretsLib.projectPatterns('ZZPRJ-[0-9]{8}\n').patterns;
+  const out = redactLib.redact(`x ${PROJECT} y ${PROJECT} ${BUILT_IN}`, extra);
+  assert.ok(!out.includes('48151623') && !out.includes(BUILT_IN.slice(4)), out);
+  assert.equal(out.match(/\*{8}/g).length, 3, out);
+});
+
+function patternDir(t, bytes) {
+  const d = join(spawnSync('mktemp', ['-d']).stdout.toString().trim());
+  t.after(() => spawnSync('rm', ['-rf', d]));
+  if (bytes !== null) writeFileSync(join(d, 'secrets-patterns.txt'), bytes);
+  return d;
+}
+
+test('F3: a UTF-8 project pattern redacts the UTF-8 secret it names', (t) => {
+  const d = patternDir(t, Buffer.from('żeton-[0-9]{8}\n', 'utf8'));
+  const extra = redactLib.projectRedactions({ dir: d });
+  assert.equal(extra.length, 1);
+  const out = redactLib.redact('key żeton-12345678 end é', extra);
+  assert.ok(!out.includes('12345678'), out);
+  assert.ok(out.endsWith(' end é'), `the rest of the line keeps its characters: ${out}`);
+});
+
+test('F4: no pattern file is no project pattern; an unreadable or invalid one is refused', (t) => {
+  assert.deepEqual(redactLib.projectRedactions({ dir: patternDir(t, null) }), []);
+  const asDir = patternDir(t, null);
+  mkdirSync(join(asDir, 'secrets-patterns.txt'));
+  const invalid = patternDir(t, 'ok-[0-9]+\n(unclosed\n');
+  for (const d of [asDir, invalid]) {
+    assert.throws(() => redactLib.projectRedactions({ dir: d }), (err) => err.code === 'project-patterns-unreadable' && err.exit === 'FAIL'
+      && err.message.includes('secrets-patterns.txt'), d);
+  }
+});
+
+test('F4: verify and baseline pin refuse an invalid pattern file before any gate runs', async (t) => {
+  const p = await fresh(t);
+  const id = await p.task();
+  p.commit('main', 'README.md', '# y\n');
+  put(join(p.stateDir, 'secrets-patterns.txt'), '(unclosed\n');
+  const v = await p.run(['verify', id, '--yes']);
+  assert.equal(v.code, 1, show(v));
+  assert.equal(v.out.errors[0].code, 'project-patterns-unreadable', show(v));
+  const d = await p.run(['decide', '--kind', 'gate-change', '--title', 'pin', '--why', 'repair', '--cost', 'none', '--yes']);
+  const pin = await p.run(['baseline', 'pin', '--decision', d.out.data.id, '--yes']);
+  assert.equal(pin.code, 1, show(pin));
+  assert.equal(pin.out.errors[0].code, 'project-patterns-unreadable', show(pin));
+  assert.equal(p.runs(), 0, 'no gate ran');
+});
+
+test('F5: a change of the project pattern file reruns the gates instead of reusing the cache', async (t) => {
+  const { p, id } = await primed(t);
+  const n = p.runs();
+  assert.ok((await p.run(['verify', id, '--yes'])).out.data.reusedFrom, 'the same patterns reuse the entry');
+  assert.equal(p.runs(), n);
+  put(join(p.stateDir, 'secrets-patterns.txt'), 'ZZPRJ-[0-9]{8}\n');
+  const v = await p.run(['verify', id, '--yes']);
+  assert.equal(v.code, 0, show(v));
+  assert.ok(p.runs() > n, 'the gate ran again');
+  assert.equal(v.out.data.reusedFrom ?? null, null);
+});

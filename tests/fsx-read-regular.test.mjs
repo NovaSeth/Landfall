@@ -55,3 +55,18 @@ test('a FIFO is refused without blocking', { timeout: 20000 }, (t) => {
   refused(() => fsx.readRegularFile(join(d, 'pipe'), { max: 10 }), 'ENOTREGULAR');
   assert.ok(Date.now() - started < 5000, 'returned at once');
 });
+
+// Fix round 1 (review r1, F2): a file that grows after fstat is read to its end or refused, never cut at its old size.
+test('F2: a file that grows after fstat is refused when it passes max, read whole when it stays within it', () => {
+  const content = Buffer.from(`{"a":1}${' '.repeat(44)}`); // 51 bytes, valid JSON in its first bytes
+  const fake = (bytes) => {
+    let pos = 0;
+    return {
+      openSync: () => 99, closeSync: () => {}, lstatSync: () => ({ isFile: () => true, dev: 1, ino: 1 }),
+      fstatSync: () => ({ isFile: () => true, size: 10, dev: 1, ino: 1 }),
+      readSync: (fd, buf, off, len) => { const n = Math.min(len, bytes.length - pos); bytes.copy(buf, off, pos, pos + n); pos += n; return n; },
+    };
+  };
+  assert.throws(() => fsx.readRegularFile('/x', { max: 20, fs: fake(content) }), (err) => err.code === 'ETOOBIG');
+  assert.equal(fsx.readRegularFile('/x', { max: 60, fs: fake(content) }).length, 51);
+});
