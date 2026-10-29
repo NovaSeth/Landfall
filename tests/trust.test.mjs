@@ -137,8 +137,9 @@ test('trust --yes, trust without a terminal and a no answer are refused (exit 7)
   assert.deepEqual([(await verifyCi(c)).code, existsSync(c.ran)], [7, false]);
 });
 
-test('gates set on this machine (profile gates set) are trusted without a prompt', async (t) => {
+test('gates set on this machine (profile gates set) over an empty gate set are trusted without a prompt', async (t) => {
   const c = clone(t, repo(t));
+  writeProfile(c, []); // the clone ships no gates: nothing untrusted to build on (fix round 1: AR-1)
   const where = state.resolve({ cwd: c.dir, env: c.env, names });
   const d = decisions.createDecision({ store: state.open(c.stateDir, { names }), where, names, env: c.env, handle: c.handle, today: AT.slice(0, 10), input: { title: 'Gates', why: 'test', cost: 'none', kind: 'gate-change', scope: [], supersedes: [] } });
   const set = await cli(['profile', 'gates', 'set', 'test', `touch '${c.ran}' && node --test`, '--kind', 'test', '--timeout', '60', '--decision', d.id, '--yes'], c);
@@ -148,10 +149,36 @@ test('gates set on this machine (profile gates set) are trusted without a prompt
   assert.equal(existsSync(c.ran), true);
 });
 
-test('adoption: an existing local/ from before the owner marker, with no trust entry, runs verify without a prompt', async (t) => {
+// ---- fix round 1: AR-1 (a write trusts only on a trusted or empty set), AR-2 (adoption needs machine-side evidence) ----
+
+test('AR-1: a clone with an untrusted shipped gate; profile gates set adds a second gate; verify still refuses gates-untrusted', async (t) => {
+  const c = clone(t, repo(t));
+  const where = state.resolve({ cwd: c.dir, env: c.env, names });
+  const d = decisions.createDecision({ store: state.open(c.stateDir, { names }), where, names, env: c.env, handle: c.handle, today: AT.slice(0, 10), input: { title: 'Gates', why: 'test', cost: 'none', kind: 'gate-change', scope: [], supersedes: [] } });
+  const second = join(c.base, 'ran-second');
+  const set = await cli(['profile', 'gates', 'set', 'second', `touch '${second}'`, '--kind', 'test', '--timeout', '60', '--decision', d.id, '--yes'], c);
+  assert.equal(set.code, 0, set.stderr);
+  const res = await verifyCi(c);
+  assert.deepEqual([res.code, codes(res)], [7, ['gates-untrusted']], JSON.stringify(res.env.errors));
+  assert.deepEqual([existsSync(c.ran), existsSync(second)], [false, false], 'no gate ran');
+});
+
+test('AR-2: an unmarked, untracked local/ without a projects.json entry is not adopted: verify refuses, nothing runs', async (t) => {
   const r = repo(t);
   rmSync(join(r.stateDir, 'local', '.machine'));
   rmSync(trustFile(), { force: true });
+  assert.equal(state.localForeign(r.stateDir).why, 'unmarked');
+  const res = await verifyCi(r);
+  assert.deepEqual([res.code, codes(res)], [7, ['gates-untrusted']], JSON.stringify(res.env.errors));
+  assert.equal(existsSync(r.ran), false);
+});
+
+test('adoption: a repository whose state dir is linked in projects.json (machine-side evidence), with no trust entry, runs verify without a prompt', async (t) => {
+  const r = repo(t);
+  rmSync(join(r.stateDir, 'local', '.machine'));
+  rmSync(trustFile(), { force: true });
+  state.updateProject({ repo: r.dir, dataDir: dataDir(), names, patch: { stateDir: r.stateDir } }); // as `init --state-dir` links it
+  t.after(() => state.updateProject({ repo: r.dir, dataDir: dataDir(), names, patch: { stateDir: null } }));
   assert.equal(state.localForeign(r.stateDir).why, 'unmarked');
   const res = await verifyCi(r);
   assert.notEqual(res.code, 7, JSON.stringify(res.env.errors));

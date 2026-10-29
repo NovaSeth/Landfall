@@ -6,7 +6,8 @@
 // This file holds no plugin name or path: both come from lib/name.json.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { hostname, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -209,4 +210,82 @@ test('A2-4: a hook run in a repository with a shipped local/ moves nothing aside
   assert.equal(r.status, 0, r.stderr);
   assert.deepEqual(foreignDirs(store), [], 'a hook never moves local/ aside');
   assert.deepEqual(readdirSync(join(store, 'local')).sort(), before, 'and writes nothing into it');
+});
+
+// ---- fix round 1: F1 (a replacement local/ is never adopted), F2 (a marker that is not a file), F3 (git errors),
+// F4 (the move-aside is serialized), F5 (the backup exclusion before any move) ----
+const dataDirOf = () => state.machineDataDir(names, process.env);
+const GATES = [{ name: 'test', cmd: 'touch shipped', timeoutS: 60, kind: 'test' }];
+
+test('F1: a shipped local/ moved aside in a linked repository: the fresh local/ is not adopted, the shipped gates stay untrusted', async (t) => {
+  const { dir, store } = await shippedClone(t);
+  writeFileSync(join(store, 'profile.json'), `${JSON.stringify({ schema: 1, gates: GATES }, null, 2)}\n`);
+  state.updateProject({ repo: dir, dataDir: dataDirOf(), names, patch: { stateDir: store } });
+  t.after(() => state.updateProject({ repo: dir, dataDir: dataDirOf(), names, patch: { stateDir: null } }));
+  state.open(store, { names }).write('config', null, config);
+  assert.equal(foreignDirs(store).length, 1);
+  const trusted = state.isTrusted({ dir: store, dataDir: dataDirOf(), names, kind: 'gates', sha: state.gatesShaOf(GATES) });
+  assert.equal(trusted.trusted, false, 'adopted from a replacement local/');
+  assert.equal(state.readTrust(dataDirOf(), names).repos[trusted.key]?.adoptedAt, undefined);
+});
+
+test('F2: a marker that is a symbolic link or a directory makes local/ foreign', (t) => {
+  const { base, store } = repo(t);
+  const target = join(base, 'id');
+  writeFileSync(target, `${state.machineId()}\n`);
+  symlinkSync(target, join(store, 'local', '.machine'));
+  assert.equal(state.localForeign(store).foreign, true);
+  rmSync(join(store, 'local', '.machine'));
+  mkdirSync(join(store, 'local', '.machine'));
+  assert.equal(state.localForeign(store).foreign, true);
+});
+
+test('F3: a git error makes ownership unknown (not ours, not cached); outside a repository local/ stays ours', (t) => {
+  const { base, store } = repo(t);
+  const bin = join(base, 'bin');
+  mkdirSync(bin);
+  writeFileSync(join(bin, 'git'), '#!/bin/sh\necho "fatal: broken" >&2\nexit 2\n', { mode: 0o755 });
+  const failed = state.localForeign(store, { env: { ...ISO.env, PATH: bin } });
+  assert.equal(failed.foreign, true, JSON.stringify(failed));
+  assert.equal(failed.unknown, true);
+  assert.equal(state.localForeign(store, { env: { ...ISO.env, PATH: join(base, 'none') } }).foreign, true, 'git missing: unknown too');
+  assert.equal(state.localForeign(store).why, 'unmarked', 'checked again once git answers');
+  const outside = join(base, 'linked-state');
+  mkdirSync(join(outside, 'local'), { recursive: true });
+  assert.equal(state.localForeign(outside).foreign, false, 'not a repository: nothing is tracked');
+});
+
+test('F4: two writers moving one shipped local/ aside are serialized: one move, both writes succeed, the lock is not moved', async (t) => {
+  const { base, store } = await shippedClone(t);
+  const signals = join(base, 'signals');
+  mkdirSync(signals);
+  const script = (cfg) => `const s = await import(${JSON.stringify(lib('state/index.mjs'))});\nconst names = ${JSON.stringify(names)};\ns.open(${JSON.stringify(store)}, { names }).write('config', null, ${JSON.stringify(cfg)});\n`;
+  writeFileSync(join(base, 'b.mjs'), script(config));
+  writeFileSync(join(base, 'a.mjs'), script({ flags: { lanes: 'on' } }));
+  const run = (file, env) => new Promise((done) => {
+    const p = spawn(process.execPath, [file], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+    let err = '';
+    p.stderr.on('data', (d) => { err += d; });
+    p.on('close', (code) => done({ code, err }));
+  });
+  const b = run(join(base, 'b.mjs'), { ...ISO.env, [`${names.envPrefix}TEST_MOVE_PAUSE`]: signals });
+  for (let i = 0; i < 200 && !existsSync(join(signals, 'paused')); i++) await sleep(25);
+  assert.ok(existsSync(join(signals, 'paused')), 'writer B paused inside the move-aside');
+  const a = run(join(base, 'a.mjs'), ISO.env);
+  await sleep(400);
+  writeFileSync(join(signals, 'go'), '');
+  const [rb, ra] = await Promise.all([b, a]);
+  assert.deepEqual([rb.code, ra.code], [0, 0], rb.err + ra.err);
+  assert.equal(foreignDirs(store).length, 1, 'moved aside once');
+  assert.equal(existsSync(join(store, 'local', 'lock')), false);
+  assert.equal(readFileSync(join(store, 'local', '.machine'), 'utf8').trim(), state.machineId());
+  assert.ok(existsSync(join(store, 'config.json')));
+});
+
+test('F5: a write that moves local/ aside first adds local.foreign-*/ to an older .gitignore', async (t) => {
+  const { store } = await shippedClone(t);
+  writeFileSync(join(store, '.gitignore'), 'local/\n.*.tmp\n');
+  state.open(store, { names }).write('config', null, config);
+  assert.equal(foreignDirs(store).length, 1);
+  assert.ok(readFileSync(join(store, '.gitignore'), 'utf8').split('\n').includes('local.foreign-*/'));
 });
