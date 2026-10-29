@@ -27,7 +27,7 @@ const sched = await lib('sched/index.mjs');
 const identity = '[user]\n\tname = Test User\n\temail = test@example.com\n';
 const CALM = Object.freeze({ cores: 10, load1: 1, loadMeasurable: true, totalBytes: 32 * 2 ** 30, availBytes: 20 * 2 ** 30, memMethod: 'vm_stat' });
 const BUSY = Object.freeze({ ...CALM, load1: 14.2 });
-const iso = (msAgo) => new Date(Date.now() - msAgo).toISOString();
+const iso = (msAgo, base = Date.now()) => new Date(base - msAgo).toISOString();
 const git = (cwd, env, args) => { const r = spawnSync('git', args, { cwd, env, encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); };
 
 test('ORC-24 resolves with rule, in the method after ORC-23, within the rule caps', () => {
@@ -50,12 +50,12 @@ test('the dispatch and loop skills name ORC-24', () => {
 
 test('watchRows: a heavy ticket queued 12 minutes ago, load over the max, a calm state', () => {
   const now = Date.now();
-  const queue = [{ status: 'live', at: iso(12 * 60e3) }, { status: 'live', at: iso(2 * 60e3) }];
+  const queue = [{ status: 'live', at: iso(12 * 60e3, now) }, { status: 'live', at: iso(2 * 60e3, now) }];
   const heavy = table.watchRows({ queue, readings: CALM, loadMax: '8.0', now });
   assert.deepEqual(heavy, [{ code: 'heavy-queue', message: 'heavy queue: 2 waiting, oldest 12 min → hold new dispatches until the gate is through (ORC-24)' }]);
   const load = table.watchRows({ queue: [], readings: BUSY, loadMax: '8.0', now });
   assert.deepEqual(load, [{ code: 'load', message: 'load 14.2 ≥ 8.0 → start no new agents until it falls (ORC-24)' }]);
-  assert.deepEqual(table.watchRows({ queue: [{ status: 'live', at: iso(9 * 60e3) }, { status: 'stale', at: iso(60 * 60e3) }], readings: CALM, loadMax: '8.0', now }), []);
+  assert.deepEqual(table.watchRows({ queue: [{ status: 'live', at: iso(9 * 60e3, now) }, { status: 'stale', at: iso(60 * 60e3, now) }], readings: CALM, loadMax: '8.0', now }), []);
   assert.deepEqual(table.watchRows({ queue: [], readings: BUSY, loadMax: 'off', now }), []);
 });
 
