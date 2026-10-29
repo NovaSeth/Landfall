@@ -1,15 +1,14 @@
 // Hook latency (SC13, GC8): every registered hook, run through the launcher as Claude Code runs it, in a fixture
-// repository of 10,000 committed files: p95 ≤ 300 ms and max < 1 s, measured as wall clock. Wall clock depends on the
-// machine: the suite records the 1-minute load before and after the run and refuses to judge above the machine budget
-// threshold (load > LOAD_MAX, default 1.7 × cores as in the machine budget; LOAD_MAX=off judges always). A refused judgement
-// is reported as a diagnostic, never as a pass of the budget. Unit tests assert CPU time instead (tests/hooks-guard.test.mjs).
-// Commands are data: the guard gets them as JSON and never runs them.
+// repository of 10,000 committed files: p95 ≤ 300 ms and max < 1 s of CPU time of the hook process (GC8: "< 1 s of CPU").
+// CPU time, not wall clock: the hook process reports its own process.cpuUsage() on fd 3 from a preload, so a loaded machine
+// (other agents, a full gate) does not change the result. The wall clock keeps one job, a hang guard (WALL_CEILING_MS).
+// Commands are data// Commands are data: the guard gets them as JSON and never runs them.
 // This file holds no plugin name or path: both come from lib/name.json.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
-import { cpus, loadavg, tmpdir } from 'node:os';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -31,13 +30,23 @@ const LAUNCHER = join(pluginDir, 'bin', names.bin);
 // Shared CI runners are slower and noisier than a developer machine: CI sets PERF_P95_MS (the 1 s max holds everywhere).
 const P95_MS = Number(process.env.PERF_P95_MS) || 300;
 const MAX_MS = 1000;
+const WALL_CEILING_MS = 5000; // a hang guard only: a hook that takes this long in wall time is stuck, not slow
 
-// The machine budget threshold: LOAD_MAX (a number, or off) or 1.7 × cores.
-function loadLimit() {
-  const v = process.env.LOAD_MAX;
-  if (v === 'off') return Infinity;
-  if (v !== undefined && /^\d+(\.\d+)?$/.test(v)) return Number(v);
-  return (cpus().length * 17) / 10;
+// What the budget judges: CPU p95 and max per hook, and the wall-clock hang guard. samples: { hook: [{ cpuMs, wallMs }] }.
+// Returns the list of breaches (empty: within budget).
+function judgeBudget(samples, { p95Ms = P95_MS, maxMs = MAX_MS, wallCeilingMs = WALL_CEILING_MS } = {}) {
+  const out = [];
+  for (const [n, xs] of Object.entries(samples)) {
+    const cpu = xs.map((x) => x.cpuMs);
+    if (cpu.some((c) => !Number.isFinite(c))) out.push(`${n}: CPU time not reported by the hook process`);
+    else {
+      if (p95(cpu) > p95Ms) out.push(`${n}: CPU p95 ${p95(cpu).toFixed(0)} ms > ${p95Ms} ms`);
+      if (Math.max(...cpu) >= maxMs) out.push(`${n}: CPU max ${Math.max(...cpu).toFixed(0)} ms ≥ ${maxMs} ms`);
+    }
+    const wall = Math.max(...xs.map((x) => x.wallMs));
+    if (wall >= wallCeilingMs) out.push(`${n}: wall ${wall.toFixed(0)} ms ≥ ${wallCeilingMs} ms (hang guard)`);
+  }
+  return out;
 }
 
 function fixture(files) {
@@ -81,17 +90,36 @@ function eventFor(h, dir, command) {
   }
 }
 
+// The preload reports the hook process's own CPU time (user + system) on fd 3 when it exits.
+const PROBE = join(mkdtempSync(join(tmpdir(), 'perf-cpu-')), 'cpu.cjs');
+writeFileSync(PROBE, "process.on('exit', () => { const u = process.cpuUsage(); require('node:fs').writeSync(3, JSON.stringify(u)); });\n");
 const runOnce = (name, input, cwd) => new Promise((done) => {
   const started = performance.now();
-  const p = spawn(process.execPath, [LAUNCHER, 'hook', name], { cwd, env: { ...process.env, CLAUDE_PROJECT_DIR: cwd }, stdio: ['pipe', 'pipe', 'pipe'] });
-  let stdout = '';
+  const p = spawn(process.execPath, ['--require', PROBE, LAUNCHER, 'hook', name], { cwd, env: { ...process.env, CLAUDE_PROJECT_DIR: cwd }, stdio: ['pipe', 'pipe', 'pipe', 'pipe'] });
+  let stdout = ''; let cpu = '';
   p.stdout.on('data', (d) => { stdout += d; });
-  p.on('close', (status) => done({ status, stdout, ms: performance.now() - started }));
+  p.stdio[3].on('data', (d) => { cpu += d; });
+  p.on('close', (status) => {
+    let cpuMs = NaN;
+    try { const u = JSON.parse(cpu); cpuMs = (u.user + u.system) / 1000; } catch { /* judged as "not reported" */ }
+    done({ status, stdout, cpuMs, wallMs: performance.now() - started });
+  });
   p.stdin.on('error', () => {}); p.stdin.end(input);
 });
 const p95 = (xs) => { const s = [...xs].sort((a, b) => a - b); return s[Math.min(s.length - 1, Math.ceil(s.length * 0.95) - 1)]; };
 
-test('hook latency on a 10,000-file repository: p95 ≤ 300 ms, max < 1 s per hook (wall clock, judged below the load threshold)', async (t) => {
+// The judge itself, driven with fakes: a machine that is slow in wall time but not in CPU passes, a hook that burns CPU or hangs fails.
+test('the budget judges CPU time: slow wall time alone passes, CPU over the limit or a hang fails', () => {
+  const fine = { cpuMs: 90, wallMs: 100 };
+  assert.deepEqual(judgeBudget({ h: Array.from({ length: 20 }, () => fine) }), []);
+  assert.deepEqual(judgeBudget({ h: Array.from({ length: 20 }, () => ({ cpuMs: 90, wallMs: 4000 })) }), [], 'a loaded machine: wall time 40x, same CPU');
+  assert.match(judgeBudget({ h: Array.from({ length: 20 }, () => ({ cpuMs: 400, wallMs: 450 })) })[0], /CPU p95 400 ms > 300 ms/);
+  assert.match(judgeBudget({ h: [...Array.from({ length: 19 }, () => fine), { cpuMs: 1200, wallMs: 1300 }] }).join('\n'), /CPU max 1200 ms/);
+  assert.match(judgeBudget({ h: [fine, { cpuMs: 10, wallMs: 6000 }] })[0], /hang guard/);
+  assert.match(judgeBudget({ h: [{ cpuMs: NaN, wallMs: 10 }] })[0], /not reported/);
+});
+
+test('hook latency on a 10,000-file repository: p95 ≤ 300 ms, max < 1 s of CPU per hook (wall clock only as a 5 s hang guard)', async (t) => {
   const dir = fixture(10000);
   await activate(dir);
   const tracked = spawnSync('git', ['ls-files'], { cwd: dir, encoding: 'utf8' }).stdout.trim().split('\n').length;
@@ -101,7 +129,6 @@ test('hook latency on a 10,000-file repository: p95 ≤ 300 ms, max < 1 s per ho
   // guard-bash: daily commands, among them the ones that read the branch (push without a refspec) and package.json
   const COMMANDS = ['git status', 'git push', 'git push -f', 'git commit -m "fix: stash note"', 'npm test', 'npm run lint | tail -1',
     'git push origin feat/perf', 'ls -la src', `${names.bin} status`, 'git stash'];
-  const before = loadavg()[0];
   const samples = {};
   for (const h of HOOKS) {
     samples[h.name] = [];
@@ -113,20 +140,10 @@ test('hook latency on a 10,000-file repository: p95 ≤ 300 ms, max < 1 s per ho
       // the measured guard is the real one: it decides, it does not just exit
       if (h.name === 'guard-bash') assert.equal(r.stdout.includes('"deny"'), c === 'git stash', `${h.name} <- ${c}: ${r.stdout}`);
       if (['session-start', 'subagent-start'].includes(h.name)) assert.match(r.stdout, /additionalContext/, `${h.name}: the context was built`);
-      samples[h.name].push(r.ms);
+      samples[h.name].push({ cpuMs: r.cpuMs, wallMs: r.wallMs });
     }
   }
-  const after = loadavg()[0];
-  const limit = loadLimit();
-  const lines = Object.entries(samples).map(([n, xs]) => `${n}: p95 ${p95(xs).toFixed(0)} ms, max ${Math.max(...xs).toFixed(0)} ms, n=${xs.length}`);
-  t.diagnostic(`load ${before.toFixed(2)} → ${after.toFixed(2)} (threshold ${limit === Infinity ? 'off' : limit.toFixed(1)}, ${cpus().length} cores)`);
+  const lines = Object.entries(samples).map(([n, xs]) => `${n}: CPU p95 ${p95(xs.map((x) => x.cpuMs)).toFixed(0)} ms, max ${Math.max(...xs.map((x) => x.cpuMs)).toFixed(0)} ms; wall max ${Math.max(...xs.map((x) => x.wallMs)).toFixed(0)} ms; n=${xs.length}`);
   for (const l of lines) t.diagnostic(l);
-  if (Math.max(before, after) > limit) {
-    t.diagnostic(`not judged: load above the machine budget threshold; rerun on an idle machine or with LOAD_MAX=off`);
-    return;
-  }
-  for (const [n, xs] of Object.entries(samples)) {
-    assert.ok(p95(xs) <= P95_MS, `${n}: p95 ${p95(xs).toFixed(0)} ms > ${P95_MS} ms`);
-    assert.ok(Math.max(...xs) < MAX_MS, `${n}: max ${Math.max(...xs).toFixed(0)} ms ≥ ${MAX_MS} ms`);
-  }
+  assert.deepEqual(judgeBudget(samples), []);
 });

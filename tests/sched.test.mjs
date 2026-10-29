@@ -595,18 +595,60 @@ test('heavy semaphore across processes: 5 waiters never overlap and run in ticke
   }
 });
 
-test('acquireWait gives up at its deadline and leaves no ticket behind', { timeout: 20000 }, async (t) => {
+// The wait is driven by an injected clock (opts.now, opts.sleep): a virtual clock starts at the real time and moves only
+// when the code sleeps, so no real time passes and a loaded machine cannot race the deadline (T-MG-68).
+function virtualClock(speed = 1) {
+  let offset = 0;
+  const slept = [];
+  return { now: () => Date.now() + offset, sleep: async (ms) => { slept.push(ms); offset += ms * speed; }, slept };
+}
+const ticketDeadline = (queue) => Date.parse(JSON.parse(readFileSync(join(queue, readdirSync(queue).find((f) => f.endsWith('.json'))), 'utf8')).deadline);
+const tickets = (queue) => (existsSync(queue) ? readdirSync(queue).filter((f) => f.endsWith('.json')) : []);
+
+for (const speed of [1, 10]) {
+  test(`acquireWait gives up at its deadline and leaves no ticket behind (virtual clock, a sleep ${speed}x as long as asked)`, { timeout: 20000 }, async (t) => {
+    const s = sandbox(t);
+    const held = sched.acquire('heavy', s.ctx());
+    const b = s.ctx({ cwd: s.dir('wt-b') });
+    const queue = join(s.data, 'heavy-queue');
+    const clock = virtualClock(speed);
+    const began = clock.now();
+    const realBegan = Date.now();
+    let deadline = null;
+    const r = await sched.acquireWait('heavy', { ...b, timeoutMs: 5000, pollMs: 1000, now: clock.now, sleep: clock.sleep, onWait: () => { deadline ??= ticketDeadline(queue); } });
+    assert.ok(Date.now() - realBegan < 3000, 'no real time was spent waiting');
+    assert.equal(r.ok, false);
+    assert.equal(r.reasons.at(-1).code, 'wait-timeout');
+    assert.ok(clock.slept.length >= 1 && clock.slept.every((ms) => ms <= 1000), 'it slept in poll steps, never past the poll interval');
+    assert.ok(deadline >= began + 5000 && deadline <= clock.now(), 'the ticket expires when the wait ends');
+    assert.deepEqual(tickets(queue), []);
+    sched.release(held.lease, s.ctx());
+  });
+}
+
+test('acquireWait with a clock that jumps past the deadline between attempts times out at once and withdraws its ticket', { timeout: 20000 }, async (t) => {
   const s = sandbox(t);
   const held = sched.acquire('heavy', s.ctx());
   const b = s.ctx({ cwd: s.dir('wt-b') });
   const queue = join(s.data, 'heavy-queue');
-  const began = Date.now();
-  let deadline = null;
-  const r = await sched.acquireWait('heavy', { ...b, timeoutMs: 200, pollMs: 20, onWait: () => { deadline ??= Date.parse(JSON.parse(readFileSync(join(queue, readdirSync(queue).find((f) => f.endsWith('.json'))), 'utf8')).deadline); } });
+  let calls = 0;
+  const now = () => Date.now() + (calls++ > 0 ? 3600e3 : 0); // the first reading is true, every later one is an hour on
+  const r = await sched.acquireWait('heavy', { ...b, timeoutMs: 5000, pollMs: 1000, now, sleep: async () => { throw new Error('must not sleep past the deadline'); } });
   assert.equal(r.ok, false);
   assert.equal(r.reasons.at(-1).code, 'wait-timeout');
-  assert.ok(deadline >= began + 200 && deadline <= Date.now(), 'the ticket expires when the wait ends');
-  assert.deepEqual(existsSync(queue) ? readdirSync(queue).filter((f) => f.endsWith('.json')) : [], []);
+  assert.deepEqual(tickets(queue), []);
+  sched.release(held.lease, s.ctx());
+});
+
+test('acquireWait on the real clock gives up and leaves no ticket behind (outcome only: how often it polls depends on the machine)', { timeout: 20000 }, async (t) => {
+  const s = sandbox(t);
+  const held = sched.acquire('heavy', s.ctx());
+  const b = s.ctx({ cwd: s.dir('wt-b') });
+  const queue = join(s.data, 'heavy-queue');
+  const r = await sched.acquireWait('heavy', { ...b, timeoutMs: 300, pollMs: 20 });
+  assert.equal(r.ok, false);
+  assert.equal(r.reasons.at(-1).code, 'wait-timeout');
+  assert.deepEqual(tickets(queue), []);
   sched.release(held.lease, s.ctx());
 });
 
