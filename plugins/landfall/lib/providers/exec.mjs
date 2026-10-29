@@ -9,14 +9,14 @@
 // Exit (exec) 0 · 1 no such task, no brief, a live run of the task and role · 2 bad role or provider · 7 inactive
 // repository, newer schema · 8 provider missing or logged out.
 import { tolerateClosedStreams } from '../cli/output.mjs';
-import { lstatSync, mkdtempSync, readFileSync, realpathSync } from 'node:fs';
+import { closeSync, constants, fstatSync, lstatSync, mkdtempSync, openSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { EXIT } from '../cli/commands.mjs';
 import { start } from '../proc/index.mjs';
 import { capFor, liveRun, nextRunId, runsStore, LOG_LINE, LOG_LINES } from '../runs/index.mjs';
 import { SYSTEM, acquireWait, attachChild, identify, release, supervise } from '../sched/index.mjs';
-import { KINDS, TASK_TEXTS, resolve } from '../state/index.mjs';
+import { KINDS, TASK_TEXTS, resolve, taskTextFile } from '../state/index.mjs';
 import { adapters, chooseProvider, detectProviders } from './index.mjs';
 import { LAST_LINE, ROLES } from './kind.mjs';
 
@@ -36,6 +36,8 @@ export function exec({ flags, names, io, pluginRoot }) {
   const role = flags.role;
   if (!ROLES.includes(role)) return { code: EXIT.USAGE, errors: [{ code: 'invalid-value', message: `--role ${String(role ?? '').slice(0, 40)}: expected ${ROLES.join(' or ')}`, hint: `${bin} exec --task <id> --role reviewer` }] };
   if (role === 'implementer') return { code: EXIT.USAGE, errors: [{ code: 'role-unsupported', message: 'implementer runs (a worktree from the task base) are not available yet', hint: 'run a reviewer' }] };
+  const asked = flags.round === undefined ? undefined : Number(flags.round);
+  if (asked !== undefined && (!/^[0-9]+$/.test(String(flags.round)) || !Number.isInteger(asked) || asked < 1 || asked > 999)) return { code: EXIT.USAGE, errors: [{ code: 'invalid-value', message: '--round: expected an integer from 1 to 999', hint: 'pass --round <k>' }] };
   const id = flags.task;
   KINDS.task.path(id); // a malformed ID is a usage error (invalid-key)
   const r = where(io, names);
@@ -43,16 +45,19 @@ export function exec({ flags, names, io, pluginRoot }) {
   const { w, store } = r;
   const task = store.read('task', id);
   if (!task) return fail('task-unknown', `no task ${id} in ${w.dir}`, `'${bin} task list' lists the tasks`);
-  const briefFile = join(w.dir, KINDS.task.path(id).replace(/[^/]+$/, TASK_TEXTS.brief));
-  let brief;
-  try { brief = readFileSync(briefFile, 'utf8'); } catch { brief = null; }
-  if (!brief) return fail('brief-missing', `${id} has no saved brief (${briefFile})`, `${bin} brief ${id} --write`);
+  const taskDir = dirname(KINDS.task.path(id));
+  const pattern = new RegExp(`^${TASK_TEXTS['review-brief'].replace('.', '\\.').replace('<k>', '([1-9][0-9]{0,2})')}$`);
+  const round = asked ?? Math.max(0, ...store.entries(taskDir).map((file) => Number(pattern.exec(file)?.[1] ?? 0)));
+  const brief = round ? store.readText(join(taskDir, taskTextFile('review-brief', { round }))) : null;
+  if (!brief) return fail('review-brief-missing', `${id} has no saved review brief${asked === undefined ? '' : ` for round ${asked}`}`, `${bin} review brief ${id} --write`);
   const live = liveRun(store, id, role);
   if (live) return fail('run-live', `${live.runId} is ${live.status} for ${id} as ${role}`, 'wait for it to end');
   const row = chooseProvider({ role, rows: detectProviders({ names, env: io.env }).rows, explicit: flags.provider });
   const adapter = adapters({ names, env: io.env }).find((a) => a.id === row.id);
   const capS = capFor(role, io.env, names.envPrefix);
   const outDir = mkdtempSync(join(tmpdir(), `${bin}-run-`)); // 0700
+  const input = `${brief}\n## External run (overrides the Output section above)\nYou run as ${row.id}:reviewer in a read-only sandbox: write no file. Your final message is the review JSON object alone, with "reviewer": {"kind": "external", "id": "${row.id}:reviewer"}, per the schema the Output section names. The orchestrator records it from the run's out file with \`${bin} review record ${id} --from <out file>\`.\n`;
+  writeFileSync(join(outDir, 'brief.md'), input, { flag: 'wx', mode: 0o600 }); // exclusive creation never follows a link
   const runId = nextRunId(store, row.id, id, role);
   const record = {
     runId, task: id, role, provider: row.id, adapterVersion: row.version ?? null, model: null, sandbox: adapter.sandboxes[role], cwd: w.repo,
@@ -81,7 +86,16 @@ function ownOutFile(f) {
 
 const clip = (s, max) => (s.length > max ? s.slice(0, max) : s);
 
-export async function runSupervise({ args, names, io }) {
+// Open without following a link or blocking on a FIFO, then check the opened file itself.
+function pinnedBrief(outFile) {
+  let fd;
+  try {
+    fd = openSync(join(dirname(outFile), 'brief.md'), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    return fstatSync(fd).isFile() ? readFileSync(fd, 'utf8') : null;
+  } catch { return null; } finally { if (fd !== undefined) closeSync(fd); }
+}
+
+export async function runSupervise({ args, names, io, pluginRoot }) {
   tolerateClosedStreams(); // the parent closed the pipes
   const r = where(io, names);
   if (r.refused) return r.refused;
@@ -94,10 +108,11 @@ export async function runSupervise({ args, names, io }) {
   const adapter = adapters({ names, env: io.env }).find((a) => a.id === rec.provider);
   const sandbox = ROLES.includes(rec.role) ? adapter?.sandboxes?.[rec.role] : undefined;
   const cwd = rec.role === 'reviewer' ? w.repo : undefined;
-  if (!adapter || !sandbox || !cwd || rec.sandbox !== sandbox || rec.cwd !== cwd || !ownOutFile(rec.outFile)) {
+  const tampered = () => {
     patch0(store, runId, { status: 'failed', endedAt: new Date().toISOString(), error: 'run-tampered' });
-    return fail('run-tampered', `${runId}: the run record does not match its role, the repository or its temp directory`, 'start the run again with exec');
-  }
+    return fail('run-tampered', `${runId}: the run record or pinned brief does not match its role, the repository or its temp directory`, 'start the run again with exec');
+  };
+  if (!adapter || !sandbox || !cwd || rec.sandbox !== sandbox || rec.cwd !== cwd || !ownOutFile(rec.outFile) || pinnedBrief(rec.outFile) === null) return tampered();
   const me = identify([process.pid], SYSTEM).get(process.pid);
   const patch = (fn) => store.update('run', runId, (cur) => (cur ? fn(cur) : undefined));
   patch((cur) => ({ ...cur, pid: process.pid, pidStart: me?.start ?? null, pidMethod: me?.method ?? null, status: 'queued', lastLine: 'waiting for an external slot' }));
@@ -107,8 +122,12 @@ export async function runSupervise({ args, names, io }) {
     patch((cur) => ({ ...cur, status: 'failed', endedAt: new Date().toISOString(), error: clip(got.reasons.map((x) => x.message).join('; '), 300) }));
     return fail('wait-timeout', `no external slot within ${WAIT_MS / 1000} s`, 'retry later');
   }
-  const brief = readFileSync(join(w.dir, KINDS.task.path(rec.task).replace(/[^/]+$/, TASK_TEXTS.brief)), 'utf8');
-  const argv = adapter.argv({ sandbox, cwd, outFile: rec.outFile, model: rec.model ?? undefined });
+  const brief = ownOutFile(rec.outFile) ? pinnedBrief(rec.outFile) : null;
+  if (brief === null) {
+    release(got.lease, opts);
+    return tampered();
+  }
+  const argv = adapter.argv({ sandbox, cwd, outFile: rec.outFile, schemaFile: rec.role === 'reviewer' ? join(pluginRoot, 'templates', 'review.schema.json') : undefined, model: rec.model ?? undefined });
   const began = Date.now();
   const child = start(argv[0], argv.slice(1), { unit: 'providers', cwd, env: { ...io.env, ...got.env }, detached: true, stdin: 'pipe' });
   child.stdin.on('error', () => {});

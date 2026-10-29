@@ -55,7 +55,7 @@ Commands:
   decisions supersede  Record a decision replacing an active one; the old record gets status superseded and supersededBy.
   decline              Opt out of tracking this repository; remembered in machine data by its real path, never in the repository.
   doctor               Health report: Claude Code floor, plugin and hooks, release, state, profile, flags, context cost, permissions.
-  exec                 Start an external provider run for a task and role: the record local/runs/<run>.json, one detached supervisor per run.
+  exec                 Start an external reviewer with a pinned review brief: latest round or --round; save with review brief <id> --write.
   flags set            Set one capability flag of this repository (off, shadow or on, as the flag has them); a flip is recorded as a decision.
   flags show           Show the capability flags: each rollout capability with its mode, its source and what it does, then the team flags.
   gen apply            Write the generated files (CI workflow, pre-push hook, PR template, CODEOWNERS and AGENTS.md blocks); edits survive.
@@ -392,12 +392,12 @@ Read-only.
 Exit codes: 0 OK · 1 FAIL · 8 ENV
 ```
 
-### `landfall exec [--task <id>] [--role <role>] [--provider <id>] [--yes] [--json]`
+### `landfall exec [--task <id>] [--role <role>] [--provider <id>] [--round <k>] [--yes] [--json]`
 
 ```text
-usage: landfall exec [--task <id>] [--role <role>] [--provider <id>] [--yes] [--json]
+usage: landfall exec [--task <id>] [--role <role>] [--provider <id>] [--round <k>] [--yes] [--json]
 
-Start an external provider run for a task and role: the record local/runs/<run>.json, one detached supervisor per run.
+Start an external reviewer with a pinned review brief: latest round or --round; save with review brief <id> --write.
 The provider is selected like the dispatch does (found, logged in, declared for the role; --provider names one). The
 record starts as {status: starting}; the supervisor (run-supervise) takes the external lease (queued while none is
 free), runs the provider in its own process group under the wall cap (reviewer 900 s, implementer 2700 s, or the env
@@ -411,6 +411,7 @@ Options:
   --task <id>      required: the task ID, such as T-AB-1
   --role <role>    required: reviewer or implementer
   --provider <id>  a declared or built-in provider instead of the selection
+  --round <k>      review brief round, 1 to 999 (default: highest stored round)
 
 Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
 Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV

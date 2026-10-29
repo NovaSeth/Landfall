@@ -1024,7 +1024,7 @@ const ROWS = [
   },
   {
     name: 'exec',
-    summary: 'Start an external provider run for a task and role: the record local/runs/<run>.json, one detached supervisor per run.',
+    summary: 'Start an external reviewer with a pinned review brief: latest round or --round; save with review brief <id> --write.',
     details: [
       'The provider is selected like the dispatch does (found, logged in, declared for the role; --provider names one). The',
       'record starts as {status: starting}; the supervisor (run-supervise) takes the external lease (queued while none is',
@@ -1040,6 +1040,7 @@ const ROWS = [
       { flag: '--task', value: 'id', summary: 'required: the task ID, such as T-AB-1' },
       { flag: '--role', value: 'role', summary: 'required: reviewer or implementer' },
       { flag: '--provider', value: 'id', summary: 'a declared or built-in provider instead of the selection' },
+      { flag: '--round', value: 'k', summary: 'review brief round, 1 to 999 (default: highest stored round)' },
     ],
     exits: ['OK', 'FAIL', 'USAGE', 'REFUSED', 'ENV'],
     mutating: true,
