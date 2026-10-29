@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
+import { isolatedEnv } from './helpers/isolated-env.mjs';
 
 const root = join(import.meta.dirname, '..');
 const example = join(root, 'examples', 'notes-api');
@@ -14,8 +15,11 @@ const walk = (dir) => readdirSync(dir).flatMap((n) => (statSync(join(dir, n)).is
 test('the example project\'s own tests pass', { timeout: 120000 }, () => {
   const files = readdirSync(join(example, 'test')).filter((n) => n.endsWith('.test.mjs')).map((n) => join('test', n));
   assert.ok(files.length >= 3, 'the store, API and limits tests are there');
-  const r = spawnSync(process.execPath, ['--test', '--test-concurrency=1', ...files], { cwd: example, encoding: 'utf8', timeout: 110000 });
-  assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`.slice(-2000));
+  const iso = isolatedEnv({ prefix: 'example-project-' });
+  try {
+    const r = spawnSync(process.execPath, ['--test', '--test-concurrency=1', ...files], { cwd: example, encoding: 'utf8', timeout: 110000, env: iso.env });
+    assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`.slice(-2000));
+  } finally { iso.cleanup(); }
 });
 
 test('every decision the example code cites exists in its committed state, and every task has a brief, a report and a verify record', () => {
