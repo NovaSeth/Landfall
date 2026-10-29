@@ -474,6 +474,8 @@ export class Store {
   batch(fn) {
     return this.locked(() => {
       const scoped = Object.create(this);
+      // A write through the scoped store counts for this lock section (T-MG-83): local/ is marked after it (markLocal).
+      Object.defineProperty(scoped, 'wrote', { get: () => this.wrote, set: (v) => { this.wrote = v; } });
       let active = true;
       scoped.locked = (op) => {
         if (!active) throw new TypeError('state.batch: the scoped store cannot outlive its callback');

@@ -350,3 +350,10 @@ test('F1 r2: the move lock (.local-move.lock) is gitignored: in a new .gitignore
   state.open(store, { names }).write('config', null, config);
   assert.ok(readFileSync(join(store, '.gitignore'), 'utf8').split('\n').includes('.local-move.lock'), 'an older .gitignore gains it');
 });
+
+test('T-MG-83: a write inside store.batch marks local/ with this machine\'s id, as an ordinary write does', (t) => {
+  const { store } = repo(t);
+  const s = state.open(store, { names });
+  s.batch((b) => b.write('config', null, config));
+  assert.equal(readFileSync(join(store, 'local', '.machine'), 'utf8').trim(), state.machineId(), 'the batch wrote, so local/ is marked');
+});
