@@ -20,7 +20,7 @@ import { capFor, liveRun, nextRunId, runsStore, LOG_LINE, LOG_LINES } from '../r
 import { SYSTEM, acquireWait, attachChild, identify, release, supervise } from '../sched/index.mjs';
 import { KINDS, TASK_TEXTS, resolve, taskTextFile } from '../state/index.mjs';
 import { adapters, chooseProvider, detectProviders } from './index.mjs';
-import { redact } from '../verify/redact.mjs';
+import { projectRedactions, redact } from '../verify/redact.mjs';
 import { LAST_LINE, ROLES } from './kind.mjs';
 import { cleanLine } from './probe.mjs';
 
@@ -97,7 +97,7 @@ export const PENDING_MAX = 64 * 1024;
 // What a provider prints, as a state string: hidden characters (escapes, controls, tabs) removed, secrets masked by
 // the shared redaction, then cut to max code points ('' when nothing visible is left). Cleaned whole first, so a
 // secret is masked before a cut could show a prefix of it.
-export const safeLine = (text, max) => cleanLine(redact(cleanLine(text, PENDING_MAX) ?? ''), max) ?? '';
+export const safeLine = (text, max, extra = []) => cleanLine(redact(cleanLine(text, PENDING_MAX) ?? '', extra), max) ?? '';
 
 // A line splitter for one stream: feed(chunk) calls onLine(line, truncated) per complete line; end() emits the rest.
 // At most PENDING_MAX characters stay pending; past it the rest of the line is dropped.
@@ -159,6 +159,15 @@ export async function runSupervise({ args, names, io, pluginRoot }) {
     return fail('run-tampered', `${runId}: the run record or pinned brief does not match its role, the repository or its temp directory`, 'start the run again with exec');
   };
   if (!adapter || !sandbox || !cwd || rec.sandbox !== sandbox || rec.cwd !== cwd || !ownOutFile(rec.outFile) || pinnedBrief(rec.outFile) === null) return tampered();
+  // The project's redaction patterns, read once as verify reads them; a file that cannot be read fails closed: no
+  // provider starts, so no output is stored unredacted.
+  let extra;
+  try {
+    extra = projectRedactions(w);
+  } catch (err) {
+    patch0(store, runId, { status: 'failed', endedAt: new Date().toISOString(), error: 'project-patterns-unreadable' });
+    return fail('project-patterns-unreadable', String(err?.message ?? err).slice(0, 300), err?.hint ?? 'fix or remove the project pattern file');
+  }
   const me = identify([process.pid], SYSTEM).get(process.pid);
   const patch = (fn) => store.update('run', runId, (cur) => (cur ? fn(cur) : undefined));
   patch((cur) => ({ ...cur, pid: process.pid, pidStart: me?.start ?? null, pidMethod: me?.method ?? null, status: 'queued', lastLine: 'waiting for an external slot' }));
@@ -184,13 +193,13 @@ export async function runSupervise({ args, names, io, pluginRoot }) {
   // line that still cannot be handled counts as unknown, never throws out of a stream callback.
   const onLine = (raw) => {
     try {
-      const line = safeLine(raw, PENDING_MAX);
+      const line = safeLine(raw, PENDING_MAX, extra);
       if (!line) return;
       const parsed = adapter.parse(line) ?? {};
       if (parsed.tokens) live.tokens = parsed.tokens;
-      if (parsed.lastLine) live.lastLine = safeLine(parsed.lastLine, LAST_LINE) || live.lastLine;
+      if (parsed.lastLine) live.lastLine = safeLine(parsed.lastLine, LAST_LINE, extra) || live.lastLine;
       if (!Object.keys(parsed).length) live.unknownEvents += 1;
-      live.lines.push(safeLine(line, LOG_LINE));
+      live.lines.push(safeLine(line, LOG_LINE, extra));
       if (live.lines.length > LOG_LINES) live.lines = live.lines.slice(-LOG_LINES);
     } catch {
       live.unknownEvents += 1;
@@ -231,7 +240,7 @@ export async function runSupervise({ args, names, io, pluginRoot }) {
     // Any supervisor failure ends the run as failed: the group is killed here, the lease released below.
     try { if (Number.isInteger(child.pid)) process.kill(-child.pid, 'SIGKILL'); } catch { /* the group is gone */ }
     try {
-      patch((cur) => ({ ...cur, status: 'failed', endedAt: new Date().toISOString(), elapsedMs: Date.now() - began, error: safeLine(`supervisor failed: ${err?.message ?? err}`, 300) || 'supervisor failed' }));
+      patch((cur) => ({ ...cur, status: 'failed', endedAt: new Date().toISOString(), elapsedMs: Date.now() - began, error: safeLine(`supervisor failed: ${err?.message ?? err}`, 300, extra) || 'supervisor failed' }));
     } catch { /* the record cannot be written; the lease is still released */ }
     return fail('supervisor-failed', `${runId}: the supervisor failed`, 'start the run again with exec');
   } finally {
