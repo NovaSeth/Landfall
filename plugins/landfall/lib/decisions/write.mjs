@@ -15,6 +15,7 @@
 // under the store lock). A crash between allocation and rewrite leaves the new record listing an old one that is
 // still active; `decisions check` reports that pair.
 import { join, relative, sep } from 'node:path';
+import { fileSelection, reviewSelection } from '../findings/index.mjs';
 import { git } from '../git/index.mjs';
 import { PATTERNS, StateError, allocateId, check, emailHash, gitIdentity, readProjects, retireId } from '../state/index.mjs';
 import { codePointName, hidden } from '../text/clean.mjs';
@@ -90,7 +91,11 @@ const fieldError = (errors) => {
 // Creates a record; input { title, why, cost, scope: [globs], kind, supersedes: [ids], allowsTestRemoval: [test ids],
 // task and remaining: [finding ids] (review-close) }.
 // Returns { id, file, supersedes }.
-export function createDecision({ store, where, names, env, handle, input, today = new Date().toISOString().slice(0, 10) }) {
+export function createDecision(options) {
+  return options.store.batch((store) => createDecisionLocked({ ...options, store }));
+}
+
+function createDecisionLocked({ store, where, names, env, handle, input, today = new Date().toISOString().slice(0, 10) }) {
   const allows = input.allowsTestRemoval ?? [];
   for (const [flag, value] of [['--title', input.title], ['--why', input.why], ['--cost', input.cost], ...(input.scope ?? []).map((g) => ['--scope', g]), ...allows.map((t) => ['--allows-test-removal', t]), ['--task', input.task ?? ''], ...(input.remaining ?? []).map((f) => ['--remaining', f])]) {
     const h = hidden(value)[0];
@@ -112,14 +117,16 @@ export function createDecision({ store, where, names, env, handle, input, today 
   const errors = check(DECISION, doc);
   if (errors.length) throw fieldError(errors);
   if (doc.kind === 'review-close' && !doc.task) throw usage('missing-flag', 'kind review-close needs --task <id>', 'name the task whose review step it closes, and its open blocking findings with --remaining');
+  const selection = doc.kind === 'review-close' ? reviewSelection(store, { task: doc.task, ids: doc.remaining ?? [], blocking: true }) : null;
   const body = ['## What', '', input.title, '', '## Why', '', input.why.trim(), '', '## Cost if wrong', '', input.cost.trim(), '', '## Alternatives', '', 'None recorded.', ''].join('\n');
 
   const high = remoteHigh({ where, handle, env });
   const warnings = high === null ? [{ code: 'remote-unchecked', message: stateRel(where.repo, where.dir) ? 'no origin/main: the number was checked against local records only (fetch first when others record decisions)' : 'the state directory is outside the repository: the number was checked against local records only' }] : [];
   if (high > 0) store.update('counter', `D-${handle}`, (cur) => ((cur?.high ?? 0) >= high ? undefined : { high }));
   const id = allocateId(store, { prefix: 'D', handle, build: (next) => formatRecord({ ...doc, id: next }, body) });
+  const filed = selection ? fileSelection(store, selection, handle) : null;
   for (const old of supersedes) rewrite(store, old, { status: 'superseded', supersededBy: id }, { active: true, by: id });
-  return { id, file: relative(where.worktree, join(where.dir, DECISION.path(id))).split(sep).join('/'), supersedes, warnings };
+  return { id, file: relative(where.worktree, join(where.dir, DECISION.path(id))).split(sep).join('/'), supersedes, warnings, ...(filed === null ? {} : { filed }) };
 }
 
 // Retires a decision: tombstone, then status retired. Returns { id, tombstone (created now), changed (record) }.

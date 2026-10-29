@@ -8,8 +8,10 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 
 import { dirname, join } from 'node:path';
 import { isolatedEnv } from './helpers/isolated-env.mjs';
 import { lib, names } from './helpers/hook-fixture.mjs';
+import { trustWith } from './helpers/trust.mjs';
 
 const profile = await lib('profile/index.mjs');
+const state = await lib('state/index.mjs'); // trustWith (T-MG-83)
 const { main } = await lib('cli/main.mjs');
 
 const IDENTITY = '[user]\n\tname = Test User\n\temail = test@example.com\n';
@@ -46,6 +48,7 @@ async function setup(t, { timeoutS, cmd }) {
   };
   assert.equal((await run(['init', '--yes', '--state-dir', stateDir])).code, 0);
   profile.openStore(stateDir, names).write('profile', null, { ...profile.emptyProfile(), gates: [{ name: 'test', cmd, timeoutS, kind: 'test' }] });
+  trustWith(state, stateDir, names, env);
   const id = JSON.parse((await run(['task', 'new', 'Heavy', '--yes', '--json'])).text).data.id;
   assert.equal((await run(['task', 'set', id, 'dispatched', '--executor', 'claude', '--base', base, '--yes'])).code, 0);
   assert.equal((await run(['route', id, '--paths', 'README.md', '--loc', '1', '--yes'])).code, 0);
@@ -53,7 +56,7 @@ async function setup(t, { timeoutS, cmd }) {
   git(repo, env, ['commit', '-q', '--allow-empty', '-m', 'work']);
   put(join(repo, 'README.md'), '# y\n');
   git(repo, env, ['commit', '-qam', 'change']);
-  return { run, id, stateDir, data, probe: join(iso.base, 'probe') };
+  return { run, id, stateDir, env, data, probe: join(iso.base, 'probe') };
 }
 const heavyLeases = (data) => (existsSync(join(data, 'leases')) ? readdirSync(join(data, 'leases'), { recursive: true }).filter((f) => /heavy-\d/.test(f)) : []);
 const probeCmd = (probe, extra = '') => `ls -R "$CLAUDE_PLUGIN_DATA" >> ${probe}; ${extra}node --test`;
@@ -80,6 +83,7 @@ test('a gate printing a key: verify.json, the log and the CLI output hold the ma
 test('a long gate runs while verify holds the heavy lease, and the lease is released after', async (t) => {
   const s = await setup(t, { timeoutS: 120, cmd: 'PLACEHOLDER' });
   profile.openStore(s.stateDir, names).write('profile', null, { ...profile.emptyProfile(), gates: [{ name: 'test', cmd: probeCmd(s.probe), timeoutS: 120, kind: 'test' }] });
+  trustWith(state, s.stateDir, names, s.env);
   const v = await s.run(['verify', s.id, '--yes', '--json']);
   assert.equal(v.code, 0, v.text.slice(0, 1500));
   assert.match(readFileSync(s.probe, 'utf8'), /heavy-1/, 'the lease was held during the gate');
@@ -89,7 +93,22 @@ test('a long gate runs while verify holds the heavy lease, and the lease is rele
 test('a short gate takes no lease', async (t) => {
   const s = await setup(t, { timeoutS: 30, cmd: 'PLACEHOLDER' });
   profile.openStore(s.stateDir, names).write('profile', null, { ...profile.emptyProfile(), gates: [{ name: 'test', cmd: probeCmd(s.probe), timeoutS: 30, kind: 'test' }] });
+  trustWith(state, s.stateDir, names, s.env);
   const v = await s.run(['verify', s.id, '--yes', '--json']);
   assert.equal(v.code, 0, v.text.slice(0, 1500));
   assert.doesNotMatch(readFileSync(s.probe, 'utf8'), /heavy-1/);
+});
+
+// T-MG-80: every full gate of verify runs under the heavy lease, the base measurement too (a base without a stored
+// baseline runs the suite again in a temporary worktree: lib/verify/base.mjs).
+test('the base measurement runs its long gate under the heavy lease as well', async (t) => {
+  const s = await setup(t, { timeoutS: 120, cmd: 'PLACEHOLDER' });
+  profile.openStore(s.stateDir, names).write('profile', null, { ...profile.emptyProfile(), gates: [{ name: 'test', cmd: `echo RUN >> ${s.probe}; ${probeCmd(s.probe)}`, timeoutS: 120, kind: 'test' }] });
+  trustWith(state, s.stateDir, names, s.env);
+  const v = await s.run(['verify', s.id, '--yes', '--json']);
+  assert.equal(v.code, 0, v.text.slice(0, 1500));
+  const runs = readFileSync(s.probe, 'utf8').split('RUN\n').filter(Boolean);
+  assert.ok(runs.length >= 2, `the gate ran at HEAD and at the base: ${runs.length} runs`);
+  runs.forEach((r, k) => assert.match(r, /heavy-1/, `run ${k + 1} held the lease`));
+  assert.deepEqual(heavyLeases(s.data), [], 'released after');
 });

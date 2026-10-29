@@ -1,4 +1,4 @@
-// State directory resolution (spec §5.3, §7.2, §7.6, §7.12, SD-7, SD-36, REV-58). Two roots, both real paths:
+// State directory resolution (spec §5.3, §7.2, §7.6, §7.12, SD-7, SD-36, COD-9). Two roots, both real paths:
 //   worktree  the git top level of the target directory: where the code is (gates, HEAD, diffs, file scans).
 //   repo      the project: the main checkout. In a linked worktree (its git directory is not git's common directory)
 //             that is the parent of the common directory when the common directory is named .git; otherwise (the main
@@ -27,6 +27,11 @@ import { upgradeDoc } from './upgrade.mjs';
 
 const PROJECTS = MACHINE_KINDS.projects;
 const absolute = (v) => (typeof v === 'string' && isAbsolute(v) ? v : null);
+
+// The machine data directory resolve() found for a state directory in this process (the command's environment, which
+// may differ from process.env when a command runs in-process); the store asks it for the owner of local/.
+const dataDirs = new Map();
+export const resolvedDataDir = (dir) => dataDirs.get(dir) ?? null;
 
 // Spec §5.3: $CLAUDE_PLUGIN_DATA → $CLAUDE_CODE_PLUGIN_CACHE_DIR/data/<id> → ${CLAUDE_CONFIG_DIR:-$HOME/.claude}
 // /plugins/data/<id>, <id> = <plugin>-<marketplace>. Relative values are ignored; null when nothing is set.
@@ -133,6 +138,7 @@ export function resolve({ cwd, env, names, timeoutMs } = {}) {
   const linked = Boolean(entry?.stateDir);
   const dir = entry?.stateDir ?? join(repo, names.stateDir);
   const copy = !linked && worktree !== repo ? join(worktree, names.stateDir) : null;
+  if (dataDir) dataDirs.set(dir, dataDir);
   return { repo, worktree, copy, dir, local: join(dir, 'local'), linked, declined: Boolean(entry?.declinedAt), active: existsSync(join(dir, 'state.json')), dataDir };
 }
 

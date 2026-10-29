@@ -115,13 +115,18 @@ export function createTask({ cwd, env, names, title, kind = 'task', lane = null,
     const { where, store } = activeStore({ cwd, env, names });
     const by = actor(store, where, env, names);
     for (const id of after) if (store.read('task', id) === null) throw unknownTask(id, where, names);
-    const data = after.length ? { after: [...new Set(after)] } : {};
-    const build = (id) => ({ id, kind, title, lane: lane ?? null, owner: by, class: null, classHistory: [], status: 'new', round: 0, events: [{ at, by, event: 'created', data }], base: null, branch: null });
-    const probe = `T-${by}-1`;
-    checkWrite(KINDS.task, { schema: KINDS.task.version, ...build(probe) }, { where: 'task', key: probe });
-    const id = allocateId(store, { prefix: 'T', handle: by, build });
-    return { id, task: store.read('task', id) };
+    return createTaskInStore({ store, handle: by, title, kind, lane, after, at });
   });
+}
+
+// Shared task-new operation for commands that also change other records under a store batch.
+export function createTaskInStore({ store, handle: by, title, kind = 'task', lane = null, after = [], at = now() }) {
+  const data = after.length ? { after: [...new Set(after)] } : {};
+  const build = (id) => ({ id, kind, title, lane, owner: by, class: null, classHistory: [], status: 'new', round: 0, events: [{ at, by, event: 'created', data }], base: null, branch: null });
+  const probe = `T-${by}-1`;
+  checkWrite(KINDS.task, { schema: KINDS.task.version, ...build(probe) }, { where: 'task', key: probe });
+  const id = allocateId(store, { prefix: 'T', handle: by, build });
+  return { id, task: store.read('task', id) };
 }
 
 // `task set`: { id, task, event }. options: the flags of the state (strings from the CLI, or numbers).
@@ -156,6 +161,48 @@ export function setTask({ cwd, env, names, id, state, options = {}, at = now() }
     return { id, task, event };
   });
 }
+
+// The merge record (T-MG-80): one `merged` event per task, data { commit, target, batch, adopted, verify }, and the
+// task's mergedAt, written by `task merge` (single, batch and --adopt) after the merge is on the target. Each entry is
+// { id, data }; every task must exist and be the caller's (a done task takes this record: it is the merge of a closed
+// task, not a further state). All checks run before the first write; each task is updated under the store lock.
+const MERGED = {
+  commit: text(64, { re: PATTERNS.sha }),
+  target: text(LIMITS.branch, { re: PATTERNS.branch }),
+  batch: text(LIMITS.event, { re: /^batch-\d{8}T\d{6}(?:-\d+)?$/, null: true }),
+  adopted: { t: 'enum', of: [true, false] },
+  verify: text(64, { re: /^[0-9a-f]{7,64}$/, null: true }),
+};
+export function recordMerged({ cwd, env, names, entries, at = now() } = {}) {
+  return guarded(() => {
+    if (!Array.isArray(entries) || entries.length === 0) throw usage('invalid-value', 'recordMerged needs at least one task');
+    for (const { id, data } of entries) {
+      KINDS.task.path(id);
+      const errors = validate({ t: 'obj', f: MERGED }, data);
+      if (errors.length) throw usage(errors[0].code, `${id}: merged ${errors[0].path}: ${errors[0].message}`);
+    }
+    const { where, store } = activeStore({ cwd, env, names });
+    const by = actor(store, where, env, names);
+    for (const { id } of entries) {
+      const doc = store.read('task', id);
+      if (doc === null) throw unknownTask(id, where, names);
+      if (doc.owner !== by) throw new StateError('not-owner', 'FAIL', `${id} belongs to ${doc.owner}; only its owner records its merge`, { hint: 'ask the owner' });
+    }
+    return entries.map(({ id, data }) => {
+      const event = { at, by, event: 'merged', data: { ...data } };
+      const task = store.update('task', id, (doc) => {
+        if (doc === null) throw unknownTask(id, where, names);
+        doc.events.push(event);
+        doc.mergedAt = at;
+        return doc;
+      });
+      return { id, task, event };
+    });
+  });
+}
+
+// The task's last `merged` event (null when it has none).
+export const mergedOf = (task) => (Array.isArray(task?.events) ? task.events.filter((e) => e.event === 'merged').at(-1) ?? null : null);
 
 // Task text files by name: tasks/<id>/<file>. The brief (`brief --write`), the report (`report`) and the review brief of a
 // round (`review brief --write`, named by its round: review-r<k>-brief.md) are documents of the task, written whole by

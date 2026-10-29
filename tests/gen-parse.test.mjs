@@ -46,7 +46,7 @@ const GATE_SETS = [
   [
     { name: 'unit: "fast" \\ slow', cmd: 'npm test -- --grep "a: b" # not a comment' },
     { name: "lint 'strict' #1", cmd: "printf '%s\\n' \"$HOME\" | tr a-z A-Z && echo 'it''s'" },
-    { name: 'types', cmd: 'node -e "console.log(`x`)" && echo ``` && echo ${{ github.sha }}' },
+    { name: 'types', cmd: 'node -e "console.log(`x`)" && echo ``` && echo $GITHUB_SHA' },
   ],
 ];
 const OWNER_SETS = [[], ['@org/platform-team'], ['@alice', 'bob@example.com']];

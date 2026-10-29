@@ -288,7 +288,7 @@ for (let i = 0; i < ${each}; i++) s.update('task', 'T-AB-1', (d) => ({ ...d, eve
   const events = state.open(dir, { names }).read('task', 'T-AB-1').events;
   assert.equal(events.length, n * each);
   assert.equal(new Set(events.map((e) => `${e.data.p}.${e.data.i}`)).size, n * each);
-  assert.deepEqual(existsSync(join(dir, 'local')) ? readdirSync(join(dir, 'local')) : [], [], 'the lock is released and local/ is left empty-free');
+  assert.deepEqual(existsSync(join(dir, 'local')) ? readdirSync(join(dir, 'local')).filter((n) => n !== '.machine') : [], [], 'the lock is released and local/ is left empty-free'); // T-MG-77 (intended): the owner marker stays
 });
 
 // ---- Review round 1, items 1, 8, 9 ----

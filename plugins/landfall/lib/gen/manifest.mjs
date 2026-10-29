@@ -2,7 +2,7 @@
 // generated/manifest.json, written only through lib/state (lock, schema checks, atomic replace). Per target path:
 //   target, template, templateVersion   what produced it; templateVersion is the plugin version last applied
 //   baseSha256, base                    the last generated version ("base" of the 3-way merge) as its lines, and
-//                                       its hash; both null while the file's origin is unknown (REV-57)
+//                                       its hash; both null while the file's origin is unknown (COD-8)
 //   generatedAt                         when the base was last set
 //   side                                the side file gen wrote and still awaits the user: { fileSha256 (the side
 //                                       file's content), theirsSha256 (the generated version it proposes), at }
@@ -72,7 +72,7 @@ export function readManifest(store) {
 }
 
 // The base text of an entry, or null when the entry has no base or its base fails its hash (then the file's
-// origin is unknown: the safest reading, REV-57).
+// origin is unknown: the safest reading, COD-8).
 export function baseOf(entry) {
   if (!entry || entry.base === null || entry.baseSha256 === null) return null;
   const text = entry.base.join('\n');

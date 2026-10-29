@@ -39,7 +39,7 @@ const unknown = (id, names) => fail('run-unknown', `no run ${String(id).slice(0,
 
 const summaryOf = (r) => ({
   runId: r.runId, status: r.status, provider: r.provider, role: r.role, task: r.task, elapsedMs: r.elapsedMs,
-  tokens: r.tokens, lastLine: r.lastLine, outFile: r.outFile, error: r.error,
+  tokens: r.tokens, lastLine: r.lastLine, outFile: r.outFile, error: r.error, endedAt: r.endedAt ?? null,
 });
 const summaryText = (s) => `${s.runId}: ${s.status} (${s.provider}, ${s.role}, ${s.task}) ${Math.round(s.elapsedMs / 1000)} s${s.tokens ? `, tokens ${s.tokens.input}/${s.tokens.output}` : ''}\n${s.lastLine ? `last: ${s.lastLine}\n` : ''}${s.outFile ? `out: ${s.outFile}\n` : ''}${s.error ? `error: ${s.error}\n` : ''}`;
 const clipSummary = (s) => (JSON.stringify(s).length <= 1024 ? s : { ...s, lastLine: s.lastLine ? s.lastLine.slice(0, 200) : null, error: s.error ? s.error.slice(0, 200) : null });

@@ -285,7 +285,10 @@ test('task merge merges a done task (done on its branch, then merged); a cancell
   assert.equal(res.code, 0, show(res));
   assert.equal(res.env.data.merged, true);
   assert.equal(r.store.read('task', r.id).status, 'done');
-  assert.equal(r.git('status', '--porcelain'), '');
+  // T-MG-80 (intended change): the code is clean; the merge record is an uncommitted state write, like task done's.
+  assert.equal(r.git('status', '--porcelain', '--', '.', `:(exclude)${names.stateDir}`), '');
+  assert.deepEqual(r.git('status', '--porcelain').split('\n').map((l) => l.replace(/^\s*\S+\s+/, '')), [`${names.stateDir}/tasks/${r.id}/task.json`]);
+  assert.equal(r.store.read('task', r.id).events.at(-1).event, 'merged');
 });
 
 // ---- (2) baseline show | pin ----

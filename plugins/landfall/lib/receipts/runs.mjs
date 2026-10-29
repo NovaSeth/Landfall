@@ -2,11 +2,13 @@
 // providers unit. Read here straight from the files (only writes are reserved to lib/state), never through a link.
 // Fields read: runId (= the file name), task, provider, model, status, tokens {input, output, cached} | null
 // (`input` without the cached part; `cached` becomes cacheRead), tokensReason, costMicroUsd | null and elapsedMs
-// (whole micro-dollars and milliseconds, ruling R70; elapsedMs absent: endedAt - startedAt), startedAt, endedAt, exit. A run without tokens keeps `tokens: null` and a reason ("not
+// (whole micro-dollars and milliseconds, ruling R70; elapsedMs absent: endedAt - startedAt), startedAt, endedAt, exit, and for the
+// loop's live-run check pid, pidStart, pidMethod, capS and queuedAt (null when they do not fit). A run without tokens keeps `tokens: null` and a reason ("not
 // reported" when its record gives none), so every run of a task appears in the task's receipt. A record that does
 // not fit is a problem (the totals are then a lower bound). Text fields (lastLine, error) are never read.
 import { lstatSync, readFileSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
+import { localForeign } from '../state/index.mjs';
 import { label } from './sessions.mjs';
 
 export const RUN_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
@@ -37,13 +39,23 @@ function entry(doc, runId) {
     tokens, tokensReason: tokens === null ? reasonOf(doc.tokensReason) ?? NOT_REPORTED : null,
     costMicroUsd: cost ?? null, wallMs: elapsed ?? span,
     exit: Number.isSafeInteger(doc.exit) ? doc.exit : null, startedAt, endedAt,
+    // the supervisor identity and the wall cap (lib/runs kind.mjs) for the loop's live-run check; a value that does
+    // not fit is null
+    pid: Number.isSafeInteger(doc.pid) && doc.pid > 0 ? doc.pid : null,
+    pidStart: typeof doc.pidStart === 'string' && doc.pidStart.length <= 64 ? doc.pidStart : null,
+    pidMethod: doc.pidMethod === 'ps' || doc.pidMethod === 'proc' ? doc.pidMethod : null,
+    capS: Number.isSafeInteger(doc.capS) && doc.capS >= 1 ? doc.capS : null,
+    queuedAt: time(doc.queuedAt),
   };
 }
 
 // { runs: [entry] sorted by runId, problems: [{ code, message, hint }] } of the run directory `dir`.
+// The runs of a foreign local/ (<state dir>/local/runs shipped in the repository, lib/state localForeign) are none of
+// this machine's: every reader (status, ui, receipts, the loop) sees none.
 export function readRuns(dir) {
   const runs = [];
   const problems = [];
+  if (basename(dir) === 'runs' && basename(dirname(dir)) === 'local' && localForeign(dirname(dirname(dir))).foreign) return { runs, problems };
   let names;
   try {
     if (lstatSync(dir).isSymbolicLink()) return { runs, problems: [{ code: 'run-invalid', message: `${dir} is a symbolic link; run records are never read through links`, hint: 'replace it with a plain directory' }] };

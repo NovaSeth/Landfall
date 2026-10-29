@@ -8,8 +8,10 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import { dirname, join } from 'node:path';
 import { isolatedEnv } from './helpers/isolated-env.mjs';
 import { lib, names } from './helpers/hook-fixture.mjs';
+import { trustWith } from './helpers/trust.mjs';
 
 const profile = await lib('profile/index.mjs');
+const state = await lib('state/index.mjs'); // trustWith (T-MG-83)
 const { main } = await lib('cli/main.mjs');
 
 const IDENTITY = '[user]\n\tname = Test User\n\temail = test@example.com\n';
@@ -53,6 +55,7 @@ async function fresh(t, { linked, files = {}, gates = GATES }) {
   p.run = (args, where = 'main') => cli(args, { cwd: where === 'wt' ? wt : repo, env });
   assert.equal((await p.run(['init', '--yes', ...(linked ? ['--state-dir', external] : [])])).code, 0);
   profile.openStore(p.stateDir, names).write('profile', null, { ...profile.emptyProfile(), gates });
+  trustWith(state, p.stateDir, names, env);
   p.base = head(repo, env);
   git(repo, env, ['worktree', 'add', '-q', wt, '-b', 'feature']);
   p.task = async (title, where = 'main') => {

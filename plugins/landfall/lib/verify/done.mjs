@@ -14,6 +14,7 @@
 // Done is an event { at, by, event: done, data: { head } } and status done. A done task stays done (exit 0,
 // nothing written); a cancelled one is closed (exit 1).
 import { authorHandle } from '../decisions/index.mjs';
+import { closeFindings, findingsForTask } from '../findings/index.mjs';
 import { emptyProfile } from '../profile/index.mjs';
 import { saveReceipt, taskReceipt } from '../receipts/index.mjs';
 import { recordedKeys, routeFor } from '../router/index.mjs';
@@ -50,19 +51,25 @@ export function markDone({ cwd, env, names, id, at = new Date().toISOString() })
   const handle = authorHandle({ store, where, names, env });
   let changed = false;
   let head = null;
-  const task = store.update('task', id, (cur) => {
-    if (cur === null) throw unknownTask(id, where, names);
-    if (cur.owner !== handle) throw fail('not-owner', `${id} belongs to ${cur.owner}; only its owner closes it`, `ask ${cur.owner}`);
-    if (cur.status === 'cancelled') throw fail('task-closed', `${id} is cancelled: a closed task takes no further state`, `'${names.bin} task new' starts a new task`);
-    if (cur.status === 'done') return undefined;
-    ({ head } = closingConditions({ store, task: cur, id, where, env, names }));
-    changed = true;
-    return { ...cur, status: 'done', events: [...cur.events, { at, by: handle, event: 'done', data: { head } }] };
+  let pending = [];
+  const { task, fixed } = store.batch((s) => {
+    const task = s.update('task', id, (cur) => {
+      if (cur === null) throw unknownTask(id, where, names);
+      if (cur.owner !== handle) throw fail('not-owner', `${id} belongs to ${cur.owner}; only its owner closes it`, `ask ${cur.owner}`);
+      if (cur.status === 'cancelled') throw fail('task-closed', `${id} is cancelled: a closed task takes no further state`, `'${names.bin} task new' starts a new task`);
+      pending = findingsForTask(s, id).filter((f) => f.status === 'taken');
+      if (cur.status === 'done') return undefined;
+      ({ head } = closingConditions({ store: s, task: cur, id, where, env, names }));
+      changed = true;
+      return { ...cur, status: 'done', events: [...cur.events, { at, by: handle, event: 'done', data: { head } }] };
+    });
+    const fixed = closeFindings(s, pending, { by: id, reason: `Fixed by ${id}`, at });
+    return { task, fixed };
   });
   // The receipt (spec §7.7) is written once, when the task closes; a receipt that cannot be built never undoes the close.
   let receipt = null;
   if (changed) {
     try { const r = taskReceipt(id, { cwd, env, names }); receipt = saveReceipt(r.receipt, { where: r.where, names }).file; } catch { /* `receipt <id>` writes it later */ }
   }
-  return { id, task, changed, head, receipt };
+  return { id, task, changed, head, receipt, fixed };
 }

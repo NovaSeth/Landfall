@@ -16,7 +16,7 @@ With `--json` every command prints exactly one line on stdout and nothing on std
 - Partial data: `ok: false` with `data` holding what was computed and `data.partial: true`.
 - Without `--json`: text on stdout, errors with their hints on stderr.
 - Output carries no escape sequence, control, bidi or invisible character from data: text drops them and keeps the printable rest; the envelope writes them as `\u` escapes, so `JSON.parse` gives the data back exactly.
-- A command that changes files refuses without a terminal unless `--yes` is given: exit 7 REFUSED (REV-58). Consent is per form: a command section names each flag whose form differs.
+- A command that changes files refuses without a terminal unless `--yes` is given: exit 7 REFUSED (COD-9). Consent is per form: a command section names each flag whose form differs.
 - A command exits only with the codes its section lists, plus 2 USAGE (arguments) and 70 INTERNAL (bug); any other code is reported as 70.
 
 ## Exit codes
@@ -55,7 +55,13 @@ Commands:
   decisions supersede  Record a decision replacing an active one; the old record gets status superseded and supersededBy.
   decline              Opt out of tracking this repository; remembered in machine data by its real path, never in the repository.
   doctor               Health report: Claude Code floor, plugin and hooks, release, state, profile, flags, context cost, permissions.
-  exec                 Start an external provider run for a task and role: the record local/runs/<run>.json, one detached supervisor per run.
+  exec                 Start an external reviewer with a pinned review brief: latest round or --round; save with review brief <id> --write.
+  findings add         File findings from a recorded review round, once per source task, round and finding ID.
+  findings close       Mark open or taken backlog findings fixed by an existing task.
+  findings drop        Drop open or taken backlog findings with a reason recorded in a decision.
+  findings list        List review findings kept in the backlog; defaults to open and taken.
+  findings show        Show a backlog finding, its source review and its lifecycle.
+  findings take        Create one task for selected open backlog findings and mark them taken.
   flags set            Set one capability flag of this repository (off, shadow or on, as the flag has them); a flip is recorded as a decision.
   flags show           Show the capability flags: each rollout capability with its mode, its source and what it does, then the team flags.
   gen apply            Write the generated files (CI workflow, pre-push hook, PR template, CODEOWNERS and AGENTS.md blocks); edits survive.
@@ -105,6 +111,7 @@ Commands:
   task start           Create the task's worktree and branch from a base commit and record them (started); the brief carries both.
   tick                 One loop tick: the next steps from the task state; exit ACTION (0), WAIT (3), DONE (4), STALLED (5) or BUDGET (6).
   tier                 Evaluate the project tier (L0-L3) from git history and the state; a change is logged (shadow) or recorded (on).
+  trust                Show the gate commands and threshold overrides this machine does not trust yet; trust them after a y at a terminal.
   verify               Re-run the profile gates, compare the test inventory with the baseline and record verify.json for a task.
   wait                 Wait for an external run: exit 3 while it runs, exit 0 with a short summary once it ended.
 
@@ -270,7 +277,7 @@ Options:
   --from-verify <task>         allow the tests the task's latest verify saw removed or newly skipped (a test-removal decision)
   --from-file <json>           read the fields from a JSON file (a regular file of at most 64 KB); flags given here win
   --task <id>                  the task whose review step a review-close decision closes; kind review-close by default
-  --remaining <ids>            comma-separated blocking finding IDs of the latest review round left open (review-close)
+  --remaining <ids>            comma-separated blocking and minor finding IDs left open in the latest review; files them in the backlog
 
 Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
 Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
@@ -392,12 +399,12 @@ Read-only.
 Exit codes: 0 OK · 1 FAIL · 8 ENV
 ```
 
-### `landfall exec [--task <id>] [--role <role>] [--provider <id>] [--yes] [--json]`
+### `landfall exec [--task <id>] [--role <role>] [--provider <id>] [--round <k>] [--yes] [--json]`
 
 ```text
-usage: landfall exec [--task <id>] [--role <role>] [--provider <id>] [--yes] [--json]
+usage: landfall exec [--task <id>] [--role <role>] [--provider <id>] [--round <k>] [--yes] [--json]
 
-Start an external provider run for a task and role: the record local/runs/<run>.json, one detached supervisor per run.
+Start an external reviewer with a pinned review brief: latest round or --round; save with review brief <id> --write.
 The provider is selected like the dispatch does (found, logged in, declared for the role; --provider names one). The
 record starts as {status: starting}; the supervisor (run-supervise) takes the external lease (queued while none is
 free), runs the provider in its own process group under the wall cap (reviewer 900 s, implementer 2700 s, or the env
@@ -411,6 +418,104 @@ Options:
   --task <id>      required: the task ID, such as T-AB-1
   --role <role>    required: reviewer or implementer
   --provider <id>  a declared or built-in provider instead of the selection
+  --round <k>      review brief round, 1 to 999 (default: highest stored round)
+
+Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
+Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
+```
+
+### `landfall findings add [--task <id>] [--round <k>] [--ids <ids>] [--yes] [--json]`
+
+```text
+usage: landfall findings add [--task <id>] [--round <k>] [--ids <ids>] [--yes] [--json]
+
+File findings from a recorded review round, once per source task, round and finding ID.
+
+Options:
+  --task <id>  source task ID (required)
+  --round <k>  recorded review round (required)
+  --ids <ids>  comma-separated review finding IDs (required)
+
+Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
+Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
+```
+
+### `landfall findings close <ids…> [--task <id>] [--yes] [--json]`
+
+```text
+usage: landfall findings close <ids…> [--task <id>] [--yes] [--json]
+
+Mark open or taken backlog findings fixed by an existing task.
+
+Arguments:
+  ids  backlog finding IDs
+
+Options:
+  --task <id>  the task that fixed them (required; must match takenBy when taken)
+
+Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
+Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
+```
+
+### `landfall findings drop <ids…> [--reason <text>] [--yes] [--json]`
+
+```text
+usage: landfall findings drop <ids…> [--reason <text>] [--yes] [--json]
+
+Drop open or taken backlog findings with a reason recorded in a decision.
+
+Arguments:
+  ids  backlog finding IDs
+
+Options:
+  --reason <text>  why they are dropped (required, 10–500 characters)
+
+Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
+Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
+```
+
+### `landfall findings list [--status <status>] [--task <id>] [--json]`
+
+```text
+usage: landfall findings list [--status <status>] [--task <id>] [--json]
+
+List review findings kept in the backlog; defaults to open and taken.
+
+Options:
+  --status <status>  open, taken, fixed, dropped or all (default: open and taken)
+  --task <id>        filter by source task ID
+
+Read-only.
+Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
+```
+
+### `landfall findings show <id> [--json]`
+
+```text
+usage: landfall findings show <id> [--json]
+
+Show a backlog finding, its source review and its lifecycle.
+
+Arguments:
+  id  the B-<handle>-<number> finding ID
+
+Read-only.
+Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
+```
+
+### `landfall findings take [<ids…>] [--all] [--title <text>] [--yes] [--json]`
+
+```text
+usage: landfall findings take [<ids…>] [--all] [--title <text>] [--yes] [--json]
+
+Create one task for selected open backlog findings and mark them taken.
+
+Arguments:
+  ids  backlog finding IDs (or --all)
+
+Options:
+  --all           take every open finding; cannot be combined with IDs
+  --title <text>  task title, at most 120 characters (default: Backlog: <n> findings (<ids>))
 
 Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
 Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
@@ -455,10 +560,10 @@ Read-only.
 Exit codes: 0 OK · 1 FAIL · 7 REFUSED · 8 ENV
 ```
 
-### `landfall gen apply [<target…>] [--dry-run] [--yes] [--json]`
+### `landfall gen apply [<target…>] [--dry-run] [--commit <sha>] [--yes] [--json]`
 
 ```text
-usage: landfall gen apply [<target…>] [--dry-run] [--yes] [--json]
+usage: landfall gen apply [<target…>] [--dry-run] [--commit <sha>] [--yes] [--json]
 
 Write the generated files (CI workflow, pre-push hook, PR template, CODEOWNERS and AGENTS.md blocks); edits survive.
 Targets: the named ones, else those whose capability flag is on and those generated before; agents-md is on while the profile
@@ -471,22 +576,26 @@ Arguments:
   target  ci, pre-push, codeowners, pr-template or agents-md; default: the enabled and already generated ones
 
 Options:
-  --dry-run  decide and report every target; write nothing
+  --dry-run       decide and report every target; write nothing
+  --commit <sha>  pin the CI workflow npx spec to this full commit SHA (40 lowercase hex) instead of the release tag
 
 Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED. Read-only with --dry-run: no consent needed.
 Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
 ```
 
-### `landfall gen plan [<target…>] [--json]`
+### `landfall gen plan [<target…>] [--commit <sha>] [--json]`
 
 ```text
-usage: landfall gen plan [<target…>] [--json]
+usage: landfall gen plan [<target…>] [--commit <sha>] [--json]
 
 Show what gen apply would do for each generated file; writes nothing.
 The decisions and exit code of `gen apply --dry-run`, without consent: exit 1 when apply would leave a file to merge by hand.
 
 Arguments:
   target  ci, pre-push, codeowners, pr-template or agents-md; default: the enabled and already generated ones
+
+Options:
+  --commit <sha>  pin the CI workflow npx spec to this full commit SHA (40 lowercase hex) instead of the release tag
 
 Read-only.
 Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
@@ -1143,7 +1252,7 @@ Show this repository: activation, tier, open tasks with their next step, the loo
 Also what the CLI prints with no command (--help prints the help). State: active (the state directory, in the
 repository or linked), declined or not active. Tier: evaluated now and never recorded (`tier` records a change).
 Tasks: each open task with the next step of the loop's step table, as `tick` would list it. Then the loop record and
-the scheduler leases of this project. At most 25 lines; --json holds every task and step. Writes nothing.
+the findings backlog counts and scheduler leases of this project. At most 25 lines; --json holds every task and step. Writes nothing.
 
 Read-only.
 Exit codes: 0 OK · 1 FAIL · 7 REFUSED · 8 ENV
@@ -1177,22 +1286,31 @@ Read-only.
 Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
 ```
 
-### `landfall task merge <id> [--branch <branch>] [--yes] [--json]`
+### `landfall task merge [<id…>] [--branch <branch>] [--ready] [--adopt] [--yes] [--json]`
 
 ```text
-usage: landfall task merge <id> [--branch <branch>] [--yes] [--json]
+usage: landfall task merge [<id…>] [--branch <branch>] [--ready] [--adopt] [--yes] [--json]
 
 Merge a task branch with --no-ff --no-commit, run the outcome gates on the merged tree, commit only on pass.
-A conflict or a failing gate aborts the merge (exit 1) and leaves the branch as it was; the tree must be clean.
-The outcome gates: profile gates, test baseline, report evidence, state files (no route or review). Writes no state.
+A conflict or a failing gate aborts the merge (exit 1) and leaves the branch as it was.
+The code tree must be clean (state writes may be pending).
+The outcome gates: profile gates, test baseline, report evidence, state files (no route or review). A merge is
+recorded on the task (a merged event and mergedAt). --adopt records tasks merged by hand after one gate run on HEAD:
+each task whose branch tip is an ancestor of HEAD; the others are reported. A failing gate records nothing.
 Any change to the gates needs a new gate-change decision. The commit runs your hooks; a hook that changes the
 tree undoes the commit (the merge stays staged).
+Several IDs, or --ready (the done, unmerged tasks with a branch), merge as one batch: the branches merge with
+--no-ff in a temporary worktree, the gates run once on the integrated tree, a failure is bisected and only the
+passing tasks merge, a conflict leaves only that task out, the target is fast-forwarded only if it did not move,
+and a branch that changes the gates is skipped (merge it alone). One line per task, the gate runs, the batch id.
 
 Arguments:
-  id  task ID such as T-AB-1
+  id  task ID such as T-AB-1 (several: one batch, or with --adopt)
 
 Options:
   --branch <branch>  the branch or commit to merge (default: the task's branch)
+  --ready            merge every done, unmerged task with a branch as one batch, in task order
+  --adopt            record tasks already merged by hand into HEAD, after one gate run on HEAD
 
 Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
 Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
@@ -1330,6 +1448,20 @@ Options:
 
 Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
 Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
+```
+
+### `landfall trust [--json]`
+
+```text
+usage: landfall trust [--json]
+
+Show the gate commands and threshold overrides this machine does not trust yet; trust them after a y at a terminal.
+Gate commands run (verify, baseline pin, task merge) and threshold overrides count (route) only once this machine
+set or trusted them: a cloned repository can ship both. Commands of this machine that write them trust them.
+Asks "[y/N]" at a terminal; without one, or with --yes, it is refused (exit 7). --json lists and writes nothing.
+
+Read-only.
+Exit codes: 0 OK · 1 FAIL · 7 REFUSED · 8 ENV
 ```
 
 ### `landfall verify <id> [--ci] [--no-cache] [--yes] [--json]`

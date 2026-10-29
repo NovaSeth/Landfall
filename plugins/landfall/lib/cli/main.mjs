@@ -1,5 +1,5 @@
 // CLI entry (spec §8.1, §8.2): parses argv by the command table, asks for consent before a command form that
-// changes files (REV-58; per form: mutates()), runs the command and hands its result to lib/cli/output.mjs, the one
+// changes files (COD-9; per form: mutates()), runs the command and hands its result to lib/cli/output.mjs, the one
 // writer: one JSON envelope line (--json) or text. No command (only --json, if anything) runs the default command,
 // `status` (spec §8.2); --help prints the help.
 // A StateError the command throws becomes its result here (typedResult), so no command maps them itself.
@@ -139,7 +139,7 @@ export async function main(argv, { commands = COMMANDS, io = processIo() } = {})
     const impl = await row.load();
     let result;
     try {
-      result = await impl({ args, flags, names, version, io, json, pluginRoot: PLUGIN_ROOT });
+      result = await impl({ args, flags, names, version, io, json, yes: globals.yes, pluginRoot: PLUGIN_ROOT });
     } catch (err) {
       if (failOpen) throw err;
       result = await typedResult(err);

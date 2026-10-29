@@ -14,6 +14,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { isolateProcessEnv } from './helpers/isolated-env.mjs';
+import { trustHere } from './helpers/trust.mjs';
 
 // Every child of this file (and git run by the code under test) gets a throwaway HOME and environment (S1).
 const ISO = isolateProcessEnv();
@@ -549,16 +550,20 @@ test('tier [--explain]: one table row; the envelope carries tier, change and cap
   assert.ok(Array.isArray(ex.data.explain) && ex.data.explain.length >= 5);
 });
 
-test('evaluate reads engine threshold overrides from config.json when they cite an active decision; defaults hold without them', (t) => {
-  const record = (status) => `---\nschema: 1\nid: D-TU-1\ntitle: Later tiers\nstatus: ${status}\nkind: general\ndate: 2026-10-15\nauthor: TU\nsupersedes: []\nsupersededBy: null\nscope: []\nallowsTestRemoval: []\n---\n\n## What\n\nLater tiers.\n\n## Why\n\nLong modules.\n\n## Cost if wrong\n\nlow\n`;
-  const withOverride = (status) => {
+// T-MG-77 (intended change): an override counts only when its decision is scoped to config.json (or a route-override)
+// and this machine trusts the overrides; the fixture writes config.json by hand, so it records trust (helpers/trust.mjs).
+test('evaluate reads engine threshold overrides from config.json when they cite an active decision; defaults hold without them', async (t) => {
+  const record = (status) => `---\nschema: 1\nid: D-TU-1\ntitle: Later tiers\nstatus: ${status}\nkind: general\ndate: 2026-10-15\nauthor: TU\nsupersedes: []\nsupersededBy: null\nscope: [.landfall/config.json]\nallowsTestRemoval: []\n---\n\n## What\n\nLater tiers.\n\n## Why\n\nLong modules.\n\n## Cost if wrong\n\nlow\n`;
+  const withOverride = async (status, { trusted = true } = {}) => {
     const { dir, store } = l1Repo(t, {});
     if (status) put(store, 'decisions/D-TU-1.md', record(status));
     put(store, 'config.json', { schema: KINDS.config.version, thresholds: { 'engine.tierSignals.loc.levels.0.up': { value: 8000, decision: 'D-TU-1', at: isoAt(1) } } });
+    if (trusted) await trustHere(lib, store, names);
     return evaluate(dir).tier;
   };
   assert.equal(evaluate(l1Repo(t, {}).dir).tier, 'L1', 'default: 5,000 lines call for L1');
-  assert.equal(withOverride('active'), 'L0', 'override 8000: 5,000 lines stay L0');
-  assert.equal(withOverride(null), 'L1', 'no record of the decision: ignored');
-  assert.equal(withOverride('retired'), 'L1', 'retired decision: ignored');
+  assert.equal(await withOverride('active'), 'L0', 'override 8000: 5,000 lines stay L0');
+  assert.equal(await withOverride('active', { trusted: false }), 'L1', 'overrides not trusted on this machine: ignored');
+  assert.equal(await withOverride(null), 'L1', 'no record of the decision: ignored');
+  assert.equal(await withOverride('retired'), 'L1', 'retired decision: ignored');
 });

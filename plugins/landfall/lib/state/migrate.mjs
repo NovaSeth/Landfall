@@ -1,4 +1,4 @@
-// Forward migrations of a store (spec §5.4, SD-10, GC9, REV-57). Every file of a known kind (outside local/)
+// Forward migrations of a store (spec §5.4, SD-10, GC9, COD-8). Every file of a known kind (outside local/)
 // whose schema is older than its kind is upgraded through the chain (lib/state/upgrade.mjs).
 // Under the store lock: plan the whole store first (a newer store or file refuses with exit 7, a corrupt file
 // or a result that fails its schema stops with state-invalid, exit 1), then copy the original bytes of each file

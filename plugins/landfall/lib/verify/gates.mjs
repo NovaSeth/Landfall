@@ -6,6 +6,7 @@
 // Known limits: a timeout ends the shell, not processes it started (lib/proc kills the direct child only); the heavy
 // lease for long test runs (testRuntimeS >= 60) waits for the scheduler unit.
 import { run } from '../proc/index.mjs';
+import { StateError, TRUST_HINT, gatesShaOf, isTrusted } from '../state/index.mjs';
 import { forTerminal } from '../text/clean.mjs';
 import { TAIL_CHARS } from './kinds.mjs';
 
@@ -24,6 +25,18 @@ export function gateEnv(env) {
   const out = { ...env };
   delete out.NODE_TEST_CONTEXT;
   return out;
+}
+
+// T-MG-77 (D5, D6): the gates of a repository run only when this machine set or trusted exactly that set (lib/state
+// trust.mjs). Every path that runs profile gates (verify, task merge on the merged tree, measureAt inside verify, baseline
+// pin) calls this once where it reads the gate list; untrusted → gates-untrusted (exit 7), nothing run.
+export function requireTrustedGates({ where, names, env, gates }) {
+  if (!gates.length) return;
+  if (isTrusted({ dir: where.dir, dataDir: where.dataDir, names, env, kind: 'gates', sha: gatesShaOf(gates) }).trusted) return;
+  const list = gates.map((g) => `${g.name}: ${g.cmd}`);
+  throw new StateError('gates-untrusted', 'REFUSED', `the gate commands of ${where.repo} are not trusted on this machine, so none ran: ${list.join('; ')}`.slice(0, 600), {
+    hint: TRUST_HINT.replaceAll('{bin}', names.bin), details: gates.map((g) => ({ name: g.name, cmd: g.cmd })),
+  });
 }
 
 // { gate: the verify.json entry (no output), output: the whole merged output, kind }.

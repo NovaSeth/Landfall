@@ -27,17 +27,18 @@ const sched = await lib('sched/index.mjs');
 const identity = '[user]\n\tname = Test User\n\temail = test@example.com\n';
 const CALM = Object.freeze({ cores: 10, load1: 1, loadMeasurable: true, totalBytes: 32 * 2 ** 30, availBytes: 20 * 2 ** 30, memMethod: 'vm_stat' });
 const BUSY = Object.freeze({ ...CALM, load1: 14.2 });
-const iso = (msAgo) => new Date(Date.now() - msAgo).toISOString();
+const iso = (msAgo, base = Date.now()) => new Date(base - msAgo).toISOString();
 const git = (cwd, env, args) => { const r = spawnSync('git', args, { cwd, env, encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); };
 
 test('ORC-24 resolves with rule, in the method after ORC-23, within the rule caps', () => {
   const r = spawnSync(process.execPath, [join(pluginDir, 'bin', names.bin), 'rule', 'ORC-24'], { encoding: 'utf8', timeout: 30000 });
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /^ORC-24\. Be proactive and keep the work flowing: while agents, external runs or gates work in the background/);
-  assert.match(r.stdout, /an executor past its budget gets a status request \(ORC-9\)/);
+  // T-MG-83 (intended change): ORC-24 keeps the cadence and points to the older rules for the reactions
+  assert.match(r.stdout, /past budget a status request \(ORC-9\), idle or hung the cause and a stop \(ORC-10\), too slow smaller slices or batches \(ORC-11\)/);
   const text = readFileSync(join(pluginDir, 'method', 'orchestration.md'), 'utf8');
   assert.ok(text.indexOf('**ORC-23.**') < text.indexOf('**ORC-24.**'));
-  assert.ok(!text.includes('**ORC-25.**') && !text.includes('**ORC-26.**'));
+  assert.ok(text.indexOf('**ORC-24.**') < text.indexOf('**ORC-25.**') && !text.includes('**ORC-26.**')); // T-MG-80: ORC-25 follows the watchdog rule
 });
 
 test('the dispatch and loop skills name ORC-24', () => {
@@ -50,12 +51,12 @@ test('the dispatch and loop skills name ORC-24', () => {
 
 test('watchRows: a heavy ticket queued 12 minutes ago, load over the max, a calm state', () => {
   const now = Date.now();
-  const queue = [{ status: 'live', at: iso(12 * 60e3) }, { status: 'live', at: iso(2 * 60e3) }];
+  const queue = [{ status: 'live', at: iso(12 * 60e3, now) }, { status: 'live', at: iso(2 * 60e3, now) }];
   const heavy = table.watchRows({ queue, readings: CALM, loadMax: '8.0', now });
   assert.deepEqual(heavy, [{ code: 'heavy-queue', message: 'heavy queue: 2 waiting, oldest 12 min → hold new dispatches until the gate is through (ORC-24)' }]);
   const load = table.watchRows({ queue: [], readings: BUSY, loadMax: '8.0', now });
   assert.deepEqual(load, [{ code: 'load', message: 'load 14.2 ≥ 8.0 → start no new agents until it falls (ORC-24)' }]);
-  assert.deepEqual(table.watchRows({ queue: [{ status: 'live', at: iso(9 * 60e3) }, { status: 'stale', at: iso(60 * 60e3) }], readings: CALM, loadMax: '8.0', now }), []);
+  assert.deepEqual(table.watchRows({ queue: [{ status: 'live', at: iso(9 * 60e3, now) }, { status: 'stale', at: iso(60 * 60e3, now) }], readings: CALM, loadMax: '8.0', now }), []);
   assert.deepEqual(table.watchRows({ queue: [], readings: BUSY, loadMax: 'off', now }), []);
 });
 

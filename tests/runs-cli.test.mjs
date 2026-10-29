@@ -83,6 +83,8 @@ async function project(t, { envExtra = {} } = {}) {
   for (const id of ['T-TU-1', 'T-TU-2']) {
     await p.ok(['route', id, '--paths', 'src/a.js', '--loc', '10']);
     await p.ok(['brief', id, '--write']);
+    await p.ok(['task', 'set', id, 'started', '--branch', 'main', '--base', git(repo, env, ['rev-parse', 'HEAD'])]);
+    await p.ok(['review', 'brief', id, '--write']);
   }
   for (const mode of ['ok', 'gate', 'stubborn']) {
     await p.ok(['providers', 'add', `fake${mode}`, '--argv', `${process.execPath} ${FAKE} ${mode} {out} {sandbox} {cwd}`, '--sandbox-map', 'reviewer=read-only,implementer=workspace-write']);
@@ -105,8 +107,12 @@ test('wait: exit 3 while the run runs, exit 0 with a summary under 1 KB when it 
   await p.until('the run to run', () => p.record(id).status === 'running');
   const w = await p.cli(['wait', id, '--timeout', '1']);
   assert.equal(w.code, 3, show(w));
+  assert.equal(w.e.data.endedAt, null, 'a live run has no end time');
   writeFileSync(`${p.record(id).outFile}.go`, '');
   await p.ended(id);
+  const listed = (await p.ok(['runs', 'list'])).e.data.runs.find((r) => r.runId === id);
+  assert.equal(listed.endedAt, p.record(id).endedAt, 'runs list carries the recorded end time');
+  assert.ok(Date.parse(listed.endedAt) > 0, 'an ended run has its time');
   const d = await p.ok(['wait', id, '--timeout', '5']);
   assert.ok(JSON.stringify(d.e.data).length <= 1024, 'summary ≤ 1 KB');
   assert.equal(d.e.data.status, 'done');

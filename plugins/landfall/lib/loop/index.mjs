@@ -18,10 +18,10 @@ import { isAbsolute, join, relative, sep } from 'node:path';
 import { git } from '../git/index.mjs';
 import { costSince, readRuns } from '../receipts/index.mjs';
 import { KINDS, StateError, emailHash, open, resolve } from '../state/index.mjs';
-import { cheapCap, decide, newLoop, parseCaps } from './decide.mjs';
+import { cheapCap, decide, effectiveCaps, newLoop, parseCaps } from './decide.mjs';
 import { CAP_RANGE, CARRIED_PLAN, DEFAULT_CAPS, LOOP, LOOP_ID, STALL, TERMINAL, UNMEASURED, fixedPrompt } from './kind.mjs';
 import { DEFAULT_BUDGET_MIN, budgetOf, readBudgets } from './budget.mjs';
-import { STATUS_MIN, TABLE_RULES, WAIT_S, nextSteps, parsePlan, readWatch } from './table.mjs';
+import { OUTSIDE_MAX, STATUS_MIN, TABLE_RULES, WAIT_S, nextSteps, parsePlan, readWatch } from './table.mjs';
 
 export { DEFAULT_BUDGET_MIN, budgetOf, readBudgets };
 export { CAP_RANGE, CARRIED_PLAN, DEFAULT_CAPS, LOOP, LOOP_ID, STALL, STATUS_MIN, TABLE_RULES, TERMINAL, UNMEASURED, WAIT_S, cheapCap, decide, fixedPrompt, newLoop, nextSteps, parseCaps, parsePlan };
@@ -119,6 +119,24 @@ function stateChanges(where, env) {
   return out.sort();
 }
 
+// Tasks merged outside the plugin (T-MG-80): done, a recorded branch, no `merged` event, and the branch tip is an ancestor of
+// the target. The target is what `task merge` merges into: HEAD of the main checkout (the first worktree), asked there and
+// never in a task worktree, where its own branch is always an ancestor of HEAD. Every candidate is checked with one git
+// call (the branches merged into HEAD, then a set lookup; fix round 1, F6); only the display is limited (OUTSIDE_MAX).
+export { OUTSIDE_MAX };
+export function outsideMerges({ where, env, tasks }) {
+  const candidates = tasks.filter((t) => t.status === 'done' && t.branch && !(t.events ?? []).some((e) => e.event === 'merged'))
+    .sort((a, b) => a.id.localeCompare(b.id, 'en', { numeric: true }));
+  if (candidates.length === 0) return [];
+  const list = git(['worktree', 'list', '--porcelain'], { cwd: where.repo, env });
+  const main = list.status === 0 ? /^worktree (.+)$/m.exec(list.stdout)?.[1] : null;
+  if (!main) return [];
+  const merged = git(['for-each-ref', '--merged=HEAD', '--format=%(refname)', 'refs/heads/'], { cwd: main, env });
+  if (merged.status !== 0) return [];
+  const set = new Set(merged.stdout.split('\n').filter(Boolean));
+  return candidates.filter((t) => typeof t.branch === 'string' && !t.branch.startsWith('-') && set.has(`refs/heads/${t.branch}`)).map((t) => t.id);
+}
+
 // Step 1 of the tick, measured in the repository.
 function gitProbe(where, env, names) {
   const text = (r) => (r.status === 0 ? r.stdout : `error ${r.error ?? r.status}`);
@@ -134,6 +152,7 @@ function gitProbe(where, env, names) {
     },
     cost: (startedAt) => costSince(startedAt, { env, names, where }),
     dirty: () => stateChanges(where, env),
+    outside: (tasks) => outsideMerges({ where, env, tasks }),
   };
 }
 
@@ -171,7 +190,8 @@ export function tickStore(store, { where, names, now, plan = null, probe, watch 
     const me = snap.team.find((d) => d.emailSha256 === hash)?.handle ?? null;
     const table = nextSteps({
       tasks: snap.tasks, runs: snap.runs, handles: snap.team.map((d) => d.handle), me, plan, lanesOn: snap.lanesOn,
-      caps: loop.caps, now, bin: names.bin, budgets: readBudgets(where.dir, snap.tasks), problem: snap.problem, dirty: probe.dirty, watch,
+      caps: effectiveCaps(loop), now, bin: names.bin, budgets: readBudgets(where.dir, snap.tasks), problem: snap.problem, dirty: probe.dirty, watch,
+      outside: snap.problem ? [] : probe.outside?.(snap.tasks) ?? [],
     });
     const d = decide(loop, {
       now, fingerprint: fingerprint(heads, snap.files, snap.runs), costMicroUsd: cost?.costMicroUsd ?? null, unmeasurable: cost?.unmeasurable === true,
@@ -203,7 +223,7 @@ export function startLoop({ cwd, env, names, now = Date.now(), caps = {}, byUser
     if (cur && !cur.exit) throw new StateError('loop-running', 'FAIL', `loop ${cur.id} is running (tick ${cur.ticks} of ${cur.caps.ticks})`, { hint: `'${names.bin} loop stop' ends it first` });
     if (cur && !byUser) throw userDecision(`the last loop ended with ${cur.exit}: a new loop after an ended one is the user's decision`);
     replaced = cur;
-    return newLoop({ now, caps: { ...DEFAULT_CAPS, ...caps } });
+    return newLoop({ now, caps: { ...DEFAULT_CAPS, ...caps }, byUser });
   });
   return { where, loop, replaced };
 }

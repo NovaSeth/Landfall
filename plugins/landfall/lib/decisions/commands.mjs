@@ -2,7 +2,7 @@
 // `decide` (with --allows-test-removal: the test IDs verify may see removed or newly skipped; kind test-removal unless
 // --kind says otherwise), `decisions supersede`, `decisions retire` (change files: consent is checked by the CLI first) and
 // `decisions check`, `decisions show`, `decisions find` (read-only). Context comes from io (cwd, env), never from
-// process state (REV-58). A StateError becomes its exit code with the error and hint unchanged.
+// process state (COD-9). A StateError becomes its exit code with the error and hint unchanged.
 import { lstatSync, readFileSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
 import { EXIT } from '../cli/commands.mjs';
@@ -153,6 +153,7 @@ function create({ flags: given, names, io }, supersedes) {
   const input = { title: flags.title.trim(), why: flags.why, cost: flags.cost, scope: splitList(flags.scope), kind, supersedes, allowsTestRemoval, ...review };
   const result = createDecision({ store, where, names, env: io.env, handle, input });
   const lines = [`${result.id} created: ${result.file}`, ...result.supersedes.map((old) => `${old} superseded by ${result.id}`)];
+  if (result.filed) lines.push(`filed: ${result.filed.length ? result.filed.join(', ') : 'none'}`);
   return { data: result, text: `${lines.join('\n')}\n`, warnings: result.warnings.map((w) => w.message) };
 }
 

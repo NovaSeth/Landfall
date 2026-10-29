@@ -129,7 +129,21 @@ const hasSegment = (path, name) => path.toLowerCase().split('/').includes(name.t
 // paths (its pathspec may be `.`; the subcommand is the first word after git and its global options, each of which may
 // take one value word, never a word of the arguments, findings-r2 A-m2), or the command runs inside the state directory
 // (without a known directory: under a segment with its name).
-const GIT_REWRITE = /(^|[\s/;&|(])git(\s+-\S*(\s+[^\s-]\S*)?)*\s+(checkout|restore|clean|rm|mv)(\s|$)/;
+// One pass over the words (linear, A-1): after a git word, options each with an optional value word; a word that may
+// stand in the subcommand place and is one of the rewriting subcommands is a hit.
+const REWRITE_SUBS = new Set(['checkout', 'restore', 'clean', 'rm', 'mv']);
+const GIT_REWRITE = { test(v) {
+  let walk = null; // null: no git before · { opt }: in git's options, opt — the previous word was an option
+  for (const w of v.split(/\s+/)) {
+    if (walk !== null) {
+      if (w.startsWith('-')) walk = { opt: true };
+      else if (REWRITE_SUBS.has(w)) return true;
+      else walk = walk.opt ? { opt: false } : null;
+    }
+    if (/(^|[/;&|(])git$/.test(w)) walk = { opt: walk?.opt ?? false };
+  }
+  return false;
+} };
 function namesState(command, state, cwd) {
   const dirName = state.dir ? realPath(state.dir).split('/').pop() : state.name ?? null;
   if (typeof cwd === 'string') {
@@ -150,11 +164,10 @@ export function evaluate(command, opts = {}) {
   const warnings = [];
   let hits = new Set();
   try {
-    let text = null;
-    try { text = opts.readGuardExtra?.() ?? null; } catch (e) {
-      // project rules cannot be read: a token blocks, no token passes
-      return prescan(command).size ? { deny: MSG.shape(`cannot read guard-extra.txt (${e.code ?? e.message})`), warnings } : { own: null, warnings };
-    }
+    let text = null; let extraError = null;
+    // project rules cannot be read: a token or a name of the state blocks (the state checks below still run, SF-AB-3),
+    // nothing else passes
+    try { text = opts.readGuardExtra?.() ?? null; } catch (e) { extraError = e; }
     const { rules, warnings: w } = loadRules(text);
     warnings.push(...w);
     // literal variables substituted (tokenizer.mjs expandLiterals): the tokens and the state are looked for in both
@@ -168,6 +181,7 @@ export function evaluate(command, opts = {}) {
     const literals = [...rules.flatMap((r) => r.literals), ...(state ? stateLiterals(state) : [])];
     hits = new Set(texts.flatMap((t) => [...prescan(t, literals)]));
     if (state && stateHit) hits.add('names the state directory');
+    if (extraError) return hits.size ? { deny: MSG.shape(`cannot read guard-extra.txt (${extraError.code ?? extraError.message})`), warnings } : { own: null, warnings };
     const ctx = context({ ...opts, literals, state, stateHit: state !== null && stateHit });
     // project rules: first on the text (the project message wins), after parsing on the simple commands
     const applyRules = (inputs) => {

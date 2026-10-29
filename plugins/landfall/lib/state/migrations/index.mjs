@@ -12,6 +12,7 @@
 import stateFlagsToConfig from './001-state-flags-to-config.mjs';
 import renameStateDir from './002-rename-state-dir.mjs';
 import profileSaidGlobs from './003-profile-said-globs.mjs';
+import taskMergedAt from './004-task-merged-at.mjs';
 
-export const MIGRATIONS = Object.freeze([stateFlagsToConfig, profileSaidGlobs]);
+export const MIGRATIONS = Object.freeze([stateFlagsToConfig, profileSaidGlobs, taskMergedAt]);
 export const LAYOUTS = Object.freeze([renameStateDir]);

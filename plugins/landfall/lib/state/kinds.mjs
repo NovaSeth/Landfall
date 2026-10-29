@@ -20,8 +20,9 @@ export const LIMITS = Object.freeze({
 export const PATTERNS = Object.freeze({
   handle: /^[A-Z]{2,4}$/,
   taskId: /^T-[A-Z]{2,4}-[1-9]\d{0,5}$/,
+  findingId: /^B-[A-Z]{2,4}-[1-9]\d{0,5}$/,
   decisionId: /^D-[A-Z]{2,4}-[1-9]\d{0,5}$/,
-  id: /^[TD]-[A-Z]{2,4}-[1-9]\d{0,5}$/,
+  id: /^[TDB]-[A-Z]{2,4}-[1-9]\d{0,5}$/,
   lane: /^[a-z0-9][a-z0-9._-]{0,39}$/,
   kebab: /^[a-z0-9]+(?:-[a-z0-9]+)*$/,
   actor: /^[A-Za-z0-9][A-Za-z0-9._:@-]*$/,
@@ -99,7 +100,9 @@ export const KINDS = Object.freeze({
       addedAt: time,
     },
   }),
-  task: defineKind('task', 1, {
+  // Task schema 2 (T-MG-80): the optional mergedAt (the time of the task's `merged` event, written by task merge) joins
+  // the task; migration 004 is a no-op upgrade, so an older plugin refuses a schema-2 task as newer (GC9).
+  task: defineKind('task', 2, {
     dir: 'tasks',
     keyPattern: PATTERNS.taskId,
     file: (id) => `tasks/${id}/task.json`,
@@ -118,6 +121,34 @@ export const KINDS = Object.freeze({
       events: { t: 'arr', max: LIMITS.events, of: { t: 'obj', f: { at: time, by: str(LIMITS.actor, { re: PATTERNS.actor }), event: str(LIMITS.event, { re: PATTERNS.kebab }), data: { t: 'data', maxBytes: LIMITS.eventData } } } },
       base: token(PATTERNS.sha, { max: 64, null: true }),
       branch: str(LIMITS.branch, { re: PATTERNS.branch, null: true }),
+      mergedAt: time,
+    },
+    opt: ['mergedAt'],
+  }),
+  finding: defineKind('finding', 1, {
+    dir: 'findings',
+    keyPattern: PATTERNS.findingId,
+    file: (id) => `findings/${id}.json`,
+    match: /^findings\/(B-[A-Z]{2,4}-[1-9]\d{0,5})\.json$/,
+    key: 'id',
+    fields: {
+      id: token(PATTERNS.findingId),
+      status: enumOf(['open', 'taken', 'fixed', 'dropped']),
+      task: token(PATTERNS.taskId),
+      round: { t: 'int', min: 1, max: 999 },
+      reviewer: { t: 'obj', f: { kind: enumOf(['claude', 'external']), id: str(LIMITS.actor, { re: PATTERNS.actor }) } },
+      finding: str(40, { min: 1 }),
+      severity: enumOf(['blocking', 'minor']),
+      path: str(LIMITS.path, { null: true }),
+      line: { t: 'int', min: 1, max: 100000000, null: true },
+      rule: str(40, { null: true }),
+      text: str(500, { min: 1 }),
+      filedAt: time,
+      filedBy: token(PATTERNS.handle),
+      takenBy: token(PATTERNS.taskId, { null: true }),
+      closedAt: { ...time, null: true },
+      closedBy: token(/^[TD]-[A-Z]{2,4}-[1-9]\d{0,5}$/, { null: true }),
+      reason: str(500, { null: true }),
     },
   }),
   // SD-9: a retired ID keeps a tombstone, so its number is never allocated again.
@@ -125,7 +156,7 @@ export const KINDS = Object.freeze({
     dir: 'tombstones',
     keyPattern: PATTERNS.id,
     file: (id) => `tombstones/${id}.json`,
-    match: /^tombstones\/([TD]-[A-Z]{2,4}-[1-9]\d{0,5})\.json$/,
+    match: /^tombstones\/([TDB]-[A-Z]{2,4}-[1-9]\d{0,5})\.json$/,
     key: 'id',
     fields: {
       id: token(PATTERNS.id),
@@ -137,9 +168,9 @@ export const KINDS = Object.freeze({
   // Review round 1, item 2: the per-handle high-water mark of an ID series (machine-local, under local/).
   counter: defineKind('counter', 1, {
     dir: 'local/ids',
-    keyPattern: /^[TD]-[A-Z]{2,4}$/,
+    keyPattern: /^[TDB]-[A-Z]{2,4}$/,
     file: (k) => `local/ids/${k}.json`,
-    match: /^local\/ids\/([TD]-[A-Z]{2,4})\.json$/,
+    match: /^local\/ids\/([TDB]-[A-Z]{2,4})\.json$/,
     fields: { high: { t: 'int', min: 0, max: LIMITS.idNumber } },
   }),
 });
@@ -166,6 +197,21 @@ export const MACHINE_KINDS = Object.freeze({
     match: /^config\.json$/,
     fields: { flags: flagsMap, executors },
     opt: ['flags', 'executors'],
+  }),
+  // T-MG-77: the gate sets and threshold overrides this machine trusts, per repository (lib/state/trust.mjs).
+  trust: defineKind('trust', 1, {
+    dir: '',
+    file: () => 'trust.json',
+    match: /^trust\.json$/,
+    fields: {
+      repos: {
+        t: 'map', max: LIMITS.projects, key: str(32, { re: /^[0-9a-f]{32}$/ }),
+        v: {
+          t: 'obj', opt: ['adoptedAt'],
+          f: { gates: { t: 'arr', max: 50, of: str(64, { re: PATTERNS.sha256 }) }, overrides: { t: 'arr', max: 50, of: str(64, { re: PATTERNS.sha256 }) }, adoptedAt: time },
+        },
+      },
+    },
   }),
 });
 

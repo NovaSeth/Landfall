@@ -19,7 +19,7 @@
 // without effect; the error names it.
 import { thresholdsOf } from '../config/index.mjs';
 import { readRecords } from '../decisions/index.mjs';
-import { LIMITS, allocateId } from '../state/index.mjs';
+import { LIMITS, TRUST_HINT, allocateId, isTrusted, overridesShaOf } from '../state/index.mjs';
 import { FLAGS, THRESHOLDS, classify, publicReasons } from './classify.mjs';
 import { checkQuote, renderOverride } from './decision.mjs';
 import { RouteError, usage } from './errors.mjs';
@@ -137,19 +137,42 @@ function result({ id, doc, previous, computed, outcome, reasons, flags, decision
   };
 }
 
-// The `unit` thresholds (shipped `defaults`) with the overrides of the config.json behind `store`, for the overrides
-// that cite an active decision only (GC3). A config or decisions folder that cannot be read gives the shipped values.
-export function thresholdsWithOverrides(unit, defaults, store) {
+// The overrides of the config.json behind `store` that count (GC3, T-MG-77 C-2/F1-3): { kept, ignored (why, or null) }.
+// An override counts only when the decision it cites is active and is a route-override or has a scope naming
+// config.json, and only when this machine set or trusted exactly these overrides (lib/state trust.mjs: a cloned
+// repository ships both files). A config or decisions folder that cannot be read counts none.
+const namesConfig = (scope) => Array.isArray(scope) && scope.some((g) => typeof g === 'string' && (g === 'config.json' || g.endsWith('/config.json')));
+export function countedOverrides(store) {
   try {
     const all = store.read('config', null)?.thresholds ?? {};
-    const active = new Set(readRecords(store.dir).records.filter((r) => r.doc.status === 'active').map((r) => r.id));
-    const kept = Object.fromEntries(Object.entries(all).filter(([, o]) => active.has(o.decision)));
-    return thresholdsOf(unit, defaults, { thresholds: kept }).data;
+    if (Object.keys(all).length === 0) return { kept: {}, ignored: null };
+    const bound = new Set(readRecords(store.dir).records.filter((r) => r.doc.status === 'active' && (r.doc.kind === 'route-override' || namesConfig(r.doc.scope))).map((r) => r.id));
+    const kept = Object.fromEntries(Object.entries(all).filter(([, o]) => bound.has(o.decision)));
+    const dropped = Object.keys(all).filter((k) => !Object.hasOwn(kept, k));
+    const dataDir = typeof store.dataDir === 'function' ? store.dataDir() : null;
+    const trust = isTrusted({ dir: store.dir, dataDir, names: store.names, kind: 'overrides', sha: overridesShaOf(all) });
+    if (!trust.trusted) return { kept: {}, ignored: `not trusted on this machine (${TRUST_HINT.replaceAll('{bin}', store.names?.bin ?? 'the CLI')})` };
+    if (dropped.length) return { kept, ignored: `${dropped.slice(0, 3).join(', ')}${dropped.length > 3 ? ` (+${dropped.length - 3} more)` : ''} cite no active route-override decision or decision scoped to config.json` };
+    return { kept, ignored: null };
+  } catch {
+    return { kept: {}, ignored: 'the config or the decisions could not be read' };
+  }
+}
+
+// The `unit` thresholds (shipped `defaults`) with the overrides that count (countedOverrides).
+export function thresholdsWithOverrides(unit, defaults, store) {
+  try {
+    return thresholdsOf(unit, defaults, { thresholds: countedOverrides(store).kept }).data;
   } catch {
     return structuredClone(defaults);
   }
 }
 export const routerThresholds = (store) => thresholdsWithOverrides('router', THRESHOLDS, store);
+// The reason line route prints when overrides were left out (none when every override counts).
+const ignoredReasons = (store) => {
+  const { ignored } = countedOverrides(store);
+  return ignored ? [{ code: 'overrides-ignored', text: `threshold overrides ignored: ${ignored}` }] : [];
+};
 
 // Classifies the declared plan of task `id` and applies the ratchet. `handle` is the caller's registered handle;
 // `riskPaths` are the profile's risk globs (added to the defaults).
@@ -160,7 +183,7 @@ export function routeTask(store, id, { paths, loc, flags = [], riskPaths = [], h
     step = applyClass(owned(cur, id, handle), plan, { at, by: handle });
     return step.next ?? undefined;
   });
-  return { ...result({ id, doc, previous: step.previous, computed: plan.class, outcome: step.outcome, reasons: step.reasons, flags: step.flags }), input: { files: plan.files, loc: plan.loc, flags: plan.flags } };
+  return { ...result({ id, doc, previous: step.previous, computed: plan.class, outcome: step.outcome, reasons: [...step.reasons, ...ignoredReasons(store)], flags: step.flags }), input: { files: plan.files, loc: plan.loc, flags: plan.flags } };
 }
 
 // Sets the class of task `id` to `to` on the user's word (see the header).

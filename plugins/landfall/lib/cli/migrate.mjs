@@ -1,4 +1,4 @@
-// `<bin> migrate [--dry-run]` (spec §5.4, SD-10, REV-57, GC9): the forward migration chain (lib/state migrate) on every
+// `<bin> migrate [--dry-run]` (spec §5.4, SD-10, COD-8, GC9): the forward migration chain (lib/state migrate) on every
 // state document of the repository: every committed JSON kind of every unit (MIGRATE_KINDS; decision records are
 // Markdown with their own schema line, and local/ is machine-local, so neither is migrated here). --dry-run lists the
 // steps and writes nothing; a run copies each original to local/backup/<stamp>/ first and writes state.json last; a
