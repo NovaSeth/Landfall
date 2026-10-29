@@ -164,3 +164,25 @@ test('SF-AB-6: a token-shaped provider line is masked in the record and the log'
   assert.ok(!raw.includes(TOKEN.slice(0, 20)), 'neither the token nor a prefix of it is stored');
   assert.ok(p.log(rec.runId).lines.some((l) => l.startsWith('leaked ') && l.endsWith(' here')), JSON.stringify(p.log(rec.runId).lines));
 });
+
+test('SF-AB-6: a project pattern (secrets-patterns.txt) in the provider output is masked in the record and the log', async (t) => {
+  const p = await project(t);
+  writeFileSync(join(p.state, 'secrets-patterns.txt'), 'red st[a-z]+\n');
+  const rec = await runTo(p, 'hesc');
+  assert.equal(rec.status, 'done', JSON.stringify(rec));
+  const raw = readFileSync(join(p.runsDir, `${rec.runId}.log`), 'utf8') + readFileSync(join(p.runsDir, `${rec.runId}.json`), 'utf8');
+  assert.ok(!raw.includes('red status'), 'the project pattern match is not stored');
+  assert.ok(p.log(rec.runId).lines.includes('col1 col2'), JSON.stringify(p.log(rec.runId).lines));
+});
+
+test('SF-AB-6: an unreadable project pattern file fails closed: the run fails and no provider starts', async (t) => {
+  const p = await project(t);
+  mkdirSync(join(p.state, 'secrets-patterns.txt'));
+  const r = await startRun(p, 'T-TU-1', 'hesc');
+  assert.equal(r.code, 0, show(r));
+  const rec = await p.ended(r.e.data.runId);
+  assert.equal(rec.status, 'failed');
+  assert.equal(rec.error, 'project-patterns-unreadable');
+  assert.equal(existsSync(`${rec.outFile}.args`), false, 'no provider was started');
+  assert.deepEqual(p.externalLeases(), []);
+});
