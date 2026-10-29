@@ -754,3 +754,29 @@ test('every verify run is an event of the task and keeps its own log; a closed t
   assert.equal(r.store.read('task', r.id).events.filter((e) => e.event === 'verify').length, 2, 'no verify event after done');
   assert.deepEqual(r.vstore.list('verifyAttempt'), [`${r.id}-1`, `${r.id}-2`]);
 });
+
+test('T-MG-95: the gate-change refusal names the likelier cause when the branch has no committed state', async (t) => {
+  const r = repo(t);
+  r.git('checkout', '-q', '-b', 'feat/nostate', r.head);
+  r.write('extra.txt', 'x\n');
+  commitAll(r, 'work without state');
+  r.git('checkout', '-q', 'main');
+  setGates(r, [{ ...GATES[0], cmd: 'true' }, GATES[1]]);
+  const res = await cli(['task', 'merge', r.id, '--branch', 'feat/nostate', '--yes'], r);
+  assert.equal(res.code, 1, show(res));
+  assert.ok(errorCodes(res).includes('gate-change-required'), show(res));
+  assert.match(show(res), /the branch has no committed state; commit it on the target and merge the target into the branch/);
+});
+
+test('T-MG-95: task done in the main checkout judges the task worktree recorded by task start', async (t) => {
+  const r = repo(t);
+  assert.equal((await run(r)).code, 0);
+  const wt = join(r.base, 'wt');
+  r.git('worktree', 'add', '-q', wt, '-b', 'task/wt', r.head);
+  assert.equal((await cli(['task', 'set', r.id, 'started', '--branch', 'task/wt', '--base', r.head, '--worktree', wt, '--yes'], r)).code, 0);
+  r.write('later.txt', 'main moved on\n');
+  commitAll(r, 'main moves on after verify');
+  const res = await done(r);
+  assert.equal(res.code, 0, show(res));
+  assert.equal(r.store.read('task', r.id).status, 'done');
+});

@@ -53,6 +53,11 @@ function repo() {
   mkdirSync(join(d, 'linked', 'bin'), { recursive: true });
   writeFileSync(join(d, 'linked', 'bin', BIN), '#!/bin/sh\necho linked\n');
   symlinkSync(join(pluginDir, 'lib'), join(d, 'linked', 'lib'));
+  // T-MG-95: a plugin root that holds this plugin's name.json is no proof either: a checkout's code is the project's own
+  mkdirSync(join(d, 'plugins', 'planted', 'bin'), { recursive: true });
+  mkdirSync(join(d, 'plugins', 'planted', 'lib'), { recursive: true });
+  writeFileSync(join(d, 'plugins', 'planted', 'lib', 'name.json'), readFileSync(join(pluginDir, 'lib', 'name.json'), 'utf8'));
+  writeFileSync(join(d, 'plugins', 'planted', 'bin', BIN), '#!/bin/sh\necho planted\n');
   git('add', '-A');
   git('-c', 'user.name=T', '-c', 'user.email=t@example.com', 'commit', '-q', '-m', 'tracked');
   return d;
@@ -171,6 +176,7 @@ const MUST_BLOCK = [
   [`node copy/bin/${BIN} commit --yes`, 'SEC-3', 'the same behind node'],
   [`linked/bin/${BIN} commit --yes`, 'SEC-3', 'a planted launcher with the real lib linked beside it: a sibling directory proves nothing'],
   [`node linked/bin/${BIN} commit --yes`, 'SEC-3', 'the same behind node'],
+  [`plugins/planted/bin/${BIN} commit --yes`, 'SEC-3', 'T-MG-95: a plugin root with this plugin\'s name.json is not the launcher; only LAUNCHERS names a checkout'],
   [`time X=a git stash`, 'SEC-3', 'an assignment after time (bash reads it as a prefix assignment)'],
   [`time PATH=/tmp/evil git commit -m x`, 'SEC-3', 'PATH set after time'],
   [`time ! git stash`, 'SEC-3', 'compound syntax after time'],

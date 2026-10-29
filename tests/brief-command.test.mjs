@@ -94,7 +94,9 @@ test('brief renders the template from the state: title, kind, class and reason, 
   assert.match(text, new RegExp(`^Executor: ${names.plugin}:implementer \\(class: standard — 3 files > 2; 120 LOC > 30; kind: task\\)\\.$`, 'm'));
   const rules = rulesFor('standard', 'implementer');
   assert.ok(text.includes(`Rules: ${rules.join(' ')}; read them with \`${BIN} rule <ID…>\`.`), text);
-  assert.ok(text.includes(`\`\`\`bash\n${GATES.map((g) => g.cmd).join('\n')}\n<secrets scan>; echo "exit $?"\n\`\`\``), 'the profile gates replace the gate placeholders');
+  assert.ok(text.includes(`\`\`\`bash\n${GATES.map((g) => g.cmd).join('\n')}\n${BIN} secrets\n\`\`\``), 'the profile gates replace the gate placeholders');
+  assert.ok(!/Gate[^]*?```bash[^]*?\$[^]*?```/.test(text.slice(text.indexOf("## Gate"), text.indexOf("## Assignments"))), "the gate block has no $ (the Bash guard blocks it)");
+  assert.ok(text.includes("Exit 0 prints `secrets: clean`."), "the secrets line says what exit 0 prints");
   assert.match(text, /^Review: none$/m, 'shadow mode (L0): a standard task needs no review');
   assert.ok(!text.includes('{{'), 'every name placeholder is filled');
   for (const ph of ['<Task title>', '<task ID>', '<trivial | standard | critical>', '<rule IDs>', '<typecheck>', '<lint>', '<tests with a worker limit>']) assert.ok(!text.includes(ph), `${ph} is filled`);
