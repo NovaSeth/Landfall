@@ -87,7 +87,7 @@ test('review brief: round 1 pins base..HEAD, saves the diff, lists files, accept
   assert.ok(r.out.includes('D-TU-1: Fail closed (cited in src/auth/login.js)'));
   assert.ok(r.out.includes('(first review: no previous findings)'));
   assert.ok(r.out.includes('(none yet)'), 'no report yet');
-  assert.ok(r.out.includes(`${names.plugin}:reviewer`));
+  assert.ok(r.out.includes(`${names.plugin}:security-reviewer`));
   assert.ok(MARKER.test(r.out), 'ends with the marker line');
   const diff = join(p.store, 'local', 'review', 'T-TU-1-r1.diff');
   assert.ok(existsSync(diff));
@@ -175,4 +175,33 @@ test('review brief: unrouted, no base, no consent; the command is listed and doc
   assert.ok(help.out.includes('review brief'), 'listed in --help');
   const docs = spawnSync(process.execPath, [join(root, 'scripts', 'gen-docs.mjs'), '--check'], { cwd: root, encoding: 'utf8' });
   assert.equal(docs.status, 0, docs.stdout + docs.stderr);
+});
+
+test('review brief: a security path names the security reviewer and the OWASP checklist; a README-only diff stays general', async (t) => {
+  const p = await project(t);
+  const r = await cli(['review', 'brief', 'T-TU-1', '--yes'], p);
+  assert.equal(r.code, 0, show(r));
+  assert.ok(r.out.includes(`Reviewer: ${names.plugin}:security-reviewer`), r.out);
+  assert.ok(r.out.includes('"id": "claude:security-reviewer"'));
+  assert.ok(r.out.includes('- security trigger: src/auth/login.js (**/auth/**)'));
+  assert.ok(r.out.includes('- security checklist (OWASP Top 10:2025): OWA-1 OWA-2 OWA-3 OWA-4 OWA-5 OWA-6 OWA-7 OWA-8 OWA-9 OWA-10, read them with `'));
+  assert.ok(!r.out.includes('AI checklist'));
+  const rules = r.out.split('\n').find((l) => l.startsWith('Rules: '));
+  assert.ok(rules.includes('SEC-14') && rules.includes('SCD-17'), rules);
+  const j = await cli(['review', 'brief', 'T-TU-1', '--yes'], { ...p, json: true });
+  assert.equal(j.out.data.focus, 'security');
+  assert.deepEqual(j.out.data.checklists, ['web']);
+  assert.deepEqual(j.out.data.triggers, ['src/auth/login.js (**/auth/**)']);
+  writeFileSync(join(p.repo, 'README.md'), 'x\n');
+  const head2 = p.commit('docs: readme');
+  await p.run(['task', 'set', 'T-TU-1', 'started', '--branch', 'task/T-TU-1-cart', '--base', p.head1]);
+  const g = await cli(['review', 'brief', 'T-TU-1', '--yes'], p);
+  assert.equal(g.code, 0, show(g));
+  assert.ok(g.out.includes(`Reviewer: ${names.plugin}:reviewer `));
+  assert.ok(g.out.includes('"id": "claude:reviewer"'));
+  assert.ok(!g.out.includes('security checklist') && !g.out.includes('security trigger'));
+  const s = await cli(['review', 'brief', 'T-TU-1', '--security', '--yes'], { ...p, json: true });
+  assert.equal(s.out.data.focus, 'security');
+  assert.deepEqual(s.out.data.triggers, ['--security']);
+  assert.ok(head2);
 });

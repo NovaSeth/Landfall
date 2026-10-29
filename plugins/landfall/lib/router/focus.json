@@ -1,0 +1,9 @@
+{
+  "schema": 1,
+  "securityPaths": ["**/authn/**", "**/authz/**", "**/oauth*/**", "**/session*/**", "**/permission*/**", "**/crypto/**","**/webhook*/**", "**/upload*/**", "**/middleware/**", "**/.env*", "**/Dockerfile", "**/docker-compose*.yml",".gitlab-ci.yml", ".githooks/**", ".husky/**", ".claude/**", "**/package.json", "**/package-lock.json", "**/pnpm-lock.yaml", "**/yarn.lock", "**/requirements*.txt", "**/pyproject.toml", "**/poetry.lock", "**/uv.lock", "**/go.mod", "**/go.sum", "**/Cargo.toml", "**/Cargo.lock", "**/Gemfile", "**/Gemfile.lock", "**/composer.json", "**/composer.lock", "**/pom.xml", "**/build.gradle", "**/build.gradle.kts"],
+  "aiPaths": ["**/prompts/**", "**/*.prompt", "**/*.prompt.*", "**/mcp/**", "**/.mcp.json", "**/llm/**", "**/agents/**", "**/rag/**", "**/embedding*/**", "**/SKILL.md", "**/CLAUDE.md", "**/AGENTS.md"],
+  "checklists": {
+    "web": ["OWA-1", "OWA-2", "OWA-3", "OWA-4", "OWA-5", "OWA-6", "OWA-7", "OWA-8", "OWA-9", "OWA-10"],
+    "ai": ["LLM-1", "LLM-2", "LLM-3", "LLM-4", "LLM-5", "LLM-6", "LLM-7", "LLM-8", "LLM-9", "LLM-10", "AGT-1", "AGT-2", "AGT-3", "AGT-4", "AGT-5", "AGT-6", "AGT-7", "AGT-8", "AGT-9", "AGT-10"]
+  }
+}

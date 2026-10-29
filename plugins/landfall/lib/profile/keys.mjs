@@ -25,6 +25,7 @@ export const FACT_KEYS = Object.freeze({
   people: { type: 'enum', of: ['solo', 'small-team', 'large-team'], summary: 'who commits here' },
   ui: { type: 'bool', summary: 'the product has a user interface' },
   backend: { type: 'bool', summary: 'the product has a server side or stored data' },
+  llm: { type: 'bool', summary: 'the product calls an LLM or runs AI agents' },
   dataSensitivity: { type: 'enum', of: ['none', 'personal', 'payment', 'health'], summary: 'the most sensitive data it stores' },
   deployedToUsers: { type: 'bool', summary: 'people use it now' },
   deadline: { type: 'date', summary: 'a date the user named (captured if said, never asked)' },
