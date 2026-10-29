@@ -539,3 +539,60 @@ test('an external run with a long capS stays blue', async ($, on) => {
   const [r, , b] = channels(await runColor($, on, 3600))
   expect(b).toBeGreaterThan(r)
 })
+
+// ---- T-MG-103 fix round 1 -------------------------------------------------------------------------------------------
+
+test('a long title is shortened before the bar and the clock are dropped', async ($, on) => {
+  const startedAt = new Date(NOW - 22.5 * 60_000).toISOString()
+  const title = 'A long description of the work that runs on and on without any sign of stopping, '.repeat(2).slice(0, 100)
+  const w = world(on, { status: withTask({ title, startedAt, expectedMs: 45 * 60_000, lastEventAt: FUTURE }), runs: quiet })
+  w.agents.length = 0
+  await $.session.start(SESSION)
+  await w.clock.settle()
+  const ui = await $.ui.mount(PANE)
+  const text = (await ui.find({ type: 'Text', text: /T-TU-7/ }))?.text ?? ''
+  expect(text).toContain('[■■■■■□□□□□] 22m/45m')
+  expect(text.endsWith('…')).toBe(true)
+  expect([...text].length).toBeLessThanOrEqual(96)
+  await ui.unmount()
+})
+
+test('an active status without a live agent or run is a pause, not a play', async ($, on) => {
+  const w = world(on, { status: withTask({ status: 'implemented', lastEventAt: FUTURE }), runs: quiet })
+  w.agents.length = 0
+  await $.session.start(SESSION)
+  await w.clock.settle()
+  const ui = await $.ui.mount(PANE)
+  const text = (await ui.find({ type: 'Text', text: /T-TU-7/ }))?.text ?? ''
+  expect(text).toMatch(/^⏸ T-TU-7/)
+  await ui.unmount()
+})
+
+test('a run that stopped before this session began does not touch its task', async ($, on) => {
+  const old = { ...RUNS.data.runs[1], task: 'T-TU-7', endedAt: '2020-01-02T00:00:00.000Z' }
+  const w = world(on, { status: withTask({ lastEventAt: '2020-01-01T00:00:00.000Z' }), runs: { ...RUNS, data: { runs: [old] } } })
+  w.agents.length = 0
+  await $.session.start(SESSION)
+  await w.clock.settle()
+  const ui = await $.ui.mount(PANE)
+  const t = await ui.find({ type: 'Text', text: /T-TU-7/ })
+  expect(t?.text).toMatch(/^■ T-TU-7/)
+  expect(t?.props?.dimColor).toBe(true)
+  await ui.unmount()
+})
+
+test('a live run clock never moves backwards after a failed refresh', async ($, on) => {
+  const w = world(on, { runs: { ...RUNS, data: { runs: [{ ...RUNS.data.runs[0], elapsedMs: 300_000 }] } } })
+  w.agents.length = 0
+  await $.session.start(SESSION)
+  await w.clock.settle()
+  w.cli.fails = true
+  await w.clock.advance(15_000)
+  let ui = await $.ui.mount(PANE)
+  expect((await ui.find({ type: 'Text', text: /codex reviewer/ }))?.text).toContain('05:15')
+  await ui.unmount()
+  await w.clock.advance(15_000)
+  ui = await $.ui.mount(PANE)
+  expect((await ui.find({ type: 'Text', text: /codex reviewer/ }))?.text).toContain('05:30')
+  await ui.unmount()
+})
