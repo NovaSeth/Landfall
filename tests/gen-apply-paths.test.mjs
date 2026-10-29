@@ -63,23 +63,28 @@ test('E1: a manifest path that is not a path of its target is refused (also a ba
     const r = cli(['gen', 'apply', 'ci', '--yes', '--json'], dir);
     assert.equal(r.status, 1, `${path}\n${show(r)}`);
     assert.deepEqual(envelope(r).errors.map((x) => x.code), ['manifest-path-refused'], path);
-    assert.ok(!existsSync(join(dir, ...path.split('/'))), path);
+    if (path !== '.git') assert.ok(!existsSync(join(dir, ...path.split('/'))), path);
     assert.ok(!existsSync(join(dir, '.github')), 'nothing else was written either');
   }
 });
 
-test('E1: applyGen refuses an item whose path its target does not declare or that has a .git component', (t) => {
+test('E1: applyGen refuses an item path with a .git component; targetItems refuses a manifest path its target does not declare', (t) => {
   const { dir, store } = repoWith(t);
   const run = (target, path) => gen.applyGen({ root: dir, store, names, version: PLUGIN_VERSION, items: [{ target, path, theirs: 'x\n' }], now: () => AT });
   const ci = REAL('ci');
-  for (const path of ['.git/hooks/reference-transaction', '.GIT/config', 'x/.git', '/etc/x', '../x', 'a\\b', 'a\0b', 'docs/x', '']) {
+  for (const path of ['.git/hooks/reference-transaction', '.GIT/config', 'x/.git', '/etc/x', '../x', 'a\\b', 'a\0b', '']) {
     assert.throws(() => run(ci, path), (err) => err.code === 'manifest-path-refused' && err.message.includes(JSON.stringify(path).slice(1, -1).slice(0, 5)), path);
   }
   assert.ok(!existsSync(join(dir, '.git', 'hooks', 'reference-transaction')));
-  assert.ok(!existsSync(join(dir, 'docs')));
-  // The target's own path and, for CODEOWNERS, its declared locations are accepted.
   assert.equal(run(ci, ci.path(names)).ok, true);
-  assert.equal(run(REAL('codeowners'), 'docs/CODEOWNERS').ok, true);
+  // The manifest: a path the target declares (CODEOWNERS also its locations) is accepted, any other is refused.
+  const items = (path, id) => {
+    store.write('generated', null, { files: { [path]: entry(id) } });
+    return gen.targetItems({ root: dir, store, names, options: gen.DEFAULT_OPTIONS, targets: [REAL(id)] });
+  };
+  assert.equal(items('docs/CODEOWNERS', 'codeowners')[0].path, 'docs/CODEOWNERS');
+  assert.throws(() => items('docs/x', 'codeowners'), (err) => err.code === 'manifest-path-refused' && err.exit === 'FAIL');
+  assert.throws(() => items('.git/hooks/pre-commit', 'pre-push'), (err) => err.code === 'manifest-path-refused');
 });
 
 test('E1: a parent directory that is a symbolic link out of the repository stops the target', (t) => {

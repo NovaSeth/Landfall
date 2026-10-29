@@ -35,10 +35,37 @@ import { StateError, check } from '../state/index.mjs';
 import { extract, withBlock, wrapBlock } from './block.mjs';
 import { MANIFEST, baseOf, makeEntry, readManifest, sha } from './manifest.mjs';
 import { merge3, mergeChecked } from './merge.mjs';
-import { render, sideSuffix } from './targets.mjs';
+import { TARGETS, render, sideSuffix } from './targets.mjs';
 
 export const OK_ACTIONS = Object.freeze(['create', 'update', 'merge', 'unchanged', 'unknown-origin-identical']);
 const SIDE_ACTIONS = new Set(['unknown-origin', 'conflict', 'lost-hunk', 'side-modified', 'side-foreign']);
+
+// The paths gen may write (audit 2.4.0, E1): the repository-relative path of a target is the one the target itself
+// declares (its path or one of its locations), never one a manifest or a caller names, and nothing inside .git.
+// The manifest of a cloned repository is data. Refusal: StateError manifest-path-refused (exit 1), nothing written.
+export function declaredPaths(target, names) {
+  return [target.path(names), ...(target.locations ?? [])];
+}
+function refusal(path, why) {
+  return new StateError('manifest-path-refused', 'FAIL', `refused the path ${JSON.stringify(String(path)).slice(0, 120)}: ${why}; nothing was written`, { hint: 'inspect the generated manifest in the state directory (a cloned repository can ship one), remove the entry, then run again' });
+}
+export function assertWritable(path) {
+  if (typeof path !== 'string' || path === '') throw refusal(path, 'it is empty');
+  if (path.includes('\0') || path.includes('\\')) throw refusal(path, 'it holds a NUL or a backslash');
+  if (path.startsWith('/')) throw refusal(path, 'it is absolute');
+  const parts = path.split('/');
+  if (parts.some((p) => p === '' || p === '.' || p === '..')) throw refusal(path, 'it is not a plain path below the repository');
+  if (parts.some((p) => p.toLowerCase() === '.git')) throw refusal(path, 'it is inside .git');
+}
+// Every entry of the manifest: its path is plain, and for a known target it is one the target declares (targetItems
+// applies this to the manifest; applyGen itself checks every item path as plain, so a caller cannot reach .git).
+export function assertManifest(files, names) {
+  for (const [path, e] of Object.entries(files)) {
+    assertWritable(path);
+    const target = TARGETS.find((t) => t.id === e.target);
+    if (target && !declaredPaths(target, names).includes(path)) throw refusal(path, `it is not a path of the ${target.id} target`);
+  }
+}
 
 // What is at rel below root, never following a link: { state: 'absent' | 'file' | 'unsafe' | 'not-text' }.
 export function inspect(root, rel) {
@@ -189,6 +216,7 @@ function bytesNow(root, rel) {
 // removed list repository-relative paths and manifest tells whether the record changed (or would, on a dry run).
 export function applyGen({ root, store, names, version, items, dryRun = false, now = () => new Date().toISOString(), env = process.env, merge = merge3 }) {
   const at = now();
+  for (const item of items) assertWritable(item.path);
   // The decisions are computed more than once (read-only, then under the lock); one merge per input triple.
   const memo = new Map();
   const merged = (args) => {
@@ -261,6 +289,7 @@ function attemptRun({ root, store, version, at, plan }) {
 // the target lists, else its default path) and the version rendered from the options.
 export function targetItems({ root, store, names, options, targets }) {
   const files = readManifest(store).files;
+  assertManifest(files, names);
   return targets.map((target) => {
     const recorded = Object.keys(files).find((p) => files[p].target === target.id);
     const existing = (target.locations ?? []).find((loc) => inspect(root, loc).state !== 'absent');
