@@ -14,7 +14,7 @@ const pluginDir = (() => {
   assert.equal(hits.length, 1, 'exactly one plugins/*/lib/name.json');
   return join(root, 'plugins', hits[0]);
 })();
-const { DATA_MARKER, codeText, dataLine, shellQuote } = await import(pathToFileURL(join(pluginDir, 'lib', 'text', 'data.mjs')).href);
+const { DATA_MARKER, codeSpan, codeText, dataLine, shellQuote } = await import(pathToFileURL(join(pluginDir, 'lib', 'text', 'data.mjs')).href);
 
 test('dataLine: newline, CR and tab become one space; control, bidi and zero-width characters go; trimmed', () => {
   assert.equal(dataLine('a\nb\r\nc\td'), 'a b c d');
@@ -54,6 +54,25 @@ test('AR-1: codeText is dataLine with backticks and | replaced by \', so a value
   assert.equal(codeText('a`b|c\n`d'), "a'b'c 'd");
   assert.equal(codeText('abcdef', 4), 'abc…');
   assert.ok(!/[`|\n]/.test(codeText('`x`|\n||``')));
+});
+
+test('fix r2 F4: codeSpan keeps the bytes and picks a backtick run longer than any inside (CommonMark), padded at a backtick edge', () => {
+  assert.equal(codeSpan('a b'), '`a b`');
+  assert.equal(codeSpan("x 'a `b` c|d'"), "``x 'a `b` c|d'``");
+  assert.equal(codeSpan('a ``` b ` c'), '````a ``` b ` c````');
+  assert.equal(codeSpan('`x'), '`` `x ``');
+  assert.equal(codeSpan('x`'), '`` x` ``');
+  assert.equal(codeSpan(' x '), '`  x  `', 'a space at both edges is padded, so CommonMark strips only the padding');
+  // the content between the delimiters, with the one-space padding stripped as CommonMark strips it, is the value
+  for (const v of ['a b', "x 'a `b` c|d'", '`', '``x``', ' x ', 'a ``` b']) {
+    const m = /^(`+)([\s\S]*)$/.exec(codeSpan(v));
+    const d = m[1];
+    let inner = m[2].slice(0, -d.length);
+    assert.ok(m[2].endsWith(d));
+    assert.ok(!(inner.match(/`+/g) ?? []).some((run) => run.length === d.length), `no run of ${d.length} inside ${JSON.stringify(v)}`);
+    if (inner.length > 1 && inner.startsWith(' ') && inner.endsWith(' ') && inner.trim() !== '') inner = inner.slice(1, -1);
+    assert.equal(inner, v);
+  }
 });
 
 test('the data marker is the exact line the context and the tick print', () => {

@@ -1002,14 +1002,18 @@ test('F2-1: a plan title with $(…) and backticks is one quoted shell word in t
   try {
     const pwned = join(dir, 'pwned');
     // relative to the shell's cwd: the title stays under the 100-character plan title limit
-    const entries = loop.parsePlan('### Task 1: $(touch pwned) `touch pwned` "x\' $HOME\n');
+    const entries = loop.parsePlan('### Task 1: $(touch pwned) `touch pwned` ``x`` "x\' $HOME A|B\n');
     const s = row(table([], { plan: { path: 'docs/plans/p.md', entries } }), '1');
-    const cmd = /create its task: `(.*)`$/.exec(s.step)?.[1];
-    assert.ok(cmd?.startsWith(`${BIN} task new `), s.step);
+    // one code span (CommonMark): a delimiter run longer than any backtick run inside it
+    const m = /create its task: (`+)(.*)$/.exec(s.step);
+    const d = m?.[1] ?? '';
+    assert.ok(m && m[2].endsWith(d), s.step);
+    const cmd = m[2].slice(0, -d.length);
+    assert.ok(!(cmd.match(/`+/g) ?? []).some((run) => run.length >= d.length), `the code span holds the whole command: ${s.step}`);
+    assert.ok(cmd.startsWith(`${BIN} task new `), s.step);
     const r = spawnSync('sh', ['-c', `printf '%s\\n' ${cmd.slice(`${BIN} `.length)}`], { cwd: dir, encoding: 'utf8' });
     assert.equal(r.status, 0, r.stderr);
-    assert.equal(r.stdout, 'task\nnew\n1: $(touch pwned) \'touch pwned\' "x\' $HOME\n', 'backticks replaced (AR-1): the code span holds the whole command');
-    assert.equal(s.step.split('`').length, 3, 'one code span');
+    assert.equal(r.stdout, 'task\nnew\n1: $(touch pwned) `touch pwned` ``x`` "x\' $HOME A|B\n');
     assert.equal(existsSync(pwned), false, 'no command substitution ran');
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
@@ -1085,6 +1089,33 @@ test('fix r1 F1: the production run reader keeps pid, pidStart, pidMethod, capS 
     const r = table([t1], { now, runs: runs.slice(0, 1) });
     assert.equal(r.liveRuns, 0, 'capS 60 s, 45 min old: not live');
     assert.equal(table([t1], { now: T0 + MIN, runs: runs.slice(0, 1) }).liveRuns, 1, 'within its cap: live');
+    let l = fresh();
+    let d;
+    for (let k = 0; k < 4; k++) { d = loop.decide(l, obs({ now: now + k * 15 * MIN, fingerprint: 'b'.repeat(64), liveRuns: r.liveRuns, outcome: r.outcome, nextTickS: r.nextTickS })); l = d.doc; }
+    assert.equal(d.result, 'STALLED', d.reason);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('fix r2 F3: a live record whose capS is missing or invalid gets its role\'s default cap (lib/runs CAP_S) through the production reader: STALLED stays possible', async () => {
+  const { CAP_S } = await lib('runs/kind.mjs');
+  const dir = mkdtempSync(join(tmpdir(), 'runs-f3-'));
+  try {
+    const doc = (id, role, o) => JSON.stringify({ schema: 1, runId: id, task: 'T-TU-1', role, provider: 'fake', model: null, status: 'running',
+      pid: null, pidStart: null, pidMethod: null, queuedAt: at(0), startedAt: at(0), endedAt: null, tokens: null, costMicroUsd: null, exit: null, ...o });
+    writeFileSync(join(dir, 'fake-T-TU-1-implementer-1.json'), doc('fake-T-TU-1-implementer-1', 'implementer', { capS: 'x' }));
+    writeFileSync(join(dir, 'fake-T-TU-1-reviewer-1.json'), doc('fake-T-TU-1-reviewer-1', 'reviewer', {}));
+    const { runs, problems } = receipts.readRuns(dir);
+    assert.deepEqual(problems, []);
+    const impl = runs.filter((r) => r.runId.includes('implementer'));
+    const rev = runs.filter((r) => r.runId.includes('reviewer'));
+    const t1 = task('T-TU-1', 'dispatched', { events: [ev('dispatched', 1)] });
+    const live = (rs, s) => table([t1], { now: T0 + s * 1000, runs: rs }).liveRuns;
+    assert.equal(live(impl, CAP_S.implementer + 100), 1, 'invalid capS: within the implementer default plus grace, live');
+    assert.equal(live(impl, CAP_S.implementer + 121), 0, 'invalid capS: past the implementer default plus grace, not live');
+    assert.equal(live(rev, CAP_S.reviewer + 100), 1, 'missing capS: within the reviewer default plus grace, live');
+    assert.equal(live(rev, CAP_S.reviewer + 121), 0, 'missing capS: past the reviewer default plus grace, not live');
+    const now = T0 + 50 * MIN;
+    const r = table([t1], { now, runs: impl });
     let l = fresh();
     let d;
     for (let k = 0; k < 4; k++) { d = loop.decide(l, obs({ now: now + k * 15 * MIN, fingerprint: 'b'.repeat(64), liveRuns: r.liveRuns, outcome: r.outcome, nextTickS: r.nextTickS })); l = d.doc; }
