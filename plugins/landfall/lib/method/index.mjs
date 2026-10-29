@@ -82,6 +82,7 @@ export const BRIEF_RULES = Object.freeze({
   role: Object.freeze({
     implementer: Object.freeze(['ORC-2', 'ORC-17', 'ORC-18', 'ORC-12', 'ORC-13', 'COD-1', 'COD-2', 'COD-3', 'COD-14', 'REV-10', 'REV-9', 'REV-18', 'ORC-7']),
     reviewer: Object.freeze(['ORC-2', 'ORC-18', 'REV-1', 'REV-2', 'REV-3', 'REV-4', 'REV-6', 'REV-9', 'COD-2', 'COD-3', 'ORC-7']),
+    'security-reviewer': Object.freeze(['ORC-2', 'ORC-18', 'REV-1', 'REV-2', 'REV-3', 'REV-4', 'REV-6', 'REV-9', 'COD-2', 'COD-3', 'ORC-7', 'SEC-5', 'SEC-8', 'SEC-12', 'SEC-14', 'SCD-16', 'SCD-17', 'SCD-18', 'SCD-19', 'SCD-20', 'SCD-28']),
   }),
   class: Object.freeze({
     trivial: Object.freeze(['PRI-15']),

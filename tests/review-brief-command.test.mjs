@@ -87,7 +87,7 @@ test('review brief: round 1 pins base..HEAD, saves the diff, lists files, accept
   assert.ok(r.out.includes('D-TU-1: Fail closed (cited in src/auth/login.js)'));
   assert.ok(r.out.includes('(first review: no previous findings)'));
   assert.ok(r.out.includes('(none yet)'), 'no report yet');
-  assert.ok(r.out.includes(`${names.plugin}:reviewer`));
+  assert.ok(r.out.includes(`${names.plugin}:security-reviewer`));
   assert.ok(MARKER.test(r.out), 'ends with the marker line');
   const diff = join(p.store, 'local', 'review', 'T-TU-1-r1.diff');
   assert.ok(existsSync(diff));
