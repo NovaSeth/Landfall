@@ -27,6 +27,8 @@ const names = JSON.parse(readFileSync(join(pluginDir, 'lib', 'name.json'), 'utf8
 const lib = (rel) => import(pathToFileURL(join(pluginDir, 'lib', rel)).href);
 const { main } = await lib('cli/main.mjs');
 const exec = await lib('providers/exec.mjs');
+const registry = await lib('providers/registry.mjs');
+const generic = await lib('providers/generic.mjs');
 const FAKE = join(root, 'tests', 'fixtures', 'providers', 'fake-provider.mjs');
 const HOSTILE = join(root, 'tests', 'fixtures', 'providers', 'fake-hostile.mjs');
 const identity = '[user]\n\tname = Test User\n\temail = test@example.com\n';
@@ -189,6 +191,43 @@ test('SF-AB-6: an unreadable project pattern file fails closed: the run fails an
   assert.equal(rec.error, 'project-patterns-unreadable');
   assert.equal(existsSync(`${rec.outFile}.args`), false, 'no provider was started');
   assert.deepEqual(p.externalLeases(), []);
+});
+
+// ---- B-6 / SF-AB-12: a minimal provider environment ----
+
+test('B-6: GITHUB_TOKEN, AWS_SECRET_ACCESS_KEY and another provider\'s key never reach the provider; the base and lease variables do', async (t) => {
+  const p = await project(t, { envExtra: { GITHUB_TOKEN: 'SYNTH-not-a-token', AWS_SECRET_ACCESS_KEY: 'SYNTH-not-a-key', OPENAI_API_KEY: 'SYNTH-other', LANG: 'C.UTF-8', LC_ALL: 'C' } });
+  const rec = await runTo(p, 'hesc');
+  const { env } = JSON.parse(readFileSync(`${rec.outFile}.args`, 'utf8'));
+  for (const k of ['GITHUB_TOKEN', 'AWS_SECRET_ACCESS_KEY', 'OPENAI_API_KEY', 'CLAUDE_PLUGIN_DATA', 'GIT_CONFIG_GLOBAL']) assert.equal(env[k], undefined, `${k} must not pass`);
+  assert.equal(env.HOME, p.env.HOME);
+  assert.equal(env.LANG, 'C.UTF-8');
+  assert.equal(env.LC_ALL, 'C');
+  assert.ok(Object.keys(env).some((k) => /_SLOT$/.test(k)), `the lease variables pass: ${Object.keys(env).join(' ')}`);
+  // Node or the OS may add its own variables to a child (macOS: __CF_USER_TEXT_ENCODING); nothing else passes.
+  for (const k of Object.keys(env)) assert.match(k, /^(?:PATH|HOME|USER|LOGNAME|SHELL|TMPDIR|LANG|LC_[A-Z_]+|[A-Z0-9_]+_(?:SLOT|PORT_BASE|PORT_MAX|DB_NAME)|__CF_USER_TEXT_ENCODING)$/, `unexpected ${k}`);
+});
+
+test('B-6: the env allowlists: codex OPENAI_*/CODEX_*/proxies, gemini GEMINI_*/GOOGLE_*/proxies, a generic adapter its declared names', () => {
+  const parent = { PATH: '/usr/bin:.:/bin:', HOME: '/h', USER: 'u', LC_CTYPE: 'C', OPENAI_API_KEY: 'a', CODEX_HOME: 'b', GEMINI_API_KEY: 'c', GOOGLE_CLOUD_PROJECT: 'd', HTTPS_PROXY: 'e', GITHUB_TOKEN: 'f', MY_TOOL_KEY: 'g', NODE_OPTIONS: '--require x' };
+  const lease = { X_SLOT: '1' };
+  const codex = registry.BUILTINS.find((a) => a.id === 'codex');
+  const gemini = registry.BUILTINS.find((a) => a.id === 'gemini');
+  const base = { PATH: '/usr/bin:/bin', HOME: '/h', USER: 'u', LC_CTYPE: 'C', X_SLOT: '1' };
+  assert.deepEqual(exec.childEnv(codex, parent, lease), { ...base, OPENAI_API_KEY: 'a', CODEX_HOME: 'b', HTTPS_PROXY: 'e' });
+  assert.deepEqual(exec.childEnv(gemini, parent, lease), { ...base, GEMINI_API_KEY: 'c', GOOGLE_CLOUD_PROJECT: 'd', HTTPS_PROXY: 'e' });
+  const mine = generic.fromEntry('mycli', { argv: 'mycli {sandbox}', sandboxMap: { reviewer: 'ro' }, env: ['MY_TOOL_KEY'] });
+  assert.deepEqual(exec.childEnv(mine, parent, lease), { ...base, MY_TOOL_KEY: 'g' });
+});
+
+test('B-6: providers add stores validated --env names; a bad name is a usage error', (t) => {
+  const iso = isolatedEnv({ prefix: 'runs-hard-env-' });
+  t.after(() => iso.cleanup());
+  const env = { ...iso.env, CLAUDE_PLUGIN_DATA: join(iso.base, 'data') };
+  const entry = registry.addProvider({ names, env, id: 'mycli', argv: 'mycli {sandbox}', sandboxMap: 'reviewer=ro', envNames: 'MY_TOOL_KEY,MY_TOOL_URL' });
+  assert.deepEqual(entry.env, ['MY_TOOL_KEY', 'MY_TOOL_URL']);
+  assert.deepEqual(registry.adapters({ names, env }).find((a) => a.id === 'mycli').envNames, ['MY_TOOL_KEY', 'MY_TOOL_URL']);
+  for (const bad of ['my-key', '1X', 'A,,B', 'A=B']) assert.throws(() => registry.addProvider({ names, env, id: 'other', argv: 'x {sandbox}', sandboxMap: 'reviewer=ro', envNames: bad }), (err) => err.exit === 'USAGE', bad);
 });
 
 // ---- B-2: the absolute program path ----
