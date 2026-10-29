@@ -5,7 +5,9 @@
 // pidStart and pidMethod are the supervisor's identity (lib/sched machine.mjs), so a detached supervisor is found again
 // by record and identity, never by name; capS is the wall cap; unknownEvents counts output lines the adapter did not
 // recognise (U8); bin (B-2) is the provider program's absolute path, resolved by exec and the only program
-// run-supervise starts (optional for the schema: a record without it, written by 2.4.1, is refused as tampered).
+// run-supervise starts; outDirId (SF-AB-10) is "<dev>:<ino>" of the run's private temp directory, made by exec, which
+// run-supervise checks before it starts the provider. Both are optional for the schema: a record without them, written
+// by 2.4.1, is refused as tampered.
 import { LAST_LINE, PROVIDER_ID, ROLES } from '../providers/kind.mjs';
 import { LIMITS, PATTERNS, defineKind } from '../state/index.mjs';
 
@@ -59,8 +61,9 @@ export const RUN = defineKind('run', 1, {
     exit: nullable({ t: 'int', min: -255, max: 255 }),
     error: nullable(str(300)),
     bin: str(LIMITS.path, { re: PATTERNS.absPath }),
+    outDirId: str(41, { re: /^[0-9]{1,20}:[0-9]{1,20}$/ }),
   },
-  opt: ['bin'],
+  opt: ['bin', 'outDirId'],
 });
 
 export const RUN_LOG = defineKind('runLog', 1, {

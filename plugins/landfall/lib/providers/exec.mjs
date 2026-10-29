@@ -6,7 +6,10 @@
 // adapter.parse into the record (at most once a second) and the log, writes the outcome, and releases the lease only
 // after the group is gone. A reviewer runs read-only in the repository checkout; the out file lives in a private temp
 // directory (0700). The program is the absolute path exec resolved on the absolute PATH entries and recorded as `bin`;
-// the provider's PATH keeps only absolute entries (B-2). Implementer runs (a worktree from the task base) are not in this slice: exit 2.
+// the provider's PATH keeps only absolute entries (B-2). The temp directory is bound to the run by its device and inode
+// (outDirId) and the out file is out.json in it (SF-AB-10). The review brief is read through the state's lstat walk and
+// without following a link, a regular file of at most 64 KiB (SF-AB-1). Implementer runs (a worktree from the task base)
+// are not in this slice: exit 2.
 // Exit (exec) 0 · 1 no such task, no brief, a live run of the task and role · 2 bad role or provider · 7 inactive
 // repository, newer schema · 8 provider missing or logged out.
 import { tolerateClosedStreams } from '../cli/output.mjs';
@@ -15,11 +18,11 @@ import { tmpdir } from 'node:os';
 import { basename, delimiter, dirname, isAbsolute, join } from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 import { EXIT } from '../cli/commands.mjs';
-import { createExclusive } from '../fsx/index.mjs';
+import { createExclusive, readRegularFile } from '../fsx/index.mjs';
 import { start } from '../proc/index.mjs';
 import { capFor, liveRun, nextRunId, runsStore, LOG_LINE, LOG_LINES } from '../runs/index.mjs';
 import { SYSTEM, acquireWait, attachChild, identify, release, supervise } from '../sched/index.mjs';
-import { KINDS, TASK_TEXTS, resolve, taskTextFile } from '../state/index.mjs';
+import { KINDS, TASK_TEXTS, checkedPath, resolve, taskTextFile } from '../state/index.mjs';
 import { adapters, chooseProvider, detectProviders } from './index.mjs';
 import { projectRedactions, redact } from '../verify/redact.mjs';
 import { LAST_LINE, ROLES } from './kind.mjs';
@@ -49,6 +52,20 @@ const modelOk = (model) => {
   try { return parseSandboxMap(`reviewer=${model}`).reviewer === model; } catch { return false; }
 };
 
+// A task text exec gives a provider (the review brief; the task brief once implementer runs exist): every component
+// from the state directory checked by lstat (no link, no case alias: state checkedPath), then the file opened without
+// following a link, a regular file of at most BRIEF_MAX bytes (writeTaskText's own cap) (SF-AB-1). { text } (null when
+// absent) or { refused } with the code <what>-unsafe.
+const BRIEF_MAX = 65536;
+function readBrief(dir, rel, what, bin) {
+  try {
+    return { text: readRegularFile(checkedPath(dir, rel), { max: BRIEF_MAX }).toString('utf8') };
+  } catch (err) {
+    if (err?.code === 'ENOENT') return { text: null };
+    return { refused: fail(`${what}-unsafe`, `${rel}: ${String(err?.message ?? err).slice(0, 200)}`, `replace it with a plain file: ${bin} ${what === 'review-brief' ? 'review brief' : 'brief'} <id> --write --force`) };
+  }
+}
+
 function where(io, names) {
   const w = resolve({ cwd: io.cwd, env: io.env, names });
   if (!w.active) return { refused: { code: EXIT.REFUSED, errors: [{ code: 'inactive', message: `${w.repo} is not active`, hint: `'${names.bin} init' activates it` }] } };
@@ -71,8 +88,15 @@ export function exec({ flags, names, io, pluginRoot }) {
   if (!task) return fail('task-unknown', `no task ${id} in ${w.dir}`, `'${bin} task list' lists the tasks`);
   const taskDir = dirname(KINDS.task.path(id));
   const pattern = new RegExp(`^${TASK_TEXTS['review-brief'].replace('.', '\\.').replace('<k>', '([1-9][0-9]{0,2})')}$`);
-  const round = asked ?? Math.max(0, ...store.entries(taskDir).map((file) => Number(pattern.exec(file)?.[1] ?? 0)));
-  const brief = round ? store.readText(join(taskDir, taskTextFile('review-brief', { round }))) : null;
+  let round;
+  try {
+    round = asked ?? Math.max(0, ...store.entries(taskDir).map((file) => Number(pattern.exec(file)?.[1] ?? 0)));
+  } catch (err) {
+    return fail('review-brief-unsafe', String(err?.message ?? err).slice(0, 300), `replace it with a plain file: ${bin} review brief ${id} --write --force`);
+  }
+  const read = round ? readBrief(w.dir, join(taskDir, taskTextFile('review-brief', { round })), 'review-brief', bin) : { text: null };
+  if (read.refused) return read.refused;
+  const brief = read.text;
   if (!brief) return fail('review-brief-missing', `${id} has no saved review brief${asked === undefined ? '' : ` for round ${asked}`}`, `${bin} review brief ${id} --write`);
   const live = liveRun(store, id, role);
   if (live) return fail('run-live', `${live.runId} is ${live.status} for ${id} as ${role}`, 'wait for it to end');
@@ -82,6 +106,7 @@ export function exec({ flags, names, io, pluginRoot }) {
   if (!program) return { code: EXIT.ENV, errors: [{ code: 'provider-missing', message: `${row.id}: ${String(adapter?.bins?.[0] ?? '?').slice(0, 80)} is not an executable file in an absolute PATH directory`, hint: 'install it in a directory on PATH (an absolute entry), or pick another provider' }] };
   const capS = capFor(role, io.env, names.envPrefix);
   const outDir = mkdtempSync(join(tmpdir(), `${bin}-run-`)); // 0700
+  const dirSt = lstatSync(outDir, { bigint: true });
   const input = `${brief}\n## External run (overrides the Output section above)\nYou run as ${row.id}:reviewer in a read-only sandbox: write no file. Your final message is the review JSON object alone, with "reviewer": {"kind": "external", "id": "${row.id}:reviewer"}, per the schema the Output section names. The orchestrator records it from the run's out file with \`${bin} review record ${id} --from <out file>\`.\n`;
   const briefFile = join(outDir, 'brief.md');
   if (!createExclusive(briefFile, input, { mode: 0o600 })) throw Object.assign(new Error(`${briefFile}: file already exists`), { code: 'EEXIST' });
@@ -89,7 +114,8 @@ export function exec({ flags, names, io, pluginRoot }) {
   const record = {
     runId, task: id, role, provider: row.id, adapterVersion: row.version ?? null, model: null, sandbox: adapter.sandboxes[role], cwd: w.repo,
     pid: null, pidStart: null, pidMethod: null, lease: null, status: 'starting', queuedAt: new Date().toISOString(), startedAt: null, endedAt: null,
-    elapsedMs: 0, capS, tokens: null, tokensReason: null, costMicroUsd: null, lastLine: null, unknownEvents: 0, outFile: join(outDir, 'out.json'), exit: null, error: null, bin: program,
+    elapsedMs: 0, capS, tokens: null, tokensReason: null, costMicroUsd: null, lastLine: null, unknownEvents: 0, outFile: join(outDir, OUT_NAME), exit: null, error: null, bin: program,
+    outDirId: idOf(dirSt),
   };
   store.create('run', runId, record);
   store.create('runLog', runId, { runId, lines: [] });
@@ -100,14 +126,25 @@ export function exec({ flags, names, io, pluginRoot }) {
   return { data: { runId, status: 'starting', provider: row.id, capS }, text: `${runId}: starting (${row.id}, ${role}, cap ${capS} s)\n` };
 }
 
+const OUT_NAME = 'out.json';
+const idOf = (st) => `${st.dev}:${st.ino}`;
+
 const patch0 = (store, runId, fields) => store.update('run', runId, (cur) => (cur ? { ...cur, ...fields } : undefined));
 
-// out.json directly inside a real 0700 directory of ours under the temp directory, neither of them a link.
-function ownOutFile(f) {
+// The run's out file: exactly out.json, directly inside the directory exec made for the run (SF-AB-10): a real directory
+// right under the temp directory, mode 0700, owned by this user, with the device and inode the record bound (outDirId);
+// the out file absent or one plain file (no link, no second name). Anything else: the record was rewritten.
+function ownOutFile(rec) {
   try {
-    if (typeof f !== 'string') return false;
+    const f = rec?.outFile;
+    if (typeof f !== 'string' || basename(f) !== OUT_NAME || typeof rec.outDirId !== 'string') return false;
     const dir = dirname(f);
-    return realpathSync(dir) === join(realpathSync(tmpdir()), basename(dir)) && (lstatSync(dir).mode & 0o777) === 0o700 && !lstatSync(f, { throwIfNoEntry: false })?.isSymbolicLink();
+    if (realpathSync(dir) !== join(realpathSync(tmpdir()), basename(dir))) return false;
+    const st = lstatSync(dir, { bigint: true });
+    const mine = typeof process.getuid !== 'function' || st.uid === BigInt(process.getuid());
+    if (!st.isDirectory() || (st.mode & 0o777n) !== 0o700n || !mine || idOf(st) !== rec.outDirId) return false;
+    const out = lstatSync(f, { throwIfNoEntry: false, bigint: true });
+    return !out || (out.isFile() && out.nlink === 1n);
   } catch { return false; }
 }
 
@@ -183,7 +220,7 @@ export async function runSupervise({ args, names, io, pluginRoot }) {
   // The program is the recorded absolute path, still what PATH resolves the adapter's program to; a record without it
   // (2.4.1) is refused too (B-2). The model is null or a plain value (B-3).
   const binOk = () => typeof rec.bin === 'string' && programOf(adapter, io.env) === rec.bin;
-  if (!adapter || !sandbox || !cwd || rec.sandbox !== sandbox || rec.cwd !== cwd || !binOk() || !modelOk(rec.model) || !ownOutFile(rec.outFile) || pinnedBrief(rec.outFile) === null) return tampered();
+  if (!adapter || !sandbox || !cwd || rec.sandbox !== sandbox || rec.cwd !== cwd || !binOk() || !modelOk(rec.model) || !ownOutFile(rec) || pinnedBrief(rec.outFile) === null) return tampered();
   // The project's redaction patterns, read once as verify reads them; a file that cannot be read fails closed: no
   // provider starts, so no output is stored unredacted.
   let extra;
@@ -203,7 +240,7 @@ export async function runSupervise({ args, names, io, pluginRoot }) {
     return fail('wait-timeout', `no external slot within ${WAIT_MS / 1000} s`, 'retry later');
   }
   // Checked again after the wait; the adapter's argv must start with its program, which runs by the recorded path.
-  const brief = ownOutFile(rec.outFile) && binOk() ? pinnedBrief(rec.outFile) : null;
+  const brief = ownOutFile(rec) && binOk() ? pinnedBrief(rec.outFile) : null;
   const argv = brief === null ? [] : adapter.argv({ sandbox, cwd, outFile: rec.outFile, schemaFile: rec.role === 'reviewer' ? join(pluginRoot, 'templates', 'review.schema.json') : undefined, model: rec.model ?? undefined });
   if (brief === null || argv[0] !== adapter.bins[0]) {
     release(got.lease, opts);
