@@ -121,3 +121,21 @@ test('F1-2: the test gate reads a bounded prefix and matches linearly (240 KB bo
   assert.equal(gateOf('echo node; echo --test'), 'npm run test', 'node and --test in different commands do not count');
   assert.equal(gateOf('node --test --test-reporter=spec'), 'npm run test');
 });
+
+test('review r1 F4: the array cap counts the opening line: an array closing on line 2000 counts, on line 2001 does not', (t) => {
+  const arr = (blank) => `[project]\ndependencies = [\n${'\n'.repeat(blank)}"openai" ]\n`;
+  assert.equal(scan(t, { 'pyproject.toml': arr(1998) }).evidence, 'pyproject.toml: openai', '2000 lines');
+  assert.equal(scan(t, { 'pyproject.toml': arr(1999) }), undefined, '2001 lines');
+});
+
+test('review r1 F2: a body over the inspection cap gets the unmodified run command, also when a chain crosses the boundary', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'profile-gate-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const gateOf = (body) => {
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'x', scripts: { test: body } }));
+    return observeFiles(dir, ['package.json']).gates.find((g) => g.name === 'test')?.cmd;
+  };
+  assert.equal(gateOf(`jest ${' '.repeat(4096)}&& node --test`), 'npm run test');
+  assert.equal(gateOf(`vitest ${' '.repeat(4096)}; node --test`), 'npm run test');
+  assert.equal(gateOf(`node ${' '.repeat(4096)} --test`), 'npm run test');
+});

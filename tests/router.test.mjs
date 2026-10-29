@@ -103,6 +103,8 @@ const TABLE = [
   ['.claude settings are critical', { paths: ['.claude/settings.json'], loc: 2 }, 'critical', ['risk-path']],
   ['AGENTS.md and GEMINI.md are critical', { paths: ['AGENTS.md', 'sub/GEMINI.md'], loc: 2 }, 'critical', ['risk-path', 'risk-path']],
   ['a large change to CLAUDE.md is no docs-only', { paths: ['CLAUDE.md', 'docs/a.md'], loc: 900 }, 'critical', ['risk-path', 'loc-over']],
+  ['a risk file in a light directory keeps its size reasons', { paths: ['mockups/CLAUDE.md'], loc: 900 }, 'critical', ['risk-path', 'loc-over']],
+  ['a SKILL.md under a light path keeps its size reasons', { paths: ['mockups/x/SKILL.md'], loc: 900 }, 'critical', ['risk-path', 'loc-over']],
   // duplicate paths count once
   ['the same file three times is one file', { paths: ['a.js', './a.js', 'x/../a.js'], loc: 3 }, 'trivial', ['small']],
 ];
