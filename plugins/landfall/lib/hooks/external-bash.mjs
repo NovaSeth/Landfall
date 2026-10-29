@@ -1,10 +1,10 @@
-// PreToolUse Bash in the external wrapper agent's own frontmatter → `external-bash` (audit G2, AGT-2, AGT-3, SEC-14).
-// The agent only starts a provider run and waits for it, so its Bash is limited to one simple command of the plugin's
-// own CLI: exec, wait, runs list, runs show, rule or method, with their flags (and the global --json before the
-// subcommand). Parsed with the guard's tokenizer: no pipe, `;`, `&&`, `||`, background job, substitution, redirection,
-// heredoc, assignment or glob. Anything else is denied with exit 2 and a reason that names the agent's job. Input that is
-// not a Bash command (another tool, malformed input) is allowed (GC8). This hook is registered for the agent only
-// (AGENT_HOOKS in registry.mjs): it is not in hooks/hooks.json, so it guards no other Bash call.
+// The external wrapper agent's Bash policy (audit G2, AGT-2, AGT-3, SEC-14), applied by guard-bash (lib/hooks/guard-bash.mjs)
+// to a call whose agent_type is `external` or `<plugin>:external`: plugin subagents ignore frontmatter hooks, so the
+// plugin-level hook is the place. The agent only starts a provider run and waits for it, so its Bash is limited to one
+// simple command of the plugin's own CLI: exec, wait, runs list, runs show, rule or method, with their flags (and the
+// global --json before the subcommand). Parsed with the guard's tokenizer: no pipe, `;`, `&&`, `||`, background job,
+// substitution, redirection, heredoc, assignment or glob. Anything else is denied with exit 2 and a reason that names the
+// agent's job. Input that is not a Bash command is allowed (GC8).
 import { parse } from '../guard/tokenizer.mjs';
 import { loadNames } from './loop-state.mjs';
 
@@ -23,7 +23,13 @@ export function externalCommand(command, bin) {
   return SUBCOMMANDS.find((s) => s.split(' ').every((x, j) => w[k + j] === x)) ?? null;
 }
 
-// Registry handler: (hook input) → { stdout, stderr?, code? }.
+// Whether the hook input comes from the external agent (agent_type `external` or `<plugin>:external`).
+export function isExternalAgent(input, plugin = loadNames().plugin) {
+  const t = input?.agent_type;
+  return typeof t === 'string' && (t === 'external' || t === `${plugin}:external`);
+}
+
+// The policy: (hook input) → { stdout, stderr?, code? }; code 2 denies.
 export function externalBash(input) {
   const command = input.tool_input?.command;
   if ((input.tool_name !== undefined && input.tool_name !== 'Bash') || typeof command !== 'string' || command.trim() === '') return { stdout: '' };

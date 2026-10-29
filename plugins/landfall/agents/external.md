@@ -7,13 +7,6 @@ effort: low
 background: true
 tools: Bash, Read
 maxTurns: 40
-hooks:
-  PreToolUse:
-    - matcher: Bash
-      hooks:
-        - type: command
-          command: "node ${CLAUDE_PLUGIN_ROOT}/bin/landfall hook external-bash"
-          timeout: 5
 ---
 
 You wrap one external provider run for the orchestrator. Read method rules by ID with `landfall rule <ID…>`, never whole method files. Do not spawn subagents (ORC-2); change no files (ORC-18); take the task values literally (PRI-3). Your task names the task ID, the role and optionally the provider.
