@@ -101,17 +101,16 @@ test('the pane says, from general to detail, the project, the tasks with their s
   const ui = await $.ui.mount(PANE)
   expect((await ui.find({ type: 'Text', text: /^petla/ }))?.text).toBe('petla · L0 (shadow) · loop done after 7 ticks')
   expect((await ui.find({ type: 'Text', text: /open · / }))?.text).toBe('2 open · 1 active · 0 planned · 1 new · 1 done')
-  // the active task first, with its round, class and stage; the closed one not at all
-  expect((await ui.find({ type: 'Text', text: /T-TU-1 r1/ }))?.text).toBe('▸ T-TU-1 r1 crit  review r2 approved')
-  expect((await ui.find({ type: 'Text', text: /T-TU-2/ }))?.text).toBe('▸ T-TU-2 -  new, not routed')
+  // the task being worked on first (an agent and a run name it), with its round, class and stage; the waiting one next; the closed one not at all
+  expect((await ui.find({ type: 'Text', text: /T-TU-1 r1/ }))?.text).toBe('▶ T-TU-1 r1 crit  working · review r2 approved')
+  expect((await ui.find({ type: 'Text', text: /T-TU-2/ }))?.text).toBe('⏸ T-TU-2 -  waiting · new, not routed')
   expect(await ui.find({ type: 'Text', text: /T-TU-3/ })).toBeUndefined()
   // the Claude subagent the engine lists and the external run, each with role, task, time and status
   expect((await ui.find({ type: 'Text', text: /● reviewer/ }))?.text).toBe('● reviewer     T-TU-1   r2  00:00  running')
   expect((await ui.find({ type: 'Text', text: /codex reviewer/ }))?.text).toBe('● codex reviewer  T-TU-1       05:00  running  → T-TU-1-r1.json  1.2k tok  reading the diff')
-  // a stopped run is not live and its summary carries no end time: it counts as ended long ago and folds into the count
-  // line (an intended change: it used to be a row of its own)
+  // a stopped run is not live: AGENTS lists only the agents and runs at work, with no fold line (intended change)
   expect(await ui.find({ type: 'Text', text: /codex implementer/ })).toBeUndefined()
-  expect((await ui.find({ type: 'Text', text: /ended/ }))?.text).toBe('  ✓ 1 ended (1 failed)')
+  expect(await ui.find({ type: 'Text', text: /ended/ })).toBeUndefined()
   expect((await ui.find({ type: 'Text', text: /^SLOTS/ }))?.text).toBe('SLOTS heavy 1')
   expect((await ui.find({ type: 'Text', text: /^NEXT/ }))?.text).toBe('NEXT T-TU-1: landfall verify T-TU-1')
   await ui.unmount()
@@ -137,17 +136,13 @@ test('a spawned agent is a row with the task, round and output file of its promp
   await $.turn.complete({ answer: 'DONE\nVerdict approved.\nReview: /tmp/s/T-TU-9-review-r2.json', durationMs: 61_000, isAborted: false, turnId: 't1', agentId: 'a2', reason: 'answer', usage: { input_tokens: 1200, output_tokens: 300, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } })
   await w.clock.advance(1_000)
   ui = await $.ui.mount(PANE)
-  expect((await ui.find({ type: 'Text', text: /T-TU-9/ }))?.text).toBe('✓ reviewer     T-TU-9   r2  01:01  completed  → T-TU-9-review-r2.json  1.5k tok')
-  await ui.unmount()
-  // past a minute after it ended (the pane refreshes every 15 s) the row folds into the count line, next to the fixture's stopped run
-  await w.clock.advance(75_000)
-  ui = await $.ui.mount(PANE)
+  // an intended change: an ended agent is no row at all, not even for a minute, and no fold line stands for it
   expect(await ui.find({ type: 'Text', text: /T-TU-9/ })).toBeUndefined()
-  expect((await ui.find({ type: 'Text', text: /ended/ }))?.text).toBe('  ✓ 2 ended (1 failed)')
+  expect(await ui.find({ type: 'Text', text: /ended/ })).toBeUndefined()
   await ui.unmount()
 })
 
-test('an external run that ended 10 s ago is a row; one that ended 2 minutes ago is folded', async ($, on) => {
+test('an ended external run is no row, however recently it ended', async ($, on) => {
   const at = Date.parse('2026-10-22T10:05:00.000Z')
   const ended = (runId: string, ago: number, status = 'done') => ({ runId, status, provider: 'codex', role: 'implementer', task: 'T-TU-5', elapsedMs: 5000, tokens: null, lastLine: null, outFile: null, error: null, endedAt: new Date(at - ago).toISOString() })
   const runs = { ...RUNS, data: { runs: [ended('r5', 10_000), ended('r6', 120_000, 'failed')] } }
@@ -155,8 +150,38 @@ test('an external run that ended 10 s ago is a row; one that ended 2 minutes ago
   await $.session.start(SESSION)
   await w.clock.settle()
   const ui = await $.ui.mount(PANE)
-  expect((await ui.find({ type: 'Text', text: /codex implementer/ }))?.text).toBe('✓ codex implementer  T-TU-5       00:05  done')
-  expect((await ui.find({ type: 'Text', text: /ended/ }))?.text).toBe('  ✓ 1 ended (1 failed)')
+  expect(await ui.find({ type: 'Text', text: /codex implementer/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /ended/ })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('a task with status new and a live agent naming it counts as working, listed before a waiting one', async ($, on) => {
+  const tasks = [
+    { id: 'T-TU-4', kind: 'task', title: 'Later', status: 'planned', class: 'standard', owner: 'TU', lane: null, round: 0 },
+    STATUS.data.tasks[1],
+  ]
+  const steps = [
+    { task: 'T-TU-2', state: 'new, not routed', step: '', rules: [], kind: 'info' },
+    { task: 'T-TU-4', state: 'planned', step: '', rules: [], kind: 'info' },
+  ]
+  const status = { ...STATUS, data: { ...STATUS.data, tasks, steps } }
+  const w = world(on, { status, runs: { ...RUNS, data: { runs: [] } } })
+  w.agents[0] = { id: 'a1', description: 'Docs for T-TU-2', type: 'landfall:implementer', status: 'running' }
+  await $.session.start(SESSION)
+  await w.clock.settle()
+  const ui = await $.ui.mount(PANE)
+  expect((await ui.find({ type: 'Text', text: /T-TU-2/ }))?.text).toBe('▶ T-TU-2 -  working · new, not routed')
+  expect((await ui.find({ type: 'Text', text: /T-TU-4/ }))?.text).toBe('⏸ T-TU-4 std  waiting · planned')
+  await ui.unmount()
+})
+
+test('with no agent and no run at work the section says none active', async ($, on) => {
+  const w = world(on, { runs: { ...RUNS, data: { runs: [RUNS.data.runs[1]] } } })
+  w.agents.length = 0
+  await $.session.start(SESSION)
+  await w.clock.settle()
+  const ui = await $.ui.mount(PANE)
+  expect((await ui.find({ type: 'Text', text: /none/ }))?.text).toBe('  none active')
   await ui.unmount()
 })
 
@@ -303,7 +328,7 @@ test('a CLI that does not answer leaves the last rows standing with the error on
   await w.clock.advance(15_000)
   const ui = await $.ui.mount(PANE)
   expect((await ui.find({ type: 'Text', text: /did not answer/ }))?.text).toBe('! landfall status did not answer: the rows are from the last answer')
-  expect((await ui.find({ type: 'Text', text: /T-TU-1 r1/ }))?.text).toBe('▸ T-TU-1 r1 crit  review r2 approved')
+  expect((await ui.find({ type: 'Text', text: /T-TU-1 r1/ }))?.text).toBe('▶ T-TU-1 r1 crit  working · review r2 approved')
   await ui.unmount()
   w.cli.fails = false
   await w.clock.advance(15_000)
