@@ -217,13 +217,13 @@ const redactDeep = (v, extra, depth = 0) => {
 };
 
 // One provider output line as the adapter, the record and the log see it (T-MG-96 F1): cleaned; a line that parses as
-// a JSON object or array is replaced by its sanitized form (every decoded string redacted, then serialized again), so
+// any JSON document (a bare string too) is replaced by its sanitized form (every decoded string redacted, then serialized again), so
 // neither the adapter's truncation nor the log ever holds the raw line; then redacted and cut as safeLine does.
 export function eventLine(raw, max, extra = []) {
   const clean = cleanLine(raw, PENDING_MAX) ?? '';
   let doc;
   try { doc = JSON.parse(clean); } catch { doc = undefined; }
-  return safeLine(doc !== null && typeof doc === 'object' ? JSON.stringify(redactDeep(doc, extra)) : clean, max, extra);
+  return safeLine(doc !== undefined ? JSON.stringify(redactDeep(doc, extra)) : clean, max, extra);
 }
 
 // A line splitter for one stream: feed(chunk) calls onLine(line, truncated) per complete line; end() emits the rest.
