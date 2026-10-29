@@ -269,7 +269,7 @@ test('1.x plan: the next entry gets its task; entries in code fences are ignored
   assert.equal(r.outcome, 'action');
   const s = row(r, 'P2');
   assert.deepEqual(s.rules, ['SPC-11', 'FLW-9']);
-  assert.match(s.step, new RegExp(`${BIN} task new "P2: second"`));
+  assert.match(s.step, new RegExp(`${BIN} task new 'P2: second'`));
   assert.match(s.state, /docs\/plans\/plan\.md/);
   assert.equal(table([task('T-TU-1', 'done', { title: 'P1: first' }), task('T-TU-2', 'cancelled', { title: 'P2 second' })], { plan }).outcome, 'done');
   assert.equal(table([task('T-TU-1', 'done', { title: 'P10: other' })], { plan: { ...plan, entries: entries.slice(0, 1) } }).outcome, 'action', 'P10 is not P1');
@@ -993,4 +993,64 @@ test('finding 5: a run live when the loop started counts toward it with its full
   assert.match(r.out.data.reason, /cost cap reached: \$30\.00 of \$25\.00/);
   writeFileSync(file, runDoc({ status: 'done', endedAt: new Date(Date.parse(startedAt) - 500).toISOString(), costMicroUsd: 30000000, exit: 0 }));
   assert.equal(since().costMicroUsd, 0, 'a run that ended before the loop started is not the loop\'s');
+});
+
+// ---- repository text is data (audit 2.4.0 F2-1, F2-2, F2-3, F2-4) --------------------------------------------------
+
+test('F2-1: a plan title with $(…) and backticks is one quoted shell word in the step: run, it prints literally and runs nothing', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'plan-inj-'));
+  try {
+    const pwned = join(dir, 'pwned');
+    const entries = loop.parsePlan(`### Task 1: $(touch ${pwned}) \`touch ${pwned}\`\n`);
+    const s = row(table([], { plan: { path: 'docs/plans/p.md', entries } }), '1');
+    const cmd = /create its task: `(.*)`$/.exec(s.step)?.[1];
+    assert.ok(cmd?.startsWith(`${BIN} task new `), s.step);
+    const r = spawnSync('sh', ['-c', `printf '%s\\n' ${cmd.slice(`${BIN} `.length)}`], { encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.stdout, `task\nnew\n1: $(touch ${pwned}) \`touch ${pwned}\`\n`);
+    assert.equal(existsSync(pwned), false, 'no command substitution ran');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('F2-4: repository-derived tick values are one line without control or bidi characters', () => {
+  const entries = [{ ref: 'P1', title: 'a‮b\u0007c' }];
+  const r = table([task('T-TU-1', 'dispatched', { title: 'P0: x', events: [ev('dispatched', 3)] })], { plan: { path: 'docs/plans/p​.md', entries } });
+  const info = r.info.find((i) => i.kind === 'plan');
+  assert.equal(info.state, 'next in docs/plans/p.md when a slot frees: abc');
+});
+
+test('F2-2: a loop record whose startedAt is in the future is invalid: STALLED, naming the record', () => {
+  const l = loop.newLoop({ now: T0 + 60 * MIN });
+  const d = loop.decide(l, obs({ now: T0 }));
+  assert.equal(d.result, 'STALLED');
+  assert.ok(d.reason.includes(l.id) && /startedAt/.test(d.reason), d.reason);
+  assert.equal(loop.decide(loop.newLoop({ now: T0 + 4 * MIN }), obs({ now: T0 })).result, 'ACTION', 'clock skew within 5 min is accepted');
+});
+
+test('F2-2: caps above the defaults count only with the user\'s recorded start; otherwise the defaults apply', () => {
+  const shipped = { ...fresh({ ticks: 500, wallMin: 10000 }), ticks: 199 };
+  let d = loop.decide(shipped, obs());
+  assert.equal(d.result, 'BUDGET', 'a raised cap without the user\'s start: the default tick cap');
+  assert.match(d.reason, /200 ticks/);
+  assert.equal(loop.decide(fresh({ ticks: 500, wallMin: 10000 }), obs({ now: T0 + 600 * MIN })).result, 'BUDGET', 'the default wall cap');
+  const byUser = { ...loop.newLoop({ now: T0, caps: { ...CAPS, ticks: 500 }, byUser: true }), ticks: 199 };
+  assert.deepEqual(state.check(loop.LOOP, byUser), [], 'a valid loop document');
+  assert.equal(loop.decide(byUser, obs()).result, 'ACTION', 'the user\'s raised cap counts');
+  assert.equal(loop.decide({ ...fresh({ ticks: 5 }), ticks: 3 }, obs()).result, 'ACTION', 'a lowered cap counts without the user');
+});
+
+test('F2-3: a live-status run whose supervisor is dead, or past capS + 120 s, is not live and does not block STALLED', () => {
+  const dead = spawnSync(process.execPath, ['-e', 'process.stdout.write(String(process.pid))'], { encoding: 'utf8' });
+  const pid = Number(dead.stdout);
+  const t1 = task('T-TU-1', 'dispatched', { events: [ev('dispatched', 1)] });
+  const run = (o) => ({ runId: 'R-1', task: 'T-TU-1', status: 'running', pid: null, pidStart: null, pidMethod: null, capS: 600, queuedAt: at(0), startedAt: at(0), ...o });
+  const now = T0 + 600 * MIN;
+  assert.equal(table([t1], { now, runs: [run({ pid, pidStart: '1', pidMethod: 'ps' })] }).liveRuns, 0, 'a dead supervisor');
+  assert.equal(table([t1], { now, runs: [run({})] }).liveRuns, 0, 'past capS + 120 s');
+  assert.equal(table([t1], { now: T0 + 5 * MIN, runs: [run({})] }).liveRuns, 1, 'within its cap, no supervisor yet: live');
+  const r = table([t1], { now, runs: [run({ pid, pidStart: '1', pidMethod: 'ps' })] });
+  let l = fresh();
+  let d;
+  for (let k = 0; k < 4; k++) { d = loop.decide(l, obs({ now: T0 + (10 + k * 15) * MIN, fingerprint: 'b'.repeat(64), liveRuns: r.liveRuns, outcome: r.outcome, nextTickS: r.nextTickS })); l = d.doc; }
+  assert.equal(d.result, 'STALLED', d.reason);
 });
