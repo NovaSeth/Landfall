@@ -67,6 +67,7 @@ Commands:
   gen apply            Write the generated files (CI workflow, pre-push hook, PR template, CODEOWNERS and AGENTS.md blocks); edits survive.
   gen plan             Show what gen apply would do for each generated file; writes nothing.
   heavy                Run a heavy command (full tests, build) in the machine-wide FIFO queue under a heavy lease, with time and output limits.
+  import-1x            Read a 1.x ledger and print how it maps to decisions, tasks, notes and profile facts (dry run only).
   init                 Activate tracking in this repository: state.json, .gitignore and your handle in team/<H>.json.
   install              Install the plugin for an agent without it (npx channel): run the SD-3 commands with claude, or print them.
   lane claim           Claim a lane on origin for 7 days: free → yours, yours → renewed, another's past expiry + 24 h → taken over.
@@ -626,6 +627,25 @@ Options:
 
 Read-only.
 Exit codes: 0 OK · 1 FAIL · 2 USAGE · 3 WAIT · 5 STALLED · 6 BUDGET · 7 REFUSED · 8 ENV
+```
+
+### `landfall import-1x [--from <dir>] [--dry-run] [--json]`
+
+```text
+usage: landfall import-1x [--from <dir>] [--dry-run] [--json]
+
+Read a 1.x ledger and print how it maps to decisions, tasks, notes and profile facts (dry run only).
+Reads <dir>/.workflow/progress.md and config.json (--from, default: the repository root); 1.x files are never changed.
+Rulings become decisions with a legacy field, corrections supersede, S<n> become shared tasks, SEC-<n> become SF-<n> notes,
+config keys become profile facts with source import; rule citations are translated by lib/import1x/legacy.json.
+Malformed entries are reported and skipped. Without --dry-run: exit 7 (apply comes in the next release step). No ledger: exit 8.
+
+Options:
+  --from <dir>  the 1.x project root holding .workflow/ (default: this repository)
+  --dry-run     print the mapping; write nothing (required in this release)
+
+Read-only.
+Exit codes: 0 OK · 7 REFUSED · 8 ENV
 ```
 
 ### `landfall init [--state-dir <path>] [--handle <H>] [--yes] [--json]`

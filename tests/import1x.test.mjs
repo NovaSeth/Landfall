@@ -18,7 +18,7 @@ Format: **Ruling R<n>: what — why — cost.**
 
 ## Rules
 - Ruling R1 (2026-01-02 03:04 AB): Use ZAS-4 as the base — dlaczego: prostota — cost: low.
-**Ruling R2: Ship the importer — because users ask — cost: a day.**
+**Ruling R2: Ship the importer — because users ask — a day.**
 **Ruling R3: Zmieniamy podejście — bo tak wyszło — koszt: niski.**
 - Ruling R4 (2026-01-03 AB): Reverse R2 — new facts — cost: none (korekta R2 pkt 1).
 - Ruling R-CD-2 (2026-01-04 CD): Second author — why — cost: low (correction R1).

@@ -157,6 +157,23 @@ const ROWS = [
     load: () => import('./doctor.mjs').then((m) => m.doctor),
   },
   {
+    name: 'import-1x',
+    summary: 'Read a 1.x ledger and print how it maps to decisions, tasks, notes and profile facts (dry run only).',
+    details: [
+      'Reads <dir>/.workflow/progress.md and config.json (--from, default: the repository root); 1.x files are never changed.',
+      'Rulings become decisions with a legacy field, corrections supersede, S<n> become shared tasks, SEC-<n> become SF-<n> notes,',
+      'config keys become profile facts with source import; rule citations are translated by lib/import1x/legacy.json.',
+      'Malformed entries are reported and skipped. Without --dry-run: exit 7 (apply comes in the next release step). No ledger: exit 8.',
+    ],
+    args: [],
+    flags: [
+      { flag: '--from', value: 'dir', summary: 'the 1.x project root holding .workflow/ (default: this repository)' },
+      { flag: '--dry-run', summary: 'print the mapping; write nothing (required in this release)' },
+    ],
+    exits: ['OK', 'REFUSED', 'ENV'],
+    load: () => import('./import1x.mjs').then((m) => m.importOneX),
+  },
+  {
     name: 'profile observe',
     summary: 'Scan the repository (manifests, files, CI, harnesses) and merge what it shows into the project profile.',
     details: [
