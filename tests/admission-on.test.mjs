@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, readdirSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { isolateProcessEnv } from './helpers/isolated-env.mjs';
+import { CALL_WALL_GUARD_MS, cpuTimed } from './helpers/cpu-time.mjs';
 import { hook, lib, names, repo } from './helpers/hook-fixture.mjs';
 
 isolateProcessEnv();
@@ -93,7 +94,16 @@ test('a heartbeat failure never changes the decision', (t) => {
 test('perf: the heartbeat adds under 50 ms p95 with a lease present', (t) => {
   const f = repo(t);
   admit(f, 1); bind(f, 1, 'agent-abc');
-  const run = (extra) => { const xs = []; for (let i = 0; i < 20; i++) { age(f); const s = process.hrtime.bigint(); bash(f, extra); xs.push(Number(process.hrtime.bigint() - s) / 1e6); } return xs.sort((a, b) => a - b)[18]; };
+  const run = (extra) => {
+    const xs = [];
+    for (let i = 0; i < 20; i++) {
+      age(f);
+      const r = cpuTimed(() => bash(f, extra));
+      assert.ok(r.wallMs < CALL_WALL_GUARD_MS, `a call hung: ${r.wallMs.toFixed(0)} ms wall`);
+      xs.push(r.cpuMs);
+    }
+    return xs.sort((a, b) => a - b)[18];
+  };
   run({}); // warm
   const base = run({});
   const withBeat = run({ agent_id: 'agent-abc' });

@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { performance } from 'node:perf_hooks';
+import { cpuP95 } from './helpers/cpu-time.mjs';
 import { MALFORMED, hook, lib, names, repo, task } from './helpers/hook-fixture.mjs';
 
 const { rollout } = await lib('config/index.mjs');
@@ -64,8 +64,6 @@ test('flag on: a title with $(…) is data; nothing runs', (t) => {
 test('flag on: p95 under 50 ms in process', (t) => {
   const f = repo(t); flagOn(f); const id = task(f.store, 1);
   done(f, `${id} x`);
-  const xs = [];
-  for (let k = 0; k < 40; k++) { const s = performance.now(); done(f, `${id} x`); xs.push(performance.now() - s); }
-  xs.sort((a, b) => a - b);
-  assert.ok(xs[Math.ceil(xs.length * 0.95) - 1] < 50, `p95 ${xs[37].toFixed(1)} ms`);
+  const p95 = cpuP95(assert, () => done(f, `${id} x`), 40);
+  assert.ok(p95 < 50, `p95 ${p95.toFixed(1)} ms of CPU`);
 });

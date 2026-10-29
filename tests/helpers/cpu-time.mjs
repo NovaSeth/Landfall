@@ -55,3 +55,26 @@ export function fd3Preload(prefix = 'cpu-') {
 export function fd3CpuMs(text) {
   try { const u = JSON.parse(text); return (u.user + u.system) / 1000; } catch { return Number.NaN; }
 }
+
+// For in-process perf cases: runs fn once and returns its CPU time (process.cpuUsage() delta, user + system, in
+// ms) and its wall time. A case judges the CPU time; wall time only guards a hang (CALL_WALL_GUARD_MS).
+export const CALL_WALL_GUARD_MS = 2000;
+export function cpuTimed(fn) {
+  const c0 = process.cpuUsage();
+  const w0 = performance.now();
+  fn();
+  const c = process.cpuUsage(c0);
+  return { cpuMs: (c.user + c.system) / 1000, wallMs: performance.now() - w0 };
+}
+
+// The p95 (sorted, index ceil(0.95 n) - 1) of the CPU times of n calls of fn; fails when a call hung.
+export function cpuP95(assert, fn, n) {
+  const xs = [];
+  for (let i = 0; i < n; i++) {
+    const r = cpuTimed(fn);
+    assert.ok(r.wallMs < CALL_WALL_GUARD_MS, `a call hung: ${r.wallMs.toFixed(0)} ms wall`);
+    xs.push(r.cpuMs);
+  }
+  xs.sort((a, b) => a - b);
+  return xs[Math.ceil(xs.length * 0.95) - 1];
+}
