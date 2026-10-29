@@ -157,13 +157,113 @@ export function dropSubs(s) {
   }
   return out;
 }
-// Variants for the tokens (lowercase): also ${X:-default} → default, no $X / $(…) / `…`, and no {,}; and the text without
-// the substitutions and their bodies.
-export function variants(text) {
-  const [v1, v2] = caseVariants(text).map((s) => s.toLowerCase());
-  const v3 = v2.replace(/\$\{[#!]?\w*(?:\[[^\]]*\])?(?::?[-=+?#%/^,]+(?![-=+?#%/^,])([^}]*))?\}/g, '$1').replace(/\$(?:\w+|[@*#?$!-])/g, '').replace(/[`$()]/g, '');
-  return [v1, v2, v3, v3.replace(/[{},]/g, ''), dropSubs(v2)];
+// The end (the index after it) of a shell construct whose body starts at i; -1: unclosed at the end of the text (bash
+// refuses the text, GC8: no hit by itself); -2: the end cannot be found with certainty (a comment or a case inside a
+// substitution, nesting deeper than MAX_NEST). One forward pass (F1).
+const MAX_NEST = 64;
+function endTick(s, i) {
+  for (let j = i; j < s.length; j++) { if (s[j] === '\\') j++; else if (s[j] === '`') return j + 1; }
+  return -1;
 }
+function endAnsi(s, i) {
+  for (let j = i; j < s.length; j++) { if (s[j] === '\\') j++; else if (s[j] === "'") return j + 1; }
+  return -1;
+}
+const endSq = (s, i) => { const k = s.indexOf("'", i); return k < 0 ? -1 : k + 1; };
+function endDq(s, i, d) {
+  for (let j = i; j < s.length;) {
+    const c = s[j];
+    if (c === '\\') j += 2;
+    else if (c === '"') return j + 1;
+    else if (c === '`') { j = endTick(s, j + 1); if (j < 0) return j; }
+    else if (c === '$' && (s[j + 1] === '(' || s[j + 1] === '{')) { j = endSub(s, j + 2, s[j + 1], d + 1); if (j < 0) return j; }
+    else j++;
+  }
+  return -1;
+}
+const WORD_START = /[\s;&|()]/;
+// The body of $( (open '(') or ${ (open '{') starts at i.
+function endSub(s, i, open, d) {
+  if (d > MAX_NEST) return -2;
+  let depth = 1;
+  for (let j = i; j < s.length;) {
+    const c = s[j];
+    const start = j === i || WORD_START.test(s[j - 1]);
+    if (c === '\\') { j += 2; continue; }
+    if (c === "'") j = s[j - 1] === '$' ? endAnsi(s, j + 1) : endSq(s, j + 1);
+    else if (c === '"') j = endDq(s, j + 1, d);
+    else if (c === '`') j = endTick(s, j + 1);
+    else if (c === '$' && (s[j + 1] === '(' || s[j + 1] === '{')) j = endSub(s, j + 2, s[j + 1], d + 1);
+    else if (open === '{') { if (c === '}') return j + 1; j++; continue; }
+    else if (c === '(') { depth++; j++; continue; }
+    else if (c === ')') { if (--depth === 0) return j + 1; j++; continue; }
+    else if (start && (c === '#' || (s.startsWith('case', j) && /^case(\s|$)/.test(s.slice(j, j + 5))))) return -2;
+    else { j++; continue; }
+    if (j < 0) return j;
+  }
+  return -1;
+}
+// The raw text with every $(…) and `…` removed with its body, read with the shell's quoting (single quotes keep a
+// substitution as text, quoted and escaped parentheses do not end one: F1); uncertain when an end cannot be found
+// with certainty (the rest is dropped and the text is a guarded hit); one unclosed at the end drops the rest (the
+// other variants keep it).
+export function subsDropped(s) {
+  let out = ''; let dq = false;
+  for (let j = 0; j < s.length;) {
+    const c = s[j];
+    if (c === '\\') { out += s.slice(j, j + 2); j += 2; continue; }
+    if (c === "'" && !dq) {
+      const k = s[j - 1] === '$' ? endAnsi(s, j + 1) : endSq(s, j + 1);
+      if (k < 0) { out += s.slice(j); break; }
+      out += s.slice(j, k); j = k; continue;
+    }
+    if (c === '"') { dq = !dq; out += c; j++; continue; }
+    if (c === '`' || (c === '$' && s[j + 1] === '(')) {
+      const k = c === '`' ? endTick(s, j + 1) : endSub(s, j + 2, '(', 1);
+      if (k < 0) return { text: out, uncertain: k === -2 };
+      j = k; continue;
+    }
+    out += c; j++;
+  }
+  return { text: out, uncertain: false };
+}
+// ${X…} expansions in one pass (F2), as /\$\{[#!]?\w*(?:\[[^\]]*\])?(?::?[-=+?#%/^,]+(?![-=+?#%/^,])([^}]*))?\}/g
+// replaced with '$1' would give: ${X:-default} → default, ${X} → nothing; the next ] and } come from a table.
+const PARAM_OPS = '-=+?#%/^,';
+const isWord = (k) => (k >= 48 && k <= 57) || (k >= 65 && k <= 90) || (k >= 97 && k <= 122) || k === 95;
+export function stripParams(s) {
+  if (!s.includes('${')) return s;
+  const n = s.length;
+  const nextOf = (ch) => { const a = new Int32Array(n + 1).fill(-1); for (let i = n - 1; i >= 0; i--) a[i] = s[i] === ch ? i : a[i + 1]; return a; };
+  const rb = nextOf(']'); const cb = nextOf('}');
+  const tryAt = (j) => {
+    while (j < n && isWord(s.charCodeAt(j))) j++;
+    if (s[j] === '[') { const k = rb[j + 1]; if (k < 0) return null; j = k + 1; }
+    let k = j; if (s[k] === ':') k++;
+    let m = k; while (m < n && PARAM_OPS.includes(s[m])) m++;
+    if (m > k && cb[m] >= 0) return [cb[m] + 1, s.slice(m, cb[m])];
+    return s[j] === '}' ? [j + 1, ''] : null;
+  };
+  let out = ''; let last = 0; let i = 0;
+  while ((i = s.indexOf('${', i)) >= 0) {
+    const r = ((s[i + 2] === '#' || s[i + 2] === '!') && tryAt(i + 3)) || tryAt(i + 2);
+    if (r) { out += s.slice(last, i) + r[1]; i = last = r[0]; } else i++;
+  }
+  return out + s.slice(last);
+}
+const noExpansions = (v) => stripParams(v).replace(/\$(?:\w+|[@*#?$!-])/g, '').replace(/[`$()]/g, '');
+// Variants for the tokens (lowercase): also ${X:-default} → default, no $X / $(…) / `…`, and no {,}; and the text without
+// the substitutions and their bodies (on the flattened text, and on the raw text read with its quoting). uncertain:
+// a substitution whose end cannot be found with certainty.
+function variantsOf(text) {
+  const [v1, v2] = caseVariants(text).map((s) => s.toLowerCase());
+  const v3 = noExpansions(v2);
+  const d = subsDropped(text);
+  const a = ansiDecoded(d.text);
+  return { vs: [v1, v2, v3, v3.replace(/[{},]/g, ''), dropSubs(v2), flat(decodeEscapes(a)).toLowerCase(), flat(a).toLowerCase()], uncertain: d.uncertain };
+}
+export const variants = (text) => variantsOf(text).vs;
+const UNCERTAIN = 'a substitution without a certain end';
 
 // A text longer than this gets a coarse prescan in linear time: the word tokens on the same variants as below (raw
 // and decoded, without expansions, without braces), and any trigger of a line token (git, a pipe, $, a backtick, <(,
@@ -173,8 +273,11 @@ const ROUGH = /(^|[\s/])git|\||[$`]|<\(|xargs|config|-section|(^|[\s/(;&])rm\s|\
 function coarse(text, literals) {
   const strip = (s) => s.replace(/\\\r?\n|['"\\]/g, '');
   const a = ansiDecoded(text); const c1 = strip(a); const c2 = strip(decodeEscapes(a));
-  const v3 = c2.toLowerCase().replace(/\$\{[#!]?\w*(?:\[[^\]]*\])?(?::?[-=+?#%/^,]+(?![-=+?#%/^,])([^}]*))?\}/g, '$1').replace(/\$(?:\w+|[@*#?$!-])/g, '').replace(/[`$()]/g, '');
-  const vs = [c1.toLowerCase(), c2.toLowerCase(), v3, v3.replace(/[{},]/g, ''), dropSubs(c2.toLowerCase())]; const cs = [c1, c2]; const hits = new Set();
+  const v3 = noExpansions(c2.toLowerCase());
+  const d = subsDropped(text);
+  const vs = [c1.toLowerCase(), c2.toLowerCase(), v3, v3.replace(/[{},]/g, ''), dropSubs(c2.toLowerCase()), strip(decodeEscapes(ansiDecoded(d.text))).toLowerCase()];
+  const cs = [c1, c2]; const hits = new Set();
+  if (d.uncertain) hits.add(UNCERTAIN);
   for (const g of GUARDED) if ((g.word && vs.some((v) => g.word.test(v))) || (g.cased && cs.some((v) => g.cased.test(v)))) hits.add(g.id);
   if (vs.some((v) => ROUGH.test(v))) hits.add('a line-token trigger in a long text');
   for (const l of literals) if (vs.some((v) => v.includes(l))) hits.add(`project rule literal "${l}"`);
@@ -183,7 +286,8 @@ function coarse(text, literals) {
 // Prescan: the tokens (and the literals of project rules) present in a command.
 export function prescan(text, literals = []) {
   if (text.length > LONG_TEXT) return coarse(text, literals);
-  const vs = variants(text); const hits = new Set(); let cs = null;
+  const { vs, uncertain } = variantsOf(text); const hits = new Set(); let cs = null;
+  if (uncertain) hits.add(UNCERTAIN);
   for (const g of GUARDED) {
     if (g.word && vs.some((v) => g.word.test(v))) hits.add(g.id);
     if (g.cased && (cs ??= caseVariants(text)).some((v) => g.cased.test(v))) hits.add(g.id);

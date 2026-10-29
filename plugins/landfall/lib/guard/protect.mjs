@@ -87,34 +87,52 @@ export function stateText(state) {
 // ---------- globs ----------
 const MAX_MATCHES = 256;
 const GLOB = /[*?[]/;
+// Caps of the matcher (F3): a longer glob or name is a match (fail closed: the path is checked, the glob reaches).
+const GLOB_MAX = 256;
+const NAME_MAX = 4096;
 // A bash glob segment as a predicate; without dots a pattern that does not start with '.' skips dot entries.
-// The pattern is read into one-character tests and stars, then matched by the iterative wildcard algorithm (one star
-// remembered, the last star's start moved forward): O(pattern × name), no backtracking regex (SF-AB-4).
+// The pattern is split at its stars into pieces of one-character tests; the first piece is matched at the start, the
+// last at the end and the middle ones left to right, each at its first place (indexOf for a literal piece). The cost is
+// bounded by name × piece length, both capped (F3, SF-AB-4); no backtracking regex.
 export function globRe(seg, { dots = false } = {}) {
-  const parts = []; // '*' or a test (c) => boolean for one character
+  if (seg.length > GLOB_MAX) return () => true;
+  const raw = [[]]; // the pieces between stars: lists of a literal character or a test (c) => boolean
   for (let i = 0; i < seg.length; i++) {
     const c = seg[i];
-    if (c === '*') { if (parts[parts.length - 1] !== '*') parts.push('*'); }
-    else if (c === '?') parts.push(() => true);
+    if (c === '*') raw.push([]);
+    else if (c === '?') raw[raw.length - 1].push(() => true);
     else if (c === '[' && seg.indexOf(']', i + 2) > 0) {
       const j = seg.indexOf(']', i + 2);
       const cls = seg.slice(i + 1, j);
       let rx;
       try { rx = new RegExp(`^[${cls[0] === '!' ? `^${cls.slice(1)}` : cls}]$`, 's'); } catch { why(`a glob pattern that cannot be read: ${seg.slice(0, 40)}`); }
-      parts.push((x) => rx.test(x));
+      raw[raw.length - 1].push((x) => rx.test(x));
       i = j;
-    } else parts.push((x) => x === c);
+    } else raw[raw.length - 1].push(c);
   }
+  const pieces = raw.map((ts) => ({
+    len: ts.length,
+    lit: ts.every((t) => typeof t === 'string') ? ts.join('') : null,
+    at: (e, k) => ts.every((t, q) => (typeof t === 'string' ? e[k + q] === t : t(e[k + q]))),
+  }));
+  const first = pieces[0];
+  const last = pieces[pieces.length - 1];
   const test = (e) => {
-    let p = 0; let s = 0; let star = -1; let mark = 0;
-    while (s < e.length) {
-      if (p < parts.length && parts[p] !== '*' && parts[p](e[s])) { p++; s++; }
-      else if (p < parts.length && parts[p] === '*') { star = p++; mark = s; }
-      else if (star >= 0) { p = star + 1; s = ++mark; }
-      else return false;
+    if (e.length > NAME_MAX) return true;
+    if (pieces.length === 1) return e.length === first.len && first.at(e, 0);
+    const end = e.length - last.len;
+    if (first.len > end || !first.at(e, 0) || !last.at(e, end)) return false;
+    let k = first.len;
+    for (let p = 1; p < pieces.length - 1; p++) {
+      const pc = pieces[p];
+      if (!pc.len) continue;
+      let at = -1;
+      if (pc.lit !== null) at = e.indexOf(pc.lit, k);
+      else for (let q = k; q + pc.len <= end; q++) if (pc.at(e, q)) { at = q; break; }
+      if (at < 0 || at + pc.len > end) return false;
+      k = at + pc.len;
     }
-    while (p < parts.length && parts[p] === '*') p++;
-    return p === parts.length;
+    return true;
   };
   return dots || seg.startsWith('.') ? (e) => e !== '.' && e !== '..' && test(e) : (e) => !e.startsWith('.') && test(e);
 }

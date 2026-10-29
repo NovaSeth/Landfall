@@ -147,11 +147,14 @@ test('F1: a quoted or escaped parenthesis inside a substitution does not end it 
 });
 
 test('F1: a substitution without a certain end is a guarded hit and is blocked', () => {
-  for (const cmd of [`cp /tmp/f ${S.slice(0, 5)}$(: '(${S.slice(5)}/tasks/T-1/verify.json`, 'echo $(: "', 'echo `: x']) {
+  const tail = `${S.slice(5)}/tasks/T-1/verify.json`;
+  for (const cmd of [`cp /tmp/f ${S.slice(0, 5)}$(case x in x) :;; esac)${tail}`, `cp /tmp/f ${S.slice(0, 5)}$(: # )\n)${tail}`,
+    `cp /tmp/f ${S.slice(0, 5)}${'$('.repeat(70)}:${')'.repeat(70)}${tail}`, 'echo $(case x in a) echo y;; esac)']) {
     assert.ok(prescan(cmd).size > 0, `no hit: ${cmd}`);
     assert.ok(denied(cmd), `allowed: ${cmd}`);
   }
-  assert.ok(prescan('echo $(case x in a) echo y;; esac)').size > 0, 'case inside a substitution');
+  // unclosed at the end of the text: bash refuses it, so without a token it passes (GC8, the input-contract test)
+  assert.equal(prescan('echo $(: "').size, 0);
 });
 
 test('F2: repeated unclosed parameter syntax is linear and the real hook denies 21000 repeats in under 1000 ms', () => {
