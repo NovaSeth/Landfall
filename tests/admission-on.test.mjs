@@ -7,7 +7,7 @@ import { readFileSync, writeFileSync, readdirSync, mkdirSync, rmSync } from 'nod
 import { spawn } from 'node:child_process';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { isolateProcessEnv } from './helpers/isolated-env.mjs';
+import { isolateProcessEnv, isolatedEnv } from './helpers/isolated-env.mjs';
 import { CALL_WALL_GUARD_MS, cpuTimed } from './helpers/cpu-time.mjs';
 import { hook, lib, names, pluginDir, repo } from './helpers/hook-fixture.mjs';
 
@@ -136,10 +136,12 @@ test('F5: with a 450 ms evaluation and the normal 500 ms budget, a busy heartbea
   // Another process holds the scheduler lock, so a heartbeat would wait its whole lock timeout.
   const lock = join(f.env.CLAUDE_PLUGIN_DATA, 'leases', 'lock');
   const fsx = pathToFileURL(join(pluginDir, 'lib', 'fsx', 'index.mjs')).href;
+  // the lock holder needs only the lock path; its environment is an isolated home like every spawned process here
+  const iso = isolatedEnv({ prefix: 'lock-holder-' });
   const holder = spawn(process.execPath, ['--input-type=module', '-e',
     `import { withLock } from ${JSON.stringify(fsx)}; withLock(${JSON.stringify(lock)}, () => { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 4000); });`],
-  { stdio: 'ignore', env: f.env });
-  t.after(() => { try { holder.kill('SIGKILL'); } catch { /* gone */ } });
+  { stdio: 'ignore', env: iso.env });
+  t.after(() => { try { holder.kill('SIGKILL'); } catch { /* gone */ } iso.cleanup(); });
   const owner = () => { try { return JSON.parse(readFileSync(join(lock, 'owner.json'), 'utf8')).pid; } catch { return null; } };
   for (const end = Date.now() + 10000; owner() !== holder.pid;) {
     assert.ok(Date.now() < end, 'the lock holder did not start');
