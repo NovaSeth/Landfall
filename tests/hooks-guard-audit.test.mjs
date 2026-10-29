@@ -19,7 +19,7 @@ const names = JSON.parse(readFileSync(join(plugin, 'lib', 'name.json'), 'utf8'))
 const LAUNCHER = join(plugin, 'bin', names.bin);
 const lib = (rel) => import(pathToFileURL(join(plugin, 'lib', rel)).href);
 const { evaluate } = await lib('guard/index.mjs');
-const { prescan } = await lib('guard/tokens.mjs');
+const { prescan, stripParams } = await lib('guard/tokens.mjs');
 const { expandLiterals } = await lib('guard/tokenizer.mjs');
 const { globRe, globReaches } = await lib('guard/protect.mjs');
 
@@ -132,4 +132,73 @@ test('SF-AB-4: the glob matcher is linear and keeps the bash semantics', () => {
   for (const [p, s, want] of cases) assert.equal(globRe(p)(s), want, `${p} ~ ${s}`);
   assert.equal(globRe('*', { dots: true })('.x'), true);
   assert.equal(globRe('*', { dots: true })('..'), false);
+});
+
+// ---------- fix round 1 (review r1) ----------
+test('F1: a quoted or escaped parenthesis inside a substitution does not end it early', () => {
+  const at = (body) => `cp /tmp/f ${S.slice(0, 5)}$(${body})${S.slice(5)}/tas$(:)ks/T-1/veri$(:)fy.json`;
+  for (const body of [": '('", ': "("', ': \\(', ": '$('", ': "a)b"', ": `echo ')'`", ': $(: ")")']) {
+    const cmd = at(body);
+    assert.ok(prescan(cmd, [S]).size > 0, `no hit: ${cmd}`);
+    assert.ok(denied(cmd), `allowed: ${cmd}`);
+  }
+  // a substitution only inside single quotes is text, not a substitution
+  assert.equal(denied("echo '$(rm -rf /)'"), null);
+});
+
+test('F1: a substitution without a certain end is a guarded hit and is blocked', () => {
+  for (const cmd of [`cp /tmp/f ${S.slice(0, 5)}$(: '(${S.slice(5)}/tasks/T-1/verify.json`, 'echo $(: "', 'echo `: x']) {
+    assert.ok(prescan(cmd).size > 0, `no hit: ${cmd}`);
+    assert.ok(denied(cmd), `allowed: ${cmd}`);
+  }
+  assert.ok(prescan('echo $(case x in a) echo y;; esac)').size > 0, 'case inside a substitution');
+});
+
+test('F2: repeated unclosed parameter syntax is linear and the real hook denies 21000 repeats in under 1000 ms', () => {
+  const ms8 = timed(() => prescan(`echo '${'${['.repeat(16000)}'`));
+  assert.ok(ms8 < 100, `prescan ${Math.round(ms8)} ms`);
+  for (const unit of ['${[', '${#[', '${x:-', '${x[']) {
+    const ms = timed(() => prescan(fill(unit, "echo '", "'")));
+    assert.ok(ms < 200, `${unit}: ${Math.round(ms)} ms`);
+  }
+  const cmd = `echo '${'${['.repeat(21000)}'${TAIL}`;
+  const input = JSON.stringify({ session_id: 's', hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: cmd }, cwd: repo });
+  const t = performance.now();
+  const r = spawnSync(process.execPath, [LAUNCHER, 'hook', 'guard-bash'], { input, encoding: 'utf8', timeout: 5000, env: { ...process.env, CLAUDE_PROJECT_DIR: repo } });
+  const ms = performance.now() - t;
+  const deny = r.status === 2 || (r.stdout && JSON.parse(r.stdout).hookSpecificOutput.permissionDecision === 'deny');
+  assert.ok(deny, `no deny: exit ${r.status} ${r.stdout} ${r.stderr}`);
+  assert.ok(ms < 1000, `${Math.round(ms)} ms`);
+});
+
+test('F2: the parameter scanner keeps the default-value semantics', () => {
+  for (const [cmd, tok] of [['echo ${x:-push}', 'push'], ['echo ${x:=commit}', 'commit'], ['echo ${#[x}stash', 'stash'], ['echo ${a[1]:-push}', 'push']]) {
+    assert.ok(prescan(cmd).has(tok), `${cmd}: ${[...prescan(cmd)]}`);
+  }
+  // the scanner gives what the former regex gave
+  const OLD = /\$\{[#!]?\w*(?:\[[^\]]*\])?(?::?[-=+?#%/^,]+(?![-=+?#%/^,])([^}]*))?\}/g;
+  for (const t of ['${x:-push}', '${#}', '${#x}', '${!x}', '${#-x}', '${#[x}', '${a[1]}', '${a[1]:-v}', '${a[}', '${x:}', '${x:-}', '${x', '${x:-a',
+    '${x/a/b}', '${x^^}', '${x,,}', '${x%%.*}', '${x##*/}', '${x:?err}', '${x+alt}', '${#x[@]}', '${x:-${y}}', 'a${b}c${d:-e}f', '${[x]}', '${}',
+    '$${x}', '${x:-a}b}', '${#[a]}', '${#[a]:-q}', '${!#}', '${##}', '${x[a]b}', '${${x}}']) {
+    assert.equal(stripParams(t), t.replace(OLD, '$1'), t);
+  }
+});
+
+test('F3: the glob matcher is bounded on the long-prefix family and fails closed past its caps', () => {
+  const n = 8192;
+  const match = globRe(`*${'a'.repeat(n)}b`);
+  const ms = timed(() => assert.equal(match('a'.repeat(2 * n)), true)); // past the 4096 cap: a hit
+  assert.ok(ms < 50, `${Math.round(ms)} ms`);
+  const m2 = globRe(`*${'a'.repeat(200)}b`);
+  const ms2 = timed(() => assert.equal(m2('a'.repeat(4000)), false));
+  assert.ok(ms2 < 50, `${Math.round(ms2)} ms`);
+  const m3 = globRe(`*${'a?'.repeat(100)}b`);
+  const ms3 = timed(() => assert.equal(m3('a'.repeat(4096)), false));
+  assert.ok(ms3 < 50, `${Math.round(ms3)} ms`);
+  assert.equal(globRe(`${'x'.repeat(257)}*`)('y'), true, 'a glob longer than 256 characters is a hit');
+  assert.equal(globRe('*.json')(`${'a'.repeat(4097)}.txt`), true, 'a name longer than 4096 characters is a hit');
+  for (const [p, s, want] of [['a*a', 'a', false], ['a*a', 'aa', true], ['*ab*ab', 'abab', true], ['*ab*ab', 'aba', false],
+    ['x*?y', 'xy', false], ['x*?y', 'xzy', true], ['*[ab]c*', 'zzbc', true], ['a*b?c*d', 'aXbYcZd', true], ['a*b?c*d', 'abcd', false]]) {
+    assert.equal(globRe(p)(s), want, `${p} ~ ${s}`);
+  }
 });
