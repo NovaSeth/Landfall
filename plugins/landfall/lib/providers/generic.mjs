@@ -6,7 +6,8 @@
 // refused. {sandbox} is mandatory, and a word that hard-codes a sandbox or write mode is refused (SF-AB-5). Every load
 // checks the entry again (B-4): a role whose mode fails checkValue, or a reviewer mapped to a write mode, is dropped; a
 // template that fails parseTemplate leaves no role; the reason is the adapter's note (providers list). The provider's
-// own environment names (--env) are kept as envNames (B-6). The CLI is trusted as logged in (no probe is declared);
+// own environment names (--env) are kept as envNames (B-6); a name that changes how a program loads (LOADER_ENV) is
+// refused on add, and on load it drops the whole env list with a note (T-MG-91). The CLI is trusted as logged in (no probe is declared);
 // each output line is the run's last line.
 import { StateError } from '../state/index.mjs';
 import { LAST_LINE, ROLES } from './kind.mjs';
@@ -20,6 +21,8 @@ const WRITE = /workspace[-_]?write|auto[-_]?edit|accept[-_]?edits|full[-_]?auto|
 const MODE_FLAG = /^(?:-s|--sandbox|--mode|--approval-mode|--ask-for-approval|--permission-mode)(=.*)?$/;
 export const ENV_NAME = /^[A-Z_][A-Z0-9_]*$/;
 export const ENV_MAX = 20;
+// Names that change how a program, its interpreter or git loads code or configuration: never passed to a provider.
+export const LOADER_ENV = /^(?:NODE_OPTIONS|NODE_PATH|LD_[A-Z0-9_]*|DYLD_[A-Z0-9_]*|BASH_ENV|ENV|PYTHONPATH|PYTHONSTARTUP|PERL5OPT|PERL5LIB|RUBYOPT|RUBYLIB|GIT_[A-Z0-9_]*)$/;
 const usage = (code, message, hint) => new StateError(code, 'USAGE', message, { hint });
 const refuse = (what) => usage('unsafe-mode', `${what} names a mode that lifts the sandbox or the approvals; an external run never gets one`, 'declare the read-only and workspace-write modes of the CLI');
 
@@ -71,6 +74,8 @@ export function parseEnvNames(text) {
   if (list.length > ENV_MAX) throw usage('limit-exceeded', `--env names ${list.length} variables, the limit is ${ENV_MAX}`, 'name only what the CLI needs to log in');
   for (const n of list) if (!ENV_NAME.test(n)) throw usage('invalid-value', `--env ${n.slice(0, 40) || '(empty)'}: expected a variable name of A-Z, 0-9 and _`, 'such as --env MYCLI_API_KEY,MYCLI_URL');
   if (new Set(list).size !== list.length) throw usage('invalid-value', '--env names a variable twice', 'name each once');
+  const loader = list.find((n) => LOADER_ENV.test(n));
+  if (loader) throw usage('invalid-value', `--env ${loader}: it changes how a program loads, so it never passes to a provider`, 'name only what the CLI needs to log in');
   return list;
 }
 
@@ -95,7 +100,10 @@ export function fromEntry(id, entry) {
   let note = null;
   try { words = parseTemplate(entry?.argv); } catch (err) { note = `no role can run: ${String(err?.message ?? err).slice(0, 200)}`; }
   const roles = words ? checkedRoles(entry?.sandboxMap) : { kept: {}, note };
-  const envNames = Array.isArray(entry?.env) ? entry.env.filter((n) => typeof n === 'string' && ENV_NAME.test(n)).slice(0, ENV_MAX) : [];
+  const stored = Array.isArray(entry?.env) ? entry.env.filter((n) => typeof n === 'string' && ENV_NAME.test(n)).slice(0, ENV_MAX) : [];
+  const loaders = stored.filter((n) => LOADER_ENV.test(n));
+  const envNames = loaders.length ? [] : stored;
+  const envNote = loaders.length ? `env dropped: ${loaders.join(', ')} in providers.json changes how a program loads` : null;
   const program = words ? words[0] : String(entry?.argv ?? '').trim().split(/\s+/)[0] || id;
   const sandboxes = Object.freeze(roles.kept);
   return Object.freeze({
@@ -104,7 +112,7 @@ export function fromEntry(id, entry) {
     bins: Object.freeze([program]),
     sandboxes,
     envNames: Object.freeze(envNames),
-    note: roles.note,
+    note: [roles.note, envNote].filter(Boolean).join('; ') || null,
     detect: ({ env }) => versionOf(program, env),
     auth: () => 'ok',
     argv: ({ sandbox, cwd, outFile, model }) => (words ?? []).flatMap((w) => {

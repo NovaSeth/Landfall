@@ -8,6 +8,8 @@
 //           decision while the engine flag is on; in shadow mode or without a tier decision it is L0. When needed,
 //           the latest round (highest k of review-r<k>.json) has verdict approved, and for external an external
 //           reviewer. → approved | missing | not-required
+//           A round of an external reviewer counts only with the run and sha256 that review record --run stores
+//           (T-MG-91); one without them (a --from file before 2.5.0) is kept but counts for no route (reviewProblem).
 //           It is also approved by review close (reviewClosed): an active review-close decision for the task, once the
 //           latest round has reached the loop's rounds cap (default 2), listing in `remaining` every blocking finding ID of
 //           that round. It closes only the review step: the report evidence and the gates are checked as before.
@@ -86,14 +88,27 @@ export function reviewShown(store, cls, { names, env }) {
 
 const classOf = (steps) => (steps.includes('cross-provider-review') ? 'critical' : steps.includes('review') ? 'standard' : 'trivial');
 
+const roundOf = (key) => Number(key.slice(key.lastIndexOf('-r') + 2));
+const reviewKeys = (store, id) => store.list('review').filter((k) => k.startsWith(`${id}/`)).sort((a, b) => roundOf(a) - roundOf(b));
+// A stored round counts unless it claims an external reviewer without the run and sha256 of its run.
+const counts = (doc) => doc?.reviewer?.kind !== 'external' || (typeof doc.run === 'string' && typeof doc.sha256 === 'string');
+
+// Why the latest round of task `id` cannot count, as a message, or null.
+export function reviewProblem(store, id, names) {
+  const keys = reviewKeys(store, id);
+  const latest = keys.length ? store.read('review', keys[keys.length - 1]) : null;
+  return latest && !counts(latest) ? `external review without its run: record it again with ${names.bin} review record ${id} --kind external --run <run ID>` : null;
+}
+
 export function reviewState(store, id, steps, { tier = appliedTier(store), providerAvailable = false } = {}) {
   const need = reviewNeed(classOf(steps), tier, providerAvailable);
-  const round = (key) => Number(key.slice(key.lastIndexOf('-r') + 2));
-  const keys = store.list('review').filter((k) => k.startsWith(`${id}/`)).sort((a, b) => round(a) - round(b));
+  const round = roundOf;
+  const keys = reviewKeys(store, id);
   // Nothing is required: a recorded approved latest round is still reported, never "missing".
-  if (need === 'none') return keys.length && store.read('review', keys[keys.length - 1]).verdict === 'approved' ? 'approved' : 'not-required';
+  if (need === 'none') return keys.length && counts(store.read('review', keys[keys.length - 1])) && store.read('review', keys[keys.length - 1]).verdict === 'approved' ? 'approved' : 'not-required';
   if (!keys.length) return 'missing';
   const latest = store.read('review', keys[keys.length - 1]);
+  if (!counts(latest)) return 'missing';
   if (latest.verdict === 'approved' && (need === 'any' || latest.reviewer.kind === 'external')) return 'approved';
   return reviewClosed(store, id, round(keys[keys.length - 1]), latest) ? 'approved' : 'missing';
 }

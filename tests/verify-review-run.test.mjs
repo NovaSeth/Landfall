@@ -224,7 +224,8 @@ test('a stored external round without run and sha256 does not count; verify name
   const steps = ['review', 'cross-provider-review'];
   r.vstore.create('review', verify.reviewKey(r.id, 1), EXTERNAL); // as a --from file stored it before 2.5.0
   assert.equal(verify.reviewState(r.vstore, r.id, steps, { providerAvailable: true }), 'missing');
-  assert.equal(verify.reviewState(r.vstore, r.id, ['review']), 'missing', 'it counts for no route');
+  assert.equal(verify.reviewState(r.vstore, r.id, ['review'], { tier: 'L1' }), 'missing', 'it counts for no route');
+  assert.equal(verify.reviewState(r.vstore, r.id, ['review']), 'not-required', 'nor as an approval where none is needed');
   assert.equal(verify.reviewProblem(r.vstore, r.id, names), `external review without its run: record it again with ${names.bin} review record ${r.id} --kind external --run <run ID>`);
   assert.deepEqual(r.vstore.read('review', verify.reviewKey(r.id, 1)), { schema: 1, ...EXTERNAL }, 'the old round is kept');
   const { runId } = addRun(r);
@@ -235,6 +236,6 @@ test('a stored external round without run and sha256 does not count; verify name
 
 test('the texts name the --run form: the dispatch skill step 6, and the providers CLI header names --env', () => {
   const dispatch = readFileSync(join(pluginDir, 'templates', 'skills', 'dispatch.md'), 'utf8');
-  assert.match(dispatch.split('\n').find((l) => l.startsWith('6. ')), /review record <id> --kind external --run <run ID>/);
+  assert.match(dispatch.split('\n').find((l) => l.startsWith('6. ')), /review record <id> --from <file> --yes`, external: `--kind external --run <run ID>`/);
   assert.match(readFileSync(join(pluginDir, 'lib', 'providers', 'cli.mjs'), 'utf8').split('\n')[0], /--env/);
 });

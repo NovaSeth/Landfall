@@ -17,7 +17,7 @@ import { readFileSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
 import { authorHandle, stateRel } from '../decisions/index.mjs';
 import { readRegularFile } from '../fsx/index.mjs';
-import { RUN_ID, runsStore } from '../runs/index.mjs';
+import { RUN_ID, ownOutDir, runsStore } from '../runs/index.mjs';
 import { KINDS, StateError } from '../state/index.mjs';
 import { VERIFY_KINDS, reviewKey } from './kinds.mjs';
 import { activeWhere, storeOf, unknownTask } from './run.mjs';
@@ -95,12 +95,14 @@ function readInput(cwd, from) {
   }
 }
 
-// The done reviewer run `run` of task `id` (lib/runs record); USAGE for a malformed or unknown ID, REFUSED otherwise.
+// The done reviewer run `run` of task `id` (lib/runs record) whose out file is in the directory exec bound to the run
+// (lib/runs ownOutDir, the check run-supervise makes); USAGE for a malformed or unknown ID, REFUSED otherwise.
 function reviewerRun(where, names, id, run) {
   if (typeof run !== 'string' || !RUN_ID.test(run)) throw usage('invalid-value', `--run ${String(run).slice(0, 80)}: not a run ID`, `'${names.bin} runs' lists the runs`);
   const rec = runsStore(where.dir, names).read('run', run);
   if (rec === null) throw usage('run-unknown', `no run ${run} in ${where.dir}`, `'${names.bin} runs' lists the runs`);
-  const why = rec.task !== id ? `it belongs to ${rec.task}` : rec.role !== 'reviewer' ? `it is an ${rec.role} run` : rec.status !== 'done' ? `its status is ${rec.status}` : rec.outFile === null ? 'it has no out file' : '';
+  const why = rec.task !== id ? `it belongs to ${rec.task}` : rec.role !== 'reviewer' ? `it is an ${rec.role} run` : rec.status !== 'done' ? `its status is ${rec.status}` : rec.outFile === null ? 'it has no out file'
+    : !ownOutDir(rec) ? 'its out file is not out.json in the private temp directory exec bound to the run' : '';
   if (why) throw refused('run-not-reviewable', `${run} is not a done reviewer run of ${id}: ${why}`, `'${names.bin} exec --task ${id} --role reviewer' starts one`);
   return rec;
 }
