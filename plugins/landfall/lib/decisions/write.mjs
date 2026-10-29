@@ -89,7 +89,7 @@ const fieldError = (errors) => {
 };
 
 // Creates a record; input { title, why, cost, scope: [globs], kind, supersedes: [ids], allowsTestRemoval: [test ids],
-// task and remaining: [finding ids] (review-close) }.
+// task and remaining: [finding ids] (review-close), legacy (the 1.x ruling ID, import-1x) }.
 // Returns { id, file, supersedes }.
 export function createDecision(options) {
   return options.store.batch((store) => createDecisionLocked({ ...options, store }));
@@ -112,6 +112,7 @@ function createDecisionLocked({ store, where, names, env, handle, input, today =
   const doc = {
     schema: DECISION.version, id: `D-${handle}-1`, title: input.title, status: 'active', kind: input.kind ?? 'general', date: today, author: handle,
     supersedes, supersededBy: null, scope: input.scope ?? [], allowsTestRemoval: allows,
+    ...(input.legacy !== undefined ? { legacy: input.legacy } : {}),
     ...(input.task !== undefined || input.remaining !== undefined ? { task: input.task, remaining: input.remaining ?? [] } : {}),
   };
   const errors = check(DECISION, doc);

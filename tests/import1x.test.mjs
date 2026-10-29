@@ -1,7 +1,10 @@
-// 1.x import, slice 1 (T-MG-18): `import-1x --dry-run` reads a 1.x ledger and prints the mapping; nothing is written.
+// 1.x import (T-MG-18): `import-1x --dry-run` prints the mapping (slice 1); `--yes` applies it through lib/state,
+// idempotently, and prints the removal checklist (slice 2). 1.x files are never changed.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { isolatedEnv, isolateProcessEnv } from './helpers/isolated-env.mjs';
@@ -11,6 +14,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const pluginDir = join(root, 'plugins', readdirSync(join(root, 'plugins')).find((d) => existsSync(join(root, 'plugins', d, 'lib/name.json'))));
 const lib = (rel) => import(pathToFileURL(join(pluginDir, 'lib', rel)).href);
 const { main } = await lib('cli/main.mjs');
+const names = JSON.parse(readFileSync(join(pluginDir, 'lib/name.json'), 'utf8'));
 const { openMethod, lookupRules } = await lib('method/index.mjs');
 
 const LEDGER = `# Ledger: synthetic
@@ -58,7 +62,7 @@ function fixture(t, { ledger = LEDGER, workflow = true } = {}) {
     const code = await main(args, { io });
     return { code, stdout: io.stdout, stderr: io.stderr };
   };
-  return { from, base: iso.base, cli };
+  return { from, base: iso.base, env: iso.env, cli };
 }
 
 test('the dry run maps rulings, a correction, tasks, shared tasks, findings and config; bad lines are reported', async (t) => {
@@ -98,14 +102,108 @@ test('every target of lib/import1x/legacy.json is a current rule or null with a 
   assert.equal(table.rules['ZAS-4'].to, 'PRI-3');
 });
 
-test('without --dry-run it refuses with exit 7 and writes nothing', async (t) => {
+test('without --yes and without a terminal it exits 7 and writes nothing', async (t) => {
   const { from, base, cli } = fixture(t);
   const before = JSON.stringify(readdirSync(base).sort());
   const r = await cli(['import-1x', '--from', from]);
   assert.equal(r.code, 7);
-  assert.match(r.stdout + r.stderr, /apply comes in the next release step/);
+  assert.match(r.stdout + r.stderr, /--yes/);
   assert.equal(JSON.stringify(readdirSync(base).sort()), before);
   assert.deepEqual(readdirSync(from).sort(), ['.workflow']);
+});
+
+const HOOKS = { hooks: {
+  SessionStart: [{ hooks: [{ type: 'command', command: 'node "$CLAUDE_PROJECT_DIR"/.claude/hooks/workflow-context.mjs' }] }],
+  PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: 'node "$CLAUDE_PROJECT_DIR"/.claude/hooks/guard-bash.mjs' }, { type: 'command', command: 'echo mine' }] }],
+} };
+
+async function applyFixture(t) {
+  const f = fixture(t);
+  const repo = join(f.base, 'repo');
+  mkdirSync(repo);
+  const env = { ...f.env, CLAUDE_PLUGIN_DATA: join(f.base, 'data') };
+  const git = (...args) => assert.equal(spawnSync('git', args, { cwd: repo, env, encoding: 'utf8' }).status, 0);
+  git('-c', 'init.defaultBranch=main', 'init', '-q');
+  git('commit', '-q', '--allow-empty', '-m', 'fixture');
+  mkdirSync(join(f.from, 'docs/workflow'), { recursive: true });
+  writeFileSync(join(f.from, 'docs/workflow/guide.md'), 'old\n');
+  mkdirSync(join(f.from, '.claude'));
+  writeFileSync(join(f.from, '.claude/settings.json'), JSON.stringify(HOOKS));
+  const cli = async (args) => {
+    const io = { cwd: repo, env, stdinIsTTY: false, stdin: null, stdout: '', stderr: '' };
+    io.out = (s) => { io.stdout += s; };
+    io.err = (s) => { io.stderr += s; };
+    const code = await main(args, { io });
+    return { code, stdout: io.stdout, stderr: io.stderr };
+  };
+  const ok = async (args) => {
+    const r = await cli(args);
+    assert.equal(r.code, 0, `${args.join(' ')}\n${r.stdout}${r.stderr}`);
+    return r;
+  };
+  await ok(['init', '--handle', 'AB', '--yes']);
+  return { ...f, repo, cli, ok, stateDir: join(realpathSync(repo), names.stateDir) };
+}
+
+function snapshot(dir) {
+  const out = {};
+  const walk = (d) => {
+    for (const e of readdirSync(d, { withFileTypes: true })) {
+      const p = join(d, e.name);
+      if (e.isDirectory()) walk(p); else out[p] = readFileSync(p, 'utf8');
+    }
+  };
+  walk(dir);
+  return out;
+}
+
+test('apply writes decisions, tasks, shared tasks, findings, profile facts and the manifest; the lists show them', async (t) => {
+  const { from, ok, stateDir } = await applyFixture(t);
+  const before = snapshot(from);
+  const r = await ok(['import-1x', '--from', from, '--yes', '--json']);
+  const { data } = JSON.parse(r.stdout);
+  const manifest = JSON.parse(readFileSync(join(stateDir, 'import-1x.json'), 'utf8'));
+  assert.equal(manifest.source, createHash('sha256').update(LEDGER).digest('hex'));
+  const legacy = ['R1', 'R2', 'R3', 'R4', 'R-CD-2', 'T1', 'T2', 'T3', 'T4', 'S1', 'S2', 'SEC-1', 'SEC-2', 'config.team', 'config.stack'];
+  assert.deepEqual(Object.keys(manifest.items).sort(), [...legacy].sort());
+  assert.deepEqual(data.imported, manifest.items);
+  const m = manifest.items;
+  // decisions: the legacy field, a correction supersedes, the decide lookups find them
+  const r4 = (await ok(['decisions', 'show', m.R4])).stdout;
+  assert.match(r4, /legacy: R4/);
+  assert.ok(r4.includes(m.R2), r4);
+  assert.match((await ok(['decisions', 'show', m.R2])).stdout, /status: superseded/);
+  const found = (await ok(['decisions', 'find', '--json'])).stdout;
+  for (const k of ['R1', 'R2', 'R3', 'R4', 'R-CD-2']) assert.ok(found.includes(m[k]), k);
+  // tasks: status mapped; shared tasks in the lane shared
+  const tasks = Object.fromEntries(JSON.parse((await ok(['task', 'list', '--json'])).stdout).data.tasks.map((x) => [x.id, x]));
+  assert.deepEqual(['T1', 'T2', 'T3', 'T4'].map((k) => tasks[m[k]]?.status), ['done', 'dispatched', 'blocked', 'cancelled']);
+  assert.deepEqual(['S1', 'S2'].map((k) => tasks[m[k]]?.lane), ['shared', 'shared']);
+  assert.match(tasks[m.S1].title, /^\[S1\] shared parser cleanup/);
+  // findings: open, source import-1x (the reviewer), the legacy ID
+  const findings = JSON.parse((await ok(['findings', 'list', '--json'])).stdout).data.findings;
+  assert.deepEqual(findings.map((f) => [f.id, f.status, f.reviewer.id, f.finding]), [[m['SEC-1'], 'open', 'import-1x', 'SEC-1'], [m['SEC-2'], 'open', 'import-1x', 'SEC-2']]);
+  // profile facts: source default (the import source), evidence naming the import
+  const profile = JSON.parse(readFileSync(join(stateDir, 'profile.json'), 'utf8'));
+  assert.equal(profile.facts.people.value, 'solo');
+  assert.equal(profile.facts.people.source, 'default');
+  assert.match(profile.facts.people.evidence, /import-1x/);
+  // the removal checklist lists the 1.x files and deletes none
+  const text = (await ok(['import-1x', '--from', from, '--yes'])).stdout;
+  for (const p of ['.workflow', 'docs/workflow', '.claude/settings.json']) assert.ok(text.includes(join(from, p)), `${p}\n${text}`);
+  assert.match(text, /guard-bash\.mjs/);
+  assert.doesNotMatch(text, /echo mine/);
+  assert.deepEqual(snapshot(from), before, '1.x files are untouched');
+});
+
+test('a second apply imports nothing new and reports already imported', async (t) => {
+  const { from, ok, stateDir } = await applyFixture(t);
+  await ok(['import-1x', '--from', from, '--yes']);
+  const before = snapshot(stateDir);
+  const r = await ok(['import-1x', '--from', from, '--yes']);
+  assert.match(r.stdout, /already imported: 15/);
+  assert.match(r.stdout, /^imported: 0$/m);
+  assert.deepEqual(snapshot(stateDir), before, 'the second run writes nothing');
 });
 
 test('a missing .workflow exits ENV with a hint', async (t) => {
