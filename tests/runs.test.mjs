@@ -112,7 +112,8 @@ test('a fake-provider run: starting → running → done with tokens and lastLin
   assert.ok(seen.has('running'), `statuses seen: ${[...seen].join(' → ')}`);
   const rec = p.record(id);
   assert.deepEqual(Object.keys(rec), ['schema', 'runId', 'task', 'role', 'provider', 'adapterVersion', 'model', 'sandbox', 'cwd', 'pid', 'pidStart', 'pidMethod', 'lease',
-    'status', 'queuedAt', 'startedAt', 'endedAt', 'elapsedMs', 'capS', 'tokens', 'tokensReason', 'costMicroUsd', 'lastLine', 'unknownEvents', 'outFile', 'exit', 'error']);
+    'status', 'queuedAt', 'startedAt', 'endedAt', 'elapsedMs', 'capS', 'tokens', 'tokensReason', 'costMicroUsd', 'lastLine', 'unknownEvents', 'outFile', 'exit', 'error', 'bin', 'outDirId']);
+  assert.equal(rec.bin, process.execPath, 'the program is the absolute path exec resolved (B-2)');
   assert.equal(rec.status, 'done');
   assert.equal(rec.exit, 0);
   assert.equal(rec.sandbox, 'read-only', 'a reviewer runs read-only');
@@ -206,8 +207,9 @@ async function tampered(t, change) {
   const base = p.record((await (async () => { const id = (await startRun(p, 'T-TU-1', 'reviewer', 'fakeok')).e.data.runId; await p.ended(id); return { id }; })()).id);
   const outDir = mkdtempSync(join(tmpdir(), `${names.bin}-run-`));
   writeFileSync(join(outDir, 'brief.md'), readFileSync(`${base.outFile}.prompt`), { mode: 0o600 });
+  const st = statSync(outDir, { bigint: true }); // bound as exec binds it (SF-AB-10), so only `change` is tampered
   const runId = 'fakeok-T-TU-2-reviewer-1';
-  const rec = { ...base, runId, task: 'T-TU-2', status: 'starting', pid: null, endedAt: null, error: null, outFile: join(outDir, 'out.json'), ...change(p, outDir) };
+  const rec = { ...base, runId, task: 'T-TU-2', status: 'starting', pid: null, endedAt: null, error: null, outFile: join(outDir, 'out.json'), outDirId: `${st.dev}:${st.ino}`, ...change(p, outDir) };
   writeFileSync(join(p.runsDir, `${runId}.json`), `${JSON.stringify(rec)}\n`);
   const r = await p.cli(['run-supervise', runId]);
   return { p, r, rec: p.record(runId), outFile: rec.outFile };

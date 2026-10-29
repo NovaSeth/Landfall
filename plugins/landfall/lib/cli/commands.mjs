@@ -1127,12 +1127,15 @@ const ROWS = [
     details: [
       'The template is split on spaces (no shell); placeholders are whole words: {cwd} {sandbox} {out} {model} ({model} is',
       'dropped when unset). The brief goes to stdin. The roles are the keys of --sandbox-map. A word or mode naming a way to',
-      'lift the sandbox or the approvals is refused (exit 2). Declaring an ID again replaces it. Kept in plugin data providers.json.',
+      'lift the sandbox or the approvals is refused (exit 2); {sandbox} is required and no word may fix a sandbox or write mode.',
+      'Every load checks the entry again: a role with an unsafe or invalid mode cannot run (providers lists why). Declaring an',
+      'ID again replaces it. Kept in plugin data providers.json.',
     ],
     args: [{ name: 'id', required: true, summary: 'provider ID: 1-20 lowercase letters or digits, not a built-in one' }],
     flags: [
       { flag: '--argv', value: 'template', summary: "required: the command, such as 'mycli run --dir {cwd} --mode {sandbox} -o {out}'" },
       { flag: '--sandbox-map', value: 'role=mode,…', summary: 'required: the mode per role, such as reviewer=read-only,implementer=workspace-write' },
+      { flag: '--env', value: 'NAME,…', summary: 'the variables the provider gets from your environment (at most 20), such as MYCLI_API_KEY; no other passes' },
     ],
     exits: ['OK', 'USAGE', 'REFUSED', 'ENV'],
     mutating: true,
