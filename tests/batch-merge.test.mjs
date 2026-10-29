@@ -415,3 +415,23 @@ test('fix round 2 (F5): a batch updates the target ref and its checkout and keep
   assert.equal(r.git('status', '--porcelain', '--', '.', `:(exclude)${names.stateDir}`), '', 'the code is clean');
   cleaned(r, res);
 });
+
+test('T-MG-83: a batch whose gate set is not trusted on this machine is refused before any merge or gate run (gates-untrusted)', async (t) => {
+  const r = repo(t);
+  // The gate set changed by hand (a clone, a pull): no store write trusted it.
+  const file = join(r.stateDir, 'profile.json');
+  const doc = JSON.parse(readFileSync(file, 'utf8'));
+  doc.gates[0].timeoutS = 32;
+  writeFileSync(file, `${JSON.stringify(doc, null, 2)}\n`);
+  r.git('add', '-A');
+  r.git('commit', '-q', '-m', 'gates changed by hand');
+  const ids = [r.task('feat/a', 'a.test.mjs'), r.task('feat/b', 'b.test.mjs')];
+  const tip = r.git('rev-parse', 'HEAD');
+  const res = await cli(['task', 'merge', ...ids, '--yes'], r);
+  assert.deepEqual([res.code, res.env.errors.map((e) => e.code)], [7, ['gates-untrusted']], JSON.stringify(res.env.errors));
+  assert.equal(r.runs(), 0, 'no gate ran');
+  assert.equal(r.git('rev-parse', 'HEAD'), tip, 'the target did not move');
+  for (const id of ids) assert.equal(merges(r, id).length, 0, id);
+  assert.equal(r.git('branch', '--list', `${names.codename}/batch-*`), '', 'no integration branch was created');
+  assert.equal(r.git('worktree', 'list', '--porcelain').split('\n').filter((l) => l.startsWith('worktree ')).length, 1, 'no integration worktree was created');
+});

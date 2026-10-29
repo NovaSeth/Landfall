@@ -316,7 +316,8 @@ export function evaluate({ where, names, env, id, mode, handle = null, at = now(
   const task = store.read('task', id);
   if (task === null) throw unknownTask(id, where, names);
   const profile = store.read('profile', null) ?? emptyProfile();
-  requireTrustedGates({ where, names, env, gates: profile.gates });
+  // A batch checked this gate set once before its merges (memo.trusted, batch.mjs); any other set is checked here.
+  if (memo?.trusted !== gatesSha(profile.gates)) requireTrustedGates({ where, names, env, gates: profile.gates });
   const code = codeState(where, env);
   const stateShown = stateRel(where.worktree, where.dir) ?? where.dir;
   const reasons = [];

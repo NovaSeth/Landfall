@@ -21,8 +21,7 @@
 // back: the merge is left as it is (`target-moved`). An up-to-date branch merges nothing (exit 0).
 import { authorHandle, readRecords } from '../decisions/index.mjs';
 import { emptyProfile, riskGlobsOf } from '../profile/index.mjs';
-import { KINDS, StateError } from '../state/index.mjs';
-import { recordMerged } from '../state/tasks.mjs';
+import { KINDS, StateError, recordMerged } from '../state/index.mjs';
 import { activeWhere, codeState, evaluate, gatesSha, gitIn, stateAt, storeOf } from './run.mjs';
 
 const usage = (code, message, hint = '') => new StateError(code, 'USAGE', message, { hint });

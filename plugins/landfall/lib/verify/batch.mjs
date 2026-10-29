@@ -27,10 +27,11 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { authorHandle } from '../decisions/index.mjs';
-import { KINDS, StateError } from '../state/index.mjs';
-import { mergedOf, recordMerged } from '../state/tasks.mjs';
+import { emptyProfile } from '../profile/index.mjs';
+import { KINDS, StateError, mergedOf, recordMerged } from '../state/index.mjs';
+import { requireTrustedGates } from './gates.mjs';
 import { changesGates, profileOf, targetOf, treeHeld } from './merge.mjs';
-import { activeWhere, codeState, evaluate, gitIn, stateAt, storeOf } from './run.mjs';
+import { activeWhere, codeState, evaluate, gatesSha, gitIn, stateAt, storeOf } from './run.mjs';
 
 const fail = (code, message, hint = '') => new StateError(code, 'FAIL', message, { hint });
 const usage = (code, message, hint = '') => new StateError(code, 'USAGE', message, { hint });
@@ -98,6 +99,12 @@ export function batchMerge({ cwd, env, names, ids = null, ready = false, version
   const branch = `${names.codename}/${batch}`;
   const result = { batch, target, tip, commit: null, branch, worktree: null, gateRuns: 0, tasks, result: null, verify: null, output: [], reasons: [], exit: 'OK' };
   if (candidates.length === 0) return finish(result);
+  // Trust (T-MG-77, T-MG-83): the gate set every run of this batch uses is checked once, before any merge or gate run;
+  // each branch keeps the target's gates (step 1) and so does the integrated tree (step 4). evaluate skips its own
+  // check for this set (memo.trusted) and checks again only a set that changed meanwhile.
+  const batchGates = (store.read('profile', null) ?? emptyProfile()).gates;
+  requireTrustedGates({ where, names, env, gates: batchGates });
+  const trusted = gatesSha(batchGates);
 
   // 2–5. The integration worktree, removed in every case.
   const wt = mkdtempSync(join(tmpdir(), `${names.codename}-batch-`));
@@ -138,7 +145,7 @@ export function batchMerge({ cwd, env, names, ids = null, ready = false, version
       const commit = gitIn(here, env, ['rev-parse', 'HEAD']).stdout.trim();
       const tree = gitIn(here, env, ['write-tree']).stdout.trim();
       result.gateRuns += 1;
-      const memo = {};
+      const memo = { trusted };
       const byTask = new Map(set.map((t) => [t.task, evaluate({ where: here, names, env, id: t.task, mode: 'merge', at, anchor: tip, merged: commit, version, memo })]));
       if (!treeHeld(here, env, scopeHere, commit) || gitIn(here, env, ['write-tree']).stdout.trim() !== tree) throw new TreeChanged();
       const all = [...byTask.values()];
