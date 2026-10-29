@@ -23,11 +23,12 @@ import { tmpdir } from 'node:os';
 import { join, relative, resolve as resolvePath } from 'node:path';
 import { MAX_OUTPUT, git } from '../git/index.mjs';
 import { StateError, resolve } from '../state/index.mjs';
-import { isKeyFile, isSynthetic, mask, matchLine, projectPatterns, skipsContent } from './patterns.mjs';
+import { isFixturePath, isKeyFile, isSynthetic, mask, matchLine, projectPatterns, skipsContent } from './patterns.mjs';
 
 export const MODES = Object.freeze(['tree', 'staged', 'range', 'artifact']);
 export const PATTERN_FILE = 'secrets-patterns.txt';
 const PATTERN_FILE_MAX = 65536;
+export const FILE_MAX = 2 * 1024 * 1024;
 const GIT_TIMEOUT_MS = 10 * 60 * 1000;
 const CHUNK = 1 << 20;
 const BINARY_PROBE = 8000; // git's own look-ahead for a NUL
@@ -154,7 +155,7 @@ function unreadable(shown, err) {
   return invalid('file-unreadable', `cannot read ${shown} (${err.code ?? err.message})`, 'make it readable (or ignore it if it does not belong in the repository), then scan again');
 }
 // The bytes of a regular file, or null: gone, not a regular file (a link, a submodule).
-function readBytes(abs, shown, st) {
+function readBytes(abs, shown, st, tooLarge = () => {}) {
   let s = st;
   if (!s) {
     try { s = lstatSync(abs); } catch (err) {
@@ -163,14 +164,28 @@ function readBytes(abs, shown, st) {
     }
   }
   if (!s.isFile()) return null;
-  try { return readFileSync(abs); } catch (err) {
+  if (s.size > FILE_MAX) { tooLarge(s.size); return null; }
+  let fd;
+  try {
+    fd = openSync(abs, 'r');
+    // Read at most cap + one byte, even if the file grows after lstat.
+    const buf = Buffer.allocUnsafe(FILE_MAX + 1);
+    let size = 0;
+    while (size < buf.length) {
+      const n = readSync(fd, buf, size, buf.length - size, null);
+      if (!n) break;
+      size += n;
+    }
+    if (size > FILE_MAX) { tooLarge(size); return null; }
+    return buf.subarray(0, size);
+  } catch (err) {
     if (err.code === 'ENOENT') return null;
     throw unreadable(shown, err);
-  }
+  } finally { if (fd !== undefined) closeSync(fd); }
 }
 // The text of a regular file (decodeText), or null: gone, not a regular file, binary.
-function readText(abs, shown, st) {
-  const buf = readBytes(abs, shown, st);
+function readText(abs, shown, st, tooLarge) {
+  const buf = readBytes(abs, shown, st, tooLarge);
   return buf === null ? null : decodeText(buf);
 }
 
@@ -181,7 +196,8 @@ function scanText(ctx, text, path, { marker }) {
 function scanLine(ctx, text, at, { marker = true } = {}) {
   ctx.lines++;
   const m = matchLine(text, ctx.extra);
-  if (!m || (marker && isSynthetic(text))) return;
+  if (!m) return;
+  if (marker && isFixturePath(at.path) && isSynthetic(text)) { ctx.exempted.add(whereOf(at)); return; }
   ctx.add({ ...at, type: m.id, masked: Buffer.from(mask(m.text), 'latin1').toString('utf8') });
 }
 const keyFile = (ctx, path, commit = null) => ctx.add({ commit, path, line: null, type: 'key-file', masked: null });
@@ -272,7 +288,7 @@ function scanTree(ctx) {
   for (const p of paths) if (isKeyFile(p)) keyFile(ctx, p);
   for (const p of paths) {
     if (skipsContent(p)) continue;
-    const text = readText(join(ctx.repo, p), p);
+    const text = readText(join(ctx.repo, p), p, undefined, (size) => ctx.skip({ path: p, commit: null, size, limit: FILE_MAX }));
     if (text !== null) scanText(ctx, text, p, { marker: true });
   }
   addedLines(fileLines(gitToFile(ctx, ['diff', '-R', ...DIFF, '--'])), (l, at) => { if (!skipsContent(at.path)) scanLine(ctx, l, at); });
@@ -343,7 +359,7 @@ function scanArtifact(ctx, given) {
     }
     if (!s.isFile()) return; // a link inside the artifact is not followed
     if (isKeyFile(shown)) keyFile(ctx, shown);
-    const text = readText(path, shown, s);
+    const text = readText(path, shown, s, (size) => ctx.skip({ path: shown, commit: null, size, limit: FILE_MAX }));
     if (text !== null) scanText(ctx, text, shown, { marker: false });
   };
   visit(abs, top, st);
@@ -372,11 +388,11 @@ export function scanSecrets({ cwd, env, names, mode = 'tree', revs = [], artifac
   }
   const found = new Map();
   const skipped = new Map();
-  const cap = blobMax % (1024 * 1024) === 0 ? `${blobMax / (1024 * 1024)} MiB` : `${blobMax} bytes`;
+  const cap = (limit) => limit % (1024 * 1024) === 0 ? `${limit / (1024 * 1024)} MiB` : `${limit} bytes`;
   const ctx = {
-    repo: where.repo, cwd, env, extra, tmp, blobMax, outputs: 0, files: 0, lines: 0,
+    repo: where.repo, cwd, env, extra, tmp, blobMax, outputs: 0, files: 0, lines: 0, exempted: new Set(),
     add: (f) => { const w = whereOf(f); if (!found.has(w)) found.set(w, { where: w, ...f }); },
-    skip: ({ path, commit, size }) => { const k = `${commit ?? ''}:${path}`; if (!skipped.has(k)) skipped.set(k, { path, commit, size, reason: `over ${cap}` }); },
+    skip: ({ path, commit, size, limit = blobMax }) => { const k = `${commit ?? ''}:${path}`; if (!skipped.has(k)) skipped.set(k, { path, commit, size, reason: `over ${cap(limit)}` }); },
   };
   try {
     if (mode === 'tree') scanTree(ctx);
@@ -387,5 +403,5 @@ export function scanSecrets({ cwd, env, names, mode = 'tree', revs = [], artifac
     rmSync(tmp, { recursive: true, force: true });
   }
   const findings = [...found.values()].sort(byPlace); // stable: one place in several commits keeps git log's order
-  return { mode, findings, skipped: [...skipped.values()].sort(byPlace), scanned: { files: ctx.files, lines: ctx.lines } };
+  return { mode, findings, exempted: ctx.exempted.size, skippedCount: skipped.size, skipped: [...skipped.values()].sort(byPlace), scanned: { files: ctx.files, lines: ctx.lines } };
 }
