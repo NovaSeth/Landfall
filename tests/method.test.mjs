@@ -166,7 +166,7 @@ test('index: maps topic → sections → rule IDs → summary, with packs and ac
     assert.ok(r.retired || (r.summary.length > 10 && r.summary.length <= 100), `${id} summary: ${r.summary}`);
     assert.doesNotMatch(r.summary ?? '', /\[always\]/, id);
   }
-  assert.deepEqual(Object.keys(index.packs).sort(), ['backend-data', 'design-system', 'discovery', 'release', 'runbooks', 'security', 'team']);
+  assert.deepEqual(Object.keys(index.packs).sort(), ['ai', 'backend-data', 'design-system', 'discovery', 'release', 'runbooks', 'security', 'team']);
   for (const [name, p] of Object.entries(index.packs)) {
     assert.ok(typeof p.when === 'string' && p.when.trim().length >= 2, `${name}: activation`);
     assert.ok(Array.isArray(p.any) && p.any.length >= 1, `${name}: machine-readable activation`);
