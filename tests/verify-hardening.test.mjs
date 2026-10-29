@@ -360,14 +360,14 @@ test('T-MG-83 AR-1: a project match that runs past a window end shows no byte of
 
 test('T-MG-83 r2 F3 and AR-2: a key across the 1 MiB mark shows no byte of it', () => {
   for (const before of [1048566, 1024 * 1024 - 5, 1024 * 1024 + 3]) {
-    const out = redactLib.redact(`${'.'.repeat(before)}AKIAABCDEFGHIJKLMNOP`);
-    noByteOf(out, 'AKIAABCDEFGHIJKLMNOP');
+    const out = redactLib.redact(`${'.'.repeat(before)}AKIAABCDEFGHIJKLMNOP`); // SYNTH
+    noByteOf(out, 'AKIAABCDEFGHIJKLMNOP'); // SYNTH
     assert.match(out, WHOLE_LINE, `at ${before}`);
   }
 });
 
 test('T-MG-83 r2: a long line masked whole leaves the other lines of the text as they are', () => {
-  const out = redactLib.redact(`first\n${'.'.repeat(5000)}AKIAABCDEFGHIJKLMNOP\nlast`);
+  const out = redactLib.redact(`first\n${'.'.repeat(5000)}AKIAABCDEFGHIJKLMNOP\nlast`); // SYNTH
   const [a, b, c] = out.split('\n');
   assert.equal(a, 'first');
   assert.match(b, WHOLE_LINE);
