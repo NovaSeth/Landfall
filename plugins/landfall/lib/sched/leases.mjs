@@ -276,8 +276,8 @@ async function withdraw(kind, opts, pollMs) {
 // Attempts until a lease is granted or timeoutMs passes (then the ticket, whose deadline is that moment, is withdrawn
 // and the last reasons end with wait-timeout). onWait(result) is called after each refused attempt.
 export async function acquireWait(kind, opts = {}) {
-  const { timeoutMs = 590e3, pollMs = 1000, onWait } = opts;
-  const until = Date.now() + timeoutMs;
+  const { timeoutMs = 590e3, pollMs = 1000, onWait, now = Date.now, sleep: nap = wait } = opts; // now, sleep: the clock and the wait, injected by tests
+  const until = now() + timeoutMs;
   try {
     for (;;) {
       let r;
@@ -288,12 +288,12 @@ export async function acquireWait(kind, opts = {}) {
         r = { ok: false, reasons: [{ code: 'busy', message: err.message }], position: null, seq: null };
       }
       if (r.ok) return r;
-      if (Date.now() >= until) {
+      if (now() >= until) {
         if (FIFO_KINDS.includes(kind)) await withdraw(kind, opts, pollMs);
         return { ...r, reasons: [...r.reasons, { code: 'wait-timeout', message: `no ${kind} slot within ${Math.ceil(timeoutMs / 1000)} s` }] };
       }
       onWait?.(r);
-      await wait(Math.min(pollMs, until - Date.now()));
+      await nap(Math.min(pollMs, until - now()));
     }
   } catch (err) {
     if (FIFO_KINDS.includes(kind) && err?.code !== 'already-queued') await withdraw(kind, opts, pollMs);
