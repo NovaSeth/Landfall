@@ -3,7 +3,7 @@
 // (WALL_CEILING_MS) that still catches a hang. The hook runs as `node --import <reporter> ...`: the reporter
 // writes the CPU time to the file named by HOOK_CPU_OUT and leaves stdout and stderr alone. The spawn stays in
 // the test file, whose module-level isolateProcessEnv() covers it (tests/isolation-guard.test.mjs).
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -41,4 +41,17 @@ export function measured(run) {
 export function assertFast(assert, r, what) {
   assert.ok(r.cpuMs < HOOK_CPU_LIMIT_MS, `${what}: ${r.cpuMs} ms of CPU`);
   assert.ok(r.ms < WALL_CEILING_MS, `${what}: ${r.ms} ms`);
+}
+
+// For tests that spawn a hook asynchronously with a fourth stdio pipe: a preload (`--require`) that writes the
+// process's own process.cpuUsage() as JSON to fd 3 when it exits, and the reader for what it wrote.
+export function fd3Preload(prefix = 'cpu-') {
+  const file = join(mkdtempSync(join(tmpdir(), prefix)), 'cpu.cjs');
+  writeFileSync(file, "process.on('exit', () => { const u = process.cpuUsage(); require('node:fs').writeSync(3, JSON.stringify(u)); });\n");
+  return file;
+}
+
+// The CPU time in ms from what the preload wrote; NaN when nothing parseable arrived.
+export function fd3CpuMs(text) {
+  try { const u = JSON.parse(text); return (u.user + u.system) / 1000; } catch { return Number.NaN; }
 }

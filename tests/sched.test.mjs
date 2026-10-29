@@ -1359,3 +1359,18 @@ test('heavy: SIGTERM to the runner ends the command group and releases the lease
   assert.equal(await gone(cmdB, 20000), true, 'the orphan command is ended');
   assert.equal(await gone(grandB, 20000), true, 'with its group');
 });
+
+test('acquireWait never passes a negative number to sleep when the clock passes the deadline between the check and the nap', { timeout: 20000 }, async (t) => {
+  const s = sandbox(t);
+  const held = sched.acquire('heavy', s.ctx());
+  const b = s.ctx({ cwd: s.dir('wt-b') });
+  let jumped = false;
+  const slept = [];
+  const now = () => Date.now() + (jumped ? 3600e3 : 0);
+  const sleep = async (ms) => { slept.push(ms); };
+  const r = await sched.acquireWait('heavy', { ...b, timeoutMs: 5000, pollMs: 1000, now, sleep, onWait: () => { jumped = true; } });
+  assert.equal(r.ok, false);
+  assert.equal(r.reasons.at(-1).code, 'wait-timeout');
+  assert.ok(slept.length >= 1 && slept.every((ms) => ms >= 0), `slept ${JSON.stringify(slept)}`);
+  sched.release(held.lease, s.ctx());
+});

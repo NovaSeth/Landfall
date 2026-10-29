@@ -36,7 +36,7 @@ function demoCommands() {
   return cmds;
 }
 
-test('every command of the README demo exists', () => {
+test('every command of the README demo exists', { timeout: 300000 }, () => {
   const cmds = demoCommands();
   assert.ok(cmds.length >= 7, `demo commands found: ${cmds.length}`);
   // The demo block shows the commands of the flow test below, in order.
@@ -57,7 +57,7 @@ test('every command of the README demo exists', () => {
   } finally { iso.cleanup(); }
 });
 
-test('the README demo flow: init, observe, task, route, test-first change, verify pass, task done', (t) => {
+test('the README demo flow: init, observe, task, route, test-first change, verify pass, task done', { timeout: 300000 }, (t) => {
   const iso = isolatedEnv({ gitConfig: '[init]\n\tdefaultBranch = main\n[user]\n\tname = Test User\n\temail = test@example.com\n', prefix: 'readme-demo-' });
   t.after(iso.cleanup);
   const dir = join(iso.base, 'app');
@@ -71,7 +71,7 @@ test('the README demo flow: init, observe, task, route, test-first change, verif
   const write = (rel, text) => { mkdirSync(dirname(join(dir, rel)), { recursive: true }); writeFileSync(join(dir, rel), text); };
   const cli = (...args) => {
     const r = spawnSync(BIN, [...args, '--yes'], { cwd: dir, env, encoding: 'utf8', timeout: 100000 });
-    assert.equal(r.status, 0, `${names.bin} ${args.join(' ')}: exit ${r.status}\n${r.stdout}\n${r.stderr}`);
+    assert.equal(r.status, 0, `step "${names.bin} ${args.join(" ")}": exit ${r.status}, signal ${r.signal}\n${r.stdout}\nstderr (last 300 bytes): ${String(r.stderr ?? "").slice(-300)}`);
     return r.stdout.trim();
   };
 

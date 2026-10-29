@@ -297,7 +297,7 @@ export async function acquireWait(kind, opts = {}) {
         return { ...r, reasons: [...r.reasons, { code: 'wait-timeout', message: `no ${kind} slot within ${Math.ceil(timeoutMs / 1000)} s` }] };
       }
       onWait?.(r);
-      await nap(Math.min(pollMs, until - now()));
+      await nap(Math.max(0, Math.min(pollMs, until - now()))); // never negative: the clock may pass `until` after the check
     }
   } catch (err) {
     if (FIFO_KINDS.includes(kind) && err?.code !== 'already-queued') await withdraw(kind, opts, pollMs);

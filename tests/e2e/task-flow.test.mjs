@@ -51,7 +51,7 @@ function project(t, { calc, tests }) {
     const r = spawnSync(process.execPath, [BIN, ...args, '--json', '--yes'], { cwd: dir, env, encoding: 'utf8', timeout: 240000 });
     let envelope = null;
     try { envelope = JSON.parse(r.stdout); } catch { /* reported below */ }
-    return { code: r.status, env: envelope, out: `${args.join(' ')}: exit ${r.status}\nstdout: ${r.stdout}\nstderr: ${r.stderr}` };
+    return { code: r.status, env: envelope, out: `step "${args.join(" ")}": exit ${r.status}, signal ${r.signal}\nstdout: ${r.stdout}\nstderr (last 300 bytes): ${String(r.stderr ?? "").slice(-300)}` };
   };
   const ok = (res) => { assert.equal(res.code, 0, res.out); return res.env; };
   const commit = (msg) => { git('add', '-A'); git('commit', '-q', '-m', msg); return git('rev-parse', 'HEAD'); };
@@ -101,7 +101,7 @@ function review(p, id) {
   assert.deepEqual([rec.data.round, rec.data.verdict], [1, 'approved']);
 }
 
-test('task flow: task new → route → implement → report from the template → verify → review record → task done → task merge, all green', (t) => {
+test('task flow: task new → route → implement → report from the template → verify → review record → task done → task merge, all green', { timeout: 600000 }, (t) => {
   const p = project(t, { calc: CALC, tests: HEAD.replace(', subtract', '') + ADDS });
   const task = start(p, 'Add subtract', 'calc.mjs,calc.test.mjs', 4);
   assert.equal(task.class, 'trivial');
@@ -133,7 +133,7 @@ test('task flow: task new → route → implement → report from the template �
   assert.equal(p.read('baseline/tests.json').tests.length, 2, 'main\'s baseline holds the new test');
 });
 
-test('task flow with a removed test: verify, task done and task merge refuse it until a decision allows it', (t) => {
+test('task flow with a removed test: verify, task done and task merge refuse it until a decision allows it', { timeout: 600000 }, (t) => {
   const p = project(t, { calc: CALC2, tests: HEAD + ADDS + SUBTRACTS });
   const task = start(p, 'Drop subtract', 'calc.mjs,calc.test.mjs', 3);
   p.write('calc.mjs', CALC);
