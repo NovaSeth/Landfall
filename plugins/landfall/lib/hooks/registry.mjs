@@ -25,6 +25,7 @@ import { decisionsContext } from './edit-decisions.mjs';
 import { editProtect } from './edit-protect.mjs';
 import { guardBash } from './guard-bash.mjs';
 import { guardWakeup } from './guard-wakeup.mjs';
+import { headroomHook } from './headroom.mjs';
 import { loadNames, stateOf } from './loop-state.mjs';
 import { sessionStart } from './session-start.mjs';
 import { stopGuard } from './stop-guard.mjs';
@@ -53,6 +54,7 @@ export const HOOKS = [
   { name: 'admit-agent', event: 'PreToolUse', matcher: 'Agent', timeout: TIMEOUT_S, budgetMs: BUDGET_MS, handler: admitHook, onError: 'allow', capability: 'admission' },
   { name: 'bind-agent', event: 'PostToolUse', matcher: 'Agent', timeout: TIMEOUT_S, budgetMs: BUDGET_MS, handler: bindHook, onError: 'allow', capability: 'admission' },
   { name: 'release-agent', event: 'SubagentStop', timeout: TIMEOUT_S, budgetMs: BUDGET_MS, handler: releaseHook, onError: 'allow', capability: 'admission' },
+  { name: 'headroom', event: 'PostToolUse', matcher: 'Bash|Edit|Write|Agent', timeout: TIMEOUT_S, budgetMs: BUDGET_MS, handler: headroomHook, onError: 'allow', capability: 'headroom' },
   { name: 'stop-guard', event: 'Stop', timeout: TIMEOUT_S, budgetMs: BUDGET_MS, handler: stopGuard, onError: 'allow' },
 ];
 

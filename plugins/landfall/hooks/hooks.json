@@ -111,6 +111,21 @@
             "timeout": 5
           }
         ]
+      },
+      {
+        "matcher": "Bash|Edit|Write|Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": [
+              "${CLAUDE_PLUGIN_ROOT}/bin/landfall",
+              "hook",
+              "headroom"
+            ],
+            "timeout": 5
+          }
+        ]
       }
     ],
     "SubagentStop": [

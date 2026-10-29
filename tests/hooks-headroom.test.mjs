@@ -22,7 +22,6 @@ const shadow = (f) => {
   const p = join(f.stateDir, 'local', 'shadow.jsonl');
   return existsSync(p) ? readFileSync(p, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l)).filter((r) => r.kind === 'headroom') : [];
 };
-const ON = (f) => ({ env: { ...f.env } });
 
 test('registered: PostToolUse Bash|Edit|Write|Agent, capability headroom, onError allow', () => {
   const h = HOOKS.find((x) => x.name === 'headroom');
@@ -120,4 +119,3 @@ test('only the last 64 KiB is read, and it takes under 50 ms (p95)', (t) => {
   times.sort((a, b) => a - b);
   assert.ok(times[Math.ceil(times.length * 0.95) - 1] <= 50, `p95 ${times[37]} ms`);
 });
-void ON;
