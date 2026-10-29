@@ -142,26 +142,53 @@ function stripToml(line) {
   return line;
 }
 
-// Dependency names of a pyproject.toml, section-aware: requirement strings inside closed arrays of `[project]
-// dependencies`, `[project.optional-dependencies]` and `[dependency-groups]`; `name = …` keys of the poetry
-// dependency tables. Everything else (keywords, descriptions, other tools, comments, unclosed arrays) counts nothing.
+// A dotted TOML key or table header as segments: split on `.` outside quotes, trimmed, one pair of quotes removed.
+// With `stopAtEq` the path ends at the first `=` outside quotes and `rest` is the text after it; no `=` gives null.
+function tomlPath(text, stopAtEq) {
+  const segs = [];
+  let cur = '';
+  let q = null;
+  let i = 0;
+  for (; i < text.length; i++) {
+    const c = text[i];
+    if (q) { cur += c; if (c === q) q = null; continue; }
+    if (c === '"' || c === "'") { q = c; cur += c; continue; }
+    if (stopAtEq && c === '=') break;
+    if (c === '.') { segs.push(cur); cur = ''; continue; }
+    cur += c;
+  }
+  if (stopAtEq && i >= text.length) return null;
+  segs.push(cur);
+  const path = segs.map((s) => s.trim().replace(/^(["'])(.*)\1$/, '$2'));
+  return { path, rest: stopAtEq ? text.slice(i + 1).trim() : '' };
+}
+
+// Dependency names of a pyproject.toml, section-aware: requirement strings inside closed arrays of
+// `project.dependencies`, `project.optional-dependencies.*` and `dependency-groups.*`; valued keys of
+// `tool.poetry.dependencies` and `tool.poetry.group.*.dependencies`. Keys and headers are decoded (quotes, dotted
+// paths) and matched as full paths. Everything else (keywords, descriptions, other tools, comments, unclosed arrays)
+// counts nothing.
 function pyprojectNames(text) {
   const names = [];
   const lines = text.split(/\r?\n/).map(stripToml);
-  let section = '';
+  let section = [];
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].trim();
-    const head = /^\[\[?\s*([^\]]*?)\s*\]\]?$/.exec(line);
-    if (head) { section = head[1]; continue; }
-    const key = /^([A-Za-z0-9][A-Za-z0-9._-]*|"[^"]*"|'[^']*')\s*=\s*(.*)$/.exec(line);
-    if (!key) continue;
-    if (section === 'tool.poetry.dependencies' || /^tool\.poetry\.group\.[^.]+\.dependencies$/.test(section)) {
-      names.push(key[1].replace(/^["']|["']$/g, ''));
+    const head = /^\[\[?(.*?)\]\]?$/.exec(line);
+    if (head) { section = tomlPath(head[1], false).path; continue; }
+    const key = tomlPath(line, true);
+    if (!key || key.path.some((s) => s === '')) continue;
+    const full = [...section, ...key.path];
+    if (full[0] === 'tool' && full[1] === 'poetry') {
+      const at = full[2] === 'dependencies' ? 3 : (full[2] === 'group' && full[4] === 'dependencies' ? 5 : -1);
+      if (at > 0 && full.length > at && /^["'{[]/.test(key.rest)) names.push(full[at]);
       continue;
     }
-    const inArray = (section === 'project' && key[1] === 'dependencies') || section === 'project.optional-dependencies' || section === 'dependency-groups';
-    if (!inArray || !key[2].startsWith('[')) continue;
-    let body = key[2];
+    const inArray = (full.length === 2 && full[0] === 'project' && full[1] === 'dependencies')
+      || (full.length === 3 && full[0] === 'project' && full[1] === 'optional-dependencies')
+      || (full.length === 2 && full[0] === 'dependency-groups');
+    if (!inArray || !key.rest.startsWith('[')) continue;
+    let body = key.rest;
     let j = i;
     while (!/\]\s*$/.test(body) && j + 1 < lines.length) body += `\n${lines[++j]}`;
     if (!/\]\s*$/.test(body)) continue;
