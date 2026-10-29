@@ -4,8 +4,10 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-export async function trustHere(lib, stateDir, names, env = process.env) {
-  const state = await lib('state/index.mjs');
+// Synchronous form for fixtures that write the profile in a plain function: `state` is lib/state/index.mjs.
+// A store write in the test process trusts its set under process.env; a CLI call with its own env (isolatedEnv) reads
+// trust under that env, so a fixture that runs the CLI with another env records it there (T-MG-83).
+export function trustWith(state, stateDir, names, env = process.env) {
   const read = (rel) => { try { return JSON.parse(readFileSync(join(stateDir, rel), 'utf8')); } catch { return null; } };
   const gates = read('profile.json')?.gates ?? [];
   const thresholds = read('config.json')?.thresholds ?? {};
@@ -14,4 +16,8 @@ export async function trustHere(lib, stateDir, names, env = process.env) {
     gates: gates.length ? state.gatesShaOf(gates) : null,
     overrides: Object.keys(thresholds).length ? state.overridesShaOf(thresholds) : null,
   });
+}
+
+export async function trustHere(lib, stateDir, names, env = process.env) {
+  trustWith(await lib('state/index.mjs'), stateDir, names, env);
 }

@@ -11,8 +11,10 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSy
 import { dirname, join } from 'node:path';
 import { isolatedEnv } from './helpers/isolated-env.mjs';
 import { lib, names } from './helpers/hook-fixture.mjs';
+import { trustWith } from './helpers/trust.mjs';
 
 const profile = await lib('profile/index.mjs');
+const state = await lib('state/index.mjs'); // trustWith (T-MG-83)
 const { main } = await lib('cli/main.mjs');
 
 const IDENTITY = '[user]\n\tname = Test User\n\temail = test@example.com\n';
@@ -61,7 +63,10 @@ async function fresh(t, { gateCmd, calc = CALC } = {}) {
   const p = { env, repo, wt, stateDir, counter, base: iso.base };
   p.run = (args, where = 'main') => cli(args, { cwd: where === 'wt' ? wt : repo, env });
   assert.equal((await p.run(['init', '--yes', '--state-dir', stateDir])).code, 0);
-  p.gate = (cmd) => profile.openStore(stateDir, names).write('profile', null, { ...profile.emptyProfile(), gates: [{ name: 'test', cmd, timeoutS: 120, kind: 'test' }] });
+  p.gate = (cmd) => {
+    profile.openStore(stateDir, names).write('profile', null, { ...profile.emptyProfile(), gates: [{ name: 'test', cmd, timeoutS: 120, kind: 'test' }] });
+    trustWith(state, stateDir, names, env);
+  };
   p.gate(gateCmd ?? `echo run >> ${counter} && node --test`);
   p.head = git(repo, env, ['rev-parse', 'HEAD']).trim();
   git(repo, env, ['worktree', 'add', '-q', wt, '-b', 'feature']);
