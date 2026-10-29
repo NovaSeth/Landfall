@@ -19,6 +19,7 @@
 // "<ref>:" or "<ref> ". The first entry without a task is the next step when none of my tasks is open, else a hint.
 // Outcome: action when any action row exists; wait when work runs (my waiting tasks, live runs, blocked or others'
 // tasks); done otherwise (then the state directory must be committed). Rows: { task, state, step, rules, kind }.
+import { currentCalibration, readings as machineReadings, snapshot } from '../sched/index.mjs';
 import { afterOf } from '../state/index.mjs';
 import { DEFAULT_BUDGET_MIN } from './budget.mjs';
 
@@ -32,7 +33,32 @@ const MIN_MS = 60000;
 
 // Every rule ID this table cites (tests check that each resolves in the method).
 export const TABLE_RULES = Object.freeze(['FLW-3', 'ORC-4', 'FLW-4', 'ORC-9', 'FLW-6', 'PRI-6', 'ORC-5', 'REV-6', 'REV-20', 'REV-7', 'REV-5',
-  'REV-11', 'FLW-8', 'ORC-7', 'ORC-11', 'SPC-1', 'SPC-2', 'SPC-11', 'FLW-9', 'PRI-1', 'COL-24', 'FLW-7']);
+  'REV-11', 'FLW-8', 'ORC-7', 'ORC-11', 'SPC-1', 'SPC-2', 'SPC-11', 'FLW-9', 'PRI-1', 'COL-24', 'FLW-7', 'ORC-24']);
+
+const HEAVY_WAIT_MIN = 10;
+
+// ORC-24 watch rows: [{ code, message }] from the heavy queue (tickets of snapshot().queues.heavy: { status, at }), the
+// readings and the calibrated load max ('off' or "8.0"). A heavy ticket live over HEAVY_WAIT_MIN min, load at or over the
+// max. Pure; no row when all is calm.
+export function watchRows({ queue = [], readings = null, loadMax = 'off', now }) {
+  const rows = [];
+  const waits = queue.filter((t) => t.status === 'live').map((t) => Math.floor((now - Date.parse(t.at)) / MIN_MS)).filter(Number.isFinite);
+  const oldest = Math.max(-1, ...waits);
+  if (oldest > HEAVY_WAIT_MIN) rows.push({ code: 'heavy-queue', message: `heavy queue: ${waits.length} waiting, oldest ${oldest} min → hold new dispatches until the gate is through (ORC-24)` });
+  const load = readings?.loadMeasurable === false ? null : readings?.load1;
+  if (loadMax !== 'off' && Number.isFinite(load) && load >= Number(loadMax)) rows.push({ code: 'load', message: `load ${load.toFixed(1)} ≥ ${loadMax} → start no new agents until it falls (ORC-24)` });
+  return rows;
+}
+
+// The watch rows of this machine's scheduler data; unreadable data gives no row (a watch never fails a command).
+export function readWatch({ names, env, now = Date.now(), readings = null }) {
+  try {
+    const r = readings ?? machineReadings();
+    return watchRows({ queue: snapshot({ names, env }).queues.heavy, readings: r, loadMax: currentCalibration({ names, env, readings: r }).calibration.loadMax, now });
+  } catch {
+    return [];
+  }
+}
 
 const natural = (a, b) => a.localeCompare(b, 'en', { numeric: true });
 const cell = (s) => String(s).replace(/[|\r\n]+/g, '/');
@@ -127,7 +153,7 @@ function taskRow(t, { now, bin, lanesOn, caps, budget = DEFAULT_BUDGET_MIN }) {
   }
 }
 
-export function nextSteps({ tasks = [], runs = [], handles = [], me = null, plan = null, lanesOn = false, caps, now, bin, budgets = {}, problem = null, dirty = () => [] }) {
+export function nextSteps({ tasks = [], runs = [], handles = [], me = null, plan = null, lanesOn = false, caps, now, bin, budgets = {}, problem = null, dirty = () => [], watch = [] }) {
   const steps = [];
   const info = [];
   const multi = handles.length > 1;
@@ -183,6 +209,7 @@ export function nextSteps({ tasks = [], runs = [], handles = [], me = null, plan
       steps.push(action('START', 'no tasks yet', `write the spec and the plan (\`${bin} rule SPC-1 SPC-2\`), then create the first task: \`${bin} task new "<title>"\``, ['SPC-1', 'SPC-2']));
     }
   }
+  for (const w of watch) info.push({ task: w.code, state: w.message, step: null, rules: ['ORC-24'], kind: 'watch' }); // notes: never a step, never an exit
   const acting = steps.some((s) => s.kind === 'action');
   const waiting = steps.some((s) => s.kind === 'wait') || info.some((i) => i.kind === 'blocked' || i.kind === 'others') || liveRuns > 0;
   if (!acting && !waiting) {

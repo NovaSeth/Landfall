@@ -21,7 +21,7 @@ import { KINDS, StateError, emailHash, open, resolve } from '../state/index.mjs'
 import { cheapCap, decide, newLoop, parseCaps } from './decide.mjs';
 import { CAP_RANGE, CARRIED_PLAN, DEFAULT_CAPS, LOOP, LOOP_ID, STALL, TERMINAL, UNMEASURED, fixedPrompt } from './kind.mjs';
 import { DEFAULT_BUDGET_MIN, budgetOf, readBudgets } from './budget.mjs';
-import { STATUS_MIN, TABLE_RULES, WAIT_S, nextSteps, parsePlan } from './table.mjs';
+import { STATUS_MIN, TABLE_RULES, WAIT_S, nextSteps, parsePlan, readWatch } from './table.mjs';
 
 export { DEFAULT_BUDGET_MIN, budgetOf, readBudgets };
 export { CAP_RANGE, CARRIED_PLAN, DEFAULT_CAPS, LOOP, LOOP_ID, STALL, STATUS_MIN, TABLE_RULES, TERMINAL, UNMEASURED, WAIT_S, cheapCap, decide, fixedPrompt, newLoop, nextSteps, parseCaps, parsePlan };
@@ -151,7 +151,7 @@ function measure(probe, loop, now) {
 // One tick on an open store. probe: { heads() → text, email() → text | null, cost(startedAt) → { costMicroUsd, partial,
 // unmeasurable, problems }, dirty() → [path] }. Returns { result, reason, nextTickS, repeated, loop, steps, info,
 // costPartial, costProblems }.
-export function tickStore(store, { where, names, now, plan = null, probe }) {
+export function tickStore(store, { where, names, now, plan = null, probe, watch = [] }) {
   const pre = store.read(LOOP.name, null);
   const measured = pre && !pre.exit ? { id: pre.id, startedAt: pre.startedAt, cost: measure(probe, pre, now) } : null;
   const heads = probe.heads();
@@ -171,7 +171,7 @@ export function tickStore(store, { where, names, now, plan = null, probe }) {
     const me = snap.team.find((d) => d.emailSha256 === hash)?.handle ?? null;
     const table = nextSteps({
       tasks: snap.tasks, runs: snap.runs, handles: snap.team.map((d) => d.handle), me, plan, lanesOn: snap.lanesOn,
-      caps: loop.caps, now, bin: names.bin, budgets: readBudgets(where.dir, snap.tasks), problem: snap.problem, dirty: probe.dirty,
+      caps: loop.caps, now, bin: names.bin, budgets: readBudgets(where.dir, snap.tasks), problem: snap.problem, dirty: probe.dirty, watch,
     });
     const d = decide(loop, {
       now, fingerprint: fingerprint(heads, snap.files, snap.runs), costMicroUsd: cost?.costMicroUsd ?? null, unmeasurable: cost?.unmeasurable === true,
@@ -185,10 +185,10 @@ export function tickStore(store, { where, names, now, plan = null, probe }) {
 }
 
 // plan: the plan's path as shown (relative to the repository root when inside it), or null.
-export function tick({ cwd, env, names, now = Date.now(), plan = null }) {
+export function tick({ cwd, env, names, now = Date.now(), plan = null, readings = null }) {
   const { where, store } = activeStore({ cwd, env, names });
   const planDoc = plan === null ? null : readPlan(where.worktree, plan);
-  return { where, plan: planDoc?.path ?? null, ...tickStore(store, { where, names, now, plan: planDoc, probe: gitProbe(where, env, names) }) };
+  return { where, plan: planDoc?.path ?? null, ...tickStore(store, { where, names, now, plan: planDoc, probe: gitProbe(where, env, names), watch: readWatch({ names, env, now, readings }) }) };
 }
 
 // A new loop with `caps` over the defaults. A running loop is never replaced; after an ended one (DONE, `loop stop`

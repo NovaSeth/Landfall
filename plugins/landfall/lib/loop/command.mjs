@@ -54,7 +54,7 @@ function render(r, rules, names, now, carried) {
   if (ended) out.push(`The loop ended (${r.result}${r.repeated ? `, recorded ${r.loop.exitAt}` : ''}): ${r.reason}.`);
   const head = ended ? '| left open | state | next step | rules |' : '| task | state | next step | rules |';
   if (r.steps.length) out.push(table(r.steps, head));
-  const sections = [['blocked', 'Blocked (informational):'], ['others', 'Others (informational):'], ['plan', 'Next in the plan (informational):']];
+  const sections = [['blocked', 'Blocked (informational):'], ['others', 'Others (informational):'], ['plan', 'Next in the plan (informational):'], ['watch', 'Watch (informational, ORC-24):']];
   for (const [kind, title] of sections) {
     const rows = r.info.filter((i) => i.kind === kind);
     if (rows.length) out.push('', title, table(rows, '| task | state | next step | rules |'));
@@ -68,7 +68,7 @@ function render(r, rules, names, now, carried) {
 
 export function tick({ flags, names, io }) {
   const now = Date.now();
-  const r = runTick({ cwd: io.cwd, env: io.env, names, now, plan: flags.plan ?? null });
+  const r = runTick({ cwd: io.cwd, env: io.env, names, now, plan: flags.plan ?? null, readings: io.readings ?? null });
   const ended = r.result === 'DONE' || r.result === 'STALLED' || r.result === 'BUDGET';
   const carried = r.plan !== null && CARRIED_PLAN.test(r.plan) ? r.plan : null;
   const { rules, warning } = ended ? { rules: [], warning: null } : rulesOf(r.steps);
