@@ -24,7 +24,7 @@ export const GLOB_LIMITS = Object.freeze({ chars: 200, wildcards: 16, alternativ
 export function scopeProblem(glob) {
   if (typeof glob !== 'string') return 'a scope glob must be text';
   if (glob.length > GLOB_LIMITS.chars) return `scope glob is over ${GLOB_LIMITS.chars} characters; it matches nothing`;
-  if ((glob.match(/\*+|\?|\{/g) ?? []).length > GLOB_LIMITS.wildcards) return `scope glob has more than ${GLOB_LIMITS.wildcards} wildcards; it matches nothing`;
+  if ((glob.match(/\*\*|\*|\?|\{/g) ?? []).length > GLOB_LIMITS.wildcards) return `scope glob has more than ${GLOB_LIMITS.wildcards} wildcards; it matches nothing`;
   return tokenize(glob) === null ? `scope glob has more than ${GLOB_LIMITS.alternatives} brace alternatives; it matches nothing` : null;
 }
 

@@ -609,7 +609,7 @@ test('review r1 F3: the wildcard limit counts the tokenizer units: a run of 34 s
 
 test('review r1 F1: record validation reports a refused scope glob', async () => {
   const { recordErrors } = await import(pathToFileURL(join(pluginDir, 'lib', 'decisions', 'record.mjs')).href);
-  const doc = { schema: 1, id: 'D-AB-1', kind: 'decision', date: '2026-10-01', status: 'active', title: 'T', scope: ['src/**'] };
+  const doc = { schema: 1, id: 'D-AB-1', kind: 'general', author: 'AB', date: '2026-10-01', status: 'active', title: 'T', scope: ['src/**'] };
   assert.deepEqual(recordErrors(doc, 'D-AB-1.md'), []);
   assert.match(recordErrors({ ...doc, scope: ['*a'.repeat(17)] }, 'D-AB-1.md').join('\n'), /more than 16 wildcards/);
 });

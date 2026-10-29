@@ -116,7 +116,7 @@ function nodeTest(body) {
 
 function testGate(pm, body) {
   const run = `${pm} run test`;
-  body = body.slice(0, MAX_GATE_BODY);
+  if (body.length > MAX_GATE_BODY) return run; // a cut chain could pass for one command: no flag is appended
   if (nodeTest(body) && !/--test-reporter/.test(body)) return `NODE_OPTIONS="$NODE_OPTIONS --test-reporter=tap" ${run}`;
   const single = !/[;&|]/.test(body);
   const pass = pm === 'npm' ? `${run} --` : run;
@@ -207,7 +207,7 @@ function pyprojectNames(text) {
     let body = key.rest;
     let j = i;
     let closed = /\]\s*$/.test(body);
-    while (!closed && j + 1 < lines.length && j - i < MAX_ARRAY_LINES) {
+    while (!closed && j + 1 < lines.length && j - i + 1 < MAX_ARRAY_LINES) {
       const next = lines[j + 1].trim();
       if (next.startsWith('[')) break;
       j++;

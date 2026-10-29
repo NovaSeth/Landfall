@@ -7,6 +7,7 @@
 // The field checks are the state unit's schema validator over the DECISION kind (validation only: records are
 // Markdown, so they are created through lib/state allocateId, never through the JSON kind API).
 import { PATTERNS, check, defineKind } from '../state/index.mjs';
+import { scopeProblem } from './context.mjs';
 import { codePointName, forModel, hidden } from '../text/clean.mjs';
 
 export const STATUSES = Object.freeze(['active', 'superseded', 'retired']);
@@ -173,6 +174,10 @@ export function recordErrors(doc, fileName) {
   if (doc.status === 'active' && doc.supersededBy) errors.push(at(`an active decision has no supersededBy (found ${doc.supersededBy})`));
   if (doc.supersededBy === doc.id || (doc.supersedes ?? []).includes(doc.id)) errors.push(at('a decision cannot supersede itself'));
   if (doc.kind === 'review-close' && !doc.task) errors.push(at('kind review-close needs task (the task whose review step it closes)'));
+  for (const glob of doc.scope ?? []) {
+    const problem = scopeProblem(glob);
+    if (problem) errors.push(at(problem));
+  }
   return errors;
 }
 
