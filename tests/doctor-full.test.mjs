@@ -39,7 +39,7 @@ const { HOOKS } = await lib('hooks/registry.mjs');
 const EVENTS = [...new Set(HOOKS.map((h) => h.event))];
 
 // T-MG-77 A2 (intended): the local row follows flags.
-const ROW_IDS = ['release', 'heartbeat', 'bin-path', 'state', 'profile', 'flags', 'local', 'providers', 'scheduler', 'guard', 'context', 'permissions', 'protection'];
+const ROW_IDS = ['release', 'heartbeat', 'bin-path', 'git', 'state', 'profile', 'flags', 'local', 'providers', 'scheduler', 'guard', 'context', 'permissions', 'protection'];
 const STATUSES = ['ok', 'warn', 'fail', 'skip'];
 const RULES = [`Bash(${names.bin} exec:*)`, `Bash(${names.bin} wait:*)`]; // U3
 const SYSTEM_DIRS = ['/usr/bin', '/bin'];
@@ -436,4 +436,17 @@ test('T-MG-77 A2-6: a local/ marked by another machine is reported foreign, move
   assert.equal(cli(s, project, ['init', '--yes']).status, 0);
   d = doctor(s, { cwd: project });
   assert.equal(d.row('local').detail, 'local.foreign-*: 1 kept (safe to delete after review)');
+});
+
+test('T-MG-85: the git row passes at 2.24 or later and warns below it', (t) => {
+  const s = scratch(t);
+  fakeClaude(s.bin);
+  const fakeGit = (v) => { writeFileSync(join(s.bin, 'git'), `#!/bin/sh\ncase "$1" in --version) echo "git version ${v}";; *) exit 1;; esac\n`); chmodSync(join(s.bin, 'git'), 0o755); };
+  fakeGit('2.20.1');
+  let d = doctor(s);
+  assert.equal(d.row('git').status, 'warn', JSON.stringify(d.row('git')));
+  assert.match(d.row('git').detail, /2\.20\.1.*2\.24/);
+  fakeGit('2.24.0');
+  d = doctor(s);
+  assert.equal(d.row('git').status, 'ok', JSON.stringify(d.row('git')));
 });
