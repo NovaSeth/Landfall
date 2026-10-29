@@ -11,8 +11,8 @@
 //   deactivate: removes untracked state (a file tracked by git: refused with the git rm command, nothing
 //     removed) or the link of an external directory (its files are kept), then records the opt-out.
 // Context comes only from the arguments (target directory, env); a refusal writes nothing.
-import { existsSync, statSync } from 'node:fs';
-import { join, relative, resolve as resolvePath } from 'node:path';
+import { existsSync, readdirSync, rmdirSync, statSync } from 'node:fs';
+import { dirname, join, relative, resolve as resolvePath } from 'node:path';
 import { makeDirs, removeEmptyDirs, removeTree } from '../fsx/index.mjs';
 import { git } from '../git/index.mjs';
 import { checkWrite } from './document.mjs';
@@ -54,10 +54,16 @@ function target(where, options, cwd) {
 // path. A trust entry that cannot be written refuses the link (trust-write-failed, naming trust.json).
 function trustLink(where, dir, names, env) {
   if (!where.dataDir) return; // updateProject refuses: no-machine-data
+  const created = []; // the directories this call makes, outermost first
+  for (let d = dir; !existsSync(d) && !created.includes(d); d = dirname(d)) created.unshift(d);
   try {
     guarded(() => makeDirs(dir));
     recordTrust({ dataDir: where.dataDir, names, key: repoKey(dir, { env }) });
   } catch (err) {
+    // a failed trust write leaves no empty directory that this call created (innermost first, only while empty)
+    for (const d of [...created].reverse()) {
+      try { if (readdirSync(d).length === 0) rmdirSync(d); else break; } catch { break; }
+    }
     throw new StateError('trust-write-failed', 'ENV', `${join(where.dataDir, 'trust.json')} could not be written (${err.message}); ${dir} was not linked`, { hint: 'check that file and its directory, then run the command again' });
   }
 }
