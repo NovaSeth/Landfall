@@ -31,6 +31,7 @@ const lib = (rel) => import(pathToFileURL(join(pluginDir, 'lib', rel)).href);
 const loop = await lib('loop/index.mjs');
 const state = await lib('state/index.mjs');
 const { Store } = await lib('state/store.mjs');
+const { CAP_S } = await lib('runs/kind.mjs');
 
 // lib/state's store with plain paths and writes: every read, parse, schema and field check is the real one; the path
 // safety checks (links, case aliases: tests/state-paths.test.mjs) and durability are left out.
@@ -134,7 +135,8 @@ function sequence(seed, base, { real = false } = {}) {
       if (out.exit === null) {
         out.exit = res.result;
         extra = r.int(1, 3);
-        if (res.result === 'STALLED' && live.size > 0) fail('STALLED while a run is live');
+        // a record without capS is live up to its role's default cap plus the 120 s grace (fix round 2 F3)
+        if (res.result === 'STALLED' && [...live.values()].some((t) => now - t < (CAP_S.reviewer + 120) * 1000)) fail('STALLED while a run is live');
         if (res.result === 'STALLED' && (onDisk.sameCount < 3 || now - Date.parse(onDisk.sameSince) < 30 * MIN)) fail('STALLED before 3 unchanged ticks spanning 30 min');
       } else if (res.result !== out.exit || !res.repeated) fail(`after ${out.exit} a tick returned ${res.result} (repeated ${res.repeated})`);
       // the misbehaving agent keeps trying to schedule wakeups
@@ -161,7 +163,7 @@ function sequence(seed, base, { real = false } = {}) {
     if (r.chance(0.15)) heads++;
     if (r.chance(0.15)) {
       const ids = store.list('task');
-      if (ids.length) { const id = `fake-${r.pick(ids)}-reviewer-${++runN}`; live.set(id, true); writeRun(id, id.split('-').slice(1, 4).join('-'), 'running'); }
+      if (ids.length) { const id = `fake-${r.pick(ids)}-reviewer-${++runN}`; live.set(id, now); writeRun(id, id.split('-').slice(1, 4).join('-'), 'running'); }
     }
     for (const id of [...live.keys()]) if (r.chance(0.3)) { live.delete(id); writeRun(id, id.split('-').slice(1, 4).join('-'), r.pick(['done', 'failed', 'timeout'])); }
     cost += r.chance(0.5) ? r.int(0, 5000) : 0;

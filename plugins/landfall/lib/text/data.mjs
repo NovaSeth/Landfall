@@ -5,6 +5,7 @@
 //                         zero-width), every run of whitespace (newline, CR, tab included) one space, trimmed, cut to
 //                         max characters with "…" (no max: the whole line)
 //   codeText(value, max)  dataLine with backticks and | replaced by ': safe inside a Markdown code span (AR-1)
+//   codeSpan(text)        a Markdown code span holding text byte for byte: a backtick run longer than any inside
 //   shellQuote(value)     one POSIX shell word in single quotes (' → '\''): the shell expands nothing in it
 //   DATA_MARKER           the line that precedes repository-derived values in the tick and the session context
 //   FENCE_MARKER          the line that precedes a fenced list of repository data in a brief
@@ -22,6 +23,15 @@ export function dataLine(value, max = Infinity) {
 // a data line that cannot close a Markdown code span or split a table cell: backticks and `|` become '
 export const codeText = (value, max) => dataLine(value, max).replace(/[`|]/g, "'");
 
-export const shellQuote =(value) => `'${String(value ?? '').replace(/'/g, "'\\''")}'`;
+// a Markdown code span that holds `text` byte for byte (CommonMark): its delimiter is a backtick run longer than any run
+// inside, with a space of padding at each edge when the text starts or ends with a backtick (or with a space at both)
+export function codeSpan(text) {
+  const s = String(text ?? '');
+  const d = '`'.repeat(Math.max(0, ...(s.match(/`+/g) ?? []).map((r) => r.length)) + 1);
+  const pad = /^`|`$/.test(s) || (s.length > 1 && s.startsWith(' ') && s.endsWith(' ') && s.trim() !== '') ? ' ' : '';
+  return `${d}${pad}${s}${pad}${d}`;
+}
+
+export const shellQuote = (value) => `'${String(value ?? '').replace(/'/g, "'\\''")}'`;
 
 export const fenceLine = (line) => (/^ {0,3}(`{3,}|~{3,})/.test(line) ? `    ${line}` : line);
