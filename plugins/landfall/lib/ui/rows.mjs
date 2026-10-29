@@ -7,7 +7,7 @@
 import { readRunRecords, runsStore } from '../runs/index.mjs';
 import { resolve } from '../state/index.mjs';
 
-const ROW_NAME = /^[a-z0-9]+-(reviewer|implementer)-(T-[A-Z]{2,4}-\d+)$/;
+const ROW_NAME = /^[a-z0-9]+-(security-reviewer|reviewer|implementer)-(T-[A-Z]{2,4}-\d+)$/;
 const MAX_INPUT = 1024 * 1024;
 const DEADLINE_MS = 1000;
 const pad = (n) => String(n).padStart(2, '0');
