@@ -456,10 +456,10 @@ Read-only.
 Exit codes: 0 OK · 1 FAIL · 7 REFUSED · 8 ENV
 ```
 
-### `landfall gen apply [<target…>] [--dry-run] [--yes] [--json]`
+### `landfall gen apply [<target…>] [--dry-run] [--commit <sha>] [--yes] [--json]`
 
 ```text
-usage: landfall gen apply [<target…>] [--dry-run] [--yes] [--json]
+usage: landfall gen apply [<target…>] [--dry-run] [--commit <sha>] [--yes] [--json]
 
 Write the generated files (CI workflow, pre-push hook, PR template, CODEOWNERS and AGENTS.md blocks); edits survive.
 Targets: the named ones, else those whose capability flag is on and those generated before; agents-md is on while the profile
@@ -472,22 +472,26 @@ Arguments:
   target  ci, pre-push, codeowners, pr-template or agents-md; default: the enabled and already generated ones
 
 Options:
-  --dry-run  decide and report every target; write nothing
+  --dry-run       decide and report every target; write nothing
+  --commit <sha>  pin the CI workflow npx spec to this full commit SHA (40 lowercase hex) instead of the release tag
 
 Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED. Read-only with --dry-run: no consent needed.
 Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
 ```
 
-### `landfall gen plan [<target…>] [--json]`
+### `landfall gen plan [<target…>] [--commit <sha>] [--json]`
 
 ```text
-usage: landfall gen plan [<target…>] [--json]
+usage: landfall gen plan [<target…>] [--commit <sha>] [--json]
 
 Show what gen apply would do for each generated file; writes nothing.
 The decisions and exit code of `gen apply --dry-run`, without consent: exit 1 when apply would leave a file to merge by hand.
 
 Arguments:
   target  ci, pre-push, codeowners, pr-template or agents-md; default: the enabled and already generated ones
+
+Options:
+  --commit <sha>  pin the CI workflow npx spec to this full commit SHA (40 lowercase hex) instead of the release tag
 
 Read-only.
 Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
