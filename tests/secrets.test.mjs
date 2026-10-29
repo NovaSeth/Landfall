@@ -649,7 +649,14 @@ for (const operation of ['matchLine', 'redact']) {
 
 test('D1: every window is bounded and overlapping; edge secrets are found and fully redacted', () => {
   const windows = [];
-  secretPatterns.matchLine('.'.repeat(14000), [{ id: 'probe', re: { exec: (s) => { windows.push(s); return null; } } }]);
+  const exec = RegExp.prototype.exec;
+  try {
+    RegExp.prototype.exec = function (s) {
+      if (this.global) windows.push(s);
+      return exec.call(this, s);
+    };
+    secretPatterns.matchLine('.'.repeat(14000));
+  } finally { RegExp.prototype.exec = exec; }
   assert.ok(windows.length > 1);
   assert.ok(windows.every((s) => s.length <= 4096));
   assert.ok(secretPatterns.WINDOW_OVERLAP >= secretPatterns.MAX_PATTERN_SPAN);
@@ -683,7 +690,7 @@ test('D3: URL password placeholders and missing passwords are clean', () => {
   }
   assert.equal(secretPatterns.matchLine('postgres://user@host/db'), null);
 });
-for (const name of ['id_rsa', 'id_dsa', 'id_ecdsa', 'id_ed25519', '.npmrc']) {
+for (const name of ['id_rsa', 'id_dsa', 'id_ecdsa', 'id_ed25519']) {
   test(`D3: ${name} is a key file; its template/public counterpart is clean`, () => {
     assert.equal(secretPatterns.isKeyFile(`config/${name}`), true);
     assert.equal(secretPatterns.isKeyFile(`config/${name}.example`), false);
@@ -691,18 +698,18 @@ for (const name of ['id_rsa', 'id_dsa', 'id_ecdsa', 'id_ed25519', '.npmrc']) {
   });
 }
 
-test('D8: tree and artifact skip a 3 MiB file, report its path/count and still scan small files', async (t) => {
+test('AR-1: tree and artifact stream a 3 MiB file, finding a secret at byte 2.5 MiB', async (t) => {
   const d = repo(t);
-  put(d, 'large.txt', `${ghToken}\n` + '.'.repeat(3 * 1024 * 1024));
+  const at = 2.5 * 1024 * 1024;
+  put(d, 'large.txt', '.'.repeat(at) + ghToken + '\n' + '.'.repeat(3 * 1024 * 1024 - at - ghToken.length - 1));
   put(d, 'small.txt', ghToken);
   for (const args of [[], ['--artifact', 'large.txt']]) {
     const r = await scan(d, ...args);
-    assert.equal(r.env.data.skipped.length, 1);
-    assert.equal(r.env.data.skipped[0].path, 'large.txt');
-    assert.equal(r.env.data.skipped[0].reason, 'over 2 MiB');
-    assert.match(r.stdout, /not scanned \(over 2 MiB\): large.txt/);
-    assert.deepEqual(where(r), args.length ? [] : ['small.txt:1']);
-    assert.equal(r.env.data.scanned.files, args.length ? 0 : 1);
+    assert.equal(r.status, 1, show(r));
+    assert.deepEqual(r.env.data.skipped, []);
+    assert.deepEqual(where(r), args.length ? ['large.txt:1'] : ['large.txt:1', 'small.txt:1']);
+    assert.equal(r.env.data.scanned.files, args.length ? 1 : 2);
+    noLeak(r, ghToken);
   }
 });
 
@@ -724,4 +731,124 @@ test('D9: only test/fixture paths exempt marked lines, counted in tree, staged a
   assert.equal(r.env.data.findings.length, production.length);
   assert.equal(r.env.data.exempted, fixtures.length);
   assert.match(r.stdout, /8 synthetic lines exempted/);
+});
+
+// T-MG-72 fix round 1: regressions for the orchestrator decision and review findings.
+test('fix1 .npmrc: registry-only configuration is clean; credentials are content findings', async (t) => {
+  const d = repo(t);
+  assert.equal(secretPatterns.isKeyFile('.npmrc'), false);
+  put(d, '.npmrc', 'registry=https://registry.npmjs.org/\n');
+  assert.equal((await scan(d)).status, 0);
+  for (const [name, value] of [['_authToken', 'npm_' + 'a1B2'.repeat(9)], ['_auth', 'a1B2'.repeat(9)], ['_password', 'a1B2'.repeat(9)]]) { // SYNTH
+    put(d, '.npmrc', `//registry.npmjs.org/:${name}=${value}\n`);
+    const r = await scan(d);
+    assert.equal(r.status, 1, show(r));
+    assert.deepEqual(r.env.data.findings.map((f) => [f.where, f.type]), [['.npmrc:1', 'npm-token']]);
+    noLeak(r, value);
+    for (const placeholder of ['${NPM_TOKEN}', '<placeholder>', '************']) {
+      put(d, '.npmrc', `//registry.npmjs.org/:${name}=${placeholder}\n`);
+      assert.equal((await scan(d)).status, 0);
+    }
+  }
+});
+
+test('fix1 AR-1: files over the hard cap make tree and artifact scans incomplete, exit 1', async (t) => {
+  const { secrets } = await lib('secrets/command.mjs');
+  const { FILE_MAX } = await lib('secrets/scan.mjs');
+  const d = repo(t);
+  put(d, 'large.txt', '.'.repeat(1025));
+  for (const flags of [{}, { artifact: 'large.txt' }]) {
+    const r = secrets({ flags, names, io: { cwd: d, env: process.env }, fileMax: 1024 });
+    assert.equal(r.code, 1);
+    assert.equal(r.data.incomplete, true);
+    assert.ok(r.errors.some((e) => e.code === 'scan-incomplete'));
+    assert.deepEqual(r.data.skipped.map((f) => f.path), ['large.txt']);
+    assert.doesNotMatch(r.text, /secrets: clean/);
+    assert.match(r.text, /large\.txt/);
+    const atCap = secrets({ flags, names, io: { cwd: d, env: process.env }, fileMax: 1025 });
+    assert.equal(atCap.code ?? 0, 0);
+    assert.equal(atCap.data.incomplete, false);
+  }
+  assert.equal(FILE_MAX, 64 * 1024 * 1024);
+});
+
+test('fix1 AR-2: JWT headers of 1500 characters are detected and redacted across windows', () => {
+  const token = 'eyJ' + 'a'.repeat(1497) + '.eyJ' + 'b'.repeat(20) + '.sig'; // SYNTH
+  for (const offset of [0, 99, 2046, 3500, 4090]) {
+    const text = '.'.repeat(offset) + token + ' '.repeat(3000);
+    assert.equal(secretPatterns.matchLine(text)?.id, 'jwt');
+    assert.ok(!redactGate(text).includes(token));
+  }
+});
+
+for (const operation of ['matchLine', 'redact']) {
+  for (const [shape, unit, suffix, limit] of [['JWT', 'eyJ', '', 500], ['URL scheme', 'a'.repeat(4000) + '://', '', 300]]) {
+    test(`fix1 F1: ${operation} scans 1 MiB of ${shape} within ${limit} ms`, () => {
+      const input = unit.repeat(Math.ceil(1048576 / unit.length)).slice(0, 1048576) + suffix;
+      const run = operation === 'matchLine' ? secretPatterns.matchLine : redactGate;
+      const start = performance.now();
+      const result = run(input);
+      const elapsed = performance.now() - start;
+      assert.equal(result, operation === 'matchLine' ? null : input);
+      assert.ok(elapsed < limit, `${operation}/${shape}: ${elapsed.toFixed(1)} ms (limit ${limit})`);
+    });
+  }
+}
+
+test('fix1 AR-3: anchored project patterns run once on the first 64 KiB of the whole line', () => {
+  const { patterns, errors } = secretPatterns.projectPatterns('^TOPSECRET-[0-9]+$');
+  assert.deepEqual(errors, []);
+  const token = 'TOPSECRET-' + '1'.repeat(4990); // SYNTH
+  assert.equal(secretPatterns.matchLine(token, patterns)?.id, 'project:1');
+  assert.equal(secretPatterns.matchLine('.' + token, patterns), null);
+  const inputs = [];
+  const probe = [{ id: 'probe', re: { exec: (line) => { inputs.push(line); return null; } } }];
+  secretPatterns.matchLine('.'.repeat(70000), probe);
+  assert.deepEqual(inputs.map((line) => line.length), [65536]);
+  const tail = secretPatterns.projectPatterns('TAILSECRET$').patterns;
+  assert.equal(secretPatterns.matchLine('.'.repeat(65536) + 'TAILSECRET', tail), null);
+});
+
+test('fix1 F2: exported patterns have stable repeated test results and no global state', () => {
+  const p = secretPatterns.PATTERNS[0];
+  assert.deepEqual([p.re.test(ghToken), p.re.test(ghToken)], [true, true]);
+  assert.ok(secretPatterns.PATTERNS.every(({ re }) => !re.global));
+});
+
+test('fix1 F3: artificial window starts cannot create an openai-key match', () => {
+  for (const offset of [99, 2046]) {
+    const text = '.'.repeat(offset) + 'task-' + 'abcdefghijklmnopqrstuvwxyz' + ' '.repeat(3000); // SYNTH
+    assert.equal(secretPatterns.matchLine(text), null);
+    assert.equal(redactGate(text), text);
+  }
+});
+
+test('fix1 F3: artificial window ends cannot satisfy a YAML end anchor', () => {
+  const assignment = 'api_key: ' + 'a'.repeat(20); // SYNTH
+  const text = '.'.repeat(4096 - assignment.length) + assignment + ' trailing text';
+  assert.equal(secretPatterns.matchLine(text), null);
+  assert.equal(secretPatterns.matchLine('.'.repeat(4096) + assignment)?.id, 'assigned-secret');
+});
+
+
+test('fix1 stream boundaries: tokens, true line anchors, markers and project prefixes survive chunks', async (t) => {
+  const d = repo(t);
+  const chunk = 1024 * 1024;
+  put(d, 'crossing.txt', '.'.repeat(chunk - 12) + ghToken + '\napi_key: ' + 'a'.repeat(20)); // SYNTH
+  put(d, `${names.stateDir}/secrets-patterns.txt`, '^TOPSECRET-[0-9]{4990}$\n');
+  put(d, 'project.txt', 'TOPSECRET-' + '1'.repeat(4990)); // SYNTH
+  put(d, 'tests/fixture.txt', ghToken + ' '.repeat(chunk - ghToken.length - 3) + 'SYNTH\n');
+  put(d, 'tests/near.txt', ghToken + ' '.repeat(chunk - ghToken.length - 5) + 'SYNTHESIS\n');
+  put(d, 'edge.txt', '.'.repeat(chunk - 2) + 'task-' + 'abcdefghijklmnopqrstuvwxyz' + ' '.repeat(3000)); // SYNTH
+  const r = await scan(d);
+  assert.deepEqual(where(r), ['crossing.txt:1', 'crossing.txt:2', 'project.txt:1', 'tests/near.txt:1']);
+  assert.equal(r.env.data.exempted, 1);
+  noLeak(r, ghToken);
+});
+
+
+test('fix1 .npmrc: short non-placeholder auth and password values are findings', () => {
+  for (const name of ['_authToken', '_auth', '_password']) {
+    assert.equal(secretPatterns.matchLine(`//registry.npmjs.org/:${name}=a1B2`)?.id, 'npm-token'); // SYNTH
+  }
 });
