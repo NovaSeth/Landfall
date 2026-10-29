@@ -1177,10 +1177,10 @@ Read-only.
 Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
 ```
 
-### `landfall task merge <id…> [--branch <branch>] [--adopt] [--yes] [--json]`
+### `landfall task merge [<id…>] [--branch <branch>] [--ready] [--adopt] [--yes] [--json]`
 
 ```text
-usage: landfall task merge <id…> [--branch <branch>] [--adopt] [--yes] [--json]
+usage: landfall task merge [<id…>] [--branch <branch>] [--ready] [--adopt] [--yes] [--json]
 
 Merge a task branch with --no-ff --no-commit, run the outcome gates on the merged tree, commit only on pass.
 A conflict or a failing gate aborts the merge (exit 1) and leaves the branch as it was; the tree must be clean.
@@ -1189,12 +1189,17 @@ recorded on the task (a merged event and mergedAt). --adopt records tasks merged
 each task whose branch tip is an ancestor of HEAD; the others are reported. A failing gate records nothing.
 Any change to the gates needs a new gate-change decision. The commit runs your hooks; a hook that changes the
 tree undoes the commit (the merge stays staged).
+Several IDs, or --ready (the done, unmerged tasks with a branch), merge as one batch: the branches merge with
+--no-ff in a temporary worktree, the gates run once on the integrated tree, a failure is bisected and only the
+passing tasks merge, a conflict leaves only that task out, the target is fast-forwarded only if it did not move,
+and a branch that changes the gates is skipped (merge it alone). One line per task, the gate runs, the batch id.
 
 Arguments:
-  id  task ID such as T-AB-1 (several with --adopt)
+  id  task ID such as T-AB-1 (several: one batch, or with --adopt)
 
 Options:
   --branch <branch>  the branch or commit to merge (default: the task's branch)
+  --ready            merge every done, unmerged task with a branch as one batch, in task order
   --adopt            record tasks already merged by hand into HEAD, after one gate run on HEAD
 
 Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.

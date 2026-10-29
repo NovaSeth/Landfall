@@ -16,4 +16,4 @@ Rules: `{{bin}} rule PRI-3 PRI-4 PRI-18 ORC-1 ORC-2 ORC-3 ORC-4 ORC-7 ORC-8 ORC-
 5. Check it: commits, tree, scope, red/green (ORC-8, FLW-6); then in the worktree `{{bin}} verify <id> --yes`. Fail: `task set <id> fix-round --round <k> --addressed <n> --open <n>`.
 6. Review as `{{bin}} brief <id>` says (none, `{{plugin}}:reviewer`, `{{plugin}}:security-reviewer` or `{{plugin}}:external`): `{{bin}} review brief <id> --write --yes`, the `review` skill, `{{bin}} review record <id> --from <file> --yes`.
 7. At most 2 fix rounds; then `{{bin}} decide --kind review-close --task <id> --remaining <blocking IDs> --yes`.
-8. Finish: `{{bin}} task done <id> --yes`, `{{bin}} task merge <id> --yes`, `{{bin}} commit --yes`. After compaction: `{{bin}} task show <id>` (MEM-11).
+8. Finish: `{{bin}} task done <id> --yes`, ready tasks as one batch `{{bin}} task merge <ids…> | --ready --yes`, `{{bin}} commit --yes`. After compaction: `{{bin}} task show <id>` (MEM-11).
