@@ -105,6 +105,16 @@ export function removeEmptyDirs(leaf, top) {
   }
 }
 
+// Removes `path` only when it is an empty directory; returns whether it did (false: not empty, missing or not a directory).
+export function removeEmptyDir(path) {
+  try {
+    rmdirSync(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // Removes a file or a directory tree; a symbolic link is removed itself, never followed. A missing path is fine.
 export const removeTree = (path) => rmSync(path, { recursive: true, force: true });
 // Moves a file or directory tree on the same volume (one rename; the target must not exist for a directory).

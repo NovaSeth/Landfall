@@ -11,9 +11,9 @@
 //   deactivate: removes untracked state (a file tracked by git: refused with the git rm command, nothing
 //     removed) or the link of an external directory (its files are kept), then records the opt-out.
 // Context comes only from the arguments (target directory, env); a refusal writes nothing.
-import { existsSync, readdirSync, rmdirSync, statSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
 import { dirname, join, relative, resolve as resolvePath } from 'node:path';
-import { makeDirs, removeEmptyDirs, removeTree } from '../fsx/index.mjs';
+import { makeDirs, removeEmptyDir, removeEmptyDirs, removeTree } from '../fsx/index.mjs';
 import { git } from '../git/index.mjs';
 import { checkWrite } from './document.mjs';
 import { StateError, guarded } from './errors.mjs';
@@ -62,7 +62,7 @@ function trustLink(where, dir, names, env) {
   } catch (err) {
     // a failed trust write leaves no empty directory that this call created (innermost first, only while empty)
     for (const d of [...created].reverse()) {
-      try { if (readdirSync(d).length === 0) rmdirSync(d); else break; } catch { break; }
+      if (!removeEmptyDir(d)) break;
     }
     throw new StateError('trust-write-failed', 'ENV', `${join(where.dataDir, 'trust.json')} could not be written (${err.message}); ${dir} was not linked`, { hint: 'check that file and its directory, then run the command again' });
   }
