@@ -10,6 +10,6 @@ export function providers({ flags, names, io }) {
 }
 
 export function providersAdd({ args, flags, names, io }) {
-  const entry = addProvider({ names, env: io.env, id: args.id, argv: flags.argv, sandboxMap: flags.sandboxMap });
+  const entry = addProvider({ names, env: io.env, id: args.id, argv: flags.argv, sandboxMap: flags.sandboxMap, envNames: flags.env });
   return { data: entry, text: `declared ${entry.id}: ${entry.argv} (${entry.roles.join(', ')})\n` };
 }

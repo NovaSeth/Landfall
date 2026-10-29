@@ -11,6 +11,8 @@ import { cleanLine, lastLineOf, versionOf } from './probe.mjs';
 export const id = 'gemini';
 export const bins = Object.freeze(['gemini']);
 export const sandboxes = Object.freeze({ reviewer: 'plan', implementer: 'auto_edit' });
+// The parent's variables the provider gets besides the base and lease ones (exec childEnv, B-6); NAME_* is a prefix.
+export const envNames = Object.freeze(['GEMINI_*', 'GOOGLE_*', 'HTTPS_PROXY', 'HTTP_PROXY', 'NO_PROXY']);
 
 export const detect = ({ env }) => versionOf('gemini', env);
 export const auth = () => 'unknown';

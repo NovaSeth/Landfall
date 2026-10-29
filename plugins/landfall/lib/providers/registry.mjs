@@ -10,7 +10,7 @@ import { makeDirs, withLock, writeAtomic } from '../fsx/index.mjs';
 import { StateError, check, machineDataDir, serialize } from '../state/index.mjs';
 import * as codex from './codex.mjs';
 import * as gemini from './gemini.mjs';
-import { fromEntry, parseSandboxMap, parseTemplate } from './generic.mjs';
+import { fromEntry, parseEnvNames, parseSandboxMap, parseTemplate } from './generic.mjs';
 import { PROVIDERS, PROVIDER_ID, ROLES } from './kind.mjs';
 
 export const BUILTINS = Object.freeze([codex, gemini].map((a) => Object.freeze({ ...a, kind: 'builtin' })));
@@ -31,6 +31,7 @@ function readFile(dir) {
     return empty();
   }
   if (Number.isInteger(doc?.schema) && doc.schema > PROVIDERS.version) return { ...empty(), newer: doc.schema };
+  if (doc?.schema === 1) doc = { ...doc, schema: PROVIDERS.version }; // schema 2 only adds the optional env
   return check(PROVIDERS, doc).length ? empty() : doc;
 }
 function update(dir, names, change) {
@@ -60,7 +61,8 @@ function detectOne(a, env) {
   const d = a.detect({ env });
   const auth = d.found ? a.auth({ env }) : 'missing';
   const roles = ROLES.filter((r) => Object.hasOwn(a.sandboxes, r));
-  return { id: a.id, kind: a.kind, found: d.found, path: d.path, version: d.version, auth, roles, sandboxes: roles.map((r) => a.sandboxes[r]), error: d.error };
+  const error = [d.error, a.note].filter(Boolean).join('; ').slice(0, 300) || null;
+  return { id: a.id, kind: a.kind, found: d.found, path: d.path, version: d.version, auth, roles, sandboxes: roles.map((r) => a.sandboxes[r]), error };
 }
 
 // { at, cached, rows }: the cached rows when fresh (and none was declared since), else a probe of every adapter.
@@ -79,15 +81,17 @@ export function detectProviders({ names, env, refresh = false, write = true, cac
   return { at, cached: false, rows };
 }
 
-// `providers add`: declares (or replaces) a generic adapter; the detection cache is dropped.
-export function addProvider({ names, env, id, argv, sandboxMap }) {
+// `providers add`: declares (or replaces) a generic adapter; the detection cache is dropped. envNames (--env) names the
+// variables its provider gets from the parent environment (B-6), as envNames (env is the process environment).
+export function addProvider({ names, env, id, argv, sandboxMap, envNames: envList }) {
   if (typeof id !== 'string' || !PROVIDER_ID.test(id)) throw usage('invalid-value', `provider ID ${String(id).slice(0, 40)}: expected 1-20 lowercase letters or digits`, 'such as mycli');
   if (BUILTINS.some((a) => a.id === id)) throw usage('provider-builtin', `${id} is a built-in adapter`, 'choose another ID for a declared CLI');
   if (argv === undefined) throw usage('missing-flag', 'providers add needs --argv <template>', "such as --argv 'mycli run --dir {cwd} --mode {sandbox} -o {out}'");
   if (sandboxMap === undefined) throw usage('missing-flag', 'providers add needs --sandbox-map <role=mode,…>', 'such as --sandbox-map reviewer=read-only,implementer=workspace-write');
   parseTemplate(argv);
   const map = parseSandboxMap(sandboxMap);
-  const entry = { argv: String(argv).trim(), sandboxMap: map, addedAt: new Date().toISOString() };
+  const envNames = envList === undefined ? undefined : parseEnvNames(envList);
+  const entry = { argv: String(argv).trim(), sandboxMap: map, ...(envNames ? { env: envNames } : {}), addedAt: new Date().toISOString() };
   update(dataDirOf(names, env), names, (cur) => ({ ...cur, generic: { ...cur.generic, [id]: entry }, detected: null }));
   return { id, ...entry, roles: Object.keys(map) };
 }

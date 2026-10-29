@@ -156,7 +156,7 @@ test('detection: PATH, --version and the auth probe, 2 s each; cached 1 h in plu
   assert.deepEqual(again.rows, first.rows);
   assert.equal(calls(s, 'codex').length, 2, 'no probe ran');
   const cache = JSON.parse(readFileSync(join(s.env.CLAUDE_PLUGIN_DATA, 'providers.json'), 'utf8'));
-  assert.equal(cache.schema, 1);
+  assert.equal(cache.schema, 2); // schema 2: a generic entry may name its env (T-MG-86 B-6)
   const old = { ...cache, detected: { ...cache.detected, at: new Date(Date.now() - 61 * 60e3).toISOString() } };
   writeFileSync(join(s.env.CLAUDE_PLUGIN_DATA, 'providers.json'), JSON.stringify(old));
   assert.equal(providers.detectProviders({ names, env: s.env }).cached, false, 'an hour later it probes again');

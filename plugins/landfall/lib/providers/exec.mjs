@@ -26,7 +26,7 @@ import { KINDS, TASK_TEXTS, checkedPath, resolve, taskTextFile } from '../state/
 import { adapters, chooseProvider, detectProviders } from './index.mjs';
 import { projectRedactions, redact } from '../verify/redact.mjs';
 import { LAST_LINE, ROLES } from './kind.mjs';
-import { parseSandboxMap } from './generic.mjs';
+import { checkValue } from './generic.mjs';
 import { cleanLine, which } from './probe.mjs';
 
 const GRACE_MS = 2000;
@@ -44,13 +44,22 @@ const programOf = (adapter, env) => {
   return path && isAbsolute(path) ? path : null;
 };
 
-// A record's model: null, or one value the generic adapter's sandbox-map check accepts (no bypass or full-access
-// word, 1-40 of [A-Za-z0-9._:=/-]) that does not start with "-" (B-3).
-const modelOk = (model) => {
-  if (model === null) return true;
-  if (typeof model !== 'string' || model.startsWith('-')) return false;
-  try { return parseSandboxMap(`reviewer=${model}`).reviewer === model; } catch { return false; }
-};
+// A record's model: null, or a plain value (generic checkValue: no bypass or full-access word, no leading "-", 1-40 of
+// [A-Za-z0-9._:=/-]) (B-3).
+const modelOk = (model) => model === null || checkValue(model) === null;
+
+// The provider's environment (B-6): the base variables (PATH as childPath keeps it), LANG and LC_*, the lease
+// variables, and the adapter's own envNames (NAME or a NAME_* prefix); nothing else of the parent passes.
+const BASE_ENV = ['HOME', 'USER', 'LOGNAME', 'SHELL', 'TMPDIR', 'LANG'];
+export function childEnv(adapter, parent, lease = {}) {
+  const names = (adapter?.envNames ?? []).filter((n) => typeof n === 'string');
+  const own = (k) => BASE_ENV.includes(k) || /^LC_[A-Z0-9_]+$/.test(k) || names.some((n) => (n.endsWith('*') ? k.startsWith(n.slice(0, -1)) : k === n));
+  const out = {};
+  for (const [k, v] of Object.entries(parent ?? {})) if (typeof v === 'string' && k !== 'PATH' && own(k)) out[k] = v;
+  if (typeof parent?.PATH === 'string') out.PATH = childPath(parent.PATH);
+  for (const [k, v] of Object.entries(lease ?? {})) if (typeof v === 'string') out[k] = v;
+  return out;
+}
 
 // A task text exec gives a provider (the review brief; the task brief once implementer runs exist): every component
 // from the state directory checked by lstat (no link, no case alias: state checkedPath), then the file opened without
@@ -247,7 +256,7 @@ export async function runSupervise({ args, names, io, pluginRoot }) {
     return tampered();
   }
   const began = Date.now();
-  const child = start(rec.bin, argv.slice(1), { unit: 'providers', cwd, env: { ...io.env, ...got.env, PATH: childPath(io.env.PATH) }, detached: true, stdin: 'pipe' });
+  const child = start(rec.bin, argv.slice(1), { unit: 'providers', cwd, env: childEnv(adapter, io.env, got.env), detached: true, stdin: 'pipe' });
   child.stdin.on('error', () => {});
   child.stdin.end(brief);
   let live = { tokens: null, lastLine: null, unknownEvents: 0, lines: [] };

@@ -921,15 +921,17 @@ Read-only.
 Exit codes: 0 OK · 2 USAGE · 7 REFUSED · 8 ENV
 ```
 
-### `landfall providers add <id> [--argv <template>] [--sandbox-map <role=mode,…>] [--yes] [--json]`
+### `landfall providers add <id> [--argv <template>] [--sandbox-map <role=mode,…>] [--env <NAME,…>] [--yes] [--json]`
 
 ```text
-usage: landfall providers add <id> [--argv <template>] [--sandbox-map <role=mode,…>] [--yes] [--json]
+usage: landfall providers add <id> [--argv <template>] [--sandbox-map <role=mode,…>] [--env <NAME,…>] [--yes] [--json]
 
 Declare another provider CLI (generic adapter): its argv template and the sandbox mode per role.
 The template is split on spaces (no shell); placeholders are whole words: {cwd} {sandbox} {out} {model} ({model} is
 dropped when unset). The brief goes to stdin. The roles are the keys of --sandbox-map. A word or mode naming a way to
-lift the sandbox or the approvals is refused (exit 2). Declaring an ID again replaces it. Kept in plugin data providers.json.
+lift the sandbox or the approvals is refused (exit 2); {sandbox} is required and no word may fix a sandbox or write mode.
+Every load checks the entry again: a role with an unsafe or invalid mode cannot run (providers lists why). Declaring an
+ID again replaces it. Kept in plugin data providers.json.
 
 Arguments:
   id  provider ID: 1-20 lowercase letters or digits, not a built-in one
@@ -937,6 +939,7 @@ Arguments:
 Options:
   --argv <template>            required: the command, such as 'mycli run --dir {cwd} --mode {sandbox} -o {out}'
   --sandbox-map <role=mode,…>  required: the mode per role, such as reviewer=read-only,implementer=workspace-write
+  --env <NAME,…>               the variables the provider gets from your environment (at most 20), such as MYCLI_API_KEY; no other passes
 
 Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
 Exit codes: 0 OK · 2 USAGE · 7 REFUSED · 8 ENV

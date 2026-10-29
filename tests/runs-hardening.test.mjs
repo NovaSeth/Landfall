@@ -113,7 +113,8 @@ test('B-1: a provider printing ESC[31m and a tab ends done, never stuck running,
   const p = await project(t);
   const rec = await runTo(p, 'hesc');
   assert.equal(rec.status, 'done', JSON.stringify(rec));
-  assert.deepEqual(p.externalLeases(), [], 'the external lease is released');
+  // The record ends before the supervisor's finally releases the lease: wait for the release, a leak still times out.
+  await p.until('the external lease to be released', () => p.externalLeases().length === 0);
   const lines = p.log(rec.runId).lines;
   assert.ok(lines.includes('red status'), JSON.stringify(lines));
   assert.ok(lines.includes('col1 col2'), JSON.stringify(lines));
@@ -157,7 +158,7 @@ test('B-5: stdout and stderr have their own buffers (interleaved pieces stay who
   assert.equal(flood.status, 'done', JSON.stringify(flood));
   const fl = p.log(flood.runId).lines;
   assert.ok(fl.includes('after the flood'), JSON.stringify(fl.map((l) => l.slice(0, 40))));
-  assert.deepEqual(p.externalLeases(), []);
+  await p.until('the external lease to be released', () => p.externalLeases().length === 0);
 });
 
 // ---- SF-AB-6: redaction before storage ----

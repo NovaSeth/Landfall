@@ -64,3 +64,45 @@ test('B-4: a hand-edited providers.json entry with a full-access reviewer cannot
     iso.cleanup();
   }
 });
+
+test('B-6: providers.json schema 2 adds the optional env; a schema 1 file still reads and a newer one is not used', () => {
+  const iso = isolatedEnv({ prefix: 'prov-hard-' });
+  try {
+    const data = join(iso.base, 'data');
+    const env = { ...iso.env, CLAUDE_PLUGIN_DATA: data };
+    registry.addProvider({ names, env, id: 'mycli', argv: OK, sandboxMap: 'reviewer=read-only' });
+    const file = join(data, 'providers.json');
+    const doc = JSON.parse(readFileSync(file, 'utf8'));
+    assert.equal(doc.schema, 2);
+    writeFileSync(file, JSON.stringify({ ...doc, schema: 1 }));
+    assert.deepEqual({ ...registry.adapters({ names, env }).find((x) => x.id === 'mycli').sandboxes }, { reviewer: 'read-only' }, 'a 2.4.1 file reads');
+    writeFileSync(file, JSON.stringify({ ...doc, schema: 3 }));
+    assert.equal(registry.adapters({ names, env }).find((x) => x.id === 'mycli'), undefined, 'a newer file is not interpreted');
+    assert.throws(() => registry.addProvider({ names, env, id: 'other', argv: OK, sandboxMap: 'reviewer=read-only' }), (err) => err.code === 'schema-newer');
+  } finally {
+    iso.cleanup();
+  }
+});
+
+test('B-4: a bad entry is listed with its note and no role; the other providers still load', () => {
+  const iso = isolatedEnv({ prefix: 'prov-hard-' });
+  try {
+    const data = join(iso.base, 'data');
+    const env = { ...iso.env, CLAUDE_PLUGIN_DATA: data };
+    registry.addProvider({ names, env, id: 'good', argv: OK, sandboxMap: 'reviewer=read-only' });
+    registry.addProvider({ names, env, id: 'bad', argv: OK, sandboxMap: 'reviewer=read-only' });
+    const file = join(data, 'providers.json');
+    const doc = JSON.parse(readFileSync(file, 'utf8'));
+    doc.generic.bad.argv = 'mycli --sandbox=read-only {sandbox}';
+    writeFileSync(file, JSON.stringify(doc));
+    const list = registry.adapters({ names, env });
+    assert.deepEqual({ ...list.find((x) => x.id === 'good').sandboxes }, { reviewer: 'read-only' });
+    assert.match(list.find((x) => x.id === 'bad').note, /no role can run/);
+    const rows = registry.detectProviders({ names, env, write: false }).rows;
+    const bad = rows.find((r) => r.id === 'bad');
+    assert.deepEqual(bad.roles, []);
+    assert.match(bad.error, /no role can run/);
+  } finally {
+    iso.cleanup();
+  }
+});
