@@ -1,0 +1,166 @@
+// External runs hardening, provider output (T-MG-86, audit 2.4.0 B-1, B-5, SF-AB-6, SF-AB-7, SF-AB-8): what a provider
+// prints becomes a clean, redacted state string before it reaches the run log or the record, the supervisor survives
+// any line, and output is split per stream with a pending buffer of at most 64 KiB. The hostile fake provider is
+// tests/fixtures/providers/fake-hostile.mjs. This file holds no plugin name or path: both come from lib/name.json.
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { isolatedEnv, isolateProcessEnv } from './helpers/isolated-env.mjs';
+
+isolateProcessEnv();
+
+const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+const pluginDir = (() => {
+  const plugins = join(root, 'plugins');
+  const hits = readdirSync(plugins).filter((d) => existsSync(join(plugins, d, 'lib', 'name.json')));
+  assert.equal(hits.length, 1, 'exactly one plugins/*/lib/name.json');
+  return join(plugins, hits[0]);
+})();
+const names = JSON.parse(readFileSync(join(pluginDir, 'lib', 'name.json'), 'utf8'));
+const lib = (rel) => import(pathToFileURL(join(pluginDir, 'lib', rel)).href);
+const { main } = await lib('cli/main.mjs');
+const exec = await lib('providers/exec.mjs');
+const FAKE = join(root, 'tests', 'fixtures', 'providers', 'fake-provider.mjs');
+const HOSTILE = join(root, 'tests', 'fixtures', 'providers', 'fake-hostile.mjs');
+const identity = '[user]\n\tname = Test User\n\temail = test@example.com\n';
+const pause = (ms) => new Promise((r) => { setTimeout(r, ms); });
+const alive = (pid) => { try { process.kill(pid, 0); return true; } catch (err) { return err.code === 'EPERM'; } };
+const TERMINAL = new Set(['done', 'failed', 'timeout', 'stopped']);
+const TOKEN = ['gh', 'p_', 'aB3dE5gH7jK9mN1pQ3sT5vW7yZ9bC1dE3fG5'].join('');
+
+const git = (cwd, env, args) => {
+  const r = spawnSync('git', args, { cwd, env, encoding: 'utf8' });
+  assert.equal(r.status, 0, `git ${args.join(' ')}: ${r.stderr}`);
+  return r.stdout.trim();
+};
+
+async function cli(args, { cwd, env }) {
+  const out = [];
+  const err = [];
+  const io = { out: (s) => out.push(s), err: (s) => err.push(s), stdinIsTTY: false, env, cwd, stdin: null };
+  const code = await main([...args, '--json', '--yes'], { io });
+  const stdout = out.join('');
+  return { code, e: stdout ? JSON.parse(stdout) : null, stderr: err.join('') };
+}
+const show = (r) => `exit ${r.code}\n${JSON.stringify(r.e)}\n${r.stderr}`;
+
+async function project(t, { envExtra = {} } = {}) {
+  const iso = isolatedEnv({ gitConfig: identity, prefix: 'runs-hard-' });
+  const repo = join(iso.base, 'repo');
+  mkdirSync(repo);
+  const env = { ...iso.env, CLAUDE_PLUGIN_DATA: join(iso.base, 'data'), ...envExtra };
+  git(repo, env, ['-c', 'init.defaultBranch=main', 'init', '-q']);
+  writeFileSync(join(repo, 'a.txt'), 'a\n');
+  git(repo, env, ['add', 'a.txt']);
+  git(repo, env, ['commit', '-q', '-m', 'start']);
+  const p = { base: iso.base, repo: realpathSync(repo), cwd: repo, env };
+  p.state = join(p.repo, names.stateDir);
+  p.runsDir = join(p.state, 'local', 'runs');
+  p.cli = (args) => cli(args, { cwd: p.cwd, env: p.env });
+  p.ok = async (args) => { const r = await p.cli(args); assert.equal(r.code, 0, `${args.join(' ')}\n${show(r)}`); return r; };
+  p.record = (id) => JSON.parse(readFileSync(join(p.runsDir, `${id}.json`), 'utf8'));
+  p.log = (id) => JSON.parse(readFileSync(join(p.runsDir, `${id}.log`), 'utf8'));
+  p.records = () => (existsSync(p.runsDir) ? readdirSync(p.runsDir).filter((f) => f.endsWith('.json')).map((f) => JSON.parse(readFileSync(join(p.runsDir, f), 'utf8'))) : []);
+  p.until = async (what, fn, ms = 15000) => {
+    const end = Date.now() + ms;
+    for (;;) {
+      const v = fn();
+      if (v) return v;
+      if (Date.now() > end) assert.fail(`timed out waiting for ${what}: ${JSON.stringify(p.records().map((r) => [r.runId, r.status, r.error]))}`);
+      await pause(50);
+    }
+  };
+  p.ended = (id, ms = 15000) => p.until(`${id} to end`, () => TERMINAL.has(p.record(id).status) && p.record(id), ms);
+  p.externalLeases = () => (existsSync(join(p.env.CLAUDE_PLUGIN_DATA, 'leases')) ? readdirSync(join(p.env.CLAUDE_PLUGIN_DATA, 'leases')).filter((f) => f.startsWith('external-')) : []);
+  t.after(async () => {
+    for (const r of p.records()) if (Number.isInteger(r.pid) && alive(r.pid) && !TERMINAL.has(r.status)) { try { process.kill(r.pid, 'SIGTERM'); } catch { /* gone */ } }
+    for (const r of p.records()) if (Number.isInteger(r.pid)) await p.until(`supervisor ${r.pid} to end`, () => !alive(r.pid), 15000).catch(() => {});
+    iso.cleanup();
+  });
+  await p.ok(['init']);
+  for (const title of ['Parser', 'Lexer']) await p.ok(['task', 'new', title]);
+  for (const id of ['T-TU-1', 'T-TU-2']) {
+    await p.ok(['route', id, '--paths', 'src/a.js', '--loc', '10']);
+    await p.ok(['brief', id, '--write']);
+    await p.ok(['task', 'set', id, 'started', '--branch', 'main', '--base', git(repo, env, ['rev-parse', 'HEAD'])]);
+    await p.ok(['review', 'brief', id, '--write']);
+  }
+  await p.ok(['providers', 'add', 'fakeok', '--argv', `${process.execPath} ${FAKE} ok {out} {sandbox} {cwd}`, '--sandbox-map', 'reviewer=read-only,implementer=workspace-write']);
+  for (const mode of ['esc', 'flood', 'secret', 'mixed']) {
+    await p.ok(['providers', 'add', `h${mode}`, '--argv', `${process.execPath} ${HOSTILE} ${mode} {out} {sandbox} {cwd}`, '--sandbox-map', 'reviewer=read-only']);
+  }
+  return p;
+}
+const startRun = (p, task, provider) => p.cli(['exec', '--task', task, '--role', 'reviewer', '--provider', provider]);
+async function runTo(p, provider, task = 'T-TU-1') {
+  const r = await startRun(p, task, provider);
+  assert.equal(r.code, 0, show(r));
+  return p.ended(r.e.data.runId);
+}
+
+// ---- B-1 / SF-AB-8: control characters never stop the supervisor ----
+
+test('B-1: a provider printing ESC[31m and a tab ends done, never stuck running, and leaks no lease; the log is clean', async (t) => {
+  const p = await project(t);
+  const rec = await runTo(p, 'hesc');
+  assert.equal(rec.status, 'done', JSON.stringify(rec));
+  assert.deepEqual(p.externalLeases(), [], 'the external lease is released');
+  const lines = p.log(rec.runId).lines;
+  assert.ok(lines.includes('red status'), JSON.stringify(lines));
+  assert.ok(lines.includes('col1 col2'), JSON.stringify(lines));
+  for (const l of [...lines, rec.lastLine]) assert.doesNotMatch(l, /[\u0000-\u001f\u007f]/, `clean: ${JSON.stringify(l)}`);
+});
+
+// ---- B-5 / SF-AB-7: one bounded pending buffer per stream ----
+
+test('B-5: the line splitter keeps at most 64 KiB pending; 10 MiB without a newline is one truncated line, in bounded time', () => {
+  const got = [];
+  const s = exec.lineSplitter((line, truncated) => got.push({ length: line.length, truncated }));
+  const piece = Buffer.from('x'.repeat(64 * 1024));
+  let peak = 0;
+  const began = Date.now();
+  for (let i = 0; i < 160; i++) { s.feed(piece); peak = Math.max(peak, s.pending()); }
+  s.feed(Buffer.from('\nnext\n'));
+  s.end();
+  const ms = Date.now() - began;
+  assert.equal(exec.PENDING_MAX, 64 * 1024);
+  assert.ok(peak <= exec.PENDING_MAX, `pending peaked at ${peak}`);
+  assert.deepEqual(got, [{ length: exec.PENDING_MAX, truncated: true }, { length: 4, truncated: false }]);
+  assert.ok(ms < 2000, `${ms} ms`);
+});
+
+test('B-5: a multi-byte character split across chunks stays whole; end() emits the unterminated rest', () => {
+  const got = [];
+  const s = exec.lineSplitter((line) => got.push(line));
+  for (const b of Buffer.from('zażółć\nreszta')) s.feed(Buffer.from([b]));
+  s.end();
+  assert.deepEqual(got, ['zażółć', 'reszta']);
+});
+
+test('B-5: stdout and stderr have their own buffers (interleaved pieces stay whole lines); a 10 MiB flood ends done', async (t) => {
+  const p = await project(t);
+  const mixed = await runTo(p, 'hmixed');
+  assert.equal(mixed.status, 'done');
+  const lines = p.log(mixed.runId).lines;
+  assert.ok(lines.includes('{"out":"whole"}'), JSON.stringify(lines));
+  assert.ok(lines.includes('err-line'), JSON.stringify(lines));
+  const flood = await runTo(p, 'hflood', 'T-TU-2');
+  assert.equal(flood.status, 'done', JSON.stringify(flood));
+  const fl = p.log(flood.runId).lines;
+  assert.ok(fl.includes('after the flood'), JSON.stringify(fl.map((l) => l.slice(0, 40))));
+  assert.deepEqual(p.externalLeases(), []);
+});
+
+// ---- SF-AB-6: redaction before storage ----
+
+test('SF-AB-6: a token-shaped provider line is masked in the record and the log', async (t) => {
+  const p = await project(t);
+  const rec = await runTo(p, 'hsecret');
+  assert.equal(rec.status, 'done');
+  const raw = readFileSync(join(p.runsDir, `${rec.runId}.log`), 'utf8') + readFileSync(join(p.runsDir, `${rec.runId}.json`), 'utf8');
+  assert.ok(!raw.includes(TOKEN.slice(0, 20)), 'neither the token nor a prefix of it is stored');
+  assert.ok(p.log(rec.runId).lines.some((l) => l.startsWith('leaked ') && l.endsWith(' here')), JSON.stringify(p.log(rec.runId).lines));
+});
