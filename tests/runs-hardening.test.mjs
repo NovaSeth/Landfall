@@ -1,11 +1,14 @@
 // External runs hardening, provider output (T-MG-86, audit 2.4.0 B-1, B-5, SF-AB-6, SF-AB-7, SF-AB-8): what a provider
 // prints becomes a clean, redacted state string before it reaches the run log or the record, the supervisor survives
 // any line, and output is split per stream with a pending buffer of at most 64 KiB. The hostile fake provider is
-// tests/fixtures/providers/fake-hostile.mjs. This file holds no plugin name or path: both come from lib/name.json.
+// tests/fixtures/providers/fake-hostile.mjs. The program is the absolute path resolved at exec time and recorded in
+// the run, and the record's model is checked before it reaches argv (B-2, B-3). This file holds no plugin name or path:
+// both come from lib/name.json.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { isolatedEnv, isolateProcessEnv } from './helpers/isolated-env.mjs';
@@ -77,7 +80,7 @@ async function project(t, { envExtra = {} } = {}) {
   p.externalLeases = () => (existsSync(join(p.env.CLAUDE_PLUGIN_DATA, 'leases')) ? readdirSync(join(p.env.CLAUDE_PLUGIN_DATA, 'leases')).filter((f) => f.startsWith('external-')) : []);
   t.after(async () => {
     for (const r of p.records()) if (Number.isInteger(r.pid) && alive(r.pid) && !TERMINAL.has(r.status)) { try { process.kill(r.pid, 'SIGTERM'); } catch { /* gone */ } }
-    for (const r of p.records()) if (Number.isInteger(r.pid)) await p.until(`supervisor ${r.pid} to end`, () => !alive(r.pid), 15000).catch(() => {});
+    for (const r of p.records()) if (Number.isInteger(r.pid) && r.pid !== process.pid) await p.until(`supervisor ${r.pid} to end`, () => !alive(r.pid), 15000).catch(() => {});
     iso.cleanup();
   });
   await p.ok(['init']);
@@ -185,4 +188,72 @@ test('SF-AB-6: an unreadable project pattern file fails closed: the run fails an
   assert.equal(rec.error, 'project-patterns-unreadable');
   assert.equal(existsSync(`${rec.outFile}.args`), false, 'no provider was started');
   assert.deepEqual(p.externalLeases(), []);
+});
+
+// ---- B-2: the absolute program path ----
+
+test('B-2: with "." first on PATH a repository-shipped ./codex never runs; the run spawns the resolved absolute path', async (t) => {
+  const p = await project(t);
+  const binDir = join(p.base, 'bin');
+  mkdirSync(binDir);
+  writeFileSync(join(binDir, 'codex'), `#!${process.execPath}\nprocess.argv.splice(2, 0, 'codex');\nimport(${JSON.stringify(pathToFileURL(FAKE).href)});\n`, { mode: 0o700 });
+  const marker = join(p.base, 'repo-codex-ran');
+  writeFileSync(join(p.repo, 'codex'), `#!/bin/sh\necho ran > ${marker}\nexit 0\n`, { mode: 0o755 });
+  p.env.PATH = `.::${binDir}:${p.env.PATH}`;
+  const r = await p.ok(['exec', '--task', 'T-TU-1', '--role', 'reviewer', '--provider', 'codex']);
+  const rec = await p.ended(r.e.data.runId);
+  assert.equal(existsSync(marker), false, 'the repository codex did not run');
+  assert.equal(rec.status, 'done', JSON.stringify(rec));
+  assert.equal(rec.bin, join(binDir, 'codex'));
+});
+
+test('B-2: the provider PATH keeps only absolute entries', () => {
+  assert.equal(exec.childPath('.::/usr/bin:rel/bin:/bin:'), '/usr/bin:/bin');
+  assert.equal(exec.childPath(undefined), '');
+});
+
+// ---- run-supervise: a record bound to its run ----
+
+// A run record rewritten for T-TU-2 in a fresh private temp directory, so only `change` differs from a record exec
+// wrote. (The binding of the temp directory itself, SF-AB-10, comes in its own slice.)
+async function rewritten(t, change) {
+  const p = await project(t);
+  const base = await runTo(p, 'fakeok');
+  const outDir = mkdtempSync(join(tmpdir(), `${names.bin}-run-`));
+  writeFileSync(join(outDir, 'brief.md'), readFileSync(`${base.outFile}.prompt`), { mode: 0o600 });
+  const runId = 'fakeok-T-TU-2-reviewer-1';
+  const rec = { ...base, runId, task: 'T-TU-2', status: 'starting', pid: null, endedAt: null, error: null, outFile: join(outDir, 'out.json'), ...change(p, outDir) };
+  writeFileSync(join(p.runsDir, `${runId}.json`), `${JSON.stringify(rec)}\n`);
+  const r = await p.cli(['run-supervise', runId]);
+  return { p, r, rec: p.record(runId), outFile: rec.outFile };
+}
+
+test('B-2/B-3 control: a record as exec wrote it runs', async (t) => {
+  const { r, rec } = await rewritten(t, () => ({}));
+  assert.equal(r.code, 0, show(r));
+  assert.equal(rec.status, 'done', JSON.stringify(rec));
+});
+
+for (const model of ['--dangerously-skip-permissions', '-x', 'has space', 'yolo']) {
+  test(`B-3: a record whose model is ${JSON.stringify(model)} is run-tampered`, async (t) => {
+    const { r, rec, outFile } = await rewritten(t, () => ({ model }));
+    assert.equal(r.code, 1, show(r));
+    assert.equal(rec.error, 'run-tampered');
+    assert.equal(existsSync(`${outFile}.args`), false, 'no provider was started');
+  });
+}
+
+test('B-2: a record whose binary is not the resolution of the adapter\'s program is run-tampered', async (t) => {
+  const { r, rec, outFile } = await rewritten(t, () => ({ bin: '/bin/sh' }));
+  assert.equal(r.code, 1, show(r));
+  assert.equal(rec.error, 'run-tampered');
+  assert.equal(existsSync(`${outFile}.args`), false, 'no provider was started');
+});
+
+test('B-2: a record without a binary (written by 2.4.1) is run-tampered, with the hint to start the run again', async (t) => {
+  const { r, rec, outFile } = await rewritten(t, () => ({ bin: undefined }));
+  assert.equal(r.code, 1, show(r));
+  assert.equal(rec.error, 'run-tampered');
+  assert.match(r.e.errors[0].hint, /start the run again/);
+  assert.equal(existsSync(`${outFile}.args`), false, 'no provider was started');
 });
