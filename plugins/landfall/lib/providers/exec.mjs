@@ -10,15 +10,16 @@
 // (outDirId) and the out file is out.json in it (SF-AB-10). The review brief is read through the state's lstat walk and
 // without following a link, a regular file of at most 64 KiB (SF-AB-1). An implementer (T-MG-64) runs in the task's
 // recorded worktree, which must be a linked worktree of this repository, under the adapter's implementer sandbox; its
-// brief is the task brief (the same lstat walk) or --brief <file> (a regular file, no link, at most 64 KiB), and the
-// record pins the sha256 of what the provider gets (briefSha256), checked again by the supervisor.
+// brief is the task brief (the same lstat walk) or --brief <file> (a regular file, no link, at most 64 KiB). For every
+// role the record pins the sha256 of what the provider gets (briefSha256), checked by the supervisor before and after
+// the lease wait (T-MG-96 F3).
 // Exit (exec) 0 · 1 no such task, no brief, no task worktree, a live run of the task and role · 2 bad role or provider,
 // a provider without the role's sandbox · 7 inactive repository, newer schema · 8 provider missing or logged out.
 import { tolerateClosedStreams } from '../cli/output.mjs';
 import { createHash } from 'node:crypto';
 import { closeSync, constants, fstatSync, lstatSync, mkdtempSync, openSync, readFileSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { delimiter, dirname, isAbsolute, join, resolve as resolvePath } from 'node:path';
+import { dirname, isAbsolute, join, resolve as resolvePath } from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 import { EXIT } from '../cli/commands.mjs';
 import { createExclusive, readRegularFile } from '../fsx/index.mjs';
@@ -30,15 +31,15 @@ import { adapters, chooseProvider, detectProviders } from './index.mjs';
 import { projectRedactions, redact } from '../verify/redact.mjs';
 import { LAST_LINE, ROLES } from './kind.mjs';
 import { checkValue } from './generic.mjs';
-import { cleanLine, which } from './probe.mjs';
+import { childEnv, childPath, cleanLine, which } from './probe.mjs';
 
 const GRACE_MS = 2000;
 const FLUSH_MS = 1000;
 const WAIT_MS = 3600e3;
 const fail = (code, message, hint) => ({ code: EXIT.FAIL, errors: [{ code, message, hint }] });
 
-// The provider's PATH: only absolute entries, so neither an empty entry nor "." can find a program in the repository.
-export const childPath = (path) => String(path ?? '').split(delimiter).filter((d) => isAbsolute(d)).join(delimiter);
+// The provider's PATH and environment (B-2, B-6) live in probe.mjs, so the detection probes get the same allowlist.
+export { childEnv, childPath };
 
 // The absolute path of the adapter's program on the absolute entries of PATH (probe which), or null (B-2).
 const programOf = (adapter, env) => {
@@ -50,19 +51,6 @@ const programOf = (adapter, env) => {
 // A record's model: null, or a plain value (generic checkValue: no bypass or full-access word, no leading "-", 1-40 of
 // [A-Za-z0-9._:=/-]) (B-3).
 const modelOk = (model) => model === null || checkValue(model) === null;
-
-// The provider's environment (B-6): the base variables (PATH as childPath keeps it), LANG and LC_*, the lease
-// variables, and the adapter's own envNames (NAME or a NAME_* prefix); nothing else of the parent passes.
-const BASE_ENV = ['HOME', 'USER', 'LOGNAME', 'SHELL', 'TMPDIR', 'LANG'];
-export function childEnv(adapter, parent, lease = {}) {
-  const names = (adapter?.envNames ?? []).filter((n) => typeof n === 'string');
-  const own = (k) => BASE_ENV.includes(k) || /^LC_[A-Z0-9_]+$/.test(k) || names.some((n) => (n.endsWith('*') ? k.startsWith(n.slice(0, -1)) : k === n));
-  const out = {};
-  for (const [k, v] of Object.entries(parent ?? {})) if (typeof v === 'string' && k !== 'PATH' && own(k)) out[k] = v;
-  if (typeof parent?.PATH === 'string') out.PATH = childPath(parent.PATH);
-  for (const [k, v] of Object.entries(lease ?? {})) if (typeof v === 'string') out[k] = v;
-  return out;
-}
 
 // A task text exec gives a provider (the review brief; the task brief once implementer runs exist): every component
 // from the state directory checked by lstat (no link, no case alias: state checkedPath), then the file opened without
@@ -169,7 +157,7 @@ export function exec({ flags, names, io, pluginRoot }) {
     runId, task: id, role, provider: row.id, adapterVersion: row.version ?? null, model: null, sandbox: adapter.sandboxes[role], cwd: wt ?? w.repo,
     pid: null, pidStart: null, pidMethod: null, lease: null, status: 'starting', queuedAt: new Date().toISOString(), startedAt: null, endedAt: null,
     elapsedMs: 0, capS, tokens: null, tokensReason: null, costMicroUsd: null, lastLine: null, unknownEvents: 0, outFile: join(outDir, OUT_NAME), exit: null, error: null, bin: program,
-    outDirId: dirIdOf(dirSt), ...(role === 'implementer' ? { briefSha256: sha256(input) } : {}),
+    outDirId: dirIdOf(dirSt), briefSha256: sha256(input),
   };
   store.create('run', runId, record);
   store.create('runLog', runId, { runId, lines: [] });
@@ -216,6 +204,27 @@ export const PENDING_MAX = 64 * 1024;
 // the shared redaction, then cut to max code points ('' when nothing visible is left). Cleaned whole first, so a
 // secret is masked before a cut could show a prefix of it.
 export const safeLine = (text, max, extra = []) => cleanLine(redact(cleanLine(text, PENDING_MAX) ?? '', extra), max) ?? '';
+
+// Every string of a parsed event (keys and values, nested at most EVENT_DEPTH deep; deeper becomes null) through the
+// shared redaction: a secret JSON escapes ( \" ) hide from the line's redaction is masked once decoded.
+const EVENT_DEPTH = 64;
+const redactDeep = (v, extra, depth = 0) => {
+  if (typeof v === 'string') return redact(v, extra);
+  if (v === null || typeof v !== 'object') return v;
+  if (depth >= EVENT_DEPTH) return null;
+  if (Array.isArray(v)) return v.map((x) => redactDeep(x, extra, depth + 1));
+  return Object.fromEntries(Object.entries(v).map(([k, x]) => [redact(k, extra), redactDeep(x, extra, depth + 1)]));
+};
+
+// One provider output line as the adapter, the record and the log see it (T-MG-96 F1): cleaned; a line that parses as
+// a JSON object or array is replaced by its sanitized form (every decoded string redacted, then serialized again), so
+// neither the adapter's truncation nor the log ever holds the raw line; then redacted and cut as safeLine does.
+export function eventLine(raw, max, extra = []) {
+  const clean = cleanLine(raw, PENDING_MAX) ?? '';
+  let doc;
+  try { doc = JSON.parse(clean); } catch { doc = undefined; }
+  return safeLine(doc !== null && typeof doc === 'object' ? JSON.stringify(redactDeep(doc, extra)) : clean, max, extra);
+}
 
 // A line splitter for one stream: feed(chunk) calls onLine(line, truncated) per complete line; end() emits the rest.
 // At most PENDING_MAX characters stay pending; past it the rest of the line is dropped.
@@ -273,8 +282,9 @@ export async function runSupervise({ args, names, io, pluginRoot }) {
   const sandbox = ROLES.includes(rec.role) ? adapter?.sandboxes?.[rec.role] : undefined;
   // An implementer's cwd is the task's worktree, checked again (a linked worktree of this repository).
   const cwd = rec.role === 'reviewer' ? w.repo : rec.role === 'implementer' ? taskWorktree(store.read('task', rec.task), w, names, io.env) ?? undefined : undefined;
-  // An implementer's pinned brief is the one whose sha256 exec recorded.
-  const briefOk = (text) => text !== null && (rec.role !== 'implementer' || (typeof rec.briefSha256 === 'string' && sha256(text) === rec.briefSha256));
+  // The pinned brief of every role is the one whose sha256 exec recorded; a record without it (2.5.0 and earlier) is
+  // refused as tampered (T-MG-96 F3).
+  const briefOk = (text) => text !== null && typeof rec.briefSha256 === 'string' && sha256(text) === rec.briefSha256;
   const tampered = () => {
     patch0(store, runId, { status: 'failed', endedAt: new Date().toISOString(), error: 'run-tampered' });
     return fail('run-tampered', `${runId}: the run record or pinned brief does not match its role, the repository, its temp directory or the provider program, or its model is not a plain value`, 'start the run again with exec');
@@ -319,7 +329,7 @@ export async function runSupervise({ args, names, io, pluginRoot }) {
   // line that still cannot be handled counts as unknown, never throws out of a stream callback.
   const onLine = (raw) => {
     try {
-      const line = safeLine(raw, PENDING_MAX, extra);
+      const line = eventLine(raw, PENDING_MAX, extra);
       if (!line) return;
       const parsed = adapter.parse(line) ?? {};
       if (parsed.tokens) live.tokens = parsed.tokens;
