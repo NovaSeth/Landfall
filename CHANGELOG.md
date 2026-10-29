@@ -9,7 +9,10 @@ The backlog is closed: every open task of the plan is built, and the part of the
   - The provider starts by the absolute path exec resolved and recorded, with only absolute PATH entries, so a `./codex` shipped in a repository never runs. A run record whose model, out directory, binary or brief does not match what exec bound is refused as tampered.
   - The provider gets a minimal environment: the base variables, the lease variables and its own login variables. `providers add --env` names a declared provider's own, and names that change how a program loads (NODE_OPTIONS, LD_*, DYLD_*, GIT_* and similar) are refused.
   - Every load of providers.json checks declared providers again. `{sandbox}` is mandatory, and a reviewer mapped to a write mode loses the role.
-  - Briefs are read without following links; each run is bound to its own 0700 temp directory by device and inode.
+  - Briefs are read without following links and pinned by sha256 for every role, checked before and after the wait for a slot; each run is bound to its own 0700 temp directory by device and inode.
+  - A secret written JSON-escaped inside a provider event is redacted after decoding and before any cut; the log keeps only the sanitized event.
+  - The detection probes (`--version`, the auth check) get the same minimal environment as the runs.
+  - The Bash guard refreshes an agent's lease only for an event with a valid `agent_id`, and only while enough of its time budget is left, so the heartbeat never changes the guard's decision.
   - The orphan reaper signals a process group only through a member identity it recorded (refreshed while the leader lives), so a reused group id never gets a signal.
 - **External implementers (ORC-26):** `exec --role implementer [--brief <file>]` runs Codex, Gemini or a declared provider in the task's worktree under its write sandbox, with the brief's sha pinned, and the run shows in the dashboard like a review. Another provider runs only through `exec`.
 - **External reviews:** `review record --kind external --run <run ID>` records an external review only from a done reviewer run of the task, with the run ID and the out file's sha256. A review file that claims an external reviewer is refused, and a round stored without its run no longer counts.
