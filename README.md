@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/logo-dark.svg">
+    <img src="docs/assets/logo.svg" width="120" alt="Landfall logo">
+  </picture>
+</p>
+
 # Landfall
 
 Landfall is a Claude Code plugin that turns one session into a small engineering team and holds it to outcomes checked in code. The session orchestrates: it sizes the task, writes a brief, hands the work to a fresh implementer in its own worktree (a Claude agent or an external CLI such as Codex, visible as a row in the agent panel), routes each role to the cheapest model that can do it, has the result reviewed, and closes the task only when `landfall verify` has re-run the project's gates on the code. A trivial change skips all of that, and every task leaves a receipt of what it cost. Formerly `caw`.
