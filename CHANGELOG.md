@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **External implementers:** `exec --role implementer [--brief <file>]` runs another provider in the task's worktree (recorded by `task start`) under its write sandbox, fed the task brief or the given file, and the run shows in the dashboard's AGENTS like a review. ORC-24: another provider runs only through `exec`, never by hand.
 - **Security checklists:** the OWASP Top 10:2025 as OWA-1…10 in the security pack, and the OWASP Top 10 for LLM Applications 2025 and for Agentic Applications 2026 as LLM-1…10 and AGT-1…10 in the new `ai` pack. Rule n is item n of its list.
 - **Profile:** the fact `llm`, observed from LLM and agent SDKs among the dependencies of package.json, requirements*.txt, pyproject.toml and go.mod, activates the `ai` pack.
 - **Security reviewer:** the `security-reviewer` agent. `review brief` names it with the checklists when a changed file is on a router risk path or a security or AI path (`lib/router/focus.json`), the route has the flag `security`, or `--security` is given (SEC-13); the AI checklist joins when the profile has `llm` or an AI path changed.

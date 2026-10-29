@@ -13,7 +13,7 @@
 - The task rows come from `landfall status --json` in the session's working directory: a task in another repository is not shown.
 
 ## Edge cases
-- External executors: `landfall exec --role implementer` is refused in this release (reviewer runs only, read-only sandbox in the task worktree); the implementer role with its own worktree follows.
+- External executors: an implementer run writes only inside the task's worktree, under the provider's own write sandbox (Codex workspace-write, Gemini auto_edit, a declared provider's implementer mapping); git metadata lies outside the worktree, so the provider cannot commit and the orchestrator commits from its tree. A provider started by hand, outside `landfall exec`, has no run record and is not shown in the dashboard (ORC-24).
 - Rename detection reads JS and TS sources only; a Python, Go or Rust test that changes its title is still a removal and needs a decision. Titles built at run time, tests declared in loops and template literals with nested braces are not read.
 - Profile scan: `llm` is read from dependency manifests by a section-aware reader, not a TOML parser; a malformed pyproject.toml may still yield the fact, and multi-line inline tables or arrays inside inline tables are not read. Override with `landfall profile set llm true|false`.
 - `task merge` still needs a clean tree, the state directory included (verify and task done do not): run `landfall commit` before the merge.
