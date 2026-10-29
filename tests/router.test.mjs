@@ -824,7 +824,7 @@ test('route: the review need is in the data and the text (critical: cross-provid
 
 // ---- threshold overrides from config.json (T-MG-40) ----
 
-const decisionText = (id, status) => `---\nschema: 1\nid: ${id}\ntitle: Larger changes\nstatus: ${status}\nkind: general\ndate: 2026-10-15\nauthor: TU\nsupersedes: []\nsupersededBy: null\nscope: []\nallowsTestRemoval: []\n---\n\n## What\n\nLarger changes.\n\n## Why\n\nLong modules.\n\n## Cost if wrong\n\nlow\n`;
+const decisionText = (id, status) => `---\nschema: 1\nid: ${id}\ntitle: Larger changes\nstatus: ${status}\nkind: general\ndate: 2026-10-15\nauthor: TU\nsupersedes: []\nsupersededBy: null\nscope: [.landfall/config.json]\nallowsTestRemoval: []\n---\n\n## What\n\nLarger changes.\n\n## Why\n\nLong modules.\n\n## Cost if wrong\n\nlow\n`;
 function override(r, decision, status = 'active', value = 800) {
   if (status) {
     mkdirSync(decisionsDir(r), { recursive: true });
