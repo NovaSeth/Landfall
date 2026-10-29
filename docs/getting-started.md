@@ -23,6 +23,18 @@ Open Claude Code in a git repository and describe the change. A trivial change r
 
 The full session is in the README demo. In a fullscreen terminal wide enough (144 columns) the `Landfall` pane opens beside the transcript and shows the open tasks, the agents at work with their task, role and time, the slots and the next step; `/landfall:dashboard` opens it from 110 columns, and narrower terminals get its one-line summary in the status bar.
 
+### First run in a cloned repository
+
+A repository's gate commands run only once this machine trusts them. In a terminal run `landfall trust` before `landfall verify` (in Claude Code type `! landfall trust`); it asks for confirmation and refuses `--yes`.
+
+### Merging finished work
+
+`landfall task merge --ready` merges every ready task as one batch, runs the gates once on the integrated tree and bisects on a failure. `landfall task merge <id…>` merges the tasks you name. If you merged a branch by hand, `landfall task merge <id> --adopt` records it.
+
+### The findings backlog
+
+Review findings still open when a review closes at the round cap are kept. `landfall findings list` shows them, `landfall findings show <id>` reads one, and `landfall findings take <id>` turns it into a task; that task's `task done` closes the finding. `findings close` and `findings drop` end one without a task.
+
 ## 4. Useful commands
 
 - `landfall status` shows open tasks and their next step; `landfall task show <task>` is the card of one task (branch, rounds, last verify, next step).
