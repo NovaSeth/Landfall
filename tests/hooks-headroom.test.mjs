@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { performance } from 'node:perf_hooks';
+import { cpuP95 } from './helpers/cpu-time.mjs';
 import { isolateProcessEnv } from './helpers/isolated-env.mjs';
 import { MALFORMED, hook, lib, repo } from './helpers/hook-fixture.mjs';
 
@@ -114,8 +114,6 @@ test('only the last 64 KiB is read, and it takes under 50 ms (p95)', (t) => {
   assert.equal(headroomUsage(p).total, 100000, 'the latest usage, not the first');
   const old = write(f, [line(150000), ...filler], 'old.jsonl');
   assert.equal(headroomUsage(old), null, 'a usage beyond the tail is not seen');
-  const times = [];
-  for (let i = 0; i < 40; i++) { const s = performance.now(); headroomUsage(p); times.push(performance.now() - s); }
-  times.sort((a, b) => a - b);
-  assert.ok(times[Math.ceil(times.length * 0.95) - 1] <= 50, `p95 ${times[37]} ms`);
+  const p95 = cpuP95(assert, () => headroomUsage(p), 40);
+  assert.ok(p95 <= 50, `p95 ${p95.toFixed(1)} ms of CPU`);
 });
