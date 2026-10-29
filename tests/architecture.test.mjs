@@ -40,7 +40,7 @@ const OUTPUT_WRITER = 'lib/cli/output.mjs';
 
 // Units of spec §4.2; `name` is lib/name.json.
 const UNITS = new Set(['cli', 'state', 'config', 'profile', 'engine', 'router', 'verify', 'loop', 'sched', 'lanes', 'decisions', 'receipts',
-  'providers', 'gen', 'method', 'hooks', 'guard', 'ui', 'git', 'fsx', 'proc', 'import1x', 'mirror', 'text', 'secrets', 'runs', 'findings']);
+  'providers', 'gen', 'method', 'hooks', 'guard', 'ui', 'git', 'fsx', 'proc', 'import1x', 'mirror', 'text', 'secrets', 'runs', 'findings', 'lessons']);
 // §4.3: hooks import directly only these units (and Node built-ins), and never reach the HOOK_NEVER units at all.
 // config (brief I2.4): the read side of the capability flags, over lib/state, for the pass-through of a hook whose
 // capability is off.

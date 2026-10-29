@@ -54,6 +54,47 @@ const DECISION_FLAGS = [
 
 const ROWS = [
   {
+    name: 'lessons add',
+    summary: 'Admit a lesson into shadow: a cue, one lesson naming a component, and evidence that exists in the state.',
+    details: ['Admission is code: all problems are listed at once. A lesson with no evidence, missing evidence or only confounded verdicts is refused.'],
+    args: [],
+    flags: [
+      { flag: '--cue', value: 'text', summary: 'the situation, one line of at most 200 characters (required)' },
+      { flag: '--lesson', value: 'text', summary: 'what to do, one line of at most 300 characters (required)' },
+      { flag: '--component', value: 'c', summary: 'route, gate, rule, skill, hook or brief (required)' },
+      { flag: '--evidence', value: 'ids', summary: 'comma-separated receipt, run, verify attempt (<task>#<n>) or task IDs, 1 to 20 (required)' },
+      { flag: '--verdict', value: 'change=v', repeat: true, summary: 'a change and its verdict: helped, hurt, no-effect or confounded; repeatable' },
+    ],
+    mutating: true,
+    exits: ['OK', 'FAIL', 'USAGE', 'REFUSED', 'ENV'],
+    load: () => import('../lessons/commands.mjs').then((m) => m.add),
+  },
+  {
+    name: 'lessons list',
+    summary: 'List lessons; retired ones only with --status retired.',
+    args: [],
+    flags: [{ flag: '--status', value: 'status', summary: 'shadow, active or retired (default: shadow and active)' }],
+    exits: ['OK', 'FAIL', 'USAGE', 'REFUSED', 'ENV'],
+    load: () => import('../lessons/commands.mjs').then((m) => m.list),
+  },
+  {
+    name: 'lessons show',
+    summary: 'Print one lesson with its evidence and verdicts.',
+    args: [{ name: 'id', required: true, summary: 'the L-<handle>-<number> lesson ID' }],
+    flags: [],
+    exits: ['OK', 'FAIL', 'USAGE', 'REFUSED', 'ENV'],
+    load: () => import('../lessons/commands.mjs').then((m) => m.show),
+  },
+  {
+    name: 'lessons retire',
+    summary: 'Retire a lesson with a reason; the record and its number stay.',
+    args: [{ name: 'id', required: true, summary: 'the L-<handle>-<number> lesson ID' }],
+    flags: [{ flag: '--why', value: 'text', summary: 'why it is retired (required, at most 300 characters)' }],
+    mutating: true,
+    exits: ['OK', 'FAIL', 'USAGE', 'REFUSED', 'ENV'],
+    load: () => import('../lessons/commands.mjs').then((m) => m.retire),
+  },
+  {
     name: 'findings list',
     summary: 'List review findings kept in the backlog; defaults to open and taken.',
     args: [],

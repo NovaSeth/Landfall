@@ -26,7 +26,7 @@
 
 ### Decisions and lessons
 **PRI-8.** Record each decision with the CLI `decide` (what, why, cost if wrong); MUST NOT change decided behavior without a superseding decision.
-**PRI-9.** Record a failure or a new rule as a lesson (source, symptom, cause, rule) in the same turn; a lesson that recurs in reviews becomes a binding shared-brief rule, and a checkable one becomes a guard test, script or hook.
+**PRI-9.** Record a failure or a new rule in the same turn with `landfall lessons add`: a cue (the symptom), a lesson (the rule) and evidence (the source) that exists in the state, admitted into shadow; a lesson that recurs in reviews becomes a binding shared-brief rule, and a checkable one becomes a guard test, script or hook.
 **PRI-10.** Treat every number and every tool-version-dependent trap in the method as a default to calibrate: record the project's own value as a decision, and give every loosening a condition for reverting it.
 
 ### Outcomes
