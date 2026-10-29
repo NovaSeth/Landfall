@@ -74,6 +74,10 @@ Commands:
   lane release         Release your lane: its claim on origin is deleted only while it is still the one you hold (lease).
   lane renew           Renew your lane for 7 more days; at most once a day (a claim made less than 24 h ago is kept as it is).
   lane takeover        Take over another developer's lane once its claim expired more than 24 h ago; the new claim records it.
+  lessons add          Admit a lesson into shadow: a cue, one lesson naming a component, and evidence that exists in the state.
+  lessons list         List lessons; retired ones only with --status retired.
+  lessons retire       Retire a lesson with a reason; the record and its number stay.
+  lessons show         Print one lesson with its evidence and verdicts.
   loop start           Start a loop with caps (defaults: wallMin=480,ticks=200,usd=25,rounds=2); a running loop is never replaced.
   loop status          Print the loop: ticks, wall time and cost against the caps, the stall count, and the exit once it ended.
   loop stop            End the running loop: exit DONE, so no wakeup is scheduled again; an ended loop is left as it is.
@@ -737,6 +741,70 @@ Arguments:
   lane  the expired lane
 
 Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
+Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
+```
+
+### `landfall lessons add [--cue <text>] [--lesson <text>] [--component <c>] [--evidence <ids>] [--verdict <change=v>] [--yes] [--json]`
+
+```text
+usage: landfall lessons add [--cue <text>] [--lesson <text>] [--component <c>] [--evidence <ids>] [--verdict <change=v>] [--yes] [--json]
+
+Admit a lesson into shadow: a cue, one lesson naming a component, and evidence that exists in the state.
+Admission is code: all problems are listed at once. A lesson with no evidence, missing evidence or only confounded verdicts is refused.
+
+Options:
+  --cue <text>          the situation, one line of at most 200 characters (required)
+  --lesson <text>       what to do, one line of at most 300 characters (required)
+  --component <c>       route, gate, rule, skill, hook or brief (required)
+  --evidence <ids>      comma-separated receipt, run, verify attempt (<task>#<n>) or task IDs, 1 to 20 (required)
+  --verdict <change=v>  a change and its verdict: helped, hurt, no-effect or confounded; repeatable
+
+Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
+Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
+```
+
+### `landfall lessons list [--status <status>] [--json]`
+
+```text
+usage: landfall lessons list [--status <status>] [--json]
+
+List lessons; retired ones only with --status retired.
+
+Options:
+  --status <status>  shadow, active or retired (default: shadow and active)
+
+Read-only.
+Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
+```
+
+### `landfall lessons retire <id> [--why <text>] [--yes] [--json]`
+
+```text
+usage: landfall lessons retire <id> [--why <text>] [--yes] [--json]
+
+Retire a lesson with a reason; the record and its number stay.
+
+Arguments:
+  id  the L-<handle>-<number> lesson ID
+
+Options:
+  --why <text>  why it is retired (required, at most 300 characters)
+
+Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
+Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
+```
+
+### `landfall lessons show <id> [--json]`
+
+```text
+usage: landfall lessons show <id> [--json]
+
+Print one lesson with its evidence and verdicts.
+
+Arguments:
+  id  the L-<handle>-<number> lesson ID
+
+Read-only.
 Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
 ```
 
