@@ -82,7 +82,7 @@ test('flags show: every rollout capability with its spec §14 default, then the 
   const p = await repository(t);
   const r = await cli(['flags', 'show'], p);
   assert.equal(r.code, 0, show(r));
-  const want = { 'guard-bash': 'on', 'auto-allow': 'shadow', engine: 'shadow', admission: 'shadow', 'edit-retrieval': 'on', headroom: 'shadow', 'executor-ui': 'off' };
+  const want = { 'guard-bash': 'on', 'auto-allow': 'shadow', engine: 'shadow', admission: 'shadow', 'edit-retrieval': 'on', headroom: 'shadow', 'executor-ui': 'off', 'task-mirror': 'off' };
   assert.deepEqual(Object.fromEntries(ROLLOUT.map((c) => [c.name, c.default])), want, 'the defaults of spec §14');
   for (const [name, mode] of Object.entries(want)) assert.deepEqual([r.out.data.flags[name].mode, r.out.data.flags[name].source], [mode, 'default'], name);
   assert.equal(r.out.data.flags.lanes.mode, null, 'a team flag nobody set: the tier offers it');

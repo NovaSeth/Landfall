@@ -29,6 +29,7 @@ import { loadNames, stateOf } from './loop-state.mjs';
 import { sessionStart } from './session-start.mjs';
 import { stopGuard } from './stop-guard.mjs';
 import { subagentStart } from './subagent-start.mjs';
+import { taskGate } from './task-gate.mjs';
 
 export const ON_ERROR = Object.freeze(['allow', 'block-if-guarded']);
 
@@ -53,6 +54,7 @@ export const HOOKS = [
   { name: 'admit-agent', event: 'PreToolUse', matcher: 'Agent', timeout: TIMEOUT_S, budgetMs: BUDGET_MS, handler: admitHook, onError: 'allow', capability: 'admission' },
   { name: 'bind-agent', event: 'PostToolUse', matcher: 'Agent', timeout: TIMEOUT_S, budgetMs: BUDGET_MS, handler: bindHook, onError: 'allow', capability: 'admission' },
   { name: 'release-agent', event: 'SubagentStop', timeout: TIMEOUT_S, budgetMs: BUDGET_MS, handler: releaseHook, onError: 'allow', capability: 'admission' },
+  { name: 'task-gate', event: 'TaskCompleted', timeout: TIMEOUT_S, budgetMs: BUDGET_MS, handler: taskGate, onError: 'allow', capability: 'task-mirror' },
   { name: 'stop-guard', event: 'Stop', timeout: TIMEOUT_S, budgetMs: BUDGET_MS, handler: stopGuard, onError: 'allow' },
 ];
 
