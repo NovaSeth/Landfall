@@ -356,6 +356,8 @@ const ACCEPTED_FP = [
 ];
 // ---- corpus (new in the port) ----
 const NEW_BLOCK = [
+  // a task branch merged by hand into the target (T-MG-80; guard/git-shape.mjs)
+  ['git merge --no-ff task/T-AB-3', 'ORC-12', 'main'], ['git pull origin task/T-AB-3', 'ORC-12', 'main'],
   // a pipe after an outcome-gate command (TRP-2; the secrets scan SEC-6): one list, GATES in lib/guard/tokens.mjs; test runs
   // are no gate (ruling R60: verify re-runs the gates itself)
   ['bash .workflow/bin/budget.sh agent | tail -1', 'TRP-2'], ['.workflow/bin/budget.sh agent | tail -1', 'TRP-2'], ['env bash .workflow/bin/budget.sh e2e | cat', 'TRP-2'],
@@ -478,6 +480,7 @@ const NEW_BLOCK = [
   ['echo x > @STATE@/tasks/T-AB-1/task.json', 'cannot be resolved', 'newer'], ['echo x > @STATE@/tasks/T-AB-1/task.json', 'cannot be resolved', 'nogit'], ['mv @STATEGLOB@ /tmp/', 'cannot be resolved', 'corrupt'],
 ];
 const NEW_ALLOW = [
+  ['git log --oneline task/T-AB-3'], ['git branch -d task/T-AB-3'], ['git merge --abort', null, 'main'],
   // gate commands without a pipe, or with the output in a file
   ['npm test > out.txt 2>&1; echo $?'], ['npm test; echo "exit $?"'], ['node --test tests/a.test.mjs'], ['bash .workflow/bin/budget.sh agent; echo $?'],
   ['@BIN@ verify T-AB-1'], ['@BIN@ secrets; echo $?'], ['@BIN@ heavy -- npm test'], ['@BIN@ status | head -5'], ['@BIN@ rule SEC-3 | cat'],
