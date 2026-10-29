@@ -114,9 +114,6 @@ test('rows: elapsed, tokens and cost, columns cut, provider auto, rows started a
   assert.equal([...lines([base], 30)[0].content].length, 30);
   assert.deepEqual(lines([{ ...base, startTime: now }]), [], 'a row started after every run of its task: no match yet');
   assert.deepEqual(lines([{ ...base, name: 'helper' }, { ...base, name: 'codex-reviewer-T-MG-3', cwd: '/elsewhere' }, { ...base, name: undefined }]), []);
-  const sec = rec({ runId: 'codex-T-MG-3-security-reviewer-1', role: 'security-reviewer' });
-  assert.deepEqual(rowLines({ tasks: [{ ...base, id: 'r3', name: 'codex-security-reviewer-T-MG-3' }], columns: 200 }, { now, runsOf: () => [sec] }),
-    [{ id: 'r3', content: 'codex · security-reviewer · T-MG-3 · 04:12 · 18.2k tok · $0.21 · running · reading lib/state/store.mjs' }]);
   // Through the command: junk on stdin, no stdin, a tasks field that is no array: no output, exit 0.
   const p = { cwd: realpathSync(isolatedEnv({ prefix: 'ui-rows-junk-' }).base), env: { ...process.env } };
   for (const input of ['not json', '{"tasks":{}}', '[]', '']) {

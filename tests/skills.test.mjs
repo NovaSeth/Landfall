@@ -66,6 +66,7 @@ function parseDoc(text, file) {
     const m = line.match(/^([a-zA-Z][a-zA-Z-]*): (.+)$/);
     assert.ok(m, `${file}: frontmatter line "${line}"`);
     assert.ok(!(m[1] in meta), `${file}: ${m[1]} twice`);
+    assert.ok(!m[2].includes(': ') && !m[2].includes(' #'), `${file}: ${m[1]} is a valid YAML plain scalar (no ": " and no " #")`);
     meta[m[1]] = m[2] === 'true' ? true : m[2] === 'false' ? false : m[2];
   }
   return { meta, comments, body: text.slice(end + 5) };

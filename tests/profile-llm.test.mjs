@@ -51,3 +51,24 @@ test('llm: the scanner version and the scanned keys', () => {
   assert.equal(SCANNER, 3);
   assert.ok(SCANNED_KEYS.includes('llm'));
 });
+
+test('llm: pyproject.toml is read by section, comments and closed arrays only', (t) => {
+  const py = (text) => scan(t, { 'pyproject.toml': text });
+  assert.equal(py('[tool.poetry.dependencies]\n  openai = "^1.0"\n').evidence, 'pyproject.toml: openai');
+  assert.equal(py('[project]\ndependencies = [\n  "anthropic>=0.30",\n]\n').evidence, 'pyproject.toml: anthropic');
+  assert.equal(py('[project.optional-dependencies]\nai = ["langchain"]\n').evidence, 'pyproject.toml: langchain');
+  assert.equal(py('[dependency-groups]\ndev = ["openai"]\n').evidence, 'pyproject.toml: openai');
+  assert.equal(py('[tool.poetry.group.ai.dependencies]\nopenai = "1"\n').evidence, 'pyproject.toml: openai');
+  assert.equal(py('[project]\ndependencies = ["openai>=1.0"] # c\n').evidence, 'pyproject.toml: openai');
+  assert.equal(py('# dependencies = ["openai>=1.0"]'), undefined);
+  assert.equal(py('[project]\ndependencies = ["openai>=1.0"'), undefined);
+  assert.equal(py('[project]\nkeywords = ["mcp"]\n'), undefined);
+  assert.equal(py('[tool.x]\nopenai = "1"\n'), undefined);
+  assert.equal(py('[tool.poetry.dev-dependencies]\nopenai = "1"\n'), undefined);
+  assert.equal(py('description = "openai wrapper"'), undefined);
+});
+
+test('llm: go.mod module paths match an entry exactly or continue with a slash', (t) => {
+  assert.equal(scan(t, { 'go.mod': 'module x\n\nrequire github.com/openai/openai-go-evil v1.0.0\n' }), undefined);
+  assert.equal(scan(t, { 'go.mod': 'module x\n\nrequire github.com/openai/openai-go/v2 v2.0.0\n' }).value, true);
+});

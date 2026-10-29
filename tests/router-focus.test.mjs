@@ -15,6 +15,7 @@ test('reviewFocus: security paths, AI paths, flags and the llm fact', () => {
   assert.equal(a.focus, 'security');
   assert.deepEqual(a.checklists, ['web']);
   assert.deepEqual(a.triggers, ['src/auth/login.ts (**/auth/**)']);
+  assert.equal(reviewFocus({ files: ['db/migrations/001.sql'] }).focus, 'security', 'a router risk path counts');
   assert.deepEqual(reviewFocus({ files: ['prompts/system.md'] }).checklists, ['web', 'ai']);
   assert.deepEqual(reviewFocus({ files: ['package.json'], llm: true }).checklists, ['web', 'ai']);
   assert.equal(reviewFocus({ files: ['package.json'] }).focus, 'security');
