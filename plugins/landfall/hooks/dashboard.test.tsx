@@ -581,6 +581,22 @@ test('a run that stopped before this session began does not touch its task', asy
   await ui.unmount()
 })
 
+test('a task a run touched this session stays touched after newer runs push that run off the bounded list (review r2 F3)', async ($, on) => {
+  const touching = { ...RUNS.data.runs[1], runId: 'r-touch', task: 'T-TU-7', endedAt: '2099-01-01T00:00:00.000Z' }
+  const runs = { ...RUNS, data: { runs: [touching] as unknown[] } }
+  const w = world(on, { status: withTask({ lastEventAt: '2020-01-01T00:00:00.000Z' }), runs })
+  w.agents.length = 0
+  await $.session.start(SESSION)
+  await w.clock.settle()
+  runs.data.runs = Array.from({ length: 30 }, (_, k) => ({ ...RUNS.data.runs[1], runId: `r-new-${k}`, task: 'T-TU-9' }))
+  await w.clock.advance(60_000)
+  await w.clock.settle()
+  const ui = await $.ui.mount(PANE)
+  const t = await ui.find({ type: 'Text', text: /T-TU-7/ })
+  expect(t?.text).toMatch(/^⏸ T-TU-7/)
+  await ui.unmount()
+})
+
 test('a live run clock never moves backwards after a failed refresh', async ($, on) => {
   const w = world(on, { runs: { ...RUNS, data: { runs: [{ ...RUNS.data.runs[0], elapsedMs: 300_000 }] } } })
   w.agents.length = 0
