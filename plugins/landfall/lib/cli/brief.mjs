@@ -14,10 +14,12 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { findingsForTask, sourceLine } from '../findings/index.mjs';
 import { briefRules } from '../method/index.mjs';
 import { openStore, reviewFocusOf } from '../profile/index.mjs';
 import { leaseEnv, snapshot } from '../sched/index.mjs';
 import { KINDS, open, resolve, writeTaskText } from '../state/index.mjs';
+import { FENCE_MARKER, dataLine, fenceLine } from '../text/data.mjs';
 import { reviewShown } from '../verify/artifacts.mjs';
 import { EXIT } from './commands.mjs';
 
@@ -40,11 +42,11 @@ export const seal = (text, bin) => `${text}${marker(bin, sha256(text))}`;
 
 // The brief text. task: the task document; gates: the gate commands; lease: the lease env ({ name: value }) or null;
 // focus: the profile's review focus (what every review of the project checks), one line after the review line.
-export function renderBrief({ template, task, role, gates, lease, review = null, focus = [], names }) {
+export function renderBrief({ template, task, role, gates, lease, review = null, focus = [], findings = [], names }) {
   const last = task.classHistory[task.classHistory.length - 1];
   const reason = last ? last.reason.replace(new RegExp(`^${escape(task.class)}: `), '') : null;
   const fills = {
-    '<Task title>': task.title,
+    '<Task title>': dataLine(task.title),
     '<task ID>': task.id,
     '<agent | provider model/effort>': `${names.plugin}:${role}`,
     '<trivial | standard | critical>': `${task.class}${reason ? ` — ${reason}` : ''}; kind: ${task.kind}`,
@@ -57,17 +59,27 @@ export function renderBrief({ template, task, role, gates, lease, review = null,
   for (const ph of [...Object.keys(fills), `\n${WORKTREE}`]) {
     if (!template.includes(ph)) throw new Error(`templates/task/brief.md has no ${JSON.stringify(ph.trim())}: the template and lib/cli/brief.mjs disagree`);
   }
-  const lines = template.split('\n');
-  if (lease) lines.splice(lines.findIndex((l) => l.startsWith(WORKTREE)) + 1, 0, `Lease env (the scheduler's slot for this task): ${Object.entries(lease).map(([k, v]) => `${k}=${v}`).join(' ')}`);
-  if (review) lines.splice(lines.findIndex((l) => l.startsWith('Executor: ')) + 1, 0, `Review: ${review.text}`);
-  if (focus.length) lines.splice(lines.findIndex((l) => l.startsWith('Executor: ')) + (review ? 2 : 1), 0, `Review focus (what every review of this project checks): ${focus.join('; ')}`);
+  // the template is filled before the inserted lines go in, so a value never fills a placeholder
   const filled = new Set();
   const once = new RegExp(Object.keys(fills).map(escape).join('|'), 'g');
-  let text = lines.join('\n').replace(once, (m) => {
+  const lines = template.replace(once, (m) => {
     if (m !== '{{bin}}' && filled.has(m)) return m;
     filled.add(m);
     return fills[m];
-  });
+  }).split('\n');
+  if (lease) lines.splice(lines.findIndex((l) => l.startsWith(WORKTREE)) + 1, 0, `Lease env (the scheduler's slot for this task): ${Object.entries(lease).map(([k, v]) => `${k}=${v}`).join(' ')}`);
+  if (review) lines.splice(lines.findIndex((l) => l.startsWith('Executor: ')) + 1, 0, `Review: ${review.text}`);
+  // the review focus is profile text the repository ships: quoted data in a text fence (SEC-14, audit 2.4.0 F1-4)
+  if (focus.length) {
+    lines.splice(lines.findIndex((l) => l.startsWith('Executor: ')) + (review ? 2 : 1), 0, 'Review focus (what every review of this project checks):',
+      FENCE_MARKER, '```text', ...focus.map((f) => fenceLine(`- ${dataLine(f)}`)), '```');
+  }
+  let text = lines.join('\n');
+  if (findings.length) {
+    const acceptance = findings.map((f, i) => `${i + 1}. ${f.id}: fixed, with a regression test that reproduces it`).join('\n');
+    text = text.replace(/(## Acceptance\n)[\s\S]*?(?=\n## )/, (_, heading) => `${heading}${acceptance}\n`);
+    text += `\n## Findings to fix (taken from the backlog)\n\n${FENCE_MARKER}\n\`\`\`text\n${findings.map((f) => fenceLine(sourceLine(f))).join('\n')}\n\`\`\`\n`;
+  }
   if (!text.endsWith('\n')) text += '\n';
   return `${text}${marker(names.bin, sha256(text))}`;
 }
@@ -95,7 +107,8 @@ export function brief({ args, flags, names, io, pluginRoot }) {
   const lease = held ? leaseEnv(held, names) : null;
   const template = readFileSync(join(pluginRoot, 'templates', 'task', 'brief.md'), 'utf8');
   const review = reviewShown(open(where.dir, { names }), task.class, { names, env: io.env });
-  const text = renderBrief({ template, task, role, gates, lease, review, focus, names });
+  const findings = findingsForTask(open(where.dir, { names }), id);
+  const text = renderBrief({ template, task, role, gates, lease, review, focus, findings, names });
   const data = { task: id, role, class: task.class, kind: task.kind, title: task.title, rules: briefRules({ cls: task.class, role }), gates, lease, review, focus, text, written: null, file: null };
   if (!flags.write) return { data, text };
   const w = writeTaskText({ cwd: io.cwd, env: io.env, names, id, name: 'brief', text, replace: (cur) => Boolean(flags.force) || unedited(cur) });

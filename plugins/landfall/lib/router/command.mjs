@@ -3,7 +3,7 @@
 //   route --probe --paths <p,…> --loc <n> [--flags <f,…>]    classify only: no task, nothing written, works in an
 //                                                            untracked repository and outside git (spec §7.2)
 //   route <task> --override <class> --by user --quote <text> the user's override (a decision when it lowers)
-// Context comes from the target (REV-58): the repository of the current directory, its git user.email (the
+// Context comes from the target (COD-9): the repository of the current directory, its git user.email (the
 // caller's handle in the store's team registry), never process state. Paths are repository-relative and
 // comma-separated; an absolute path inside the repository (the worktree of the current directory, lib/state resolve) is
 // made relative.
@@ -15,10 +15,12 @@ import { isAbsolute, relative } from 'node:path';
 import { EXIT } from '../cli/commands.mjs';
 import { openStore, riskGlobsOf } from '../profile/index.mjs';
 import { StateError, emailHash, gitIdentity, open, resolve } from '../state/index.mjs';
+import { cellStats, suggestExecutors } from '../receipts/executors.mjs';
+import { executorRecords } from '../receipts/index.mjs';
 import { reviewShown } from '../verify/artifacts.mjs';
 import { classify } from './classify.mjs';
 import { RouteError, usage } from './errors.mjs';
-import { overrideTask, routeTask, routerThresholds } from './ratchet.mjs';
+import { ignoredReasons, overrideTask, routeTask, routerThresholds } from './ratchet.mjs';
 import { rank, routeFor } from './routes.mjs';
 
 const list = (value) => String(value).split(',').map((s) => s.trim()).filter(Boolean);
@@ -88,10 +90,11 @@ function probe(f, { io, names, readRisk }) {
     if (!(err instanceof StateError && err.exit === 'ENV')) throw err; // outside git: paths stay as given
   }
   const riskPaths = where?.active ? readRisk({ dir: where.dir, names }) : [];
-  const thresholds = where?.active ? routerThresholds(open(where.dir, { names })) : undefined;
+  const store = where?.active ? open(where.dir, { names }) : null;
+  const thresholds = store ? routerThresholds(store) : undefined;
   const plan = classify({ paths: inRepo(where?.worktree ?? null, f.paths), loc: f.loc, flags: f.flags, riskPaths, thresholds });
   return {
-    task: null, class: plan.class, computed: plan.class, previous: null, outcome: 'probed', escalated: false, reasons: plan.reasons,
+    task: null, class: plan.class, computed: plan.class, previous: null, outcome: 'probed', escalated: false, reasons: [...plan.reasons, ...(store ? ignoredReasons(store) : [])],
     route: routeFor(plan.class, { flags: plan.flags }), addedSteps: [], decision: null, review: reviewShown(where?.active ? open(where.dir, { names }) : NO_STORE, plan.class, { names, env: io.env }), input: { files: plan.files, loc: plan.loc, flags: plan.flags },
   };
 }
@@ -109,12 +112,27 @@ const HEADLINE = {
   probed: () => ' (probe: nothing written)',
 };
 
-function render(d) {
+const fixed = (x) => x.toFixed(2);
+function executorData(cls, { io, names }) {
+  const cells = cellStats(executorRecords({ cwd: io.cwd, env: io.env, names }), { seed: 1 }).filter((c) => c.class === cls);
+  return { seed: 1, resamples: 1000, results: suggestExecutors(cells, cls) };
+}
+
+function executorLines(ex) {
+  return ex.results.map((r) => {
+    if (r.executor === null) return `executor ${r.role}: role defaults (${r.reason})`;
+    const c = r.cells.find((x) => x.executor === r.executor);
+    return `executor ${r.role}: ${r.executor} (first pass ${fixed(c.firstPass.rate)}, 90% ${fixed(c.firstPass.lo)}-${fixed(c.firstPass.hi)}, ${c.tasks} tasks)`;
+  });
+}
+
+function render(d, ex) {
   const lines = [`${d.task ?? 'plan'}: ${d.class}${HEADLINE[d.outcome](d)}`, `route: ${d.route.steps.join(' > ')}`];
   lines.push(`review: ${d.review.text}`);
   if (d.addedSteps.length) lines.push(`adds: ${d.addedSteps.join(', ')}`);
   lines.push(`outcome gates (the same for every class): ${d.route.gates.join(', ')}`, 'reasons:');
   for (const r of d.reasons) lines.push(`  - ${r.path ? `${r.path}: ` : ''}${r.text}`);
+  if (ex) lines.push(...executorLines(ex));
   return `${lines.join('\n')}\n`;
 }
 
@@ -133,7 +151,8 @@ export function makeRoute({ readProfileRiskPaths: readRisk = readProfileRiskPath
         data = { probe: false, ...out, review: reviewShown(store, out.class, { names, env: io.env }) };
       }
       data = { task: data.task, probe: data.probe, class: data.class, computed: data.computed, previous: data.previous, outcome: data.outcome, escalated: data.escalated, reasons: data.reasons, route: data.route, addedSteps: data.addedSteps, decision: data.decision, review: data.review, input: data.input };
-      return { data, text: render(data) };
+      if (flags.executor) data.executor = executorData(data.class, { io, names });
+      return { data, text: render(data, data.executor) };
     } catch (err) {
       if (err instanceof RouteError || err instanceof StateError) return { code: EXIT[err.exit], errors: [err] };
       throw err;

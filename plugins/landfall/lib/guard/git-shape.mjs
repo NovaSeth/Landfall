@@ -29,6 +29,13 @@ function configPair(v, where) {
   return null;
 }
 
+// A ref argument naming a task branch: task/T-…, also refs/heads/ or a remote in front, or a forced refspec (+…). For
+// merge and pull "--" only ends the options: the words after it are still refs (fix round 1, F4), so every word counts.
+const TASK_REF = /^(refs\/(heads|remotes\/[^/]+)\/|[^/\s-][^/\s]*\/)?task\/T-[A-Za-z0-9]/;
+const namesTaskBranch = (args) => args.some((a) => TASK_REF.test(a.replace(/^\+/, '')));
+const MERGE_TASK = 'ORC-25: blocked a plain `git merge` of a task branch into the target. Instead merge task branches with '
+  + 'the plugin\'s `task merge <ids…>` (one gate for the batch, recorded in the state).';
+
 // Subcommands with a transport: an ext::<command> address runs the command.
 const TRANSPORT = new Set(['clone', 'fetch', 'pull', 'ls-remote', 'push', 'remote', 'archive', 'submodule']);
 
@@ -66,7 +73,11 @@ function scanArgs(sub, args) {
 
 // Git: global options from the list, then the subcommand's shape. ctx: { cwd, unsure, branch(dir), teamMode() }.
 export function gitShape(c, w, ctx) {
-  if (c.words.some((x) => x.glob)) why('a glob in a git command');
+  if (c.words.some((x) => x.glob)) {
+    // the first word that is no option (or an option's value) is the subcommand place (A-2)
+    let k = 1; while (k < w.length && w[k].startsWith('-')) k += GIT_ARG.has(w[k]) || w[k] === '-c' || w[k] === '-C' ? 2 : 1;
+    why(c.words[k]?.glob ? 'a glob in the git subcommand: write the subcommand literally' : 'a glob in a git command');
+  }
   let i = 1; let dir = ctx.cwd; let inline = false;
   while (i < w.length && w[i].startsWith('-')) {
     const t = w[i];
@@ -93,6 +104,12 @@ export function gitShape(c, w, ctx) {
   if (sub === 'commit') return checkCommit(args);
   if (sub === 'push') return checkPush(args, dir, ctx, inline);
   if (sub === 'config') return checkConfig(args);
+  if ((sub === 'merge' || sub === 'pull') && namesTaskBranch(args)) {
+    // T-MG-80: a task branch merged by hand into the target is not in the state. Allowed on a task or batch branch (ORC-12);
+    // the current branch cannot be told → ctx.branch refuses (no proof, GC8).
+    const cur = ctx.branch(dir);
+    if (!/^task\/|\/batch-\d{8}T\d{6}/.test(cur)) return MERGE_TASK;
+  }
   // a --no-verify prefix anywhere before "--" of a merge-like command, also as an option value (fail closed, as 1.5.2)
   if (MERGE_LIKE.has(sub)) {
     for (const a of args) {

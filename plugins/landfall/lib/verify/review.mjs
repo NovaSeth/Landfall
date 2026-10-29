@@ -7,10 +7,17 @@
 //   - The round is the next free number, created exclusively (two records never share a round); the task gets the
 //     event `review` { round, verdict, reviewer: kind }.
 // The validator knows exactly the JSON Schema keywords the schema uses; any other keyword is an error, never ignored.
-// Known limit: the reviewer's kind and id are what the file says.
-import { lstatSync, readFileSync } from 'node:fs';
+// An external review comes from its run (D4): `--kind external --run <runId>` reads the out file of a done reviewer
+// run of the task (lib/runs record; a regular file, no link followed, capped) and stores the run ID and the sha256 of
+// the out file's bytes, with reviewer { kind: external, id: <provider>:reviewer } from the record. A `--from` file
+// never makes a review external: one that claims kind external is refused. Known limit: the reviewer id of a claude
+// review is what the file says.
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
 import { authorHandle, stateRel } from '../decisions/index.mjs';
+import { readRegularFile } from '../fsx/index.mjs';
+import { RUN_ID, runsStore } from '../runs/index.mjs';
 import { KINDS, StateError } from '../state/index.mjs';
 import { VERIFY_KINDS, reviewKey } from './kinds.mjs';
 import { activeWhere, storeOf, unknownTask } from './run.mjs';
@@ -65,33 +72,49 @@ export function schemaErrors(schema, value, path = '') {
 
 export const reviewErrors = (value) => schemaErrors(reviewSchema(), value);
 
-// The JSON of the input file; USAGE when it is not a readable regular file of at most 1 MB holding JSON.
+export const EXTERNAL_HINT = 'use --run <runId> (the review of an external run comes from its record)';
+const refused = (code, message, hint = '') => new StateError(code, 'REFUSED', message, { hint });
+
+// { value, bytes } of the input file; USAGE when it is not a readable regular file of at most 1 MB holding JSON.
 function readInput(cwd, from) {
   const file = isAbsolute(from) ? from : join(cwd, from);
+  let bytes;
   let text;
   try {
-    const st = lstatSync(file);
-    if (!st.isFile()) throw usage('review-unreadable', `${from} is not a regular file`, 'give the path of the review JSON file (links are not followed)');
-    if (st.size > INPUT_MAX) throw usage('review-unreadable', `${from} has ${st.size} bytes, the limit is ${INPUT_MAX}`, 'a review holds at most 1000 findings');
-    text = readFileSync(file, 'utf8');
+    bytes = readRegularFile(file, { max: INPUT_MAX });
+    text = bytes.toString('utf8');
   } catch (err) {
-    if (err instanceof StateError) throw err;
+    if (err.code === 'ENOTREGULAR') throw usage('review-unreadable', `${from} is not a regular file`, 'give the path of the review JSON file (links are not followed)');
+    if (err.code === 'ETOOBIG') throw usage('review-unreadable', `${from} is over the limit of ${INPUT_MAX} bytes`, 'a review holds at most 1000 findings');
     throw usage('review-unreadable', `${from} cannot be read (${err.code ?? err.message})`, 'give the path of the review JSON file');
   }
   try {
-    return JSON.parse(text);
+    return { value: JSON.parse(text), bytes };
   } catch (err) {
     throw usage('invalid-review', `${from} is not JSON: ${err.message}`.slice(0, 300), 'the file holds one JSON object: {"verdict", "reviewer", "findings"}');
   }
 }
 
+// The done reviewer run `run` of task `id` (lib/runs record); USAGE for a malformed or unknown ID, REFUSED otherwise.
+function reviewerRun(where, names, id, run) {
+  if (typeof run !== 'string' || !RUN_ID.test(run)) throw usage('invalid-value', `--run ${String(run).slice(0, 80)}: not a run ID`, `'${names.bin} runs' lists the runs`);
+  const rec = runsStore(where.dir, names).read('run', run);
+  if (rec === null) throw usage('run-unknown', `no run ${run} in ${where.dir}`, `'${names.bin} runs' lists the runs`);
+  const why = rec.task !== id ? `it belongs to ${rec.task}` : rec.role !== 'reviewer' ? `it is an ${rec.role} run` : rec.status !== 'done' ? `its status is ${rec.status}` : rec.outFile === null ? 'it has no out file' : '';
+  if (why) throw refused('run-not-reviewable', `${run} is not a done reviewer run of ${id}: ${why}`, `'${names.bin} exec --task ${id} --role reviewer' starts one`);
+  return rec;
+}
+
 // { invalid: [messages] } for input that breaks the schema, else { task, round, key, file, doc } after the write.
-export function recordReview({ cwd, env, names, id, from, at = new Date().toISOString() }) {
+// `from`: a claude review file; `run`: the run ID of an external review (its out file is the input).
+export function recordReview({ cwd, env, names, id, from, run, at = new Date().toISOString() }) {
   const where = activeWhere({ cwd, env, names });
   KINDS.task.path(id);
-  const input = readInput(cwd, from);
+  const rec = run === undefined ? null : reviewerRun(where, names, id, run);
+  const { value: input, bytes } = readInput(cwd, rec ? rec.outFile : from);
   const invalid = reviewErrors(input);
   if (invalid.length) return { invalid: invalid.slice(0, ERRORS_MAX) };
+  if (!rec && input.reviewer.kind === 'external') throw refused('external-needs-run', `${from} claims an external reviewer: a file alone never makes a review external`, EXTERNAL_HINT);
   const store = storeOf(where, names);
   const task = store.read('task', id);
   if (task === null) throw unknownTask(id, where, names);
@@ -101,7 +124,9 @@ export function recordReview({ cwd, env, names, id, from, at = new Date().toISOS
     if (t.status === 'done' || t.status === 'cancelled') throw fail('task-closed', `${id} is ${t.status}: a closed task takes no further state`, `'${names.bin} task new' starts a new task`);
   };
   open(task);
-  const doc = { verdict: input.verdict, reviewer: input.reviewer, findings: input.findings };
+  const doc = rec
+    ? { verdict: input.verdict, reviewer: { kind: 'external', id: `${rec.provider}:reviewer` }, findings: input.findings, run: rec.runId, sha256: createHash('sha256').update(bytes).digest('hex') }
+    : { verdict: input.verdict, reviewer: input.reviewer, findings: input.findings };
   const taken = store.list('review').filter((k) => k.startsWith(`${id}/`)).map((k) => Number(k.slice(k.lastIndexOf('-r') + 2)));
   let round = Math.max(0, ...taken) + 1;
   while (round <= ROUND_MAX && !store.create('review', reviewKey(id, round), doc)) round++;

@@ -9,6 +9,7 @@
 //                capped at 2 s; offline, no tag or no git source → skip "unknown"); a newer tag warns (SD-4)
 //   heartbeat    hook heartbeat per event: no hook writes one in this version → skip "not recorded"
 //   bin-path     the first <bin> on PATH is this launcher (Claude Code puts the plugin's bin/ on the Bash tool PATH)
+//   git          the git version: below 2.24 warns (batch merge uses --end-of-options)
 //   state        state.json schema vs this plugin: newer or invalid → fail (writes are refused)
 //   profile      profile freshness (lib/profile scanDue): a scan due → warn
 //   flags        the capability flags (lib/config: machine overrides, config.json, defaults); a machine entry that is
@@ -21,22 +22,26 @@
 //   protection   branch protection of the claim refs needs gh, which only lib/mirror may run (spec §4.3), not in this
 //                version → skip
 // Exit 0 healthy · 1 a check or row failed · 8 claude or git missing or not runnable (the report is still listed).
-import { accessSync, constants, readFileSync, realpathSync, statSync } from 'node:fs';
+import { accessSync, constants, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { delimiter, isAbsolute, join } from 'node:path';
 import { flagsOf, readConfig } from '../config/index.mjs';
 import { trackedSideFiles } from '../gen/index.mjs';
 import { git } from '../git/index.mjs';
 import { HOOKS } from '../hooks/registry.mjs';
+import { STORE_KINDS, outsideMerges } from '../loop/index.mjs';
 import { run } from '../proc/index.mjs';
 import { detectProviders } from '../providers/index.mjs';
 import { readProfile } from '../profile/index.mjs';
 import { currentCalibration, snapshot } from '../sched/index.mjs';
-import { KINDS, StateError, machineDataDir, open as openStore, resolve as resolveRepo } from '../state/index.mjs';
+import { KINDS, StateError, localForeign, machineDataDir, open as openStore, resolve as resolveRepo } from '../state/index.mjs';
 import { EXIT } from './commands.mjs';
 
 // SD-5: the oldest Claude Code version CI runs (tests/cli-contract.test.mjs keeps the two equal).
 export const CLAUDE_CODE_FLOOR = '2.1.300';
 const TIMEOUT_MS = 30000;
+// `claude` runs from a neutral directory, never the repository: Claude Code may read project settings from its cwd.
+const neutralCwd = () => { const d = tmpdir(); try { return realpathSync(d); } catch { return d; } };
 // Offline-safe release check: a source that does not answer within this is "unknown".
 export const RELEASE_TIMEOUT_MS = 2000;
 // SC3: `claude plugin details` "Always-on" ≤ 1,000 tok.
@@ -137,6 +142,21 @@ function releaseRow({ names, io, id, installed, marketplaces }) {
 }
 
 // Read-only (write: false): the providers found with their auth; none found → warn.
+// Done tasks whose branch was merged by hand (T-MG-80): a row only when there are some, with the count.
+function outsideRows({ names, io }) {
+  try {
+    const where = resolveRepo({ cwd: io.cwd, env: io.env, names });
+    if (!where.active) return [];
+    const store = openStore(where.dir, { names, kinds: STORE_KINDS });
+    const ids = outsideMerges({ where, env: io.env, tasks: store.list('task').map((t) => store.read('task', t)) });
+    if (ids.length === 0) return [];
+    return [row('outside-merges', 'warn', `${ids.length} done task(s) merged outside ${names.bin}: ${ids.slice(0, 5).join(', ')}${ids.length > 5 ? ', …' : ''}`,
+      `one batch records them: ${names.bin} task merge --adopt ${ids.join(' ')}`)];
+  } catch {
+    return [];
+  }
+}
+
 function providersRow({ names, io }) {
   try {
     const detected = detectProviders({ names, env: io.env, write: false, cacheOnly: true });
@@ -171,6 +191,17 @@ function firstOnPath(name, pathValue) {
 }
 const realPath = (p) => { try { return realpathSync(p); } catch { return null; } };
 
+// `git merge --end-of-options` (task merge --batch) needs git 2.24 or later: older warns, unreadable skips.
+export const GIT_FLOOR = '2.24.0';
+function gitRow({ io }) {
+  const hint = `update git to ${GIT_FLOOR} or newer (batch merge uses --end-of-options)`;
+  const r = git(['--version'], { cwd: neutralCwd(), env: io.env, timeoutMs: TIMEOUT_MS });
+  const v = r.status === 0 ? parseVersion(r.stdout) : null;
+  if (!v) return row('git', 'skip', 'version not readable', hint);
+  const text = v.join('.');
+  return compareVersions(v, parseVersion(GIT_FLOOR)) >= 0 ? row('git', 'ok', `${text} (floor ${GIT_FLOOR})`, hint) : row('git', 'warn', `${text} is older than ${GIT_FLOOR}: batch merge needs it`, hint);
+}
+
 function binRow({ names, io, pluginRoot }) {
   const own = join(pluginRoot, 'bin', names.bin);
   const found = firstOnPath(names.bin, io.env?.PATH);
@@ -194,10 +225,23 @@ function flagList({ flags, ignored, lowered }) {
     ...lowered.map((l) => `${l.name} ${l.mode} in config.json ignored (a committed file never lowers a protective capability; flags set --local does)`)].join(', ');
 }
 
+// The owner of the state directory's local/ (T-MG-77, lib/state localForeign) and the moved-aside copies it left.
+function localRow(where, io, names) {
+  const hint = `a local/ shipped in the repository is moved aside to local.foreign-*/ by the next ${names.bin} command; review and delete those in ${where.dir}`;
+  try {
+    const f = localForeign(where.dir, { env: io.env });
+    if (f.foreign) return row('local', 'warn', `local/: foreign (${f.why}), moved aside at the next command`, hint);
+    let kept = 0;
+    try { kept = readdirSync(where.dir).filter((n) => n.startsWith('local.foreign-')).length; } catch { /* none */ }
+    if (kept) return row('local', 'warn', `local.foreign-*: ${kept} kept (safe to delete after review)`, hint);
+    return row('local', 'ok', 'local/: ours', hint);
+  } catch (err) { return row('local', 'skip', `not readable: ${firstLine(err.message)}`, hint); }
+}
+
 // The state, profile and flags rows of the repository at cwd. A StateError is a failed row (and an error) except
 // not-a-repo (rows skipped) and git-missing (an environment error). Returns { rows, repo, env }.
 function repoRows({ names, io, id, errors }) {
-  const ids = ['state', 'profile', 'flags'];
+  const ids = ['state', 'profile', 'flags', 'local'];
   const skipAll = (detail, hint) => ids.map((x) => row(x, 'skip', detail, hint));
   let where;
   try {
@@ -254,7 +298,7 @@ function repoRows({ names, io, id, errors }) {
       flagsRow = failed('flags', err);
     }
   }
-  return { rows: [stateRow, profileRow, flagsRow], repo: where.repo, worktree: where.worktree, env: null };
+  return { rows: [stateRow, profileRow, flagsRow, localRow(where, io, names)], repo: where.repo, worktree: where.worktree, env: null };
 }
 
 // The Bash guard's blocks of the last 7 days, from the plugin data shadow log (lib/hooks/guard-bash.mjs logs every block
@@ -334,7 +378,7 @@ function render(bin, checks, rows, errors) {
 
 export function doctor({ names, io, version, pluginRoot }) {
   const id = `${names.plugin}@${names.marketplace}`;
-  const opts = { unit: 'cli', cwd: io.cwd, env: io.env, timeoutMs: TIMEOUT_MS };
+  const opts = { unit: 'cli', cwd: neutralCwd(), env: io.env, timeoutMs: TIMEOUT_MS };
   const envErrors = []; // exit 8
   const errors = []; // exit 1
   const side = sideFiles({ names, io });
@@ -403,7 +447,9 @@ export function doctor({ names, io, version, pluginRoot }) {
     releaseRow({ names, io, id, installed: entry?.version ?? version, marketplaces }),
     row('heartbeat', 'skip', 'not recorded: no hook writes a heartbeat in this version', 'nothing to fix; if hooks seem inactive, run /reload-plugins or restart Claude Code'),
     binRow({ names, io, pluginRoot }),
+    gitRow({ io }),
     ...repo.rows,
+    ...outsideRows({ names, io }),
     providersRow({ names, io }),
     schedulerRow({ names, io }),
     guardRow({ names, io }),

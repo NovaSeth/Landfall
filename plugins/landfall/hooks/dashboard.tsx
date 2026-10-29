@@ -161,6 +161,7 @@ function runsOf(env: Json | null): RunRow[] {
         error: str(r.error) || null,
         lastLine: str(r.lastLine) || null,
         live: !RUN_TERMINAL.has(status),
+        endedAt: Date.parse(str(r.endedAt)) || null,
       }
     })
     .slice(0, KEEP_AGENTS)
@@ -240,7 +241,7 @@ function inactiveSnapshot(project: string, now: number, error: string | null): S
 // ---- the drawing -------------------------------------------------------------------------------------------------
 
 type Line = { text: string; style: 'head' | 'dim' | 'section' | 'row' | 'live' | 'ok' | 'bad' | 'next' }
-type AgentLine = { line: Line; live: boolean; since: number }
+type AgentLine = { line: Line; live: boolean; since: number; endedAt: number | null; failed: boolean }
 
 function agentLine(r: AgentRecord, at: number): AgentLine {
   const running = RUNNING.has(r.status)
@@ -253,7 +254,7 @@ function agentLine(r: AgentRecord, at: number): AgentLine {
     ...(r.out ? [`→ ${baseName(r.out)}`] : []),
     ...(r.tokens ? [`${(r.tokens / 1000).toFixed(1)}k tok`] : []),
   ]
-  return { line: { text: parts.join('  '), style: running ? 'live' : r.status === 'completed' ? 'ok' : r.status === 'idle' ? 'dim' : 'bad' }, live: running, since: r.startedAt }
+  return { line: { text: parts.join('  '), style: running ? 'live' : r.status === 'completed' ? 'ok' : r.status === 'idle' ? 'dim' : 'bad' }, live: running, since: r.startedAt, endedAt: r.endedAt, failed: !running && r.status !== 'completed' && r.status !== 'idle' }
 }
 
 function runLine(r: RunRow, at: number): AgentLine {
@@ -267,7 +268,7 @@ function runLine(r: RunRow, at: number): AgentLine {
     ...(r.tokens ? [`${(r.tokens / 1000).toFixed(1)}k tok`] : []),
     ...(r.error ? [r.error] : r.lastLine ? [r.lastLine] : []),
   ]
-  return { line: { text: parts.join('  '), style: r.live ? 'live' : r.status === 'done' ? 'ok' : 'bad' }, live: r.live, since: at - r.elapsedMs }
+  return { line: { text: parts.join('  '), style: r.live ? 'live' : r.status === 'done' ? 'ok' : 'bad' }, live: r.live, since: at - r.elapsedMs, endedAt: r.endedAt, failed: !r.live && r.status !== 'done' }
 }
 
 export function linesOf(snap: Snapshot, width: number, rows: number): Line[] {
@@ -282,20 +283,34 @@ export function linesOf(snap: Snapshot, width: number, rows: number): Line[] {
   const agentRoom = Math.max(1, room - taskRoom)
 
   out.push({ text: 'TASKS', style: 'section' })
-  const shownTasks = snap.tasks.slice(0, snap.tasks.length > taskRoom ? taskRoom - 1 : taskRoom)
+  // working: an active status, or a live agent or run names the task; every other open task waits
+  const named = new Set<string>()
+  for (const a of snap.agents) if (RUNNING.has(a.status) && a.task) named.add(a.task)
+  for (const r of snap.runs) if (r.live && r.task) named.add(r.task)
+  const working = (t: TaskRow) => ACTIVE.has(t.status) || named.has(t.id)
+  // a new task nobody routed (and no --after holds, nothing blocks) is backlog: one dim line, not a row
+  const backlog = (t: TaskRow) => !working(t) && t.status === 'new' && t.cls === null && t.kind !== 'blocked' && !t.state.startsWith('waits for')
+  const rowsOf = snap.tasks.filter(t => !backlog(t))
+  const folded = snap.tasks.length - rowsOf.length
+  const ordered = [...rowsOf.filter(working), ...rowsOf.filter(t => !working(t))]
+  const shownTasks = ordered.slice(0, ordered.length > taskRoom ? taskRoom - 1 : taskRoom)
   for (const t of shownTasks) {
-    const glyph = t.kind === 'action' ? '▸' : t.kind === 'blocked' ? '✗' : '·'
-    out.push({ text: `${glyph} ${t.id}${t.round ? ` r${t.round}` : ''} ${t.cls ? CLASS_TAG[t.cls] ?? t.cls : '-'}  ${t.state}`, style: t.kind === 'blocked' ? 'bad' : 'row' })
+    const w = working(t)
+    const blocked = t.kind === 'blocked'
+    const stage = blocked ? `blocked · ${t.state.replace(/^blocked:\s*/, '')}` : `${w ? 'working' : 'waiting'} · ${t.state}`
+    out.push({ text: `${w ? '▶' : '⏸'} ${t.id}${t.round ? ` r${t.round}` : ''} ${t.cls ? CLASS_TAG[t.cls] ?? t.cls : '-'}  ${stage}`, style: blocked ? 'bad' : w ? 'row' : 'dim' })
   }
-  if (snap.tasks.length > shownTasks.length) out.push({ text: `  … ${snap.tasks.length - shownTasks.length} more (landfall task list)`, style: 'dim' })
+  if (ordered.length > shownTasks.length) out.push({ text: `  … ${ordered.length - shownTasks.length} more (landfall task list)`, style: 'dim' })
+  if (folded > 0) out.push({ text: `⏸ ${folded} in backlog (landfall task list)`, style: 'dim' })
   if (snap.tasks.length === 0) out.push({ text: '  no open tasks (landfall task new)', style: 'dim' })
 
   out.push({ text: 'AGENTS', style: 'section' })
-  const all = [...snap.agents.map(r => agentLine(r, snap.at)), ...snap.runs.map(r => runLine(r, snap.at))].sort((a, b) => Number(b.live) - Number(a.live) || b.since - a.since)
-  const shownAgents = all.slice(0, all.length > agentRoom ? agentRoom - 1 : agentRoom)
+  // only the agents and runs at work
+  const shown = [...snap.agents.map(r => agentLine(r, snap.at)), ...snap.runs.map(r => runLine(r, snap.at))].filter(a => a.live).sort((a, b) => b.since - a.since)
+  const shownAgents = shown.slice(0, shown.length > agentRoom ? Math.max(0, agentRoom - 1) : agentRoom)
   for (const a of shownAgents) out.push(a.line)
-  if (all.length > shownAgents.length) out.push({ text: `  … ${all.length - shownAgents.length} more`, style: 'dim' })
-  if (all.length === 0) out.push({ text: '  none yet', style: 'dim' })
+  if (shown.length > shownAgents.length) out.push({ text: `  … ${shown.length - shownAgents.length} more`, style: 'dim' })
+  if (shown.length === 0) out.push({ text: '  none active', style: 'dim' })
 
   const slots = Object.entries(snap.slots)
   out.push({ text: `SLOTS ${slots.length ? slots.map(([k, n]) => `${k} ${n}`).join(' · ') : 'none in use'}`, style: 'dim' })

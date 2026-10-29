@@ -13,6 +13,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fd3CpuMs, fd3Preload } from './helpers/cpu-time.mjs';
 import { isolateProcessEnv } from './helpers/isolated-env.mjs';
 
 // No test here touches the real HOME: git, the hook and the launcher run with a throwaway HOME and an empty global git
@@ -356,6 +357,11 @@ const ACCEPTED_FP = [
 ];
 // ---- corpus (new in the port) ----
 const NEW_BLOCK = [
+  // a task branch merged by hand into the target (T-MG-80; guard/git-shape.mjs)
+  ['git merge --no-ff task/T-AB-3', 'ORC-25', 'main'], ['git pull origin task/T-AB-3', 'ORC-25', 'main'],
+  // fix round 1 (F4): "--" ends the options of merge and pull, the refs after it are still refs; an unreadable branch blocks
+  ['git merge -- task/T-AB-3', 'ORC-25', 'main'], ['git pull -- origin task/T-AB-3', 'ORC-25', 'main'], ['git pull origin +task/T-AB-3:x', 'ORC-25', 'main'],
+  ['git merge -- task/T-AB-3', 'cannot tell the current branch'], ['git pull -- origin task/T-AB-3', 'cannot tell the current branch'],
   // a pipe after an outcome-gate command (TRP-2; the secrets scan SEC-6): one list, GATES in lib/guard/tokens.mjs; test runs
   // are no gate (ruling R60: verify re-runs the gates itself)
   ['bash .workflow/bin/budget.sh agent | tail -1', 'TRP-2'], ['.workflow/bin/budget.sh agent | tail -1', 'TRP-2'], ['env bash .workflow/bin/budget.sh e2e | cat', 'TRP-2'],
@@ -478,6 +484,7 @@ const NEW_BLOCK = [
   ['echo x > @STATE@/tasks/T-AB-1/task.json', 'cannot be resolved', 'newer'], ['echo x > @STATE@/tasks/T-AB-1/task.json', 'cannot be resolved', 'nogit'], ['mv @STATEGLOB@ /tmp/', 'cannot be resolved', 'corrupt'],
 ];
 const NEW_ALLOW = [
+  ['git log --oneline task/T-AB-3'], ['git branch -d task/T-AB-3'], ['git merge --abort', null, 'main'],
   // gate commands without a pipe, or with the output in a file
   ['npm test > out.txt 2>&1; echo $?'], ['npm test; echo "exit $?"'], ['node --test tests/a.test.mjs'], ['bash .workflow/bin/budget.sh agent; echo $?'],
   ['@BIN@ verify T-AB-1'], ['@BIN@ secrets; echo $?'], ['@BIN@ heavy -- npm test'], ['@BIN@ status | head -5'], ['@BIN@ rule SEC-3 | cat'],
@@ -692,8 +699,7 @@ const blocked = (v) => v.decision === 'deny';
 const label = ([c, , ctx = 'none']) => `[${ctx}] ${c}`;
 
 // The launcher end to end, with the hook process's own CPU time reported on fd 3 by a preload (process.cpuUsage).
-const PROBE = join(mkdtempSync(join(tmpdir(), 'guard-cpu-')), 'cpu.cjs');
-writeFileSync(PROBE, "process.on('exit', () => { const u = process.cpuUsage(); require('node:fs').writeSync(3, JSON.stringify(u)); });\n");
+const PROBE = fd3Preload('guard-cpu-');
 function launch(input, extraEnv = {}) {
   return new Promise((done) => {
     const p = spawn(process.execPath, ['--require', PROBE, LAUNCHER, 'hook', 'guard-bash'], { env: { ...process.env, ...extraEnv }, stdio: ['pipe', 'pipe', 'pipe', 'pipe'] });
@@ -701,7 +707,7 @@ function launch(input, extraEnv = {}) {
     p.stdout.on('data', (d) => { stdout += d; }); p.stderr.on('data', (d) => { stderr += d; }); p.stdio[3].on('data', (d) => { cpu += d; });
     p.on('close', (status) => {
       let cpuMs = NaN;
-      try { const u = JSON.parse(cpu); cpuMs = (u.user + u.system) / 1000; } catch { /* reported below */ }
+      cpuMs = fd3CpuMs(cpu); // NaN is reported below
       done({ status, stdout, stderr, cpuMs, ...decode({ stdout, stderr, status }) });
     });
     p.stdin.on('error', () => {}); p.stdin.end(input);

@@ -1,10 +1,10 @@
-// Command table (spec §8.1, §8.2, REV-54): the single source of commands, arguments, flags and exit codes.
+// Command table (spec §8.1, §8.2, COD-5): the single source of commands, arguments, flags and exit codes.
 // main.mjs parses argv by it; help.mjs renders `--help` from it and scripts/gen-docs.mjs renders docs/cli.md.
 // A command is one row; `load` imports its implementation on demand, so hook calls start fast.
 //
 // Row: name (words separated by one space) · summary (≤ 120 chars) · details (extra help lines) ·
 // args [{ name, required, variadic, summary }] · flags [{ flag, alias, value, summary }] · exits (EXIT names) ·
-// mutating (changes files: needs a terminal or --yes, REV-58; for a command whose forms differ, a function of the
+// mutating (changes files: needs a terminal or --yes, COD-9; for a command whose forms differ, a function of the
 // parsed flags, true for a form that changes files: consent (main.mjs) and help (help.mjs) both read it through
 // mutates()) · hidden (not in --help; docs list it as internal) ·
 // failOpen (hook entry: an error ends with exit 0 and no output, GC8, except a block-if-guarded hook: exit 2) ·
@@ -53,6 +53,69 @@ const DECISION_FLAGS = [
 ];
 
 const ROWS = [
+  {
+    name: 'findings list',
+    summary: 'List review findings kept in the backlog; defaults to open and taken.',
+    args: [],
+    flags: [
+      { flag: '--status', value: 'status', summary: 'open, taken, fixed, dropped or all (default: open and taken)' },
+      { flag: '--task', value: 'id', summary: 'filter by source task ID' },
+    ],
+    exits: ['OK', 'FAIL', 'USAGE', 'REFUSED', 'ENV'],
+    load: () => import('../findings/commands.mjs').then((m) => m.list),
+  },
+  {
+    name: 'findings show',
+    summary: 'Show a backlog finding, its source review and its lifecycle.',
+    args: [{ name: 'id', required: true, summary: 'the B-<handle>-<number> finding ID' }],
+    flags: [],
+    exits: ['OK', 'FAIL', 'USAGE', 'REFUSED', 'ENV'],
+    load: () => import('../findings/commands.mjs').then((m) => m.show),
+  },
+  {
+    name: 'findings add',
+    summary: 'File findings from a recorded review round, once per source task, round and finding ID.',
+    args: [],
+    flags: [
+      { flag: '--task', value: 'id', summary: 'source task ID (required)' },
+      { flag: '--round', value: 'k', summary: 'recorded review round (required)' },
+      { flag: '--ids', value: 'ids', summary: 'comma-separated review finding IDs (required)' },
+    ],
+    mutating: true,
+    exits: ['OK', 'FAIL', 'USAGE', 'REFUSED', 'ENV'],
+    load: () => import('../findings/commands.mjs').then((m) => m.add),
+  },
+  {
+    name: 'findings take',
+    summary: 'Create one task for selected open backlog findings and mark them taken.',
+    args: [{ name: 'ids', variadic: true, summary: 'backlog finding IDs (or --all)' }],
+    flags: [
+      { flag: '--all', summary: 'take every open finding; cannot be combined with IDs' },
+      { flag: '--title', value: 'text', summary: 'task title, at most 120 characters (default: Backlog: <n> findings (<ids>))' },
+    ],
+    mutating: true,
+    exits: ['OK', 'FAIL', 'USAGE', 'REFUSED', 'ENV'],
+    load: () => import('../findings/commands.mjs').then((m) => m.take),
+  },
+  {
+    name: 'findings close',
+    summary: 'Mark open or taken backlog findings fixed by an existing task.',
+    args: [{ name: 'ids', variadic: true, required: true, summary: 'backlog finding IDs' }],
+    flags: [{ flag: '--task', value: 'id', summary: 'the task that fixed them (required; must match takenBy when taken)' }],
+    mutating: true,
+    exits: ['OK', 'FAIL', 'USAGE', 'REFUSED', 'ENV'],
+    load: () => import('../findings/commands.mjs').then((m) => m.close),
+  },
+  {
+    name: 'findings drop',
+    summary: 'Drop open or taken backlog findings with a reason recorded in a decision.',
+    args: [{ name: 'ids', variadic: true, required: true, summary: 'backlog finding IDs' }],
+    flags: [{ flag: '--reason', value: 'text', summary: 'why they are dropped (required, 10–500 characters)' }],
+    mutating: true,
+    exits: ['OK', 'FAIL', 'USAGE', 'REFUSED', 'ENV'],
+    load: () => import('../findings/commands.mjs').then((m) => m.drop),
+  },
+
   // Views (spec §8.2, §12): lib/ui.
   {
     name: 'status',
@@ -61,7 +124,7 @@ const ROWS = [
       'Also what the CLI prints with no command (--help prints the help). State: active (the state directory, in the',
       'repository or linked), declined or not active. Tier: evaluated now and never recorded (`tier` records a change).',
       'Tasks: each open task with the next step of the loop\'s step table, as `tick` would list it. Then the loop record and',
-      'the scheduler leases of this project. At most 25 lines; --json holds every task and step. Writes nothing.',
+      'the findings backlog counts and scheduler leases of this project. At most 25 lines; --json holds every task and step. Writes nothing.',
     ],
     args: [],
     flags: [],
@@ -189,6 +252,7 @@ const ROWS = [
       { flag: '--loc', value: 'n', summary: 'estimated lines changed' },
       { flag: '--flags', value: 'f,…', summary: 'risk flags, comma-separated: migration, public-api, security, data-write, irreversible, new-dependency' },
       { flag: '--probe', summary: 'classify the plan only: no task, nothing written' },
+      { flag: '--executor', summary: 'add a line per role: the executor the receipts favour for the class (two cells of 20+ tasks, separated 90% first-pass intervals), else the role defaults' },
       { flag: '--override', value: 'class', summary: 'set the class on the user\'s word (lowering records a decision): trivial, standard, critical' },
       { flag: '--by', value: 'who', summary: 'who decided the override; only user is accepted' },
       { flag: '--quote', value: 'text', summary: 'the user\'s own words, at most 300 characters, kept in the decision' },
@@ -311,7 +375,10 @@ const ROWS = [
       '(exit 1); delete the side file once merged. Nothing is written in an inactive repository (exit 7). `gen plan` previews.',
     ],
     args: [{ name: 'target', variadic: true, summary: 'ci, pre-push, codeowners, pr-template or agents-md; default: the enabled and already generated ones' }],
-    flags: [{ flag: '--dry-run', summary: 'decide and report every target; write nothing' }],
+    flags: [
+      { flag: '--dry-run', summary: 'decide and report every target; write nothing' },
+      { flag: '--commit', value: 'sha', summary: 'pin the CI workflow npx spec to this full commit SHA (40 lowercase hex) instead of the release tag' },
+    ],
     exits: ['OK', 'FAIL', 'USAGE', 'REFUSED', 'ENV'],
     mutating: (flags) => !flags.dryRun,
     load: () => import('./gen.mjs').then((m) => m.genApply),
@@ -321,7 +388,7 @@ const ROWS = [
     summary: 'Show what gen apply would do for each generated file; writes nothing.',
     details: ['The decisions and exit code of `gen apply --dry-run`, without consent: exit 1 when apply would leave a file to merge by hand.'],
     args: [{ name: 'target', variadic: true, summary: 'ci, pre-push, codeowners, pr-template or agents-md; default: the enabled and already generated ones' }],
-    flags: [],
+    flags: [{ flag: '--commit', value: 'sha', summary: 'pin the CI workflow npx spec to this full commit SHA (40 lowercase hex) instead of the release tag' }],
     exits: ['OK', 'FAIL', 'USAGE', 'REFUSED', 'ENV'],
     load: () => import('./gen.mjs').then((m) => m.genPlan),
   },
@@ -583,13 +650,24 @@ const ROWS = [
     name: 'task merge',
     summary: 'Merge a task branch with --no-ff --no-commit, run the outcome gates on the merged tree, commit only on pass.',
     details: [
-      'A conflict or a failing gate aborts the merge (exit 1) and leaves the branch as it was; the tree must be clean.',
-      'The outcome gates: profile gates, test baseline, report evidence, state files (no route or review). Writes no state.',
+      'A conflict or a failing gate aborts the merge (exit 1) and leaves the branch as it was.',
+      'The code tree must be clean (state writes may be pending).',
+      'The outcome gates: profile gates, test baseline, report evidence, state files (no route or review). A merge is',
+      'recorded on the task (a merged event and mergedAt). --adopt records tasks merged by hand after one gate run on HEAD:',
+      'each task whose branch tip is an ancestor of HEAD; the others are reported. A failing gate records nothing.',
       'Any change to the gates needs a new gate-change decision. The commit runs your hooks; a hook that changes the',
       'tree undoes the commit (the merge stays staged).',
+      'Several IDs, or --ready (the done, unmerged tasks with a branch), merge as one batch: the branches merge with',
+      '--no-ff in a temporary worktree, the gates run once on the integrated tree, a failure is bisected and only the',
+      'passing tasks merge, a conflict leaves only that task out, the target is fast-forwarded only if it did not move,',
+      'and a branch that changes the gates is skipped (merge it alone). One line per task, the gate runs, the batch id.',
     ],
-    args: [{ name: 'id', required: true, summary: 'task ID such as T-AB-1' }],
-    flags: [{ flag: '--branch', value: 'branch', summary: 'the branch or commit to merge (default: the task\'s branch)' }],
+    args: [{ name: 'id', variadic: true, summary: 'task ID such as T-AB-1 (several: one batch, or with --adopt)' }],
+    flags: [
+      { flag: '--branch', value: 'branch', summary: 'the branch or commit to merge (default: the task\'s branch)' },
+      { flag: '--ready', summary: 'merge every done, unmerged task with a branch as one batch, in task order' },
+      { flag: '--adopt', summary: 'record tasks already merged by hand into HEAD, after one gate run on HEAD' },
+    ],
     exits: ['OK', 'FAIL', 'USAGE', 'REFUSED', 'ENV'],
     mutating: true,
     load: () => import('../verify/command.mjs').then((m) => m.taskMerge),
@@ -743,9 +821,16 @@ const ROWS = [
       '(the output schema external reviewers get). Invalid: exit 2 with each failing field, nothing written.',
       'Only the task\'s owner records, while the task is open; the task gets a review event. verify and task done read',
       'the latest round; a review recorded after a passing verify needs no second verify.',
+      'An external review comes from its run: --kind external --run <runId> reads the out file of a done reviewer run of',
+      'the task (no link followed) and stores the run ID and the sha256 of its bytes. --from with kind external, or a file',
+      'claiming an external reviewer, is refused.',
     ],
     args: [{ name: 'id', required: true, summary: 'task ID such as T-AB-1' }],
-    flags: [{ flag: '--from', value: 'file', summary: 'required: the review JSON file (a regular file of at most 1 MB)' }],
+    flags: [
+      { flag: '--from', value: 'file', summary: 'kind claude: the review JSON file (a regular file of at most 1 MB)' },
+      { flag: '--kind', value: 'kind', summary: 'claude (default) or external' },
+      { flag: '--run', value: 'runId', summary: 'kind external: the done reviewer run whose out file holds the review' },
+    ],
     exits: ['OK', 'FAIL', 'USAGE', 'REFUSED', 'ENV'],
     mutating: true,
     load: () => import('../verify/command.mjs').then((m) => m.reviewRecord),
@@ -881,6 +966,37 @@ const ROWS = [
     load: () => import('../config/commands.mjs').then((m) => m.flagsSet),
   },
   {
+    name: 'mirror github',
+    summary: 'Mirror tasks to GitHub issues, one way: opt-in, prints its target repository, writes only with --yes or a terminal.',
+    details: [
+      'Runs gh auth status first (exit 8 when it fails). One issue per task titled "<task ID> <title>", marked',
+      '<!-- landfall:<task ID> -->, labelled landfall, class:<class>, status:<status>; a done or cancelled task is closed.',
+      'Existing issues are found by the marker and edited only when they differ: a rerun without changes writes nothing.',
+      'Issues are never read back into the state. --dry-run prints the plan and writes nothing.',
+    ],
+    args: [],
+    flags: [
+      { flag: '--repo', value: 'owner/name', summary: 'target repository (default: the gh default repository of this directory)' },
+      { flag: '--dry-run', summary: 'print the target and the plan, make no write' },
+    ],
+    exits: ['OK', 'FAIL', 'USAGE', 'REFUSED', 'ENV'],
+    mutating: (flags) => !flags.dryRun,
+    load: () => import('../mirror/commands.mjs').then((m) => m.github),
+  },
+  {
+    name: 'trust',
+    summary: 'Show the gate commands and threshold overrides this machine does not trust yet; trust them after a y at a terminal.',
+    details: [
+      'Gate commands run (verify, baseline pin, task merge) and threshold overrides count (route) only once this machine',
+      'set or trusted them: a cloned repository can ship both. Commands of this machine that write them trust them.',
+      'Asks "[y/N]" at a terminal; without one, or with --yes, it is refused (exit 7). --json lists and writes nothing.',
+    ],
+    args: [],
+    flags: [],
+    exits: ['OK', 'FAIL', 'REFUSED', 'ENV'],
+    load: () => import('./trust.mjs').then((m) => m.trust),
+  },
+  {
     name: 'config show',
     summary: 'Show the configuration: threshold overrides with their default and decision, executor preferences, changed flags.',
     details: [
@@ -934,7 +1050,7 @@ const ROWS = [
       { flag: '--from-verify', value: 'task', summary: 'allow the tests the task\'s latest verify saw removed or newly skipped (a test-removal decision)' },
       { flag: '--from-file', value: 'json', summary: 'read the fields from a JSON file (a regular file of at most 64 KB); flags given here win' },
       { flag: '--task', value: 'id', summary: 'the task whose review step a review-close decision closes; kind review-close by default' },
-      { flag: '--remaining', value: 'ids', summary: 'comma-separated blocking finding IDs of the latest review round left open (review-close)' },
+      { flag: '--remaining', value: 'ids', summary: 'comma-separated blocking and minor finding IDs left open in the latest review; files them in the backlog' },
     ],
     exits: ['OK', 'FAIL', 'USAGE', 'REFUSED', 'ENV'],
     mutating: true,
@@ -1011,12 +1127,15 @@ const ROWS = [
     details: [
       'The template is split on spaces (no shell); placeholders are whole words: {cwd} {sandbox} {out} {model} ({model} is',
       'dropped when unset). The brief goes to stdin. The roles are the keys of --sandbox-map. A word or mode naming a way to',
-      'lift the sandbox or the approvals is refused (exit 2). Declaring an ID again replaces it. Kept in plugin data providers.json.',
+      'lift the sandbox or the approvals is refused (exit 2); {sandbox} is required and no word may fix a sandbox or write mode.',
+      'Every load checks the entry again: a role with an unsafe or invalid mode cannot run (providers lists why). Declaring an',
+      'ID again replaces it. Kept in plugin data providers.json.',
     ],
     args: [{ name: 'id', required: true, summary: 'provider ID: 1-20 lowercase letters or digits, not a built-in one' }],
     flags: [
       { flag: '--argv', value: 'template', summary: "required: the command, such as 'mycli run --dir {cwd} --mode {sandbox} -o {out}'" },
       { flag: '--sandbox-map', value: 'role=mode,…', summary: 'required: the mode per role, such as reviewer=read-only,implementer=workspace-write' },
+      { flag: '--env', value: 'NAME,…', summary: 'the variables the provider gets from your environment (at most 20), such as MYCLI_API_KEY; no other passes' },
     ],
     exits: ['OK', 'USAGE', 'REFUSED', 'ENV'],
     mutating: true,
@@ -1024,7 +1143,7 @@ const ROWS = [
   },
   {
     name: 'exec',
-    summary: 'Start an external provider run for a task and role: the record local/runs/<run>.json, one detached supervisor per run.',
+    summary: 'Start an external reviewer with a pinned review brief: latest round or --round; save with review brief <id> --write.',
     details: [
       'The provider is selected like the dispatch does (found, logged in, declared for the role; --provider names one). The',
       'record starts as {status: starting}; the supervisor (run-supervise) takes the external lease (queued while none is',
@@ -1040,6 +1159,7 @@ const ROWS = [
       { flag: '--task', value: 'id', summary: 'required: the task ID, such as T-AB-1' },
       { flag: '--role', value: 'role', summary: 'required: reviewer or implementer' },
       { flag: '--provider', value: 'id', summary: 'a declared or built-in provider instead of the selection' },
+      { flag: '--round', value: 'k', summary: 'review brief round, 1 to 999 (default: highest stored round)' },
     ],
     exits: ['OK', 'FAIL', 'USAGE', 'REFUSED', 'ENV'],
     mutating: true,

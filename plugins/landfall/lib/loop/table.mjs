@@ -19,7 +19,10 @@
 // "<ref>:" or "<ref> ". The first entry without a task is the next step when none of my tasks is open, else a hint.
 // Outcome: action when any action row exists; wait when work runs (my waiting tasks, live runs, blocked or others'
 // tasks); done otherwise (then the state directory must be committed). Rows: { task, state, step, rules, kind }.
+import { currentCalibration, identify, judge, readings as machineReadings, snapshot } from '../sched/index.mjs';
 import { afterOf } from '../state/index.mjs';
+import { CAP_S } from '../runs/kind.mjs';
+import { codeSpan, dataLine, shellQuote } from '../text/data.mjs';
 import { DEFAULT_BUDGET_MIN } from './budget.mjs';
 
 export const STATUS_MIN = 20; // ORC-9 default: status request after 20 min without an event
@@ -29,13 +32,40 @@ const FINISHED = new Set(['done', 'failed', 'timeout', 'stopped']);
 const CLOSED = new Set(['done', 'cancelled']);
 const BLOCKING_REPORTS = new Set(['needs-context', 'blocked']);
 const MIN_MS = 60000;
+const LIVE_GRACE_S = 120; // a live-status run past capS + this is not live: its supervisor ends it at capS plus a grace
 
 // Every rule ID this table cites (tests check that each resolves in the method).
 export const TABLE_RULES = Object.freeze(['FLW-3', 'ORC-4', 'FLW-4', 'ORC-9', 'FLW-6', 'PRI-6', 'ORC-5', 'REV-6', 'REV-20', 'REV-7', 'REV-5',
-  'REV-11', 'FLW-8', 'ORC-7', 'ORC-11', 'SPC-1', 'SPC-2', 'SPC-11', 'FLW-9', 'PRI-1', 'COL-24', 'FLW-7']);
+  'REV-11', 'FLW-8', 'ORC-7', 'ORC-11', 'SPC-1', 'SPC-2', 'SPC-11', 'FLW-9', 'PRI-1', 'COL-24', 'FLW-7', 'ORC-24', 'ORC-25']);
+
+const HEAVY_WAIT_MIN = 10;
+
+// ORC-24 watch rows: [{ code, message }] from the heavy queue (tickets of snapshot().queues.heavy: { status, at }), the
+// readings and the calibrated load max ('off' or "8.0"). A heavy ticket live over HEAVY_WAIT_MIN min, load at or over the
+// max. Pure; no row when all is calm.
+export function watchRows({ queue = [], readings = null, loadMax = 'off', now }) {
+  const rows = [];
+  const waits = queue.filter((t) => t.status === 'live').map((t) => Math.floor((now - Date.parse(t.at)) / MIN_MS)).filter(Number.isFinite);
+  const oldest = Math.max(-1, ...waits);
+  if (oldest > HEAVY_WAIT_MIN) rows.push({ code: 'heavy-queue', message: `heavy queue: ${waits.length} waiting, oldest ${oldest} min → hold new dispatches until the gate is through (ORC-24)` });
+  const load = readings?.loadMeasurable === false ? null : readings?.load1;
+  if (loadMax !== 'off' && Number.isFinite(load) && load >= Number(loadMax)) rows.push({ code: 'load', message: `load ${load.toFixed(1)} ≥ ${loadMax} → start no new agents until it falls (ORC-24)` });
+  return rows;
+}
+
+// The watch rows of this machine's scheduler data; unreadable data gives no row (a watch never fails a command).
+export function readWatch({ names, env, now = Date.now(), readings = null }) {
+  try {
+    const r = readings ?? machineReadings();
+    return watchRows({ queue: snapshot({ names, env }).queues.heavy, readings: r, loadMax: currentCalibration({ names, env, readings: r }).calibration.loadMax, now });
+  } catch {
+    return [];
+  }
+}
 
 const natural = (a, b) => a.localeCompare(b, 'en', { numeric: true });
-const cell = (s) => String(s).replace(/[|\r\n]+/g, '/');
+// repository text (titles, states, paths) as one inert line (SEC-14); a `|` would split the table cell
+const cell = (s) => dataLine(s).replace(/\|/g, '/');
 const action = (task, state, step, rules) => ({ task, state, step, rules, kind: 'action' });
 const wait = (task, state, step, rules) => ({ task, state, step, rules, kind: 'wait' });
 const timeOf = (e) => Date.parse(e?.at ?? '') || 0;
@@ -73,7 +103,7 @@ function taskRow(t, { now, bin, lanesOn, caps, budget = DEFAULT_BUDGET_MIN }) {
   };
   // a review dispatched to an in-session agent is visible only once recorded: the task then waits as dispatched
   const record = `record it: \`${bin} task set ${id} dispatched --executor <reviewer> --base <sha>\``;
-  const approved = (state) => action(id, state, `merge origin/main into its branch and verify it again: \`${bin} verify ${id}\`; merge it (a squashed pull request, or locally without a remote) and close it: \`${bin} task done ${id}\``, ['REV-11', 'FLW-8']);
+  const approved = (state) => action(id, state, `merge origin/main into its branch and verify it again: \`${bin} verify ${id}\`; then \`${bin} task done ${id}\`, then \`${bin} task merge ${id}\` (several ready: \`${bin} task merge --ready\`)`, ['REV-11', 'ORC-25', 'FLW-8']);
   const decide = (k) => action(id, `fix round ${k} after the ${caps.rounds}-round limit`,
     'decide: escalate to the user or change the approach, and start no further fix round (Critical findings are exempt: they go to the strongest executor)', ['REV-7']);
   // round k is delivered: approved when a self-verified event of round k follows the last fix-round event
@@ -127,7 +157,33 @@ function taskRow(t, { now, bin, lanesOn, caps, budget = DEFAULT_BUDGET_MIN }) {
   }
 }
 
-export function nextSteps({ tasks = [], runs = [], handles = [], me = null, plan = null, lanesOn = false, caps, now, bin, budgets = {}, problem = null, dirty = () => [] }) {
+// The supervisor of a run against the process table (lib/sched, judged as `runs stop` judges it): 'gone' or 'other'
+// is dead; no pid yet, or an identity that cannot be told, counts as alive.
+export function supervisorAlive(r) {
+  if (!Number.isInteger(r.pid)) return true;
+  try {
+    const v = judge({ start: r.pidStart ?? null, method: r.pidMethod ?? null }, identify([r.pid]).get(r.pid));
+    return v !== 'gone' && v !== 'other';
+  } catch { return true; }
+}
+
+// A live-status run is live only while its supervisor is alive and the time since startedAt (or queuedAt) is below
+// capS + LIVE_GRACE_S (capS missing or invalid: the default cap of the role its run ID names, lib/runs CAP_S; no
+// role: the largest): a crashed supervisor or a shipped record never keeps the loop waiting (STALLED stays possible).
+const roleOf = (r) => r.role ?? /-(reviewer|implementer)-\d+$/.exec(r.runId ?? '')?.[1];
+const capOf = (r) => (Number.isInteger(r.capS) && r.capS >= 1 ? r.capS : CAP_S[roleOf(r)] ?? Math.max(...Object.values(CAP_S)));
+function isLive(r, now, alive) {
+  if (!LIVE.has(r.status)) return false;
+  const since = [r.startedAt, r.queuedAt].map((x) => Date.parse(x ?? '')).find(Number.isFinite);
+  if (since === undefined) return false; // no valid start or queue time: no deadline, so unusable metadata, not a live run
+  if (now - since >= (capOf(r) + LIVE_GRACE_S) * 1000) return false;
+  return alive(r);
+}
+
+// The most outside merges listed as steps; the rest are one "… n more" note (every eligible task is still checked).
+export const OUTSIDE_MAX = 50;
+
+export function nextSteps({ tasks = [], runs = [], handles = [], me = null, plan = null, lanesOn = false, caps, now, bin, budgets = {}, problem = null, dirty = () => [], outside = [], watch = [], alive = supervisorAlive }) {
   const steps = [];
   const info = [];
   const multi = handles.length > 1;
@@ -137,7 +193,7 @@ export function nextSteps({ tasks = [], runs = [], handles = [], me = null, plan
   let liveRuns = 0;
   const liveOf = new Map(); // task → its first live run (sorted by run ID)
   for (const r of [...runs].sort((a, b) => natural(a.runId, b.runId))) {
-    if (!LIVE.has(r.status)) continue;
+    if (!isLive(r, now, alive)) continue;
     liveRuns++; // a live run of any task, a closed one too: the loop waits for it
     if (!liveOf.has(r.task)) liveOf.set(r.task, r);
   }
@@ -148,7 +204,7 @@ export function nextSteps({ tasks = [], runs = [], handles = [], me = null, plan
     let ownOpen = 0;
     for (const t of [...tasks].sort((a, b) => natural(a.id, b.id))) {
       if (!open(t)) continue;
-      if (!mine(t)) { info.push({ task: t.id, state: `${t.owner}: ${t.status}${t.lane ? ` (lane ${t.lane})` : ''}`, kind: 'others' }); continue; }
+      if (!mine(t)) { info.push({ task: t.id, state: cell(`${t.owner}: ${t.status}${t.lane ? ` (lane ${t.lane})` : ''}`), kind: 'others' }); continue; }
       ownOpen++;
       // a task created --after others waits, undispatched, until each of them is closed (retro 2026-10 §4.13: a
       // dependency is state, not a sentence in the brief); an unknown predecessor counts as open
@@ -165,24 +221,31 @@ export function nextSteps({ tasks = [], runs = [], handles = [], me = null, plan
       const t = byId.get(r.task);
       if (!t || !mine(t)) continue;
       if (LIVE.has(r.status)) {
+        if (!isLive(r, now, alive)) continue; // a dead live-status record waits for nothing
         // a live run of an open task waits in its task's row; of a closed task, in its own
         if (!open(t)) steps.push(wait(r.runId, `run ${r.status} for ${t.id}, ${t.status}`, 'wait for the run; its record changes when it ends', ['FLW-4']));
       } else if (FINISHED.has(r.status) && r.endedAt && Date.parse(r.endedAt) > lastEvent(t) && !tasks.some((x) => belongs(x, r.runId))) {
         // collected: an event of its task after it ended, or (a closed task takes no further state) a task named after it
         const record = open(t) ? `then record ${t.id}'s state`
-          : `${t.id} is ${t.status}, so record it as a task named after the run: \`${bin} task new "${r.runId}: <what follows>"\` (cancel that task with the reason when nothing follows)`;
+          : `${t.id} is ${t.status}, so record it as a task named after the run: ${codeSpan(`${bin} task new ${shellQuote(`${dataLine(r.runId)}: <what follows>`)}`)} (cancel that task with the reason when nothing follows)`;
         steps.push(action(r.runId, `run ${r.status}${r.exit === null || r.exit === undefined ? '' : `, exit ${r.exit}`} for ${t.id}`, `collect its result: check the exit code and the result count, ${record}`, ['FLW-6']));
       }
     }
+    // done tasks whose branch was merged by hand: the merge is not in the state (T-MG-80)
+    // (fix round 2, F8: the caller's own are filtered first, so others' merges never push them past the cap)
+    const adoptable = outside.filter((id) => byId.has(id) && mine(byId.get(id)));
+    for (const id of adoptable.slice(0, OUTSIDE_MAX)) steps.push(action(id, `merged outside ${bin}`, `${bin} task merge --adopt ${id}`, []));
+    if (adoptable.length > OUTSIDE_MAX) info.push({ task: '…', state: `… ${adoptable.length - OUTSIDE_MAX} more merged outside ${bin}`, step: null, rules: ['ORC-25'], kind: 'others' });
     if (plan) {
       const next = plan.entries.find((e) => !tasks.some((t) => belongs(t, e.ref)));
       if (plan.entries.length === 0) steps.push(action('-', `${cell(plan.path)} has no "### Task <id>: <title>" entries`, 'give the plan its task headings, or tick without --plan', ['SPC-11']));
-      else if (next && ownOpen === 0) steps.push(action(next.ref, `next in ${cell(plan.path)}`, `create its task: \`${bin} task new "${cell(`${next.ref}: ${next.title}`).replace(/"/g, "'")}"\``, ['SPC-11', 'FLW-9']));
+      else if (next && ownOpen === 0) steps.push(action(next.ref, `next in ${cell(plan.path)}`, `create its task: ${codeSpan(`${bin} task new ${shellQuote(dataLine(`${next.ref}: ${next.title}`))}`)}`, ['SPC-11', 'FLW-9']));
       else if (next) info.push({ task: next.ref, state: `next in ${cell(plan.path)} when a slot frees: ${cell(next.title)}`, kind: 'plan' });
     } else if (tasks.length === 0) {
       steps.push(action('START', 'no tasks yet', `write the spec and the plan (\`${bin} rule SPC-1 SPC-2\`), then create the first task: \`${bin} task new "<title>"\``, ['SPC-1', 'SPC-2']));
     }
   }
+  for (const w of watch) info.push({ task: w.code, state: w.message, step: null, rules: ['ORC-24'], kind: 'watch' }); // notes: never a step, never an exit
   const acting = steps.some((s) => s.kind === 'action');
   const waiting = steps.some((s) => s.kind === 'wait') || info.some((i) => i.kind === 'blocked' || i.kind === 'others') || liveRuns > 0;
   if (!acting && !waiting) {

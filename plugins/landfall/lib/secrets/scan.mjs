@@ -16,18 +16,21 @@
 // by lib/git is capped at 16 MB, and a range can hold far more (the first push of a large history). git refuses
 // --output for a combined diff, so the merges of a range are read from a captured `git log --merges --cc`: it holds
 // only what no parent had (the resolution of a conflict), and beyond the cap the scan is invalid. Every failure (git
-// missing or failing, a file or the pattern file unreadable, a pattern refused, a path that is not UTF-8) throws a
-// StateError with exit ENV: the result is invalid, never clean.
+// missing or failing, a file or the pattern file unreadable, a path that is not UTF-8) throws a
+// StateError with exit ENV. Refused patterns are returned as errors while valid patterns and built-ins still run;
+// either result is invalid, never clean.
 import { closeSync, lstatSync, mkdtempSync, openSync, readFileSync, readSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, relative, resolve as resolvePath } from 'node:path';
 import { MAX_OUTPUT, git } from '../git/index.mjs';
 import { StateError, resolve } from '../state/index.mjs';
-import { isKeyFile, isSynthetic, mask, matchLine, projectPatterns, skipsContent } from './patterns.mjs';
+import { isFixturePath, isKeyFile, isSynthetic, mask, matchLine, matchProjectLine, PROJECT_LINE_MAX, projectPatterns, skipsContent, WINDOW_SIZE } from './patterns.mjs';
 
 export const MODES = Object.freeze(['tree', 'staged', 'range', 'artifact']);
 export const PATTERN_FILE = 'secrets-patterns.txt';
 const PATTERN_FILE_MAX = 65536;
+export const FILE_MAX = 64 * 1024 * 1024;
+const REFERENCE_MAX = 2 * 1024 * 1024; // optional disk baseline for a binary index diff; scanFile scans the disk itself
 const GIT_TIMEOUT_MS = 10 * 60 * 1000;
 const CHUNK = 1 << 20;
 const BINARY_PROBE = 8000; // git's own look-ahead for a NUL
@@ -154,7 +157,7 @@ function unreadable(shown, err) {
   return invalid('file-unreadable', `cannot read ${shown} (${err.code ?? err.message})`, 'make it readable (or ignore it if it does not belong in the repository), then scan again');
 }
 // The bytes of a regular file, or null: gone, not a regular file (a link, a submodule).
-function readBytes(abs, shown, st) {
+function readBytes(abs, shown, st, tooLarge = () => {}) {
   let s = st;
   if (!s) {
     try { s = lstatSync(abs); } catch (err) {
@@ -163,25 +166,128 @@ function readBytes(abs, shown, st) {
     }
   }
   if (!s.isFile()) return null;
-  try { return readFileSync(abs); } catch (err) {
+  if (s.size > REFERENCE_MAX) { tooLarge(s.size); return null; }
+  let fd;
+  try {
+    fd = openSync(abs, 'r');
+    // Read at most cap + one byte, even if the file grows after lstat.
+    const buf = Buffer.allocUnsafe(REFERENCE_MAX + 1);
+    let size = 0;
+    while (size < buf.length) {
+      const n = readSync(fd, buf, size, buf.length - size, null);
+      if (!n) break;
+      size += n;
+    }
+    if (size > REFERENCE_MAX) { tooLarge(size); return null; }
+    return buf.subarray(0, size);
+  } catch (err) {
     if (err.code === 'ENOENT') return null;
     throw unreadable(shown, err);
-  }
+  } finally { if (fd !== undefined) closeSync(fd); }
 }
-// The text of a regular file (decodeText), or null: gone, not a regular file, binary.
-function readText(abs, shown, st) {
-  const buf = readBytes(abs, shown, st);
-  return buf === null ? null : decodeText(buf);
+// Disk files are read in 1 MiB chunks, including long lines. Retain only the
+// project prefix (4 KiB), two JWT windows and marker context between chunks.
+function scanFile(ctx, abs, path, st, { marker }) {
+  let s = st;
+  if (!s) {
+    try { s = lstatSync(abs); } catch (err) {
+      if (err.code === 'ENOENT' || err.code === 'ENOTDIR') return;
+      throw unreadable(path, err);
+    }
+  }
+  if (!s.isFile()) return;
+  const tooLarge = (size) => {
+    ctx.incomplete = true;
+    ctx.skip({ path, commit: null, size, limit: ctx.fileMax });
+  };
+  if (s.size > ctx.fileMax) { tooLarge(s.size); return; }
+  let fd;
+  try {
+    fd = openSync(abs, 'r');
+    const buf = Buffer.allocUnsafe(CHUNK);
+    let bytes = 0;
+    let decoder;
+    let first = true;
+    let line = 1;
+    let length = 0;
+    let prefix = '';
+    let carry = '';
+    let before = '';
+    let markerTail = '';
+    let synthetic = false;
+    let found = null;
+    const piece = (text, end) => {
+      length += text.length;
+      if (prefix.length < PROJECT_LINE_MAX) prefix += text.slice(0, PROJECT_LINE_MAX - prefix.length);
+      if (marker && !synthetic) {
+        const probe = markerTail + text;
+        synthetic = isSynthetic(probe + (end ? '' : 'x'));
+        markerTail = probe.slice(-64);
+      }
+      if (!found) {
+        const probe = carry + text;
+        const m = matchLine(probe, [], { before, after: end ? '' : 'x' });
+        if (m) found = { id: m.id, masked: mask(m.text) };
+        const keep = 2 * WINDOW_SIZE;
+        if (probe.length > keep) {
+          before = probe[probe.length - keep - 1];
+          carry = probe.slice(-keep);
+        } else carry = probe;
+      }
+      if (!end) return;
+      ctx.lines++;
+      if (!found) {
+        const m = matchProjectLine(prefix, ctx.extra);
+        if (m) found = { id: m.id, masked: mask(m.text) };
+      }
+      const at = { commit: null, path, line };
+      if (found) {
+        if (marker && isFixturePath(path) && synthetic) ctx.exempted.add(whereOf(at));
+        else {
+          const masked = length > 1024 ? `${prefix.slice(0, 4)}******** (${length} chars)` : found.masked;
+          ctx.add({ ...at, type: found.id, masked: Buffer.from(masked, 'latin1').toString('utf8') });
+        }
+      }
+      line++;
+      length = 0; prefix = ''; carry = ''; before = ''; markerTail = ''; synthetic = false; found = null;
+    };
+    const textChunk = (text) => {
+      let start = 0;
+      for (let at = text.indexOf('\n'); at >= 0; at = text.indexOf('\n', start)) {
+        piece(text.slice(start, at), true);
+        start = at + 1;
+      }
+      if (start < text.length) piece(text.slice(start), false);
+    };
+    for (;;) {
+      // One extra byte detects growth after lstat without exceeding the cap in memory.
+      const n = readSync(fd, buf, 0, Math.min(CHUNK, ctx.fileMax - bytes + 1), null);
+      if (!n) break;
+      bytes += n;
+      if (bytes > ctx.fileMax) { tooLarge(bytes); return; }
+      const chunk = buf.subarray(0, n);
+      if (first) {
+        first = false;
+        if (isUtf16(chunk)) decoder = new TextDecoder(chunk[0] === 0xfe ? 'utf-16be' : 'utf-16le');
+        else if (chunk.subarray(0, BINARY_PROBE).includes(0)) return;
+        ctx.files++;
+      }
+      textChunk(decoder ? Buffer.from(decoder.decode(chunk, { stream: true }), 'utf8').toString('latin1') : chunk.toString('latin1'));
+    }
+    if (first) ctx.files++;
+    if (decoder) textChunk(Buffer.from(decoder.decode(), 'utf8').toString('latin1'));
+    if (length) piece('', true);
+  } catch (err) {
+    if (err.code === 'ENOENT') return;
+    throw unreadable(path, err);
+  } finally { if (fd !== undefined) closeSync(fd); }
 }
 
-function scanText(ctx, text, path, { marker }) {
-  ctx.files++;
-  linesOf(text).forEach((l, k) => scanLine(ctx, l, { commit: null, path, line: k + 1 }, { marker }));
-}
 function scanLine(ctx, text, at, { marker = true } = {}) {
   ctx.lines++;
   const m = matchLine(text, ctx.extra);
-  if (!m || (marker && isSynthetic(text))) return;
+  if (!m) return;
+  if (marker && isFixturePath(at.path) && isSynthetic(text)) { ctx.exempted.add(whereOf(at)); return; }
   ctx.add({ ...at, type: m.id, masked: Buffer.from(mask(m.text), 'latin1').toString('utf8') });
 }
 const keyFile = (ctx, path, commit = null) => ctx.add({ commit, path, line: null, type: 'key-file', masked: null });
@@ -250,7 +356,7 @@ function readPatterns(where) {
   const refuse = (why) => invalid('patterns-unreadable', `cannot read the project patterns ${shown}: ${why}`, `fix ${shown} (one pattern per line) or remove it, then scan again`);
   let st;
   try { st = lstatSync(file); } catch (err) {
-    if (err.code === 'ENOENT' || err.code === 'ENOTDIR') return [];
+    if (err.code === 'ENOENT' || err.code === 'ENOTDIR') return { patterns: [], errors: [] };
     throw refuse(err.code ?? err.message);
   }
   if (!st.isFile()) throw refuse(st.isSymbolicLink() ? 'a symbolic link' : 'not a regular file');
@@ -260,8 +366,7 @@ function readPatterns(where) {
   if (buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf) buf = buf.subarray(3); // a UTF-8 BOM
   if (buf.includes(0) || !isUtf8(buf)) throw refuse('not UTF-8 text (save it as UTF-8)');
   const { patterns, errors } = projectPatterns(buf.toString('latin1'));
-  if (errors.length) throw invalid('bad-pattern', `${shown}:${errors[0].line}: ${errors[0].message}`, 'fix that pattern (a JS regular expression with POSIX classes, as in guard-extra.txt) or remove the line');
-  return patterns;
+  return { patterns, errors: errors.map((error) => invalid('bad-pattern', `${shown}:${error.line}: ${error.message}`, 'fix that pattern (a JS regular expression with POSIX classes, as in guard-extra.txt) or remove the line')) };
 }
 
 function scanTree(ctx) {
@@ -272,8 +377,7 @@ function scanTree(ctx) {
   for (const p of paths) if (isKeyFile(p)) keyFile(ctx, p);
   for (const p of paths) {
     if (skipsContent(p)) continue;
-    const text = readText(join(ctx.repo, p), p);
-    if (text !== null) scanText(ctx, text, p, { marker: true });
+    scanFile(ctx, join(ctx.repo, p), p, undefined, { marker: true });
   }
   addedLines(fileLines(gitToFile(ctx, ['diff', '-R', ...DIFF, '--'])), (l, at) => { if (!skipsContent(at.path)) scanLine(ctx, l, at); });
   for (const { path } of binaryEntries(readOutput(gitToFile(ctx, ['diff', '-R', '--numstat', '-z', '--no-renames', '--'])))) {
@@ -343,8 +447,7 @@ function scanArtifact(ctx, given) {
     }
     if (!s.isFile()) return; // a link inside the artifact is not followed
     if (isKeyFile(shown)) keyFile(ctx, shown);
-    const text = readText(path, shown, s);
-    if (text !== null) scanText(ctx, text, shown, { marker: false });
+    scanFile(ctx, path, shown, s, { marker: false });
   };
   visit(abs, top, st);
 }
@@ -355,8 +458,9 @@ const byPlace = (a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : (a.line 
 // One scan: { mode, findings: [{ where, path, line, commit, type, masked }], skipped: [{ path, commit, size, reason }]
 // (blobs over the cap, not read), scanned: { files, lines } }. opts: cwd,
 // env, names, mode (tree, staged, range, artifact), revs (the words of a range), artifact (a path relative to cwd),
-// blobMax (the largest blob read from git, default lib/git's output cap; tests lower it).
-export function scanSecrets({ cwd, env, names, mode = 'tree', revs = [], artifact, blobMax = MAX_OUTPUT } = {}) {
+// blobMax (the largest blob read from git, default lib/git's output cap; tests lower it),
+// fileMax (test-only lower disk cap; cannot raise the 64 MiB production limit).
+export function scanSecrets({ cwd, env, names, mode = 'tree', revs = [], artifact, blobMax = MAX_OUTPUT, fileMax = FILE_MAX } = {}) {
   if (!MODES.includes(mode)) throw new Error(`unknown scan mode ${mode}`);
   let where;
   try {
@@ -365,18 +469,18 @@ export function scanSecrets({ cwd, env, names, mode = 'tree', revs = [], artifac
     if (err instanceof StateError || typeof err?.code !== 'string') throw err;
     throw invalid('state-unreadable', `cannot resolve the repository state (${err.code})`, 'check the machine data directory of the plugin');
   }
-  const extra = readPatterns(where);
+  const { patterns: extra, errors } = readPatterns(where);
   let tmp;
   try { tmp = mkdtempSync(join(tmpdir(), 'secrets-')); } catch (err) {
     throw invalid('temp-unavailable', `cannot create a temporary directory (${err.code ?? err.message})`, 'check TMPDIR');
   }
   const found = new Map();
   const skipped = new Map();
-  const cap = blobMax % (1024 * 1024) === 0 ? `${blobMax / (1024 * 1024)} MiB` : `${blobMax} bytes`;
+  const cap = (limit) => limit % (1024 * 1024) === 0 ? `${limit / (1024 * 1024)} MiB` : `${limit} bytes`;
   const ctx = {
-    repo: where.repo, cwd, env, extra, tmp, blobMax, outputs: 0, files: 0, lines: 0,
+    repo: where.worktree, cwd, env, extra, tmp, blobMax, fileMax: Math.max(1, Math.min(FILE_MAX, fileMax)), incomplete: false, outputs: 0, files: 0, lines: 0, exempted: new Set(),
     add: (f) => { const w = whereOf(f); if (!found.has(w)) found.set(w, { where: w, ...f }); },
-    skip: ({ path, commit, size }) => { const k = `${commit ?? ''}:${path}`; if (!skipped.has(k)) skipped.set(k, { path, commit, size, reason: `over ${cap}` }); },
+    skip: ({ path, commit, size, limit = blobMax }) => { const k = `${commit ?? ''}:${path}`; if (!skipped.has(k)) skipped.set(k, { path, commit, size, reason: `over ${cap(limit)}` }); },
   };
   try {
     if (mode === 'tree') scanTree(ctx);
@@ -387,5 +491,5 @@ export function scanSecrets({ cwd, env, names, mode = 'tree', revs = [], artifac
     rmSync(tmp, { recursive: true, force: true });
   }
   const findings = [...found.values()].sort(byPlace); // stable: one place in several commits keeps git log's order
-  return { mode, findings, skipped: [...skipped.values()].sort(byPlace), scanned: { files: ctx.files, lines: ctx.lines } };
+  return { mode, findings, errors, incomplete: ctx.incomplete, exempted: ctx.exempted.size, skippedCount: skipped.size, skipped: [...skipped.values()].sort(byPlace), scanned: { files: ctx.files, lines: ctx.lines } };
 }

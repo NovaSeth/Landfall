@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 640" width="1280" height="640" role="img" aria-labelledby="t">
+  <title id="t">Sizes the process to each task. Done means the gates pass again.</title>
+  <rect width="1280" height="640" fill="#0B2540"/>
+  <!-- The mark (dark variant), 260 px wide. -->
+  <g transform="translate(112 112) scale(0.5078)">
+    <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M48 312 H116" stroke="#E8EEF5" stroke-width="32"/>
+      <path d="M88 388 q42 -26 84 0 t84 0 t84 0 t84 0" stroke="#E8EEF5" stroke-width="28"/>
+      <path d="M172 448 q42 -26 84 0 t84 0" stroke="#E8EEF5" stroke-width="28"/>
+      <path d="M116 232 L208 316 L396 128" stroke="#E8B04B" stroke-width="44"/>
+    </g>
+    <path d="M245 328 L408 165 Q420 153 430 168 Q472 214 484 310 Q486 328 468 328 Z" fill="#E8EEF5"/>
+  </g>
+  <!-- The wordmark, drawn as monoline strokes (no text): cap height 110. -->
+  <g transform="translate(424 200)" fill="none" stroke="#E8EEF5" stroke-width="18" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M0 0 V110 H62"/>
+    <path d="M92 110 L127 0 L162 110 M105 70 H149"/>
+    <path d="M192 110 V0 L258 110 V0"/>
+    <path d="M288 0 V110 H310 A55 55 0 0 0 310 0 Z"/>
+    <path d="M455 0 H395 V110 M395 54 H443"/>
+    <path d="M485 110 L520 0 L555 110 M498 70 H542"/>
+    <path d="M585 0 V110 H647"/>
+    <path d="M677 0 V110 H739"/>
+  </g>
+  <text x="640" y="470" text-anchor="middle" fill="#E8EEF5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="34" font-weight="500">Sizes the process to each task. Done means the gates pass again.</text>
+</svg>

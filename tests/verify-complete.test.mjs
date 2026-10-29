@@ -285,7 +285,10 @@ test('task merge merges a done task (done on its branch, then merged); a cancell
   assert.equal(res.code, 0, show(res));
   assert.equal(res.env.data.merged, true);
   assert.equal(r.store.read('task', r.id).status, 'done');
-  assert.equal(r.git('status', '--porcelain'), '');
+  // T-MG-80 (intended change): the code is clean; the merge record is an uncommitted state write, like task done's.
+  assert.equal(r.git('status', '--porcelain', '--', '.', `:(exclude)${names.stateDir}`), '');
+  assert.deepEqual(r.git('status', '--porcelain').split('\n').map((l) => l.replace(/^\s*\S+\s+/, '')), [`${names.stateDir}/tasks/${r.id}/task.json`]);
+  assert.equal(r.store.read('task', r.id).events.at(-1).event, 'merged');
 });
 
 // ---- (2) baseline show | pin ----
@@ -504,7 +507,7 @@ test('review record, baseline show and baseline pin are command rows; show is re
   const row = (n) => COMMANDS.find((c) => c.name === n);
   for (const n of ['review record', 'baseline pin']) assert.equal(row(n)?.mutating, true, `${n}: changes files`);
   assert.ok(row('baseline show') && !row('baseline show').mutating, 'baseline show: read-only');
-  assert.deepEqual(row('review record').flags.map((f) => f.flag), ['--from']);
+  assert.deepEqual(row('review record').flags.map((f) => f.flag), ['--from', '--kind', '--run']);
   assert.deepEqual(row('baseline pin').flags.map((f) => f.flag), ['--decision']);
   assert.ok(row('decide').flags.some((f) => f.flag === '--allows-test-removal'));
   const r = repo(t);

@@ -70,6 +70,8 @@ async function project(t) {
   await p.ok(['task', 'new', 'Parser']);
   await p.ok(['route', 'T-TU-1', '--paths', 'src/a.js', '--loc', '10']);
   await p.ok(['brief', 'T-TU-1', '--write']);
+  await p.ok(['task', 'set', 'T-TU-1', 'started', '--branch', 'main', '--base', git(repo, env, ['rev-parse', 'HEAD'])]);
+  await p.ok(['review', 'brief', 'T-TU-1', '--write']);
   await p.ok(['providers', 'add', 'fakeslow', '--argv', `${process.execPath} ${FAKE} slow {out} {sandbox} {cwd}`, '--sandbox-map', 'reviewer=read-only']);
   return p;
 }

@@ -7,7 +7,11 @@ const data = JSON.parse(readFileSync(new URL('./focus.json', import.meta.url), '
 const MAX_TRIGGERS = 10;
 
 export const SECURITY_PATHS = Object.freeze([...new Set([...DEFAULT_RISK_PATHS, ...data.securityPaths])]);
-export const AI_PATHS = Object.freeze([...data.aiPaths]);
+// Agent instructions (CLAUDE.md, SKILL.md, .claude/**, prompts, agent definitions) are router risk paths, single-sourced in
+// thresholds.json; they are AI paths too, so the AI checklist joins for them. One list: the AI globs of focus.json plus the
+// risk globs that name agent instructions.
+const AGENT_RISK = /^\.claude\/|CLAUDE\.md|AGENTS\.md|GEMINI\.md|SKILL\.md|agents\/|prompts\//;
+export const AI_PATHS = Object.freeze([...new Set([...data.aiPaths, ...DEFAULT_RISK_PATHS.filter((g) => AGENT_RISK.test(g))])]);
 export const CHECKLISTS = Object.freeze({ web: Object.freeze([...data.checklists.web]), ai: Object.freeze([...data.checklists.ai]) });
 
 const firstMatch = (globs, file) => globs.find((g) => globMatch(g, file));

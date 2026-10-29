@@ -13,7 +13,7 @@
 //                threshold data (router, engine), only with an active decision (lib/decisions requireDecision; exit 1
 //                otherwise, nothing written), which config.json keeps with it; `default` removes it.
 //                executors.<role> <provider,…|default>: the role's providers in order of preference; no decision.
-// Context comes from io (cwd, env), never from process state (REV-58). Exit 2 an unknown flag or mode · 7 an inactive
+// Context comes from io (cwd, env), never from process state (COD-9). Exit 2 an unknown flag or mode · 7 an inactive
 // repository, a newer schema, no consent · 8 not a git repository.
 import { relative } from 'node:path';
 import { EXIT } from '../cli/commands.mjs';

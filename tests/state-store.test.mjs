@@ -281,14 +281,19 @@ for (let i = 0; i < ${each}; i++) s.update('task', 'T-AB-1', (d) => ({ ...d, eve
     const c = spawn(process.execPath, ['--input-type=module', '-e', code(k)], { stdio: ['ignore', 'ignore', 'pipe'] });
     let err = '';
     c.stderr.on('data', (d) => { err += d; });
-    c.on('exit', (status) => res({ status, err }));
+    c.on('exit', (status, signal) => res({ status, signal, err }));
   }));
   writeFileSync(go, '');
-  for (const r of await Promise.all(runs)) assert.equal(r.status, 0, r.err);
+  const results = await Promise.all(runs);
   const events = state.open(dir, { names }).read('task', 'T-AB-1').events;
-  assert.equal(events.length, n * each);
+  const seen = new Set(events.map((e) => `${e.data.p}.${e.data.i}`));
+  const missing = [];
+  for (let p = 0; p < n; p++) for (let i = 0; i < each; i++) if (!seen.has(`${p}.${i}`)) missing.push(`(${p}, ${i})`);
+  const diag = results.map((r, k) => `process ${k}: exit ${r.status}, signal ${r.signal}, stderr tail ${JSON.stringify(r.err.slice(-300))}`).join('\n') + `\nmissing (process, index): ${missing.join(' ') || 'none'}`;
+  assert.ok(results.every((r) => r.status === 0), diag);
+  assert.equal(events.length, n * each, diag);
   assert.equal(new Set(events.map((e) => `${e.data.p}.${e.data.i}`)).size, n * each);
-  assert.deepEqual(existsSync(join(dir, 'local')) ? readdirSync(join(dir, 'local')) : [], [], 'the lock is released and local/ is left empty-free');
+  assert.deepEqual(existsSync(join(dir, 'local')) ? readdirSync(join(dir, 'local')).filter((n) => n !== '.machine') : [], [], 'the lock is released and local/ is left empty-free'); // T-MG-77 (intended): the owner marker stays
 });
 
 // ---- Review round 1, items 1, 8, 9 ----

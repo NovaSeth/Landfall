@@ -56,7 +56,11 @@ export const LEASE = defineKind('lease', 1, {
     heartbeatAt: time,
     ttlS: { t: 'int', min: 1, max: 7 * 86400 },
     child: { t: 'obj', null: true, f: identity }, // leads its own process group: the group id is its pid
+    // Optional (SF-AB-9; a lease without it stays valid): the identities of the child's group members recorded at
+    // attach; after the child is gone its group is signalled only while one of them still matches.
+    members: { t: 'arr', max: 64, of: { t: 'obj', f: { pid, start: { t: 'str', max: 64 } } } },
   },
+  opt: ['members'],
 });
 
 export const TICKET = defineKind('ticket', 1, {

@@ -1,4 +1,4 @@
-// Help and reference rendering from the command table (spec §8.2, REV-54): `--help`, `<command> --help` and
+// Help and reference rendering from the command table (spec §8.2, COD-5): `--help`, `<command> --help` and
 // docs/cli.md (scripts/gen-docs.mjs) come from these functions only, so the three cannot disagree.
 // ctx: { names (lib/name.json), commands, globalFlags, exitCodes }.
 import { flagKey, mutates } from './commands.mjs';
@@ -105,7 +105,7 @@ export function renderDocs(ctx, { source }) {
     '- Partial data: `ok: false` with `data` holding what was computed and `data.partial: true`.',
     '- Without `--json`: text on stdout, errors with their hints on stderr.',
     '- Output carries no escape sequence, control, bidi or invisible character from data: text drops them and keeps the printable rest; the envelope writes them as `\\u` escapes, so `JSON.parse` gives the data back exactly.',
-    '- A command that changes files refuses without a terminal unless `--yes` is given: exit 7 REFUSED (REV-58). Consent is per form: a command section names each flag whose form differs.',
+    '- A command that changes files refuses without a terminal unless `--yes` is given: exit 7 REFUSED (COD-9). Consent is per form: a command section names each flag whose form differs.',
     '- A command exits only with the codes its section lists, plus 2 USAGE (arguments) and 70 INTERNAL (bug); any other code is reported as 70.',
     '',
     '## Exit codes',

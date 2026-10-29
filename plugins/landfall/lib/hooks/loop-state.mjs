@@ -11,7 +11,7 @@
 import { lstatSync, readFileSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
 import { performance } from 'node:perf_hooks';
-import { resolve, stateMarker } from '../state/index.mjs';
+import { localForeign, resolve, stateMarker } from '../state/index.mjs';
 
 export const TERMINAL = Object.freeze(['DONE', 'STALLED', 'BUDGET']);
 const LOOP_MAX_BYTES = 65536;
@@ -45,7 +45,9 @@ export function stateOf(cwd, env, deadline = Infinity) {
 }
 
 // { doc: null } (no loop document) · { doc } (a JSON object) · { error } (present but unreadable).
+// A foreign local/ (shipped in the repository, lib/state localForeign) holds no loop of this machine.
 export function readLoop(dir) {
+  try { if (localForeign(dir).foreign) return { doc: null }; } catch (e) { return { error: e.code ?? 'unreadable' }; }
   const file = join(dir, 'local', 'loop.json');
   let st;
   try { st = lstatSync(file); } catch (e) {

@@ -49,14 +49,14 @@ import { authorHandle, readRecords, stateRel } from '../decisions/index.mjs';
 import { git } from '../git/index.mjs';
 import { PROFILE_KINDS, emptyProfile, listFiles, observe, riskGlobsOf } from '../profile/index.mjs';
 import { MAX_PATHS, addedSteps, applyClass, classify, rank, recordedKeys, routeFor, routeTask, routerThresholds, weightless } from '../router/index.mjs';
-import { KINDS, StateError, check, open, resolve } from '../state/index.mjs';
+import { KINDS, StateError, check, gatesShaOf, open, resolve } from '../state/index.mjs';
 import { appliedTier, readReport, reportHasEvidence, reviewNeed, reviewState } from './artifacts.mjs';
 import { measureAt } from './base.mjs';
 import { baselineSha, compareInventory, excusable, fingerprint, referenceOf, splitFailures } from './baseline.mjs';
-import { cacheKey, lookup, store as storeRuns, treeOf } from './gate-cache.mjs';
-import { runGate, tailLines } from './gates.mjs';
+import { cacheKey, lookup, machineKey, store as storeRuns, treeOf } from './gate-cache.mjs';
+import { requireTrustedGates, tailLines } from './gates.mjs';
 import { runHeavy } from './heavy.mjs';
-import { redacted } from './redact.mjs';
+import { readProjectPatterns, runRedacted } from './redact.mjs';
 import { byCodeUnit, hashOf } from './inventory.mjs';
 import { VERIFY_KINDS } from './kinds.mjs';
 import { detectRenames, idFiles } from './rename.mjs';
@@ -76,7 +76,7 @@ const some = (list, n = 5) => (list.length <= n ? list.join(', ') : `${list.slic
 export const storeOf = (where, names) => open(where.dir, { names, kinds: { ...KINDS, ...PROFILE_KINDS, ...VERIFY_KINDS } });
 export const unknownTask = (id, where, names) => usage('task-unknown', `no task ${id} in ${where.dir}`, `'${names.bin} task list' lists the tasks`);
 // The identity of a gate set: what verify ran, in order.
-export const gatesSha = (gates) => hashOf(JSON.stringify(gates.map((g) => [g.name, g.cmd, g.timeoutS, g.kind])));
+export const gatesSha = gatesShaOf;
 // The sha256 of the working baseline's content (null without one), recomputed: an edit that keeps the field shows.
 export const workingSha = (store) => {
   const doc = store.read('baseline', null);
@@ -303,13 +303,21 @@ function reroute({ store, task, id, write, handle, riskPaths, change, at }) {
 // output, reused (the time of the gate runs reused from the gate cache, else null) }. `anchor`: the commit whose
 // baseline is the accepted inventory (merge mode: the target tip); `merged`: the commit a merge brings onto it (merge
 // mode). `version`: the plugin version (part of the gate cache key); `cache` false runs the gates whatever is stored.
-export function evaluate({ where, names, env, id, mode, handle = null, at = now(), anchor = null, merged = null, version = null, cache = true }) {
+// memo (a batch gate run, T-MG-80 fix round 1): one object shared by the evaluations of the tasks of one integrated tree;
+// the gate runs and the base measurement of the first are reused by the others, so the suite runs once and each task is
+// checked against that inventory with its own report, baseline and class.
+// publish (merge mode, fix round 2 F1): the gate-cache entry of this run is not stored here but returned as a function;
+// the caller calls it only after it confirmed that the tree held during the gates, so a rejected run leaves no entry.
+// Other modes store it at once (null is returned).
+export function evaluate({ where, names, env, id, mode, handle = null, at = now(), anchor = null, merged = null, version = null, cache = true, memo = null }) {
   const started = Date.now();
   const write = mode === 'write';
   const store = storeOf(where, names);
   const task = store.read('task', id);
   if (task === null) throw unknownTask(id, where, names);
   const profile = store.read('profile', null) ?? emptyProfile();
+  // A batch checked this gate set once before its merges (memo.trusted, batch.mjs); any other set is checked here.
+  if (memo?.trusted !== gatesSha(profile.gates)) requireTrustedGates({ where, names, env, gates: profile.gates });
   const code = codeState(where, env);
   const stateShown = stateRel(where.worktree, where.dir) ?? where.dir;
   const reasons = [];
@@ -330,6 +338,7 @@ export function evaluate({ where, names, env, id, mode, handle = null, at = now(
   let output = [];
   let reused = null;
   let renamed = [];
+  let publish = null;
   const baseOk = mode === 'merge' || commitExists(where, env, task.base);
   if (!baseOk) say('fail', 'base-missing', task.base ? `the base commit ${task.base.slice(0, 12)} of ${id} is not in this repository` : `${id} has no base commit`, `record it: ${names.bin} task set ${id} dispatched --executor <e> --base <sha> (fetch it first in a shallow clone)`);
   const anchorCommit = mode === 'merge' ? anchor : baseOk ? task.base : null;
@@ -347,23 +356,31 @@ export function evaluate({ where, names, env, id, mode, handle = null, at = now(
     }
     // The gate cache (gate-cache.mjs): the runs stored for this tree, gate set and version are reused; a set that
     // passed is stored (not in ci mode, which writes nothing).
+    // The project patterns first: an unreadable or invalid file refuses before any gate runs (T-MG-75).
+    const { extra, sha: patterns } = readProjectPatterns(where);
     const tree = treeOf((a) => gitIn(where, env, a), { staged: mode === 'merge' });
-    const key = tree ? cacheKey({ tree, gatesSha: doc.gatesSha, version }) : null;
-    const hit = key && cache ? lookup(store, { key, tree, gatesSha: doc.gatesSha, version, gates: profile.gates, at }) : null;
-    const runs = hit ? hit.runs : runHeavy(profile.gates, { names, env, cwd: where.worktree, task: id }, (g) => redacted(runGate(g, { cwd: where.worktree, env })));
+    const key = tree ? cacheKey({ tree, gatesSha: doc.gatesSha, version, patterns }) : null;
+    // A critical task's verify never reuses runs; task merge may reuse an authenticated entry (T-MG-75).
+    const reuse = cache && (mode === 'merge' || task.class !== 'critical');
+    const shared = memo?.runs ?? null;
+    const hit = shared === null && key && reuse ? lookup(store, { key, tree, gatesSha: doc.gatesSha, version, patterns, gates: profile.gates, at, secret: machineKey(where.dataDir) }) : null;
+    const runs = shared ?? (hit ? hit.runs : runHeavy(profile.gates, { names, env, cwd: where.worktree, task: id }, (g) => runRedacted(g, { cwd: where.worktree, env, extra })));
+    if (memo) memo.runs = runs;
     reused = hit?.at ?? null;
     doc.gates = runs.map((r) => r.gate);
     output = runs.map((r) => ({ name: r.gate.name, lines: tailLines(r.output) }));
     ctx = context(where, env, code.rel);
     inv = inventoryOf(runs, ctx);
-    if (key && !hit && mode !== 'ci') {
+    if (key && !hit && shared === null && mode !== 'ci') {
       const report = (r) => {
         const part = inv.parts.find((p) => p.run === r);
         if (!part) return null;
         const { run: _run, ...collected } = part;
         return collected;
       };
-      storeRuns(store, key, { tree, gatesSha: doc.gatesSha, version, at, runs, report });
+      const entry = () => storeRuns(store, key, { tree, gatesSha: doc.gatesSha, version, patterns, at, runs, report, secret: machineKey(where.dataDir, { create: true }) });
+      if (mode === 'merge') publish = entry;
+      else entry();
     }
 
     const current = store.read('baseline', null);
@@ -383,7 +400,8 @@ export function evaluate({ where, names, env, id, mode, handle = null, at = now(
     if (anchored.problem) {
       say('fail', 'baseline-unanchored', `the baseline at ${anchorCommit.slice(0, 12)} is ${anchored.problem}, though its history has one: there is no accepted inventory to compare with`, 'restore the baseline on the target branch (git), or pin one with a decision');
     } else if (measure) {
-      const m = measureAt({ where, env, commit: anchorCommit, gates: profile.gates, gitIn, inventory: (runs, dir) => inventoryOf(runs, context({ ...where, worktree: dir }, env, code.rel)) });
+      const m = memo?.measured ?? measureAt({ where, env, names, task: id, commit: anchorCommit, gates: profile.gates, gitIn, inventory: (runs, dir) => inventoryOf(runs, context({ ...where, worktree: dir }, env, code.rel)) });
+      if (memo) memo.measured = m;
       if (m.error) say('error', 'base-gate-error', `${m.error}: there is no reference to compare with`, 'make the gates run at the base (install what they run), or pin a baseline (' + names.bin + ' baseline pin --decision <D>), then verify again');
       measured = m.doc;
     }
@@ -485,7 +503,7 @@ export function evaluate({ where, names, env, id, mode, handle = null, at = now(
     const n = store.list('verifyAttempt').filter((k) => k.startsWith(`${id}-m`)).length + 1;
     store.write('verifyAttempt', `${id}-m${n}`, { task: id, at, gates: output });
   }
-  return { doc, reasons: reasons.map(({ code: c, message, hint }) => ({ code: c, message, hint })), written: write, candidates, output, reused, attempt, renamed };
+  return { doc, reasons: reasons.map(({ code: c, message, hint }) => ({ code: c, message, hint })), written: write, candidates, output, reused, attempt, renamed, publish };
 }
 
 // On pass the baseline is this inventory; written only when its content changed, and only over the baseline this run

@@ -1,6 +1,6 @@
 // Commands of the verify unit (spec §8.1, §8.2), loaded by their rows in lib/cli/commands.mjs: `verify <id> [--ci]`,
-// `task done <id>`, `task merge <id> [--branch <b>]`, `review record <id> --from <file>`, `baseline show`,
-// `baseline pin --decision <D>`. Context comes from io (cwd, env), never from process state (REV-58). A typed error
+// `task done <id>`, `task merge <id> [--branch <b>]` (several IDs or --ready: a batch, batch.mjs), `review record <id> --from <file> | --kind external --run <runId>`, `baseline show`,
+// `baseline pin --decision <D>`. Context comes from io (cwd, env), never from process state (COD-9). A typed error
 // of lib/state, lib/router or lib/profile becomes its exit code with message and hint.
 // Exit: verify and task merge by result (pass 0 · error 8 · any other 1); task done 0 when done; review record 0
 // when recorded, 2 with one error per failing field; baseline show 1 when the sha256 does not match the content.
@@ -10,10 +10,11 @@ import { ProfileError } from '../profile/index.mjs';
 import { RouteError } from '../router/index.mjs';
 import { StateError } from '../state/index.mjs';
 import { forTerminal } from '../text/clean.mjs';
+import { batchMerge } from './batch.mjs';
 import { markDone } from './done.mjs';
-import { mergeTask } from './merge.mjs';
+import { adoptMerged, mergeTask } from './merge.mjs';
 import { pinBaseline, showBaseline } from './pin.mjs';
-import { recordReview } from './review.mjs';
+import { EXTERNAL_HINT, recordReview } from './review.mjs';
 import { verifyTask } from './run.mjs';
 
 const exitOf = (result) => (result === 'pass' ? EXIT.OK : result === 'error' ? EXIT.ENV : EXIT.FAIL);
@@ -61,11 +62,32 @@ export const verify = typed(({ args, flags, names, version, io }) => {
 export const taskDone = typed(({ args, names, io }) => {
   const r = markDone({ cwd: io.cwd, env: io.env, names, id: args.id });
   const text = r.changed ? `${r.id}: done (verified at ${r.head.slice(0, 12)})` : `${r.id}: already done`;
-  return { data: { task: r.id, status: r.task.status, changed: r.changed, head: r.head }, text: `${text}\n` };
+  return { data: { task: r.id, status: r.task.status, changed: r.changed, head: r.head, fixed: r.fixed }, text: `${text}\n${r.fixed.length ? `findings fixed: ${r.fixed.join(', ')}\n` : ''}` };
 });
 
 export const taskMerge = typed(({ args, flags, names, version, io }) => {
-  const r = mergeTask({ cwd: io.cwd, env: io.env, names, id: args.id, branch: flags.branch, version: version ?? null });
+  const ids = [].concat(args.id ?? []);
+  if (flags.adopt) {
+    if (flags.branch !== undefined) return { code: EXIT.USAGE, errors: [{ code: 'unexpected-flag', message: '--branch does not apply to --adopt', hint: `${names.bin} task merge --adopt <id…>` }] };
+    if (flags.ready) return { code: EXIT.USAGE, errors: [{ code: 'unexpected-flag', message: '--ready does not apply to --adopt', hint: `${names.bin} task merge --adopt <id…>` }] };
+    const a = adoptMerged({ cwd: io.cwd, env: io.env, names, ids, version: version ?? null });
+    const { exit, reasons, ...data } = a;
+    const lines = a.result === 'pass'
+      ? [`gates pass on ${a.target} at ${a.commit.slice(0, 12)}`, ...a.tasks.map((t) => `${t.task}  ${t.adopted ? 'adopted' : `not adopted: ${t.why}`}`)]
+      : [`gates ${a.result} on ${a.target} at ${a.commit.slice(0, 12)}: nothing recorded`, ...renderVerify(a.verify).slice(1)];
+    return { code: EXIT[exit], data, errors: reasons, text: `${forTerminal(lines.join('\n'))}\n` };
+  }
+  if (flags.ready && ids.length) return { code: EXIT.USAGE, errors: [{ code: 'unexpected-argument', message: '--ready takes the ready tasks itself: give no IDs', hint: `${names.bin} task merge --ready` }] };
+  if (!flags.ready && ids.length === 0) return { code: EXIT.USAGE, errors: [{ code: 'missing-argument', message: 'task merge: missing <id>', hint: `${names.bin} task merge <id…> | --ready` }] };
+  if (flags.ready || ids.length > 1) {
+    if (flags.branch !== undefined) return { code: EXIT.USAGE, errors: [{ code: 'unexpected-flag', message: '--branch applies to one ID only', hint: `${names.bin} task merge <id> --branch <branch>` }] };
+    const b = batchMerge({ cwd: io.cwd, env: io.env, names, ids, ready: Boolean(flags.ready), version: version ?? null });
+    const { exit, reasons, ...data } = b;
+    const lines = b.tasks.length === 0 ? ['no task is ready to merge'] : b.tasks.map((t) => `${t.task}  ${t.outcome === 'merged' ? 'merged' : `${t.outcome}: ${t.why}`}`);
+    if (b.tasks.length) lines.push(`gate runs: ${b.gateRuns} · batch ${b.batch}${b.commit ? ` · ${b.target} at ${b.commit.slice(0, 12)}` : ''}`);
+    return { code: EXIT[exit], data, errors: reasons, text: `${forTerminal(lines.join('\n'))}\n` };
+  }
+  const r = mergeTask({ cwd: io.cwd, env: io.env, names, id: ids[0], branch: flags.branch, version: version ?? null });
   const { exit, reasons, ...data } = r;
   let lines;
   if (r.merged) lines = [`merged ${r.branch} for ${r.task} as ${r.commit.slice(0, 12)}`, ...renderVerify(r.verify).slice(1)];
@@ -76,10 +98,18 @@ export const taskMerge = typed(({ args, flags, names, version, io }) => {
 });
 
 export const reviewRecord = typed(({ args, flags, names, io }) => {
-  if (typeof flags.from !== 'string' || flags.from === '') {
-    return { code: EXIT.USAGE, errors: [{ code: 'missing-flag', message: 'review record needs --from <file>: the typed review JSON', hint: `${names.bin} review record ${args.id} --from <file>` }] };
+  const kind = flags.kind ?? 'claude';
+  const given = (v) => typeof v === 'string' && v !== '';
+  const bad = (code, message, hint) => ({ code: EXIT.USAGE, errors: [{ code, message, hint }] });
+  if (kind !== 'claude' && kind !== 'external') return bad('invalid-value', `--kind ${String(kind).slice(0, 40)}: expected claude or external`, `${names.bin} review record ${args.id} --from <file> | --kind external --run <runId>`);
+  if (kind === 'external') {
+    if (flags.from !== undefined) return bad('unexpected-flag', '--from does not apply to --kind external', EXTERNAL_HINT);
+    if (!given(flags.run)) return bad('missing-flag', 'review record --kind external needs --run <runId>', EXTERNAL_HINT);
+  } else {
+    if (flags.run !== undefined) return bad('unexpected-flag', '--run applies to --kind external only', `${names.bin} review record ${args.id} --kind external --run <runId>`);
+    if (!given(flags.from)) return bad('missing-flag', 'review record needs --from <file>: the typed review JSON', `${names.bin} review record ${args.id} --from <file>`);
   }
-  const r = recordReview({ cwd: io.cwd, env: io.env, names, id: args.id, from: flags.from });
+  const r = recordReview({ cwd: io.cwd, env: io.env, names, id: args.id, ...(kind === 'external' ? { run: flags.run } : { from: flags.from }) });
   if (r.invalid) {
     const hint = 'the file must match templates/review.schema.json in the plugin; nothing was written';
     return { code: EXIT.USAGE, data: { task: args.id, written: false }, errors: r.invalid.map((message) => ({ code: 'invalid-review', message, hint })) };

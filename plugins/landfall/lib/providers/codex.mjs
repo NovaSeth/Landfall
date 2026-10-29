@@ -11,6 +11,8 @@ import { cleanLine, lastLineOf, probe, versionOf, which } from './probe.mjs';
 export const id = 'codex';
 export const bins = Object.freeze(['codex']);
 export const sandboxes = Object.freeze({ reviewer: 'read-only', implementer: 'workspace-write' });
+// The parent's variables the provider gets besides the base and lease ones (exec childEnv, B-6); NAME_* is a prefix.
+export const envNames = Object.freeze(['OPENAI_*', 'CODEX_*', 'HTTPS_PROXY', 'HTTP_PROXY', 'NO_PROXY']);
 
 export const detect = ({ env }) => versionOf('codex', env);
 

@@ -5,14 +5,19 @@
 //   owners  [string]         CODEOWNERS owners: @user, @org/team or an e-mail address
 //   branch  string           the protected branch CI runs on for pushes
 //   package string, optional the npx package spec of this plugin for CI steps (SD-21), e.g.
-//                            github:<owner>/<repo>#<plugin>--v<version>; without it CI runs no plugin command
-// Values are trimmed single lines; a gate name cannot hold a GitHub Actions expression (`${{`), a command can.
-// A package spec is a GitHub spec (owner/repo, optional #ref) or an npm name with an optional version, nothing else.
+//                            github:<owner>/<repo>#<plugin>--v<version>, or #<40-hex commit> to pin a commit;
+//                            without it CI runs no plugin command
+// Values are trimmed single lines; neither a gate name nor a gate command can hold a GitHub Actions expression
+// (`${{`): a command is pasted into a `run:` script, where an expression is script injection (audit 2.4.0, G3).
+// A package spec is a GitHub spec (owner/repo and a #ref that is a release tag or a full commit SHA, never a
+// branch) or an npm name with an optional version, nothing else.
 import { check } from '../state/index.mjs';
 
 export const DEFAULT_OPTIONS = Object.freeze({ gates: Object.freeze([]), owners: Object.freeze([]), branch: 'main' });
 
 const TRIMMED = '\\S(?:.*\\S)?';
+const RELEASE_REF = '[a-z0-9][a-z0-9-]*--v\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.-]+)?';
+const COMMIT = /^[0-9a-f]{40}$/;
 const SPEC = {
   t: 'obj',
   f: {
@@ -29,17 +34,32 @@ const SPEC = {
     },
     owners: { t: 'arr', max: 20, of: { t: 'str', max: 100, re: /^(?:@[A-Za-z0-9][A-Za-z0-9-]{0,38}(?:\/[A-Za-z0-9][A-Za-z0-9._-]{0,60})?|[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})$/ } },
     branch: { t: 'str', min: 1, max: 100, re: /^(?![-/])(?!.*\.\.)(?!.*\/\/)(?!.*[/.]$)(?!.*\.lock$)[A-Za-z0-9._/-]+$/ },
-    package: { t: 'str', max: 300, re: /^(?:github:[A-Za-z0-9][A-Za-z0-9-]{0,38}\/[A-Za-z0-9._-]{1,100}(?:#[A-Za-z0-9._/-]{1,100})?|(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]{0,213}(?:@[A-Za-z0-9._+-]{1,64})?)$/ },
+    package: { t: 'str', max: 300, re: new RegExp(`^(?:github:[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9._-]{1,100}#(?:${RELEASE_REF}|[0-9a-f]{40})|(?:@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]{0,213}(?:@[A-Za-z0-9._+-]{1,64})?)$`) },
   },
   opt: ['package'],
 };
 
 // The npx package spec of this plugin at a version (SD-21): name.json `repository` at the release tag
 // <plugin>--v<version>, such as github:<owner>/<repo>#<plugin>--v2.0.0.
-export const packageSpec = (names, version) => `${names.repository}#${names.plugin}--v${version}`;
+// With a commit (40 lowercase hex digits) the spec pins that commit instead of the tag, which can be moved.
+export function packageSpec(names, version, commit) {
+  if (commit === undefined) return `${names.repository}#${names.plugin}--v${version}`;
+  if (typeof commit !== 'string' || !COMMIT.test(commit)) throw new Error('generator options: the commit to pin must be 40 lowercase hex digits');
+  return `${names.repository}#${commit}`;
+}
 
 // [{ path, code, message }]; empty when the options are valid.
-export const checkOptions = (options) => check({ spec: SPEC }, options);
+export function checkOptions(options) {
+  const errors = check({ spec: SPEC }, options);
+  const gates = Array.isArray(options?.gates) ? options.gates : [];
+  gates.forEach((g, i) => {
+    if (typeof g?.cmd === 'string' && g.cmd.includes('${{')) {
+      const name = JSON.stringify(String(g.name ?? '').slice(0, 40));
+      errors.push({ path: `gates[${i}].cmd`, code: 'expression', message: `gate ${name}: the command holds "\${{", a GitHub Actions expression that would run as script in CI; read the value from an environment variable instead` });
+    }
+  });
+  return errors;
+}
 
 export function assertOptions(options) {
   const errors = checkOptions(options);

@@ -11,8 +11,10 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import { dirname, join } from 'node:path';
 import { isolatedEnv } from './helpers/isolated-env.mjs';
 import { lib, names } from './helpers/hook-fixture.mjs';
+import { trustWith } from './helpers/trust.mjs';
 
 const profile = await lib('profile/index.mjs');
+const state = await lib('state/index.mjs'); // trustWith (T-MG-83)
 const { main } = await lib('cli/main.mjs');
 
 const IDENTITY = '[user]\n\tname = Test User\n\temail = test@example.com\n';
@@ -53,7 +55,10 @@ async function fresh(t, { fail = false } = {}) {
   const p = { env, repo, wt, stateDir, counter };
   p.run = (args, where = 'main') => cli(args, { cwd: where === 'wt' ? wt : repo, env });
   assert.equal((await p.run(['init', '--yes', '--state-dir', stateDir])).code, 0);
-  p.gate = (cmd) => profile.openStore(stateDir, names).write('profile', null, { ...profile.emptyProfile(), gates: [{ name: 'test', cmd, timeoutS: 120, kind: 'test' }] });
+  p.gate = (cmd) => {
+    profile.openStore(stateDir, names).write('profile', null, { ...profile.emptyProfile(), gates: [{ name: 'test', cmd, timeoutS: 120, kind: 'test' }] });
+    trustWith(state, stateDir, names, env);
+  };
   p.gate(`echo run >> ${counter} && node --test${fail ? ' && exit 1' : ''}`);
   p.base = git(repo, env, ['rev-parse', 'HEAD']).trim();
   git(repo, env, ['worktree', 'add', '-q', wt, '-b', 'feature']);

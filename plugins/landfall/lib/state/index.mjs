@@ -13,10 +13,12 @@ export { LAYOUTS, MIGRATIONS } from './migrations/index.mjs';
 export { checkChain, migrate } from './migrate.mjs';
 export { allocateId, retireId } from './ids.mjs';
 export { emailHash, gitIdentity, handleCandidates, registerHandle } from './team.mjs';
-export { open, unlockStale } from './store.mjs';
+export { checkedPath, open, setForeignLocal, unlockStale } from './store.mjs';
+export { localForeign, machineId } from './machine.mjs';
+export { TRUST_HINT, TRUST_MAX, gatesShaOf, isTrusted, overridesShaOf, readTrust, recordTrust, repoKey } from './trust.mjs';
 export { machineDataDir, readProjects, resolve, stateDirName, stateMarker, unlockStaleMachine, updateProject } from './resolve.mjs';
 export { activate, activationStep, deactivate, decline } from './activation.mjs';
-export { TASK_TEXTS, afterOf, createTask, listTasks, setTask, showTask, taskTextFile, writeTaskText } from './tasks.mjs';
+export { TASK_TEXTS, afterOf, createTask, createTaskInStore, listTasks, mergedOf, recordMerged, setTask, showTask, taskTextFile, writeTaskText } from './tasks.mjs';
 
 // Field errors of a document of `kind` ([] when valid) and its canonical file text.
 export const check = (kind, doc) => validate(kind.spec, doc);

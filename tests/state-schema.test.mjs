@@ -38,6 +38,7 @@ const examples = {
   tombstone: () => ({ schema: KINDS.tombstone.version, id: 'T-MG-7', retiredAt: AT, by: 'MG', reason: 'created by mistake' }),
   projects: () => ({ schema: MACHINE_KINDS.projects.version, projects: { '/work/repo': { stateDir: '/work/state' }, '/work/other': { declinedAt: AT, handle: 'MG' } } }),
   machineConfig: () => ({ schema: MACHINE_KINDS.machineConfig.version, flags: { 'guard-bash': 'on' }, executors: { implementer: ['claude'] } }),
+  trust: () => ({ schema: MACHINE_KINDS.trust.version, repos: { ['a'.repeat(32)]: { gates: ['b'.repeat(64)], overrides: [], adoptedAt: AT } } }),
 };
 const kindOf = (name) => KINDS[name] ?? MACHINE_KINDS[name];
 const errorsAt = (name, doc) => check(kindOf(name), doc);
@@ -50,13 +51,13 @@ const set = (obj, path, value) => {
 };
 
 test('the kinds of the state store and of machine data: versions, paths and keys round-trip', () => {
-  assert.deepEqual(Object.keys(KINDS).sort(), ['config', 'counter', 'state', 'task', 'team', 'tombstone']);
-  assert.deepEqual(Object.keys(MACHINE_KINDS), ['projects', 'machineConfig']);
+  assert.deepEqual(Object.keys(KINDS).sort(), ['config', 'counter', 'finding', 'state', 'task', 'team', 'tombstone']);
+  assert.deepEqual(Object.keys(MACHINE_KINDS), ['projects', 'machineConfig', 'trust']); // T-MG-77 A2 (intended): the machine id is derived, not stored; B: trust.json
   for (const [name, kind] of [...Object.entries(KINDS), ...Object.entries(MACHINE_KINDS)]) {
     assert.ok(Number.isInteger(kind.version) && kind.version >= 1, `${name}: integer version`);
     assert.ok(kind.readUpTo >= kind.version, `${name}: reads at least its own version`);
   }
-  const keys = { state: null, config: null, team: 'MG', task: 'T-MG-12', tombstone: 'D-ABCD-999999', counter: 'T-MG' };
+  const keys = { finding: 'B-MG-12', state: null, config: null, team: 'MG', task: 'T-MG-12', tombstone: 'D-ABCD-999999', counter: 'T-MG' };
   for (const [name, key] of Object.entries(keys)) {
     const rel = KINDS[name].path(key);
     const m = KINDS[name].match.exec(rel);
@@ -275,4 +276,33 @@ test('an array property that is not an index is invalid (rereview item E)', () =
   doc.events['4294967295'] = { discarded: 'data' };
   assert.ok(errorsAt('task', doc).length >= 1, 'events["4294967295"] would be lost by serialization');
   assert.equal(roundTrips('task', doc), false, 'it indeed does not round-trip');
+});
+
+// ---- T-MG-80: task schema 2 (mergedAt) ----
+
+test('task schema 2: mergedAt is optional, a schema-1 task reads upgraded, and a schema-1 reader refuses a schema-2 task', async () => {
+  const { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { defineKind } = await import(pathToFileURL(join(pluginDir, 'lib', 'state', 'kinds.mjs')).href);
+  const names = JSON.parse(readFileSync(join(pluginDir, 'lib', 'name.json'), 'utf8'));
+  assert.equal(KINDS.task.version, 2);
+  assert.deepEqual(errorsAt('task', { ...examples.task(), mergedAt: AT }), []);
+  assert.deepEqual(errorsAt('task', examples.task()), [], 'mergedAt is optional');
+  const dir = mkdtempSync(join(tmpdir(), 'task-schema-'));
+  try {
+    const store = state.open(dir, { names });
+    store.write('state', null, { codename: names.codename, createdWith: '2.0.0', activatedAt: AT });
+    mkdirSync(join(dir, 'tasks', 'T-MG-1'), { recursive: true });
+    const v1 = { ...examples.task(), schema: 1 };
+    writeFileSync(join(dir, 'tasks', 'T-MG-1', 'task.json'), `${JSON.stringify(v1, null, 2)}\n`);
+    assert.equal(store.read('task', 'T-MG-1').schema, 2, 'a schema-1 task is read through the no-op migration');
+    writeFileSync(join(dir, 'tasks', 'T-MG-1', 'task.json'), `${JSON.stringify({ ...examples.task(), mergedAt: AT }, null, 2)}\n`);
+    // The plugin before the bump: task schema 1 and no step to 2.
+    const { schema: _s, mergedAt: _m, ...fields } = KINDS.task.spec.f;
+    const oldTask = defineKind('task', 1, { dir: 'tasks', keyPattern: KINDS.task.keyPattern, file: (id) => `tasks/${id}/task.json`, match: KINDS.task.match, key: 'id', fields });
+    const old = state.open(dir, { names, kinds: { ...KINDS, task: oldTask }, migrations: state.MIGRATIONS.filter((m) => m.kind !== 'task') });
+    assert.throws(() => old.read('task', 'T-MG-1'), (err) => err.code === 'schema-newer' && /has schema 2; this plugin knows schema 1/.test(err.message));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

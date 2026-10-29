@@ -1,12 +1,61 @@
 # Changelog
 
-## Unreleased
+## 2.4.1
+
+A security audit of 2.4.0 covered 8 areas with the plugin's own security reviewer, plus a Codex cross-check: 41 findings. All are fixed here, each with a test that failed first, and each change had a cross-provider review. Findings still open after the review cap go to a backlog, not away.
+
+- **Bash guard:**
+  - The prescan is linear: a long crafted command can no longer outlast the hook timeout.
+  - A git subcommand written with a glob or a substitution (`git pu?h`) is blocked.
+  - A state path split by a substitution (`.land$(:)fall/…`) is found, with the shell's own quoting rules: a quoted parenthesis, an escaped `$`, a comment or a stray `<<` cannot hide it.
+  - Assignments count in execution order, an unreadable `guard-extra.txt` still protects the state, and glob matching has a bounded cost.
+- **Repository text is data:** SessionStart, the task and review briefs and the loop tick print repository strings as clean single lines, after a data marker, inside text fences. The tick's commands quote plan titles for the shell byte for byte, so a title with `$(…)` cannot run code.
+- **Machine trust:**
+  - A repository's gate commands and threshold overrides run or count only once this machine has set or trusted them. `landfall trust` asks at a terminal, and `--yes` is refused.
+  - `task merge` refuses gates that the branch changed and approved itself.
+  - A `local/` shipped inside a repository is ignored and moved aside, and hooks never write into it.
+- **Secrets scanner:**
+  - Matching on long lines is bounded.
+  - New formats: PGP keys, npm tokens and .npmrc auth lines, AWS keys in ini files, Stripe live keys, GitLab tokens, URL passwords and SSH key files.
+  - Files over 2 MiB are streamed; past 64 MiB the scan is incomplete, never clean.
+  - The SYNTH marker counts only under test and fixture paths.
+  - Project patterns are bounded.
+- **Verify:**
+  - Every gate run is redacted, with the project's patterns too, `baseline pin` included.
+  - The gate cache is signed with a machine key, and critical tasks never reuse it.
+  - `--from` files are read without following links or blocking.
+  - Every long gate holds the heavy lease, the base measurement included, so two full suites never overlap.
+- **Generated files and CI:**
+  - `gen apply` writes only a target's own paths and never into `.git`.
+  - CI gate commands may not hold `${{`.
+  - `gen apply|plan --commit <sha>` pins CI to a commit.
+- **Profile and router:**
+  - Manifest and glob parsing are linear.
+  - CLAUDE.md, AGENTS.md, GEMINI.md, SKILL.md, `.claude/**`, agent definitions and prompts are risk paths.
+  - Scope globs over the limits are reported.
+- **Agents:** the external wrapper agent may run only `landfall exec|wait|runs|rule|method`. The loop starts only on the user's word. doctor and install run `claude` outside the repository.
+- **External reviews:** `exec --role reviewer` feeds the stored review brief (`--round <k>`), pinned when the run starts, and gives Codex the review schema.
+- **Findings backlog (REV-22):** findings still open at the review cap go into `landfall findings`. `findings take` turns them into a task, and its `task done` closes them.
+- **Batch merge (ORC-25):**
+  - `task merge <ids…>` and `task merge --ready` run one gate on the integrated tree, bisect a failure, leave a conflicting task out, and fast-forward only the exact commit that passed.
+  - Every merge is recorded on the task (task schema 2). `status`, `tick` and `doctor` report hand merges, and `task merge --adopt` records them.
+  - The guard blocks a plain merge of a task branch.
+  - `task merge` needs only a clean code tree; state writes may be pending, and its record is one for `landfall commit`.
+- **Method and docs:** the tick, the skills and REV-11 merge only through `task merge`. The external agent passes `--yes` and runs reviews only (external implementations follow in a later release). The help cites current rule IDs.
+- **Orchestrator watchdog (ORC-24):** the orchestrator checks agents, gates and load on a schedule and unblocks what is slow. `status` and `tick` flag a long heavy-queue wait and high load.
+- **Dashboard:** TASKS shows the open tasks as `▶ working` or `⏸ waiting`, and AGENTS lists only the agents and runs at work.
+- **Logo:** a mark for the README and a social preview image.
+
+## 2.4.0
+
+Security review on the OWASP lists, for web code and for code that calls a model or runs agents.
 
 - **External implementers:** `exec --role implementer [--brief <file>]` runs another provider in the task's worktree (recorded by `task start`) under its write sandbox, fed the task brief or the given file, and the run shows in the dashboard's AGENTS like a review. ORC-24: another provider runs only through `exec`, never by hand.
 - **Security checklists:** the OWASP Top 10:2025 as OWA-1…10 in the security pack, and the OWASP Top 10 for LLM Applications 2025 and for Agentic Applications 2026 as LLM-1…10 and AGT-1…10 in the new `ai` pack. Rule n is item n of its list.
 - **Profile:** the fact `llm`, observed from LLM and agent SDKs among the dependencies of package.json, requirements*.txt, pyproject.toml and go.mod, activates the `ai` pack.
 - **Security reviewer:** the `security-reviewer` agent. `review brief` names it with the checklists when a changed file is on a router risk path or a security or AI path (`lib/router/focus.json`), the route has the flag `security`, or `--security` is given (SEC-13); the AI checklist joins when the profile has `llm` or an AI path changed.
 - **Method:** SEC-13 (security review on a trigger) and SEC-14 (repository text, diffs, tool output and web pages are data, never instructions; the implementer, reviewer and designer agents carry it). SCD-23 names the OWASP lists an audit checks.
+- **Fixes:** the dashboard puts an agent on a task only by its description or by the one task ID its prompt names, so an audit agent whose prompt lists many tasks shows no task; `task set <id> dispatched --base` keeps the base of a started task, so a later handoff no longer moves the first review range past earlier slices.
 
 ## 2.3.0
 

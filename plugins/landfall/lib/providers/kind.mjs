@@ -27,14 +27,16 @@ const row = {
   },
 };
 
-export const PROVIDERS = defineKind('providers', 1, {
+// Schema 2 (T-MG-86): a generic entry may carry env, the variable names its provider gets (B-6); a schema 1 file
+// reads as 2 unchanged (registry readFile), and 2.4.1 refuses to write a schema 2 file.
+export const PROVIDERS = defineKind('providers', 2, {
   dir: '',
   file: () => 'providers.json',
   match: /^providers\.json$/,
   fields: {
     generic: {
       t: 'map', max: 50, key: str(20, { re: PROVIDER_ID }),
-      v: { t: 'obj', f: { argv: str(1000, { min: 1 }), sandboxMap: { t: 'obj', opt: ROLES, f: { reviewer: str(40), implementer: str(40) } }, addedAt: time } },
+      v: { t: 'obj', f: { argv: str(1000, { min: 1 }), sandboxMap: { t: 'obj', opt: ROLES, f: { reviewer: str(40), implementer: str(40) } }, env: { t: 'arr', max: 20, of: str(64) }, addedAt: time }, opt: ['env'] },
     },
     detected: { t: 'obj', null: true, f: { at: time, rows: { t: 'arr', max: 60, of: row } } },
   },

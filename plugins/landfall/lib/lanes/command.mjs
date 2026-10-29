@@ -1,5 +1,5 @@
 // The lane commands (spec §7.9, §8.2, SD-20): lane claim|renew|release|takeover <lane> · lane list [<lane>].
-// Context comes from the target (REV-58): the repository of the current directory and its git user.email (the
+// Context comes from the target (COD-9): the repository of the current directory and its git user.email (the
 // caller's handle in the team registry of its state). The writers need an active repository and a registered
 // handle; list reads origin in any repository and writes nothing. The lane name is checked before any git call.
 // Exit 0 done · 1 the lane is held, not yours, free (renew, takeover), yours (takeover), changed meanwhile, or its

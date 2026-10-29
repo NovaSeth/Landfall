@@ -1,9 +1,10 @@
-// Admission hooks (spec §7.8 admission points, §14 capability `admission`), shadow mode: the scheduler is called, the
-// hook never blocks. admit-agent (PreToolUse Agent) asks for an agent lease and appends the would-deny record to
+// Admission hooks (spec §7.8 admission points, §14 capability `admission`), the scheduler is called; in shadow mode (the default)
+// the hook never blocks, in on mode a full agent table is a PreToolUse deny naming ORC-11 and the `slots` hint. admit-agent (PreToolUse Agent) asks for an agent lease and appends the would-deny record to
 // local/shadow.jsonl; bind-agent (PostToolUse Agent) attaches tool_response.agentId to the lease keyed by tool_use_id;
 // release-agent (SubagentStop) frees the lease of agent_id. Malformed input, an inactive repository or a scheduler error:
 // allow, no output (GC8). The capability flag (off → pass-through) is applied by the registry.
 import { isAbsolute } from 'node:path';
+import { modeOf, readConfig, rollout } from '../config/index.mjs';
 import { open } from '../state/index.mjs';
 import { admitAgent, bindAgent, releaseAgent } from '../sched/index.mjs';
 import { loadNames, stateOf } from './loop-state.mjs';
@@ -21,7 +22,14 @@ export function admitHook(input, { env = process.env, deadline = Infinity } = {}
   if (!cwd || !isObj(input.tool_input)) return NONE;
   const where = stateOf(cwd, env, deadline).where;
   if (!where?.active) return NONE;
-  const r = admitAgent({ ...input, cwd }, { names, env, mode: 'shadow', lockTimeoutMs: LOCK_MS });
+  let mode;
+  try { mode = modeOf('admission', readConfig(where, { names, env })); } catch { mode = rollout('admission').default; }
+  if (mode === 'off') return NONE;
+  const r = admitAgent({ ...input, cwd }, { names, env, mode, lockTimeoutMs: LOCK_MS });
+  if (r.action === 'deny') {
+    const reason = `ORC-11: ${r.message}`.slice(0, 600);
+    return { stdout: `${JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: reason } })}\n` };
+  }
   if (r.action === 'allow' && r.shadow) {
     open(where.dir, { names, lockTimeoutMs: LOCK_MS }).append('shadow', r.shadow);
   }

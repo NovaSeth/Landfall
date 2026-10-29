@@ -13,7 +13,17 @@
 import { spawn } from 'node:child_process';
 import { existsSync, writeFileSync } from 'node:fs';
 
-const [mode, out, sandbox, cwd] = process.argv.slice(2);
+let [mode, out, sandbox, cwd] = process.argv.slice(2);
+let schemaFile;
+// A fake Codex executable exercises the real adapter's argv without calling a provider.
+if (mode === 'codex') {
+  const args = process.argv.slice(3);
+  if (args[0] === '--version') { process.stdout.write('codex-cli 0.160.0\n'); process.exit(0); }
+  if (args[0] === 'login') { process.stdout.write('Logged in\n'); process.exit(0); }
+  const value = (flag) => args.includes(flag) ? args[args.indexOf(flag) + 1] : undefined;
+  out = value('-o'); sandbox = value('-s'); cwd = value('-C'); schemaFile = value('--output-schema');
+  mode = 'ok';
+}
 const say = (line) => process.stdout.write(`${line}\n`);
 const review = { verdict: 'approved', reviewer: { kind: 'external', id: 'fake' }, findings: [] };
 const finish = (lines) => {
@@ -27,7 +37,7 @@ process.stdin.on('data', (c) => chunks.push(c));
 process.stdin.on('end', () => {
   writeFileSync(`${out}.prompt`, Buffer.concat(chunks));
   const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => /_(?:SLOT|PORT_BASE|PORT_MAX|DB_NAME)$/.test(k)));
-  writeFileSync(`${out}.args`, `${JSON.stringify({ mode, sandbox, cwd, pid: process.pid, env })}\n`);
+  writeFileSync(`${out}.args`, `${JSON.stringify({ mode, sandbox, cwd, schemaFile, pid: process.pid, env })}\n`);
   say(`fake provider ${mode}: sandbox ${sandbox}`);
   if (mode === 'ok') {
     setTimeout(() => finish(['reading the brief', 'checking the diff', 'done: approved']), 300);

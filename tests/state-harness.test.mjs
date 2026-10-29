@@ -13,7 +13,7 @@
 //   6. every crasher was killed, or stopped at a dead process's lock; a process that exits cleanly leaves no
 //      temporary file and no lock (attributed by the pid in the artifact's name or owner record, after the round,
 //      when every process has exited); a crash leaves at most a lock whose owner is dead, which no writer takes
-//      over (stale-lock) until the explicit unlock; afterwards local/ holds only ids/ and backup/;
+//      over (stale-lock) until the explicit unlock; afterwards local/ holds only ids/, backup/ and the owner marker .machine (T-MG-77);
 //   7. no failure other than the expected refusals of the round; every refusal had no effect (deletions of
 //      existing paths count as effects).
 // No assertion depends on wall-clock speed or on how the system interleaves the processes: coverage comes from
@@ -312,7 +312,7 @@ async function runSeed(t, seed) {
   }
   assert.equal(state.unlockStale(current(dir), { quietMs: 50 }).removed, stale, `${label}: the explicit unlock removes the dead owner's lock`);
   current(dir).write('team', 'ZZ', { handle: 'ZZ', emailSha256: 'f'.repeat(64), addedAt: AT });
-  const localNow = () => readdirSync(join(dir, 'local')).filter((n) => !['ids', 'backup'].includes(n));
+  const localNow = () => readdirSync(join(dir, 'local')).filter((n) => !['ids', 'backup', '.machine'].includes(n));
   assert.deepEqual(localNow(), [], `${label}: local/ holds only ids/ and backup/ after the explicit unlock`);
   const walkAll = (d, rel = '') => readdirSync(d).flatMap((n) => { const r = rel ? `${rel}/${n}` : n; return lstatSync(join(d, n)).isDirectory() ? walkAll(join(d, n), r) : [r]; });
   for (const rel of walkAll(dir)) {

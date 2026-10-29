@@ -36,3 +36,14 @@ test('reviewFocus: at most 10 file triggers then a count; the lists are frozen',
   assert.ok(Object.isFrozen(SECURITY_PATHS) && Object.isFrozen(AI_PATHS) && Object.isFrozen(CHECKLISTS));
   assert.equal(CHECKLISTS.ai.length, 20);
 });
+
+test('T-MG-74: agent-instruction paths are router risk paths and still join the AI checklist; manifests stay security-focus only', async () => {
+  const { DEFAULT_RISK_PATHS, globMatch } = await import(pathToFileURL(join(pluginDir, 'lib', 'router', 'classify.mjs')).href);
+  for (const f of ['CLAUDE.md', 'x/SKILL.md', 'a/AGENTS.md', 'GEMINI.md', '.claude/commands/x.md', 'app/prompts/a.txt', 'agents/r.md']) {
+    assert.ok(DEFAULT_RISK_PATHS.some((g) => globMatch(g, f)), `${f} is a router risk path`);
+    assert.deepEqual(reviewFocus({ files: [f] }).checklists, ['web', 'ai'], f);
+  }
+  assert.ok(!DEFAULT_RISK_PATHS.some((g) => globMatch(g, 'package.json')), 'manifests are no router risk paths');
+  assert.equal(reviewFocus({ files: ['package.json'] }).focus, 'security');
+  assert.deepEqual(reviewFocus({ files: ['package.json'] }).checklists, ['web']);
+});

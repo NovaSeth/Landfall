@@ -671,5 +671,12 @@
   ["echo x > @STATE@/local/loop.json","tracked"],
   ["echo x > @STATE@/tombstones/D-AB-3.json","tracked"],
   ["echo x > @STATE@/local/ids/T-AB.json","tracked"],
-  ["echo x > @STATE@/tasks/T-AB-1/verify.json","tracked"]
+  ["echo x > @STATE@/tasks/T-AB-1/verify.json","tracked"],
+  ["git merge --no-ff task/T-AB-3","main"],
+  ["git pull origin task/T-AB-3","main"],
+  ["git merge -- task/T-AB-3","main"],
+  ["git pull -- origin task/T-AB-3","main"],
+  ["git pull origin +task/T-AB-3:x","main"],
+  ["git merge -- task/T-AB-3","none"],
+  ["git pull -- origin task/T-AB-3","none"]
 ]

@@ -1,6 +1,7 @@
 # Scoped re-review: <task> (<task ID>), round <k>
 <!-- The orchestrator fills in "Request" and saves it as rereview-r<k>-brief.md (REV-19).
-     The reviewer writes the result (sections from "Result" on) to rereview-r<k>.md; the last line of the file is the verdict alone (one of the two). -->
+     The reviewer writes the result (sections from "Result" on) to rereview-r<k>.md; the last line of the file is the verdict alone (one of the two).
+     `review record` takes the JSON of templates/review.schema.json: Critical and Important are blocking, Minor is minor (REV-2). -->
 
 ## Request
 Previous review: <file> (findings <IDs>). Findings file: <path>/findings-r<k>.md. Round diff <a>..<b>: <path>/rereview-r<k>.diff. The author's report with its "Fix round <k>" section: <file>.

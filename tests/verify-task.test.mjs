@@ -377,7 +377,9 @@ test('task merge: merges with --no-commit, runs the outcome gates, commits only 
   assert.equal(res.env.data.merged, true);
   const parents = r.git('rev-list', '--parents', '-n', '1', 'HEAD').split(' ');
   assert.deepEqual(parents.slice(1), [before, r.git('rev-parse', 'feat/x')], 'a merge commit of main and the branch');
-  assert.equal(r.git('status', '--porcelain'), '');
+  // T-MG-80 (intended change): the code is clean; the merge record is an uncommitted state write, like task done's.
+  assert.equal(r.git('status', '--porcelain', '--', '.', `:(exclude)${names.stateDir}`), '');
+  assert.deepEqual(r.git('status', '--porcelain').split('\n').map((l) => l.replace(/^\s*\S+\s+/, '')), [`${names.stateDir}/tasks/${r.id}/task.json`]);
   assert.equal(res.env.data.result, 'pass');
 });
 
@@ -437,10 +439,12 @@ test('verify, task done and task merge are command rows that change files; help 
   for (const name of ['verify', 'task done', 'task merge']) {
     assert.ok(row(name) && !row(name).hidden, name);
     assert.equal(row(name).mutating, true, `${name}: changes files`);
-    assert.deepEqual(row(name).args.map((a) => [a.name, Boolean(a.required)]), [['id', true]], name);
   }
+  for (const name of ['verify', 'task done']) assert.deepEqual(row(name).args.map((a) => [a.name, Boolean(a.required)]), [['id', true]], name);
+  // T-MG-80: task merge takes several IDs (a batch, --adopt) or none (--ready)
+  assert.deepEqual(row('task merge').args.map((a) => [a.name, Boolean(a.required), Boolean(a.variadic)]), [['id', false, true]]);
   assert.deepEqual(row('verify').flags.map((f) => f.flag), ['--ci', '--no-cache']);
-  assert.deepEqual(row('task merge').flags.map((f) => f.flag), ['--branch']);
+  assert.deepEqual(row('task merge').flags.map((f) => f.flag), ['--branch', '--ready', '--adopt']);
   assert.deepEqual(row('verify').exits, ['OK', 'FAIL', 'USAGE', 'REFUSED', 'ENV']);
   const r = repo(t);
   const help = await cli(['--help'], { ...r, json: false });
@@ -452,19 +456,24 @@ test('verify, task done and task merge are command rows that change files; help 
 
 // ---- review r1 (findings-r1.md) ----
 
-// Runs `task done` with `inject` executed when it starts its task update: the boundary between anything checked
-// before the store lock and the write (Codex's injection point).
+// Runs `task done` with `inject` executed just before it takes the store lock: the boundary between anything checked
+// before the store lock and the write (Codex's injection point). Task done decides inside one store.batch (T-MG-78:
+// the task and its findings close together), so the boundary is the start of that batch; without a batch it is the
+// start of the task update. The injection writes through another store, so it must run before the lock is held.
 async function doneAcross(r, inject) {
-  const original = Store.prototype.update;
+  const { update, batch } = Store.prototype;
   let fired = false;
-  Store.prototype.update = function update(name, ...rest) {
-    if (!fired && name === 'task') { fired = true; inject(); }
-    return original.call(this, name, ...rest);
+  const fire = () => { if (!fired) { fired = true; inject(); } };
+  Store.prototype.batch = function batched(fn) { fire(); return batch.call(this, fn); };
+  Store.prototype.update = function updated(name, ...rest) {
+    if (name === 'task') fire();
+    return update.call(this, name, ...rest);
   };
   try {
     return await done(r);
   } finally {
-    Store.prototype.update = original;
+    Store.prototype.update = update;
+    Store.prototype.batch = batch;
   }
 }
 
@@ -646,7 +655,16 @@ test('r2 D3: lib/verify never resets hard, writes refs or builds commits by hand
   const dir = join(pluginDir, 'lib', 'verify');
   for (const f of readdirSync(dir)) {
     const text = readFileSync(join(dir, f), 'utf8');
-    assert.doesNotMatch(text, /--hard|update-ref|commit-tree/, f);
+    assert.doesNotMatch(text, /--hard|commit-tree/, f);
+    // T-MG-80 fix round 2 (F5): the one ref write is the batch's compare-and-swap of the target ref, always with the
+    // expected old value; no other file writes a ref
+    const calls = text.match(/'update-ref'[^\n]*/g) ?? [];
+    if (f !== 'batch.mjs') assert.deepEqual(calls, [], f);
+    else {
+      assert.equal(calls.length, 1, f);
+      assert.match(calls[0], /, ref, to, from\]\);$/, 'the update-ref names the new and the expected old value');
+      assert.ok((text.match(/\bswap\(/g) ?? []).length >= 2 && !/\bswap\([^,)]*\)/.test(text), 'each swap passes both values');
+    }
   }
 });
 

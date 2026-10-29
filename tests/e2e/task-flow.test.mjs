@@ -51,7 +51,7 @@ function project(t, { calc, tests }) {
     const r = spawnSync(process.execPath, [BIN, ...args, '--json', '--yes'], { cwd: dir, env, encoding: 'utf8', timeout: 240000 });
     let envelope = null;
     try { envelope = JSON.parse(r.stdout); } catch { /* reported below */ }
-    return { code: r.status, env: envelope, out: `${args.join(' ')}: exit ${r.status}\nstdout: ${r.stdout}\nstderr: ${r.stderr}` };
+    return { code: r.status, env: envelope, out: `step "${args.join(" ")}": exit ${r.status}, signal ${r.signal}\nstdout: ${r.stdout}\nstderr (last 300 bytes): ${String(r.stderr ?? "").slice(-300)}` };
   };
   const ok = (res) => { assert.equal(res.code, 0, res.out); return res.env; };
   const commit = (msg) => { git('add', '-A'); git('commit', '-q', '-m', msg); return git('rev-parse', 'HEAD'); };
@@ -101,7 +101,7 @@ function review(p, id) {
   assert.deepEqual([rec.data.round, rec.data.verdict], [1, 'approved']);
 }
 
-test('task flow: task new → route → implement → report from the template → verify → review record → task done → task merge, all green', (t) => {
+test('task flow: task new → route → implement → report from the template → verify → review record → task done → task merge, all green', { timeout: 600000 }, (t) => {
   const p = project(t, { calc: CALC, tests: HEAD.replace(', subtract', '') + ADDS });
   const task = start(p, 'Add subtract', 'calc.mjs,calc.test.mjs', 4);
   assert.equal(task.class, 'trivial');
@@ -124,13 +124,16 @@ test('task flow: task new → route → implement → report from the template �
   const m = p.ok(p.cli('task', 'merge', task.id, '--branch', task.branch));
   assert.deepEqual([m.data.merged, m.data.result], [true, 'pass']);
   assert.deepEqual(p.git('rev-list', '--parents', '-n', '1', 'HEAD').split(' ').slice(1), [tip, p.git('rev-parse', task.branch)]);
-  assert.equal(p.git('status', '--porcelain'), '');
+  // T-MG-80 (intended change): the code is clean; the merge record is an uncommitted state write, like task done's.
+  assert.equal(p.git('status', '--porcelain', '--', '.', `:(exclude)${names.stateDir}`), '');
+  assert.deepEqual(p.git('status', '--porcelain').split('\n').map((l) => l.replace(/^\s*\S+\s+/, '')), [`${names.stateDir}/tasks/${task.id}/task.json`]);
+  assert.equal(p.read(`tasks/${task.id}/task.json`).events.at(-1).event, 'merged');
   assert.equal(p.read(`tasks/${task.id}/task.json`).status, 'done');
   assert.deepEqual(p.read(`tasks/${task.id}/review-r1.json`).verdict, 'approved');
   assert.equal(p.read('baseline/tests.json').tests.length, 2, 'main\'s baseline holds the new test');
 });
 
-test('task flow with a removed test: verify, task done and task merge refuse it until a decision allows it', (t) => {
+test('task flow with a removed test: verify, task done and task merge refuse it until a decision allows it', { timeout: 600000 }, (t) => {
   const p = project(t, { calc: CALC2, tests: HEAD + ADDS + SUBTRACTS });
   const task = start(p, 'Drop subtract', 'calc.mjs,calc.test.mjs', 3);
   p.write('calc.mjs', CALC);
@@ -166,6 +169,8 @@ test('task flow with a removed test: verify, task done and task merge refuse it 
   p.git('checkout', '-q', 'main');
   const m = p.ok(p.cli('task', 'merge', task.id, '--branch', task.branch));
   assert.deepEqual([m.data.merged, m.data.verify.inventory.allowedBy], [true, [allow.data.id]]);
-  assert.equal(p.git('status', '--porcelain'), '');
+  // T-MG-80 (intended change): the code is clean; the merge record is an uncommitted state write, like task done's.
+  assert.equal(p.git('status', '--porcelain', '--', '.', `:(exclude)${names.stateDir}`), '');
+  assert.deepEqual(p.git('status', '--porcelain').split('\n').map((l) => l.replace(/^\s*\S+\s+/, '')), [`${names.stateDir}/tasks/${task.id}/task.json`]);
   assert.deepEqual(p.read('baseline/tests.json').tests.map((x) => x.id).filter((id) => id.includes('subtracts')), []);
 });

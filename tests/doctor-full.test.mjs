@@ -10,7 +10,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { accessSync, chmodSync, constants, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { accessSync, chmodSync, constants, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, realpathSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { delimiter, dirname, join, relative } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { isolatedEnv, isolateProcessEnv } from './helpers/isolated-env.mjs';
@@ -37,7 +38,8 @@ const PLUGIN_ID = `${names.plugin}@${names.marketplace}`;
 const { HOOKS } = await lib('hooks/registry.mjs');
 const EVENTS = [...new Set(HOOKS.map((h) => h.event))];
 
-const ROW_IDS = ['release', 'heartbeat', 'bin-path', 'state', 'profile', 'flags', 'providers', 'scheduler', 'guard', 'context', 'permissions', 'protection'];
+// T-MG-77 A2 (intended): the local row follows flags.
+const ROW_IDS = ['release', 'heartbeat', 'bin-path', 'git', 'state', 'profile', 'flags', 'local', 'providers', 'scheduler', 'guard', 'context', 'permissions', 'protection'];
 const STATUSES = ['ok', 'warn', 'fail', 'skip'];
 const RULES = [`Bash(${names.bin} exec:*)`, `Bash(${names.bin} wait:*)`]; // U3
 const SYSTEM_DIRS = ['/usr/bin', '/bin'];
@@ -64,6 +66,7 @@ function fakeClaude(bin, { version = '2.1.300 (Claude Code)', list = healthyList
   const answers = JSON.stringify({ version, list, details, marketplaces, id: PLUGIN_ID });
   writeFileSync(join(bin, 'claude'), `#!/usr/bin/env node
 const a = process.argv.slice(2).join(' ');
+if (process.env.FAKE_CWD_LOG) require('node:fs').appendFileSync(process.env.FAKE_CWD_LOG, require('node:fs').realpathSync(process.cwd()) + '\\n');
 const o = ${answers};
 if (a === '--version') process.stdout.write(o.version + '\\n');
 else if (a === 'plugin list --json') process.stdout.write(o.list);
@@ -129,6 +132,22 @@ function snapshot(base) {
   return snap;
 }
 const changed = (a, b) => [...new Set([...a.keys(), ...b.keys()])].filter((k) => a.get(k) !== b.get(k)).sort();
+
+test('doctor runs claude from the real temp directory, never from the repository (E3)', (t) => {
+  const s = scratch(t);
+  fakeClaude(s.bin);
+  const project = join(s.base, 'project');
+  mkdirSync(project);
+  gitIn(project, 'init', '-q');
+  const log = join(s.base, 'cwd.log');
+  const { r } = doctor(s, { cwd: project, env: { ...s.env, FAKE_CWD_LOG: log } });
+  assert.equal(r.status, 0, out(r));
+  const cwds = readFileSync(log, 'utf8').trim().split('\n');
+  assert.ok(cwds.length >= 3, 'claude ran several times');
+  const neutral = realpathSync(s.env.TMPDIR || tmpdir());
+  for (const c of cwds) assert.equal(c, neutral);
+  assert.ok(!cwds.includes(realpathSync(project)));
+});
 
 test('full report: the v0 checks stay as pinned, one row per item with a status and a fix hint; healthy exits 0', (t) => {
   const s = scratch(t);
@@ -396,4 +415,38 @@ test('environment: claude or git missing exits 8 and the report is still listed'
   assert.equal(d.r.status, 8, out(d.r));
   assert.ok(d.e.errors.some((x) => x.code === 'git-missing'), JSON.stringify(d.e.errors));
   assert.deepEqual(d.e.data.rows.map((x) => x.id), ROW_IDS);
+});
+
+test('T-MG-77 A2-6: a local/ marked by another machine is reported foreign, moved aside at the next command; doctor moves nothing', (t) => {
+  const s = scratch(t);
+  fakeClaude(s.bin);
+  const project = repo(s.base, 'project');
+  const init = cli(s, project, ['init', '--yes']);
+  assert.equal(init.status, 0, out(init));
+  let d = doctor(s, { cwd: project });
+  assert.equal(d.row('local').status, 'ok', JSON.stringify(d.row('local')));
+  assert.equal(d.row('local').detail, 'local/: ours');
+  const store = join(project, names.stateDir);
+  writeFileSync(join(store, 'local', '.machine'), `${'0'.repeat(32)}\n`);
+  const before = snapshot(project);
+  d = doctor(s, { cwd: project });
+  assert.equal(d.row('local').status, 'warn', JSON.stringify(d.row('local')));
+  assert.match(d.row('local').detail, /^local\/: foreign \(.+\), moved aside at the next command$/);
+  assert.deepEqual(changed(before, snapshot(project)), [], 'doctor wrote nothing');
+  assert.equal(cli(s, project, ['init', '--yes']).status, 0);
+  d = doctor(s, { cwd: project });
+  assert.equal(d.row('local').detail, 'local.foreign-*: 1 kept (safe to delete after review)');
+});
+
+test('T-MG-85: the git row passes at 2.24 or later and warns below it', (t) => {
+  const s = scratch(t);
+  fakeClaude(s.bin);
+  const fakeGit = (v) => { writeFileSync(join(s.bin, 'git'), `#!/bin/sh\ncase "$1" in --version) echo "git version ${v}";; *) exit 1;; esac\n`); chmodSync(join(s.bin, 'git'), 0o755); };
+  fakeGit('2.20.1');
+  let d = doctor(s);
+  assert.equal(d.row('git').status, 'warn', JSON.stringify(d.row('git')));
+  assert.match(d.row('git').detail, /2\.20\.1.*2\.24/);
+  fakeGit('2.24.0');
+  d = doctor(s);
+  assert.equal(d.row('git').status, 'ok', JSON.stringify(d.row('git')));
 });

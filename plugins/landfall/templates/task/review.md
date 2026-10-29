@@ -1,4 +1,4 @@
-<!-- Task review (REV-1): review-r<k>.md. Sections in this order, no preamble; the last line of the file is the verdict alone (one of the two). -->
+<!-- Task review (REV-1): review-r<k>.md, the long form. `review record` takes the JSON of templates/review.schema.json: Critical and Important there are blocking, Minor is minor (REV-2). Sections in this order, no preamble; the last line of the file is the verdict alone (one of the two). -->
 ### Compliance with the brief
 - ✅ Point 1: <…> (file:line)
 - ❌ Point 2: <…> (file:line)
