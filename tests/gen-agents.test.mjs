@@ -52,7 +52,7 @@ const GATE_SETS = [
   [
     { name: 'unit: "fast" \\ slow', cmd: 'npm test -- --grep "a: b" # not a comment' },
     { name: 'lint `strict`', cmd: "printf '%s\\n' \"$HOME\" | tr a-z A-Z && echo 'it''s'" },
-    { name: 'types', cmd: '`which tsc` --noEmit && echo ``` && echo ${{ github.sha }}' },
+    { name: 'types', cmd: '`which tsc` --noEmit && echo ``` && echo $GITHUB_SHA' },
   ],
   Array.from({ length: 20 }, (_, i) => ({ name: `gate-${i}`, cmd: `npm run gate-${i} -- --with-a-long-argument-list ${'x'.repeat(200)}` })),
 ];
