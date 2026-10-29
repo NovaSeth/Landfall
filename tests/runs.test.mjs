@@ -98,7 +98,7 @@ async function project(t, { envExtra = {} } = {}) {
 }
 const startRun = (p, task, role, provider) => p.cli(['exec', '--task', task, '--role', role, '--provider', provider]);
 const reviewBrief = (p, task, round = 1) => readFileSync(join(p.state, 'tasks', task, `review-r${round}-brief.md`), 'utf8');
-const externalSection = (provider, task) => `## External run (overrides the Output section above)\nYou run as ${provider}:reviewer in a read-only sandbox: write no file. Your final message is the review JSON object alone, with "reviewer": {"kind": "external", "id": "${provider}:reviewer"}, per the schema the Output section names. The orchestrator records it from the run's out file with \`${names.bin} review record ${task} --from <out file>\`.\n`;
+const externalSection = (provider, task) => `## External run (overrides the Output section above)\nYou run as ${provider}:reviewer in a read-only sandbox: write no file. Your final message is the review JSON object alone, with "reviewer": {"kind": "external", "id": "${provider}:reviewer"}, per the schema the Output section names. The orchestrator records it from the run's out file with \`${names.bin} review record ${task} --kind external --run <run ID>\`.\n`;
 
 test('a fake-provider run: starting → running → done with tokens and lastLine; the out file exists; the record per §8.5', async (t) => {
   const p = await project(t);

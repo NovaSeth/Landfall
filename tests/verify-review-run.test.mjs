@@ -7,7 +7,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -31,7 +31,8 @@ const HINT = 'use --run <runId> (the review of an external run comes from its re
 // A repository with an active store, two dispatched tasks of the git identity, and the run store.
 function repo(t) {
   const base = realpathSync(mkdtempSync(join(tmpdir(), 'review-run-')));
-  t.after(() => rmSync(base, { recursive: true, force: true }));
+  const cleanup = [base];
+  t.after(() => { for (const d of cleanup) rmSync(d, { recursive: true, force: true }); });
   const dir = join(base, 'repo');
   const home = join(base, 'home');
   mkdirSync(dir);
@@ -55,23 +56,26 @@ function repo(t) {
   });
   const id = task();
   const other = task();
-  return { base, dir, env, stateDir, store, id, other, rstore: runs.runsStore(stateDir, names), vstore: verify.openStore(stateDir, names) };
+  return { base, cleanup, dir, env, stateDir, store, id, other, rstore: runs.runsStore(stateDir, names), vstore: verify.openStore(stateDir, names) };
 }
 
-// A run record of `task` and `role` with `status`, its out file holding `out` (JSON unless a string).
+// A run record of `task` and `role` with `status`, its out file holding `out` (JSON unless a string). Its out
+// directory is as exec makes it (T-MG-91): a 0700 directory right under the temp directory, bound by outDirId.
 function addRun(r, { task = r.id, role = 'reviewer', status = 'done', out = EXTERNAL, n = 1 } = {}) {
   const runId = runs.runIdOf('codex', task, role, n);
-  const outDir = join(r.base, `out-${runId}`);
-  mkdirSync(outDir, { mode: 0o700 });
+  const outDir = mkdtempSync(join(tmpdir(), 'review-run-out-'));
+  chmodSync(outDir, 0o700);
+  r.cleanup.push(outDir);
+  const st = lstatSync(outDir, { bigint: true });
   const outFile = join(outDir, 'out.json');
   if (out !== null) writeFileSync(outFile, typeof out === 'string' ? out : JSON.stringify(out));
   const terminal = status === 'done' || status === 'failed';
   r.rstore.write('run', runId, {
     runId, task, role, provider: 'codex', adapterVersion: null, model: null, sandbox: 'read-only', cwd: r.dir, pid: null, pidStart: null, pidMethod: null, lease: null,
     status, queuedAt: AT, startedAt: AT, endedAt: terminal ? AT : null, elapsedMs: 0, capS: 900, tokens: null, tokensReason: null, costMicroUsd: null,
-    lastLine: null, unknownEvents: 0, outFile, exit: terminal ? 0 : null, error: null,
+    lastLine: null, unknownEvents: 0, outFile, exit: terminal ? 0 : null, error: null, outDirId: `${st.dev}:${st.ino}`,
   });
-  return { runId, outFile };
+  return { runId, outFile, outDir };
 }
 
 async function cli(args, { dir, env }) {
@@ -165,4 +169,73 @@ test('kind claude with --from still records, with no run and no sha256', async (
 test('the review record row lists --from, --kind and --run', () => {
   const row = COMMANDS.find((c) => c.name === 'review record');
   assert.deepEqual(row.flags.map((f) => f.flag), ['--from', '--kind', '--run']);
+});
+
+// ---- T-MG-91: the run's bound out directory, and a stored external round without its run ----
+
+test('review record --run checks the run\'s bound out directory as run-supervise does; anything else is run-not-reviewable', async (t) => {
+  const r = repo(t);
+  const patch = (runId, fields) => r.rstore.update('run', runId, (cur) => ({ ...cur, ...fields }));
+  const cases = [];
+  let n = 1;
+  const next = () => addRun(r, { n: n++ });
+  let x = next();
+  writeFileSync(join(x.outDir, 'other.json'), JSON.stringify(EXTERNAL));
+  patch(x.runId, { outFile: join(x.outDir, 'other.json') });
+  cases.push(['not named out.json', x.runId]);
+  x = next();
+  const nested = join(r.base, 'nested');
+  mkdirSync(nested, { mode: 0o700 });
+  writeFileSync(join(nested, 'out.json'), JSON.stringify(EXTERNAL));
+  const nst = lstatSync(nested, { bigint: true });
+  patch(x.runId, { outFile: join(nested, 'out.json'), outDirId: `${nst.dev}:${nst.ino}` });
+  cases.push(['not directly under the temp directory', x.runId]);
+  x = next();
+  chmodSync(x.outDir, 0o755);
+  cases.push(['mode 0755', x.runId]);
+  x = next();
+  patch(x.runId, { outDirId: '1:2' });
+  cases.push(['another outDirId', x.runId]);
+  x = next();
+  r.rstore.update('run', x.runId, ({ outDirId, ...rest }) => rest); // eslint-disable-line no-unused-vars
+  cases.push(['no outDirId', x.runId]);
+  x = next();
+  const link = `${x.outDir}-link`;
+  symlinkSync(x.outDir, link);
+  r.cleanup.push(link);
+  patch(x.runId, { outFile: join(link, 'out.json') });
+  cases.push(['a linked directory', x.runId]);
+  x = next();
+  renameSync(x.outDir, `${x.outDir}-old`);
+  r.cleanup.push(`${x.outDir}-old`);
+  mkdirSync(x.outDir, { mode: 0o700 });
+  writeFileSync(x.outFile, JSON.stringify(EXTERNAL));
+  cases.push(['a replaced directory', x.runId]);
+  for (const [what, runId] of cases) {
+    const res = await viaRun(r, runId);
+    assert.deepEqual([res.code, first(res).code], [7, 'run-not-reviewable'], `${what}: ${res.text}`);
+  }
+  assert.deepEqual(reviewKeys(r), []);
+  assert.equal((await viaRun(r, next().runId)).code, 0, 'the control run records');
+});
+
+test('a stored external round without run and sha256 does not count; verify names the fix; the round is kept', async (t) => {
+  const r = repo(t);
+  const steps = ['review', 'cross-provider-review'];
+  r.vstore.create('review', verify.reviewKey(r.id, 1), EXTERNAL); // as a --from file stored it before 2.5.0
+  assert.equal(verify.reviewState(r.vstore, r.id, steps, { providerAvailable: true }), 'missing');
+  assert.equal(verify.reviewState(r.vstore, r.id, ['review'], { tier: 'L1' }), 'missing', 'it counts for no route');
+  assert.equal(verify.reviewState(r.vstore, r.id, ['review']), 'not-required', 'nor as an approval where none is needed');
+  assert.equal(verify.reviewProblem(r.vstore, r.id, names), `external review without its run: record it again with ${names.bin} review record ${r.id} --kind external --run <run ID>`);
+  assert.deepEqual(r.vstore.read('review', verify.reviewKey(r.id, 1)), { schema: 1, ...EXTERNAL }, 'the old round is kept');
+  const { runId } = addRun(r);
+  assert.equal((await viaRun(r, runId)).code, 0);
+  assert.equal(verify.reviewState(r.vstore, r.id, steps, { providerAvailable: true }), 'approved');
+  assert.equal(verify.reviewProblem(r.vstore, r.id, names), null);
+});
+
+test('the texts name the --run form: the dispatch skill step 6, and the providers CLI header names --env', () => {
+  const dispatch = readFileSync(join(pluginDir, 'templates', 'skills', 'dispatch.md'), 'utf8');
+  assert.match(dispatch.split('\n').find((l) => l.startsWith('6. ')), /review record <id> --from <file> --yes`, external: `--kind external --run <run ID>`/);
+  assert.match(readFileSync(join(pluginDir, 'lib', 'providers', 'cli.mjs'), 'utf8').split('\n')[0], /--env/);
 });

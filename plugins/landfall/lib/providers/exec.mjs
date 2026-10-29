@@ -13,14 +13,14 @@
 // Exit (exec) 0 · 1 no such task, no brief, a live run of the task and role · 2 bad role or provider · 7 inactive
 // repository, newer schema · 8 provider missing or logged out.
 import { tolerateClosedStreams } from '../cli/output.mjs';
-import { closeSync, constants, fstatSync, lstatSync, mkdtempSync, openSync, readFileSync, realpathSync } from 'node:fs';
+import { closeSync, constants, fstatSync, lstatSync, mkdtempSync, openSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, delimiter, dirname, isAbsolute, join } from 'node:path';
+import { delimiter, dirname, isAbsolute, join } from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 import { EXIT } from '../cli/commands.mjs';
 import { createExclusive, readRegularFile } from '../fsx/index.mjs';
 import { start } from '../proc/index.mjs';
-import { capFor, liveRun, nextRunId, runsStore, LOG_LINE, LOG_LINES } from '../runs/index.mjs';
+import { OUT_NAME, capFor, dirIdOf, liveRun, nextRunId, ownOutDir, runsStore, LOG_LINE, LOG_LINES } from '../runs/index.mjs';
 import { SYSTEM, acquireWait, attachChild, identify, release, supervise } from '../sched/index.mjs';
 import { KINDS, TASK_TEXTS, checkedPath, resolve, taskTextFile } from '../state/index.mjs';
 import { adapters, chooseProvider, detectProviders } from './index.mjs';
@@ -111,12 +111,14 @@ export function exec({ flags, names, io, pluginRoot }) {
   if (live) return fail('run-live', `${live.runId} is ${live.status} for ${id} as ${role}`, 'wait for it to end');
   const row = chooseProvider({ role, rows: detectProviders({ names, env: io.env }).rows, explicit: flags.provider });
   const adapter = adapters({ names, env: io.env }).find((a) => a.id === row.id);
+  // The detection cache can list a role the adapter no longer maps (providers.json edited by hand): no run without one.
+  if (typeof adapter?.sandboxes?.[role] !== 'string') return { code: EXIT.ENV, errors: [{ code: 'role-unavailable', message: `${row.id} has no sandbox mapping for the ${role} role`, hint: `${bin} providers --refresh` }] };
   const program = programOf(adapter, io.env);
   if (!program) return { code: EXIT.ENV, errors: [{ code: 'provider-missing', message: `${row.id}: ${String(adapter?.bins?.[0] ?? '?').slice(0, 80)} is not an executable file in an absolute PATH directory`, hint: 'install it in a directory on PATH (an absolute entry), or pick another provider' }] };
   const capS = capFor(role, io.env, names.envPrefix);
   const outDir = mkdtempSync(join(tmpdir(), `${bin}-run-`)); // 0700
   const dirSt = lstatSync(outDir, { bigint: true });
-  const input = `${brief}\n## External run (overrides the Output section above)\nYou run as ${row.id}:reviewer in a read-only sandbox: write no file. Your final message is the review JSON object alone, with "reviewer": {"kind": "external", "id": "${row.id}:reviewer"}, per the schema the Output section names. The orchestrator records it from the run's out file with \`${bin} review record ${id} --from <out file>\`.\n`;
+  const input = `${brief}\n## External run (overrides the Output section above)\nYou run as ${row.id}:reviewer in a read-only sandbox: write no file. Your final message is the review JSON object alone, with "reviewer": {"kind": "external", "id": "${row.id}:reviewer"}, per the schema the Output section names. The orchestrator records it from the run's out file with \`${bin} review record ${id} --kind external --run <run ID>\`.\n`;
   const briefFile = join(outDir, 'brief.md');
   if (!createExclusive(briefFile, input, { mode: 0o600 })) throw Object.assign(new Error(`${briefFile}: file already exists`), { code: 'EEXIST' });
   const runId = nextRunId(store, row.id, id, role);
@@ -124,7 +126,7 @@ export function exec({ flags, names, io, pluginRoot }) {
     runId, task: id, role, provider: row.id, adapterVersion: row.version ?? null, model: null, sandbox: adapter.sandboxes[role], cwd: w.repo,
     pid: null, pidStart: null, pidMethod: null, lease: null, status: 'starting', queuedAt: new Date().toISOString(), startedAt: null, endedAt: null,
     elapsedMs: 0, capS, tokens: null, tokensReason: null, costMicroUsd: null, lastLine: null, unknownEvents: 0, outFile: join(outDir, OUT_NAME), exit: null, error: null, bin: program,
-    outDirId: idOf(dirSt),
+    outDirId: dirIdOf(dirSt),
   };
   store.create('run', runId, record);
   store.create('runLog', runId, { runId, lines: [] });
@@ -135,24 +137,14 @@ export function exec({ flags, names, io, pluginRoot }) {
   return { data: { runId, status: 'starting', provider: row.id, capS }, text: `${runId}: starting (${row.id}, ${role}, cap ${capS} s)\n` };
 }
 
-const OUT_NAME = 'out.json';
-const idOf = (st) => `${st.dev}:${st.ino}`;
-
 const patch0 = (store, runId, fields) => store.update('run', runId, (cur) => (cur ? { ...cur, ...fields } : undefined));
 
-// The run's out file: exactly out.json, directly inside the directory exec made for the run (SF-AB-10): a real directory
-// right under the temp directory, mode 0700, owned by this user, with the device and inode the record bound (outDirId);
-// the out file absent or one plain file (no link, no second name). Anything else: the record was rewritten.
+// The run's out file: the bound out directory (lib/runs ownOutDir, the check review record --run makes too, SF-AB-10)
+// and the out file absent or one plain file (no link, no second name). Anything else: the record was rewritten.
 function ownOutFile(rec) {
   try {
-    const f = rec?.outFile;
-    if (typeof f !== 'string' || basename(f) !== OUT_NAME || typeof rec.outDirId !== 'string') return false;
-    const dir = dirname(f);
-    if (realpathSync(dir) !== join(realpathSync(tmpdir()), basename(dir))) return false;
-    const st = lstatSync(dir, { bigint: true });
-    const mine = typeof process.getuid !== 'function' || st.uid === BigInt(process.getuid());
-    if (!st.isDirectory() || (st.mode & 0o777n) !== 0o700n || !mine || idOf(st) !== rec.outDirId) return false;
-    const out = lstatSync(f, { throwIfNoEntry: false, bigint: true });
+    if (!ownOutDir(rec)) return false;
+    const out = lstatSync(rec.outFile, { throwIfNoEntry: false, bigint: true });
     return !out || (out.isFile() && out.nlink === 1n);
   } catch { return false; }
 }

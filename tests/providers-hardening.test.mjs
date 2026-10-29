@@ -106,3 +106,40 @@ test('B-4: a bad entry is listed with its note and no role; the other providers 
     iso.cleanup();
   }
 });
+
+// T-MG-91: names that change how a program loads never pass to a provider.
+const LOADER_NAMES = ['NODE_OPTIONS', 'NODE_PATH', 'LD_PRELOAD', 'LD_LIBRARY_PATH', 'DYLD_INSERT_LIBRARIES', 'BASH_ENV', 'ENV', 'PYTHONPATH', 'PYTHONSTARTUP', 'PERL5OPT', 'PERL5LIB', 'RUBYOPT', 'RUBYLIB', 'GIT_DIR', 'GIT_SSH_COMMAND'];
+
+test('providers add --env refuses a name that changes how a program loads', () => {
+  const iso = isolatedEnv({ prefix: 'prov-hard-' });
+  try {
+    const env = { ...iso.env, CLAUDE_PLUGIN_DATA: join(iso.base, 'data') };
+    for (const n of LOADER_NAMES) {
+      assert.throws(() => registry.addProvider({ names, env, id: 'mycli', argv: OK, sandboxMap: 'reviewer=read-only', envNames: `MYCLI_KEY,${n}` }), (err) => err.exit === 'USAGE' && err.message.includes(n), n);
+    }
+    assert.equal(registry.addProvider({ names, env, id: 'mycli', argv: OK, sandboxMap: 'reviewer=read-only', envNames: 'MYCLI_KEY,LDAP_URL,GITHUB_X' }).env.length, 3, 'a name only starting like one is fine');
+  } finally {
+    iso.cleanup();
+  }
+});
+
+test('a hand-edited providers.json env with a loader name drops the provider\'s env list, with a note', () => {
+  const iso = isolatedEnv({ prefix: 'prov-hard-' });
+  try {
+    const data = join(iso.base, 'data');
+    const env = { ...iso.env, CLAUDE_PLUGIN_DATA: data };
+    registry.addProvider({ names, env, id: 'mycli', argv: OK, sandboxMap: 'reviewer=read-only', envNames: 'MYCLI_KEY' });
+    const file = join(data, 'providers.json');
+    for (const n of LOADER_NAMES) {
+      const doc = JSON.parse(readFileSync(file, 'utf8'));
+      doc.generic.mycli.env = ['MYCLI_KEY', n];
+      writeFileSync(file, JSON.stringify(doc));
+      const a = registry.adapters({ names, env }).find((x) => x.id === 'mycli');
+      assert.deepEqual([...a.envNames], [], n);
+      assert.match(a.note ?? '', new RegExp(`env dropped.*${n}`), n);
+      assert.deepEqual({ ...a.sandboxes }, { reviewer: 'read-only' }, 'the roles stay');
+    }
+  } finally {
+    iso.cleanup();
+  }
+});

@@ -50,7 +50,7 @@ import { git } from '../git/index.mjs';
 import { PROFILE_KINDS, emptyProfile, listFiles, observe, riskGlobsOf } from '../profile/index.mjs';
 import { MAX_PATHS, addedSteps, applyClass, classify, rank, recordedKeys, routeFor, routeTask, routerThresholds, weightless } from '../router/index.mjs';
 import { KINDS, StateError, check, gatesShaOf, open, resolve } from '../state/index.mjs';
-import { appliedTier, readReport, reportHasEvidence, reviewNeed, reviewState } from './artifacts.mjs';
+import { appliedTier, readReport, reportHasEvidence, reviewNeed, reviewProblem, reviewState } from './artifacts.mjs';
 import { measureAt } from './base.mjs';
 import { baselineSha, compareInventory, excusable, fingerprint, referenceOf, splitFailures } from './baseline.mjs';
 import { cacheKey, lookup, machineKey, store as storeRuns, treeOf } from './gate-cache.mjs';
@@ -466,7 +466,9 @@ export function evaluate({ where, names, env, id, mode, handle = null, at = now(
       if (doc.class !== null) {
         const steps = routeFor(doc.class, { flags }).steps;
         doc.artifacts.review = reviewState(store, id, steps);
-        if (doc.artifacts.review === 'missing') say('missing-artifact', 'missing-artifact', `the ${doc.class} route needs an approved ${reviewNeed(doc.class, appliedTier(store)) === 'external' ? 'cross-provider ' : ''}review of ${id}`, 'record the review (review-r<k>.json, verdict approved), then verify again');
+        const problem = doc.artifacts.review === 'missing' ? reviewProblem(store, id, names) : null;
+        if (problem) say('missing-artifact', 'missing-artifact', problem, 'an external round counts only with its run');
+        else if (doc.artifacts.review === 'missing') say('missing-artifact', 'missing-artifact', `the ${doc.class} route needs an approved ${reviewNeed(doc.class, appliedTier(store)) === 'external' ? 'cross-provider ' : ''}review of ${id}`, 'record the review (review-r<k>.json, verdict approved), then verify again');
       }
     }
     if (doc.class === null) {
