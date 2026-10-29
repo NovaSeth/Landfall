@@ -170,10 +170,12 @@ test('1.x fix round delivered → scoped re-review (REV-6, REV-20); a round in p
 test('1.x self-verified round → approved: verify, merge, close (REV-11, FLW-8); a verified task the same', () => {
   const events = [ev('fix-round', 2, { round: 1, addressed: 1, open: 0 }), ev('self-verified', 3, { round: 1 })];
   let s = row(table([task('T-TU-1', 'fix-round', { round: 1, events })]), 'T-TU-1');
-  assert.deepEqual(s.rules, ['REV-11', 'FLW-8']);
-  assert.match(s.step, new RegExp(`${BIN} task done T-TU-1`));
+  assert.deepEqual(s.rules, ['REV-11', 'ORC-25', 'FLW-8']);
+  assert.match(s.step, new RegExp(`${BIN} task done T-TU-1\`, then \`${BIN} task merge T-TU-1\``));
+  assert.match(s.step, new RegExp(`${BIN} task merge --ready`));
+  assert.doesNotMatch(s.step, /squash|by hand|locally/);
   s = row(table([task('T-TU-1', 'verified')]), 'T-TU-1');
-  assert.deepEqual(s.rules, ['REV-11', 'FLW-8']);
+  assert.deepEqual(s.rules, ['REV-11', 'ORC-25', 'FLW-8']);
   // a self-check of round 1 does not approve round 2
   const later = [...events, ev('fix-round', 4, { round: 2, addressed: 0, open: 1 }), ev('fix-round', 5, { round: 2, addressed: 1, open: 0 })];
   s = row(table([task('T-TU-1', 'fix-round', { round: 2, events: later })]), 'T-TU-1');
@@ -183,14 +185,14 @@ test('1.x self-verified round → approved: verify, merge, close (REV-11, FLW-8)
 test('a recorded review decides the step: approved → verify and close (REV-11, FLW-8); needs-fixes → the next fix round (REV-5, PRI-6); past the cap → decide (REV-7)', () => {
   const rev = (min, round, verdict) => ev('review', min, { round, verdict, reviewer: 'claude' });
   let s = row(table([task('T-TU-1', 'implemented', { events: [ev('implementer', 2, { report: 'done' }), rev(3, 1, 'approved')] })]), 'T-TU-1');
-  assert.deepEqual(s.rules, ['REV-11', 'FLW-8']);
+  assert.deepEqual(s.rules, ['REV-11', 'ORC-25', 'FLW-8']);
   assert.match(s.state, /review r1 approved/);
   // the same after a dispatched reviewer: the record, not the status, says it
   s = row(table([task('T-TU-1', 'dispatched', { events: [ev('dispatched', 2, { executor: 'claude:reviewer' }), rev(3, 1, 'approved')] })]), 'T-TU-1');
-  assert.deepEqual(s.rules, ['REV-11', 'FLW-8']);
+  assert.deepEqual(s.rules, ['REV-11', 'ORC-25', 'FLW-8']);
   // a fix round delivered, then its scoped re-review approved
   s = row(table([task('T-TU-1', 'implemented', { round: 1, events: [rev(2, 1, 'needs-fixes'), ev('implementer', 3, { report: 'done', round: 1 }), rev(4, 2, 'approved')] })]), 'T-TU-1');
-  assert.deepEqual(s.rules, ['REV-11', 'FLW-8']);
+  assert.deepEqual(s.rules, ['REV-11', 'ORC-25', 'FLW-8']);
   // needs-fixes → fix round 1 to the implementer
   s = row(table([task('T-TU-1', 'implemented', { events: [ev('implementer', 2, { report: 'done' }), rev(3, 1, 'needs-fixes')] })]), 'T-TU-1');
   assert.deepEqual(s.rules, ['REV-5', 'PRI-6']);
