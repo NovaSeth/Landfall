@@ -127,8 +127,6 @@ test('F4: a Bash event without agent_id refreshes nothing; an unbound lease of a
   }
 });
 
-const sleepMs = (ms) => { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); }; // sleeps, no CPU load
-
 test('F5: with a 450 ms evaluation and the normal 500 ms budget, a busy heartbeat never turns the allow into a block', async (t) => {
   const f = repo(t);
   admit(f, 1); bind(f, 1, 'agent-abc');
@@ -147,10 +145,23 @@ test('F5: with a 450 ms evaluation and the normal 500 ms budget, a busy heartbea
     assert.ok(Date.now() < end, 'the lock holder did not start');
     await new Promise((r) => { setTimeout(r, 20); });
   }
-  const v = hook('guard-bash', { hook_event_name: 'PreToolUse', tool_name: 'Bash', session_id: 'sess-1', cwd: f.dir, agent_id: 'agent-abc',
-    tool_input: { command: 'echo commit' } }, { env: f.env, deadline: undefined, readGuardExtra: () => { sleepMs(450); return null; } });
-  assert.equal(v.code, 0, `${v.decision}: ${v.stderr}`);
-  assert.equal(v.decision, 'allow');
+  // The guard is called in process with an explicit deadline, so the test judges the heartbeat's own wait, not how fast
+  // a loaded machine evaluates the command (T-MG-87 gate: a 450 ms sleep under a wall-clock budget was load-dependent).
+  const { guardBash, BEAT_MIN_LEFT_MS } = await lib('hooks/guard-bash.mjs');
+  const input = { hook_event_name: 'PreToolUse', tool_name: 'Bash', session_id: 'sess-1', cwd: f.dir, agent_id: 'agent-abc', tool_input: { command: 'echo commit' } };
+  const plain = guardBash({ ...input, agent_id: undefined }, { env: f.env });
+  // under BEAT_MIN_LEFT_MS left: the heartbeat is skipped, so the held lock costs nothing and the decision is unchanged
+  let start = performance.now();
+  const short = guardBash(input, { env: f.env, deadline: start + BEAT_MIN_LEFT_MS - 30 });
+  const shortMs = performance.now() - start;
+  assert.deepEqual(short, plain, 'the heartbeat never changes the decision');
+  assert.ok(shortMs < 90, `with ${BEAT_MIN_LEFT_MS - 30} ms left the call took ${shortMs.toFixed(0)} ms: the heartbeat waited on the held lock`);
+  assert.equal(beat(f), OLD, 'skipped: the lease is not refreshed');
+  // with 300 ms left: the heartbeat runs, its lock wait is capped, and the call still ends before the deadline
+  start = performance.now();
+  const long = guardBash(input, { env: f.env, deadline: start + 300 });
+  assert.deepEqual(long, plain);
+  assert.ok(performance.now() < start + 300, 'the capped lock wait ends before the deadline');
 });
 
 test('T-MG-96: heartbeatAgent and releaseAgent match only a non-empty string agentId; null and undefined touch an unbound lease nowhere', (t) => {
