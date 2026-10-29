@@ -16,7 +16,7 @@ export function externalCommand(command, bin) {
   try { cmds = parse(command); } catch { return null; }
   if (cmds.length !== 1) return null;
   const [c] = cmds;
-  if (c.pipeIn || c.pipeOut || c.after !== null || c.redirs.length || c.heredoc !== null || c.words.some((x) => x.glob || x.at)) return null;
+  if (c.pipeIn || c.pipeOut || c.after !== null || c.redirs.length || c.heredoc !== null || c.words.some((x) => x.glob || x.at || x.q)) return null;
   const w = c.words.map((x) => x.text);
   if (w[0] !== bin) return null;
   let k = 1; while (w[k] === '--json') k++;
