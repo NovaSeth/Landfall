@@ -83,3 +83,59 @@ test('llm: pyproject.toml keys and headers are decoded; a poetry key needs a val
   assert.equal(py('[tool."poetry".dependencies]\nopenai = "^1"\n').evidence, 'pyproject.toml: openai');
   assert.equal(py('[project]\n"keywords" = ["mcp"]\n'), undefined);
 });
+
+test('F1-1: an unclosed dependency array is scanned once: the largest readable file (256 KB) of `dependencies = [` finishes fast with no llm fact', (t) => {
+  const text = `[project]\n${'dependencies = [\n'.repeat(Math.floor(250_000 / 17))}`;
+  const started = performance.now();
+  const fact = scan(t, { 'pyproject.toml': text });
+  const ms = performance.now() - started;
+  assert.equal(fact, undefined);
+  assert.ok(ms < 2000, `took ${Math.round(ms)} ms`);
+});
+
+test('F1-1: an array that closes after the cap counts nothing; a later well-formed array still counts', (t) => {
+  const far = `[project]\ndependencies = [\n${'\n'.repeat(2500)}"openai",\n]\n`;
+  assert.equal(scan(t, { 'pyproject.toml': far }), undefined, 'closing beyond 2000 lines counts nothing');
+  const near = `[project]\ndependencies = [\n${'\n'.repeat(1500)}"openai",\n]\n`;
+  assert.equal(scan(t, { 'pyproject.toml': near }).evidence, 'pyproject.toml: openai');
+  const after = '[project]\ndependencies = [\n"x"\n[tool.poetry.dependencies]\nopenai = "1"\n';
+  assert.equal(scan(t, { 'pyproject.toml': after }).evidence, 'pyproject.toml: openai', 'the scan moves on after an unclosed array');
+});
+
+test('F1-2: the test gate reads a bounded prefix and matches linearly (240 KB body)', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'profile-gate-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const gateOf = (body) => {
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'x', scripts: { test: body } }));
+    return observeFiles(dir, ['package.json']).gates.find((g) => g.name === 'test')?.cmd;
+  };
+  const started = performance.now();
+  const cmd = gateOf(';node a '.repeat(30000));
+  const ms = performance.now() - started;
+  assert.equal(cmd, 'npm run test');
+  assert.ok(ms < 1000, `took ${Math.round(ms)} ms`);
+  const tap = 'NODE_OPTIONS="$NODE_OPTIONS --test-reporter=tap" npm run test';
+  assert.equal(gateOf('node --test'), tap);
+  assert.equal(gateOf('npx node --test tests/'), tap);
+  assert.equal(gateOf('tsc && node --import x --test'), tap);
+  assert.equal(gateOf('echo node; echo --test'), 'npm run test', 'node and --test in different commands do not count');
+  assert.equal(gateOf('node --test --test-reporter=spec'), 'npm run test');
+});
+
+test('review r1 F4: the array cap counts the opening line: an array closing on line 2000 counts, on line 2001 does not', (t) => {
+  const arr = (blank) => `[project]\ndependencies = [\n${'\n'.repeat(blank)}"openai" ]\n`;
+  assert.equal(scan(t, { 'pyproject.toml': arr(1998) }).evidence, 'pyproject.toml: openai', '2000 lines');
+  assert.equal(scan(t, { 'pyproject.toml': arr(1999) }), undefined, '2001 lines');
+});
+
+test('review r1 F2: a body over the inspection cap gets the unmodified run command, also when a chain crosses the boundary', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'profile-gate-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const gateOf = (body) => {
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'x', scripts: { test: body } }));
+    return observeFiles(dir, ['package.json']).gates.find((g) => g.name === 'test')?.cmd;
+  };
+  assert.equal(gateOf(`jest ${' '.repeat(4096)}&& node --test`), 'npm run test');
+  assert.equal(gateOf(`vitest ${' '.repeat(4096)}; node --test`), 'npm run test');
+  assert.equal(gateOf(`node ${' '.repeat(4096)} --test`), 'npm run test');
+});

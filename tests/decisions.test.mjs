@@ -576,3 +576,40 @@ test('npx channel (SD-21): the packed CLI runs `decisions check` in a repository
   const passing = npx(['decisions', 'check', '--ci']);
   assert.equal(passing.status, 0, out(passing));
 });
+
+test('C-1: scope globs match linearly: a backtracking glob on a 63-char path answers fast', async () => {
+  const { globMatch, relevantDecisions, scopeProblem } = await import(pathToFileURL(join(pluginDir, 'lib', 'decisions', 'context.mjs')).href);
+  const path = `${'a'.repeat(60)}.ts`;
+  const started = performance.now();
+  assert.equal(globMatch(`${'*a'.repeat(6)}*b`, path), false);
+  assert.equal(globMatch('*a*a*a*a*a*a*.ts', path), true);
+  assert.ok(performance.now() - started < 50, `took ${Math.round(performance.now() - started)} ms`);
+  // The semantics stay: `**` any depth, `*` and `?` inside a segment, `{a,b}` alternatives.
+  const cases = [['src/**', 'src/a/b.ts', true], ['src/**', 'src', false], ['**', 'a/b', true], ['**/x.ts', 'x.ts', true], ['**/x.ts', 'a/b/x.ts', true],
+    ['src/*.ts', 'src/a/b.ts', false], ['src/?.ts', 'src/a.ts', true], ['src/?.ts', 'src/ab.ts', false], ['a/*/c', 'a/b/c', true], ['a/*/c', 'a//c', true],
+    ['*.{ts,js}', 'x.js', true], ['*.{ts,js}', 'x.md', false], ['src/**/x', 'src/x', true], ['src/**/x', 'src/a/b/x', true], ['a**b', 'aXb', true], ['a**b', 'a/b', true], ['A.ts', 'a.ts', false]];
+  for (const [g, p, want] of cases) assert.equal(globMatch(g, p), want, `${g} vs ${p}`);
+  // A glob over 200 characters or with more than 16 wildcards matches nothing and is reported.
+  assert.equal(globMatch('*a'.repeat(17), 'a'.repeat(30)), false);
+  assert.equal(globMatch(`${'a'.repeat(201)}`, 'a'.repeat(201)), false);
+  assert.match(scopeProblem('*a'.repeat(17)), /wildcard/);
+  assert.match(scopeProblem('a'.repeat(201)), /200/);
+  assert.equal(scopeProblem('src/**'), null);
+  const records = [{ id: 'D-AB-1', status: 'active', scope: ['*a'.repeat(17)] }, { id: 'D-AB-2', status: 'active', scope: ['**'] }];
+  assert.deepEqual(relevantDecisions(records, { path: 'aaaa' }).map((r) => r.id), ['D-AB-2']);
+});
+
+test('review r1 F3: the wildcard limit counts the tokenizer units: a run of 34 stars is 17 wildcards and is refused', async () => {
+  const { globMatch, scopeProblem } = await import(pathToFileURL(join(pluginDir, 'lib', 'decisions', 'context.mjs')).href);
+  assert.match(scopeProblem('*'.repeat(34)) ?? '', /wildcard/);
+  assert.equal(globMatch('*'.repeat(34), 'src/index.ts'), false);
+  assert.match(scopeProblem('*'.repeat(33)) ?? '', /wildcard/, '33 stars are 17 units: 16 pairs and one');
+  assert.equal(scopeProblem('*'.repeat(32)), null, '32 stars are 16 units');
+});
+
+test('review r1 F1: record validation reports a refused scope glob', async () => {
+  const { recordErrors } = await import(pathToFileURL(join(pluginDir, 'lib', 'decisions', 'record.mjs')).href);
+  const doc = { schema: 1, id: 'D-AB-1', kind: 'general', author: 'AB', date: '2026-10-01', status: 'active', title: 'T', scope: ['src/**'] };
+  assert.deepEqual(recordErrors(doc, 'D-AB-1.md'), []);
+  assert.match(recordErrors({ ...doc, scope: ['*a'.repeat(17)] }, 'D-AB-1.md').join('\n'), /more than 16 wildcards/);
+});

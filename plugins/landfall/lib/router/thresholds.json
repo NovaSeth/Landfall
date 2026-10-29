@@ -29,7 +29,14 @@
     "**/migrations/**",
     "**/security/**",
     ".github/workflows/**",
-    "**/*.sql"
+    "**/*.sql",
+    ".claude/**",
+    "**/CLAUDE.md",
+    "**/AGENTS.md",
+    "**/GEMINI.md",
+    "**/SKILL.md",
+    "**/agents/*.md",
+    "**/prompts/**"
   ],
   "lightPaths": [
     "mockups/",

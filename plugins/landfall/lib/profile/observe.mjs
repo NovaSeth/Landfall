@@ -19,6 +19,8 @@ export const SCANNER = 3; // bump when detection changes, so cached observations
 // The fact keys this scan observes; an observed fact of another key (set by an agent) is never dropped by a scan.
 export const SCANNED_KEYS = Object.freeze(['stack', 'ui', 'backend', 'llm', 'ci', 'otherHarnesses']);
 const MAX_READ = 256 * 1024;
+const MAX_ARRAY_LINES = 2000; // a pyproject dependency array that does not close within this many lines counts nothing
+const MAX_GATE_BODY = 4096; // the scripts.test body is read up to here
 export const GATE_TIMEOUT_S = 1800;
 
 const MANIFESTS = [
@@ -101,9 +103,21 @@ function publicGlobs(pkg) {
 
 // The test gate of a package script: node:test gets the TAP reporter through NODE_OPTIONS (also inside a chain; a
 // reporter after the file patterns would be ignored), a single jest or vitest command JSON output after npm's `--`.
+// `node` followed later by `--test` within one command segment (segments end at ; & | or a parenthesis): one pass over
+// the tokens, no backtracking.
+function nodeTest(body) {
+  for (const segment of body.split(/[;&|()]/)) {
+    const words = segment.trim().split(/\s+/);
+    const at = words[0] === 'npx' ? 1 : 0;
+    if (words[at] === 'node' && words.slice(at + 1).some((w) => /^--test(?!\w)/.test(w))) return true;
+  }
+  return false;
+}
+
 function testGate(pm, body) {
   const run = `${pm} run test`;
-  if (/(?:^|[;&|(]\s*)(?:npx\s+)?node\s+(?:\S+\s+)*?--test\b/.test(body) && !/--test-reporter/.test(body)) return `NODE_OPTIONS="$NODE_OPTIONS --test-reporter=tap" ${run}`;
+  if (body.length > MAX_GATE_BODY) return run; // a cut chain could pass for one command: no flag is appended
+  if (nodeTest(body) && !/--test-reporter/.test(body)) return `NODE_OPTIONS="$NODE_OPTIONS --test-reporter=tap" ${run}`;
   const single = !/[;&|]/.test(body);
   const pass = pm === 'npm' ? `${run} --` : run;
   if (single && /^\s*(?:npx\s+)?jest\b/.test(body) && !/--json\b/.test(body)) return `${pass} --json`;
@@ -188,10 +202,19 @@ function pyprojectNames(text) {
       || (full.length === 3 && full[0] === 'project' && full[1] === 'optional-dependencies')
       || (full.length === 2 && full[0] === 'dependency-groups');
     if (!inArray || !key.rest.startsWith('[')) continue;
+    // Each line is read a bounded number of times: an array that does not close within MAX_ARRAY_LINES lines, before
+    // the next table header or by the end of the file counts nothing, and the scan resumes after the lines it read.
     let body = key.rest;
     let j = i;
-    while (!/\]\s*$/.test(body) && j + 1 < lines.length) body += `\n${lines[++j]}`;
-    if (!/\]\s*$/.test(body)) continue;
+    let closed = /\]\s*$/.test(body);
+    while (!closed && j + 1 < lines.length && j - i + 1 < MAX_ARRAY_LINES) {
+      const next = lines[j + 1].trim();
+      if (next.startsWith('[')) break;
+      j++;
+      body += `\n${lines[j]}`;
+      closed = /\]\s*$/.test(next);
+    }
+    if (!closed) { i = j; continue; }
     for (const q of body.matchAll(/"([^"]*)"|'([^']*)'/g)) {
       const m = /^([A-Za-z0-9][A-Za-z0-9._-]*)\s*(?:$|[[<>=!~;@])/.exec((q[1] ?? q[2]).trim());
       if (m) names.push(m[1]);

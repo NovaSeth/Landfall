@@ -186,7 +186,9 @@ export function classify({ paths, loc, flags = [], riskPaths = [], thresholds = 
   const { trivial, critical } = thresholds;
   const lights = Array.isArray(thresholds.lightPaths) ? (thresholds === THRESHOLDS ? DEFAULT_LIGHT : compile(thresholds.lightPaths)) : [];
   const light = (p) => { const names = p.split('/'); return lights.some((g) => matchSegments(g.segs, names)); };
-  const sized = files.filter((p) => !weightless(p) && !light(p));
+  // A risk path is never weightless: a change to agent instructions (CLAUDE.md, SKILL.md, ...) is no docs-only change.
+  const risky = (p) => { const names = p.split('/'); return globs.some((g) => matchSegments(g.segs, names)); };
+  const sized = files.filter((p) => risky(p) || (!weightless(p) && !light(p)));
   const docsOnly = sized.length === 0;
   const lightOnly = docsOnly && files.some(light);
 
