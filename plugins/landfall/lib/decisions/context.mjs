@@ -14,30 +14,80 @@ export const READ_MAX = 256 * 1024; // a target file is read for citations only 
 
 const natural = (a, b) => a.localeCompare(b, 'en', { numeric: true });
 
-function convert(glob) {
-  let re = '';
+// A scope glob is repository-controlled text read by the edit hook on every write, so it is matched without a
+// backtracking regular expression: the glob becomes tokens, matched by dynamic programming over the path, at most
+// tokens x path steps. Limits, checked where a glob is read (scopeProblem): 200 characters, 16 wildcards (`*`, `**`,
+// `?` and `{`), 32 brace alternatives; a glob over a limit matches nothing.
+export const GLOB_LIMITS = Object.freeze({ chars: 200, wildcards: 16, alternatives: 32 });
+
+// The reason a scope glob is refused, or null.
+export function scopeProblem(glob) {
+  if (typeof glob !== 'string') return 'a scope glob must be text';
+  if (glob.length > GLOB_LIMITS.chars) return `scope glob is over ${GLOB_LIMITS.chars} characters; it matches nothing`;
+  if ((glob.match(/\*+|\?|\{/g) ?? []).length > GLOB_LIMITS.wildcards) return `scope glob has more than ${GLOB_LIMITS.wildcards} wildcards; it matches nothing`;
+  return tokenize(glob) === null ? `scope glob has more than ${GLOB_LIMITS.alternatives} brace alternatives; it matches nothing` : null;
+}
+
+// Token sequences of a glob, one per brace alternative; null over the alternatives limit. Tokens: a literal
+// character, '?' (one non-/ character), '*' (non-/ run), '**' (any run), '**/' (nothing, or anything ending in /).
+function tokenize(glob) {
+  let seqs = [[]];
+  const add = (token) => { for (const q of seqs) q.push(token); };
   for (let i = 0; i < glob.length; i++) {
     const c = glob[i];
     if (c === '*' && glob[i + 1] === '*') {
       const segmentStart = i === 0 || glob[i - 1] === '/';
       i++;
-      if (segmentStart && glob[i + 1] === '/') { i++; re += '(?:[^/]*/)*'; } else re += '.*';
-    } else if (c === '*') re += '[^/]*';
-    else if (c === '?') re += '[^/]';
+      if (segmentStart && glob[i + 1] === '/') { i++; add({ t: '**/' }); } else add({ t: '**' });
+    } else if (c === '*') add({ t: '*' });
+    else if (c === '?') add({ t: '?' });
     else if (c === '{' && glob.indexOf('}', i) > i) {
       const end = glob.indexOf('}', i);
-      re += `(?:${glob.slice(i + 1, end).split(',').map(convert).join('|')})`;
+      const alts = [];
+      for (const part of glob.slice(i + 1, end).split(',')) {
+        const sub = tokenize(part);
+        if (sub === null) return null;
+        alts.push(...sub);
+      }
+      if (seqs.length * alts.length > GLOB_LIMITS.alternatives) return null;
+      seqs = seqs.flatMap((q) => alts.map((alt) => [...q, ...alt]));
       i = end;
-    } else re += c.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+    } else add({ t: 'c', c });
   }
-  return re;
+  return seqs;
+}
+
+function matchTokens(tokens, path) {
+  const n = path.length;
+  let cur = new Uint8Array(n + 1);
+  cur[0] = 1;
+  for (const { t, c } of tokens) {
+    const next = new Uint8Array(n + 1);
+    if (t === 'c') { for (let j = 0; j < n; j++) if (cur[j] && path[j] === c) next[j + 1] = 1; }
+    else if (t === '?') { for (let j = 0; j < n; j++) if (cur[j] && path[j] !== '/') next[j + 1] = 1; }
+    else if (t === '*') { for (let j = 0; j <= n; j++) next[j] = cur[j] || (j > 0 && next[j - 1] && path[j - 1] !== '/') ? 1 : 0; }
+    else if (t === '**') { for (let j = 0; j <= n; j++) next[j] = cur[j] || (j > 0 && next[j - 1]) ? 1 : 0; }
+    else {
+      let seen = 0; // some earlier position was reachable
+      for (let j = 0; j <= n; j++) {
+        next[j] = cur[j] || (seen && j > 0 && path[j - 1] === '/') ? 1 : 0;
+        if (cur[j]) seen = 1;
+      }
+    }
+    cur = next;
+  }
+  return cur[n] === 1;
 }
 
 const compiled = new Map();
 export function globMatch(glob, path) {
-  let re = compiled.get(glob);
-  if (!re) { re = new RegExp(`^${convert(glob)}$`); compiled.set(glob, re); }
-  return re.test(path);
+  let seqs = compiled.get(glob);
+  if (seqs === undefined) {
+    seqs = scopeProblem(glob) === null ? tokenize(glob) : [];
+    if (compiled.size > 5000) compiled.clear();
+    compiled.set(glob, seqs);
+  }
+  return seqs.some((tokens) => matchTokens(tokens, path));
 }
 export const specificity = (glob) => glob.replace(/\*|\?|\{[^}]*\}/g, '').length;
 

@@ -590,11 +590,11 @@ test('C-1: scope globs match linearly: a backtracking glob on a 63-char path ans
     ['*.{ts,js}', 'x.js', true], ['*.{ts,js}', 'x.md', false], ['src/**/x', 'src/x', true], ['src/**/x', 'src/a/b/x', true], ['a**b', 'aXb', true], ['a**b', 'a/b', true], ['A.ts', 'a.ts', false]];
   for (const [g, p, want] of cases) assert.equal(globMatch(g, p), want, `${g} vs ${p}`);
   // A glob over 200 characters or with more than 16 wildcards matches nothing and is reported.
-  assert.equal(globMatch('*a'.repeat(9), 'a'.repeat(30)), false);
+  assert.equal(globMatch('*a'.repeat(17), 'a'.repeat(30)), false);
   assert.equal(globMatch(`${'a'.repeat(201)}`, 'a'.repeat(201)), false);
-  assert.match(scopeProblem('*a'.repeat(9)), /wildcard/);
+  assert.match(scopeProblem('*a'.repeat(17)), /wildcard/);
   assert.match(scopeProblem('a'.repeat(201)), /200/);
   assert.equal(scopeProblem('src/**'), null);
-  const records = [{ id: 'D-AB-1', status: 'active', scope: ['*a'.repeat(9)] }, { id: 'D-AB-2', status: 'active', scope: ['**'] }];
+  const records = [{ id: 'D-AB-1', status: 'active', scope: ['*a'.repeat(17)] }, { id: 'D-AB-2', status: 'active', scope: ['**'] }];
   assert.deepEqual(relevantDecisions(records, { path: 'aaaa' }).map((r) => r.id), ['D-AB-2']);
 });

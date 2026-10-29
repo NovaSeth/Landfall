@@ -81,7 +81,7 @@ const TABLE = [
   ['a manual of 2,100 lines in 12 files is docs-only: standard', { paths: many(12, 'docs/manual/pl').map((p) => p.replace('.js', '.md')), loc: 2100 }, 'standard', ['docs-only']],
   ['35 screenshots are docs-only: standard', { paths: many(35, 'docs/qa').map((p) => p.replace('.js', '.png')), loc: 0 }, 'standard', ['docs-only']],
   ['one README line stays trivial', { paths: ['README.md'], loc: 5 }, 'trivial', ['small']],
-  ['a docs file under a risk glob is still critical', { paths: ['src/auth/README.md', 'docs/a.md', 'docs/b.md'], loc: 900 }, 'critical', ['risk-path']],
+  ['a docs file under a risk glob is still critical', { paths: ['src/auth/README.md', 'docs/a.md', 'docs/b.md'], loc: 900 }, 'critical', ['risk-path', 'loc-over']],
   ['a flag on docs is still a flag', { paths: ['docs/a.md', 'docs/b.md', 'docs/c.md'], loc: 900, flags: ['new-dependency'] }, 'standard', ['docs-only', 'flag']],
   ['16 code files plus 20 images: the images weigh nothing (16 files > 15 by the code alone)', { paths: [...many(16), ...many(20, 'assets').map((p) => p.replace('.js', '.png'))], loc: 100 }, 'critical', ['files-over']],
   ['15 code files plus 20 images: standard, not critical', { paths: [...many(15), ...many(20, 'assets').map((p) => p.replace('.js', '.png'))], loc: 100 }, 'standard', ['files-over-trivial', 'loc-over-trivial']],
@@ -141,7 +141,7 @@ test('classifier: thresholds and default risk globs are data with the spec value
   assert.deepEqual(data.critical, { overFiles: 15, overLoc: 400 });
   assert.deepEqual(data.criticalFlags, ['migration', 'public-api', 'security', 'data-write', 'irreversible']);
   assert.deepEqual(data.flags, [...data.criticalFlags, 'new-dependency']);
-  assert.deepEqual(data.riskPaths, ['**/auth/**', '**/payment*/**', '**/migrations/**', '**/security/**', '.github/workflows/**', '**/*.sql']);
+  assert.deepEqual(data.riskPaths, ['**/auth/**', '**/payment*/**', '**/migrations/**', '**/security/**', '.github/workflows/**', '**/*.sql', '.claude/**', '**/CLAUDE.md', '**/AGENTS.md', '**/GEMINI.md', '**/SKILL.md', '**/agents/*.md', '**/prompts/**']);
   assert.deepEqual(data.lightPaths, ['mockups/', 'prototype/', 'prototypes/', '**/*.stories.*', '**/storybook/**']);
   assert.deepEqual(router.THRESHOLDS, data, 'the router reads exactly this file');
 });
