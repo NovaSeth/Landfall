@@ -1,10 +1,10 @@
 # Evaluation: with and without the plugin
 
-Run on 2026-10-19 with `claude plugin eval` (Claude Code 2.1.302, agent model claude-opus-5-5), 10 cases × 2 arms × 5 runs, total cost $17.84, 63 minutes, evaluator commit 310f130 (`scripts/eval-hidden.mjs`, `scripts/eval-publish.mjs`, frozen `evals/suite.lock.json`). Completion is decided by hidden tests and checks the agent cannot see; the harness grader scores are process indicators only. The suite and its limits: [plugins/landfall/evals/README.md](../plugins/landfall/evals/README.md).
+Run on 2026-10-19 with `claude plugin eval` (Claude Code 2.1.302, agent model claude-opus-5-5), 10 cases × 2 arms × 5 runs, total cost $17.84, 63 minutes, evaluator commit 310f130 (`scripts/eval-hidden.mjs`, `scripts/eval-publish.mjs`, frozen `evals/suite.lock.json`). Hidden tests and checks the agent cannot see decide completion; the harness grader scores are process indicators only. The suite and its limits: [plugins/landfall/evals/README.md](../plugins/landfall/evals/README.md).
 
 ## Result
 
-Quality delta (with - without), mean over 10 cases: **0** [80% CI -0.04, 0.04; 95% -0.04, 0.04]; cost delta 29%; pilot: 5 runs per arm, indicative only
+Quality delta (with - without), mean over 10 cases: 0 [80% CI -0.04, 0.04; 95% -0.04, 0.04]; cost delta 29%; pilot: 5 runs per arm, indicative only
 
 | Case | Class | n/arm | Complete with | Complete without | Delta | Process with / without | Cost with / without |
 |---|---|---|---|---|---|---|---|
@@ -31,7 +31,7 @@ Claude Code 2.1.302; agent model claude-opus-5-5; judge harness default (haiku);
 
 ## Caveat found after the run
 
-In the eval sandbox the plugin's `bin/` was not on the agent's PATH: the traces show `landfall status --json` answered "command not found", so the with-plugin arm measured the skill guidance (and the extra exploration it caused) without the plugin's commands, gates or state. In a Claude Code session the plugin's `bin/` is on PATH (checked on 2026-10-19 with a fresh session). The skills now fall back to `${CLAUDE_PLUGIN_ROOT}/bin/landfall` when the name is not found, and the suite will be re-run.
+In the eval sandbox the plugin's `bin/` was not on the agent's PATH: the traces show `landfall status --json` answered "command not found", so the with-plugin arm measured the skill guidance and the extra exploration it caused, without the plugin's commands, gates or state. In a Claude Code session the plugin's `bin/` is on PATH (checked on 2026-10-19 with a fresh session). The skills now fall back to `${CLAUDE_PLUGIN_ROOT}/bin/landfall` when the name is not found. The suite will be re-run.
 
 ## Re-measurement after the skill change (same day, 3 runs per arm, medians)
 
@@ -43,8 +43,8 @@ The `work` skill now classifies an obviously trivial request from the request it
 | small-bug | 1.16× (over 1.15×) | 1.31× (over 1.25×) |
 | typo-fix | 1.41× (over) | 2.33× (over) |
 
-Where the rest of the overhead is: in every with-plugin run of these cases the agent runs the project's test suite after the change (`npm test`); in the without-plugin runs it does not run the tests at all. Most of the remaining extra time is that test run, which is the behaviour the plugin asks for. The suite's overhead limits were fixed before the runs and stay as they are; the numbers are published as measured.
+Where the rest of the overhead is: in every with-plugin run of these cases the agent runs the project's test suite after the change (`npm test`); in the without-plugin runs it does not run the tests at all. Most of the remaining extra time is that test run, which the plugin asks for. The suite's overhead limits were fixed before the runs and stay as they are.
 
 ## Reading
 
-On these ten small, single-session tasks the plugin changes the outcome of none of them: both arms complete 49 of 50 runs, and the one incomplete run per arm is the same case (`auth-change`, a secret left in a test file in one run each). The plugin costs about 29 % more and takes longer, and two of the three trivial cases exceed the overhead limits the suite fixes in advance. This is published as measured. The mechanisms the plugin adds (gates re-run by code, a test baseline, decisions, a loop that ends) are not exercised by ten tasks of this size; whether they pay off on larger, multi-step or cheat-prone work is the question of the pre-registered benchmark in [benchmark.md](benchmark.md). Cutting the overhead on small tasks is the first item of the next release.
+On these ten small, single-session tasks the plugin changes the outcome of none of them: both arms complete 49 of 50 runs, and the one incomplete run per arm is the same case (`auth-change`, a secret left in a test file in one run each). The plugin costs about 29 % more and takes longer, and two of the three trivial cases exceed the overhead limits the suite fixes in advance. Ten tasks of this size do not exercise the mechanisms the plugin adds (gates re-run by code, a test baseline, decisions, a loop that ends). Whether they pay off on larger, multi-step or cheat-prone work is what the pre-registered benchmark in [benchmark.md](benchmark.md) tests. Cutting the overhead on small tasks is the first item of the next release.
