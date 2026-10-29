@@ -289,3 +289,41 @@ test('F6: three overlapping patterns are masked completely over the union', () =
   assert.ok(!/[0-9]/.test(out.replace(/\(\d+ chars\)/g, '')), out);
   assert.match(out, /^id \*{8,} \(16 chars\) end$/);
 });
+
+// T-MG-83 fix round 1 (review r1, F1 F2): redaction never prints more than the bounded scanner sees.
+test('T-MG-83 F1: a value longer than the bounded probe is masked to its end, not only its first 1024 bytes', () => {
+  const out = redactLib.redact(`pre password="${'A'.repeat(1100)}SYNTH_END" post`);
+  assert.ok(!out.includes('SYNTH_END'), out.slice(-80));
+  assert.ok(!out.includes('AAAA'), 'no part of the value shows');
+  assert.ok(out.startsWith('pre '), out.slice(0, 40));
+});
+
+test('T-MG-83 F1: a line the scanner marks sensitive but no span covers is masked to its end', () => {
+  // A JWT header longer than the regex bound: the scanner's separator-anchored probe finds it, the span regex does not.
+  const line = `x eyJ${'A'.repeat(4085)}.eyJ${'B'.repeat(20)}SYNTHTAIL`;
+  assert.ok(secretsLib.matchLine(line), 'the scanner marks the line');
+  const out = redactLib.redact(line);
+  assert.ok(!out.includes('SYNTHTAIL') && !out.includes('AAAA'), out.slice(-80));
+});
+
+test('T-MG-83 F2: a project pattern match after the first 4096 bytes of a line is masked', () => {
+  const extra = secretsLib.projectPatterns('synth_custom_[A-Z]+').patterns;
+  const out = redactLib.redact(`${'.'.repeat(4096)}synth_custom_PRIVATE`, extra);
+  assert.ok(!out.includes('PRIVATE'), out.slice(-80));
+});
+
+test('T-MG-83 F2: a project pattern match straddling a window edge is masked, far into a long line', () => {
+  const extra = secretsLib.projectPatterns('synth_custom_[A-Z]+').patterns;
+  for (const at of [4090, 2048 * 5 - 7, 4096 * 7 - 10, 100000]) {
+    const out = redactLib.redact(`${'.'.repeat(at)}synth_custom_PRIVATE ${'.'.repeat(5000)}`, extra);
+    assert.ok(!out.includes('PRIVATE'), `at ${at}: ${out.slice(at - 20, at + 60)}`);
+    assert.ok(out.endsWith('.'.repeat(5000)), 'the rest of the line stays');
+  }
+});
+
+test('T-MG-83 F2: a line longer than 1 MiB keeps only its first 1 MiB, the rest is masked', () => {
+  const extra = secretsLib.projectPatterns('synth_custom_[A-Z]+').patterns;
+  const out = redactLib.redact(`${'.'.repeat(1024 * 1024 + 10)}tail_visible`, extra);
+  assert.ok(!out.includes('tail_visible'), out.slice(-80));
+  assert.ok(out.startsWith('.'.repeat(1024 * 1024)));
+});
