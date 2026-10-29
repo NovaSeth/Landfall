@@ -15,13 +15,16 @@
 // pattern's text: a project pattern can be a literal secret.
 import { extraRegExp, nestedQuantifier } from '../guard/extra.mjs';
 
-// Regex work is bounded, including on minified output. The longest built-in span is
+// Regex work is bounded, including on minified output. Fixed-stride built-in spans are
 // below 2048 characters (URL userinfo: at most 1351); a 2048-character overlap
-// therefore contains every cross-boundary match. Values use a 1024-character probe.
+// therefore contains every cross-boundary match. JWT segments instead use windows
+// anchored at their separator, at most 4096 characters on either side.
+// Values use a 1024-character probe.
 // A hit on a line longer than that probe masks the entire line, including any tail.
 export const WINDOW_SIZE = 4096;
 export const MAX_PATTERN_SPAN = 2048;
 export const WINDOW_OVERLAP = MAX_PATTERN_SPAN;
+export const PROJECT_LINE_MAX = 64 * 1024;
 const VALUE_LIMIT = 1024;
 const SPACE = ' \\t\\n\\v\\f\\r';
 const S = `[${SPACE}]`;
@@ -50,13 +53,13 @@ const BUILT_IN = [
   ['private-key', '-----BEGIN (?:[A-Z]{1,64} )?PRIVATE KEY-----'],
   ['private-key', '-----BEGIN PGP PRIVATE KEY BLOCK-----'],
   ['npm-token', 'npm_[A-Za-z0-9]{36}'],
-  ['npm-token', `_authToken=${S}{0,64}["']?[A-Za-z0-9_/+=-]{12,1024}`, true],
+  ['npm-token', `_(?:authToken|auth|password)=${S}{0,64}["']?[A-Za-z0-9_/+=-]{1,1024}`],
   ['aws-secret-key', `aws_secret_access_key${S}{0,64}=${S}{0,64}["']?[A-Za-z0-9/+=]{40}`, true],
   ['stripe-key', '[sr]k_live_[A-Za-z0-9]{24,1024}'],
   ['gitlab-token', 'glpat-[A-Za-z0-9_-]{20,1024}'],
   ['url-password', '[A-Za-z][A-Za-z0-9+.-]{0,63}://[^:/@\\s"\'<>]{1,256}:([^/@\\s"\'$<>{}*]{3,1024})@[^/\\s"\'<>]', false, passwordValue],
   ['bearer-token', `[Bb]earer${S}{1,64}[A-Za-z0-9_.~+/-]{20,1024}`],
-  ['jwt', 'eyJ[A-Za-z0-9_-]{10,512}\\.eyJ[A-Za-z0-9_-]{10,512}'],
+  ['jwt', 'eyJ[A-Za-z0-9_-]{10,4080}\\.eyJ[A-Za-z0-9_-]{10,4080}'],
   // Check colon/password semantics after one value scan, never with overlapping VALUE* repeats.
   ['assigned-secret', `${ASSIGNED}(${VALUE}{1,1024})["']`, true, quotedValue],
   // A full probe is evidence even if the closing quote is beyond the window.
@@ -66,7 +69,10 @@ const BUILT_IN = [
   // Start at the keyword, not an overlapping arbitrary uppercase prefix.
   ['env-secret', '(?:API_KEY|SECRET|TOKEN|PASSWORD)[A-Z_]{0,128}=["\']?[A-Za-z0-9_/+=-]{12,1024}', true],
 ];
-export const PATTERNS = Object.freeze(BUILT_IN.map(([id, source, keyword, accept]) => Object.freeze({ id, re: new RegExp(source, 'g'), keyword, accept })));
+export const PATTERNS = Object.freeze(BUILT_IN.map(([id, source, keyword, accept]) => Object.freeze({ id, re: new RegExp(source), keyword, accept })));
+
+// Public regexes stay stateless; scanning uses private global copies.
+const MATCH_PATTERNS = PATTERNS.map((p) => ({ ...p, re: new RegExp(p.re.source, 'g') }));
 
 // The synthetic marker of test values (SEC-11): a separate word anywhere in the line's text.
 export const SYNTHETIC = /\bSYNTH\b|\bcheck-secrets: synthetic\b/;
@@ -77,7 +83,7 @@ export const isSynthetic = (line) => SYNTHETIC.test(line);
 const KEY_FILE_TEMPLATE = /\.(?:example|sample|template)$/;
 export const isKeyFile = (path) => {
   const file = path.slice(path.lastIndexOf('/') + 1);
-  return !KEY_FILE_TEMPLATE.test(file) && (/\.(?:keystore|jks|p12|pfx|pem|key)$/.test(file) || /^\.env(?:\.[^/]*)?$/.test(file) || /^(?:id_rsa|id_dsa|id_ecdsa|id_ed25519|\.npmrc)$/.test(file));
+  return !KEY_FILE_TEMPLATE.test(file) && (/\.(?:keystore|jks|p12|pfx|pem|key)$/.test(file) || /^\.env(?:\.[^/]*)?$/.test(file) || /^(?:id_rsa|id_dsa|id_ecdsa|id_ed25519)$/.test(file));
 };
 export const isFixturePath = (path) => {
   const parts = path.split('/');
@@ -126,28 +132,81 @@ function reasonOf(err) {
   return 'not a valid pattern';
 }
 
-// The first pattern matching a line: { id, index, text } or null. extra: the project patterns.
-export function matchLine(line, extra = []) {
+// Separator-anchored probes avoid retrying a long header/scheme at every character.
+// A separator partitions JWT base64 runs, so backwards scans do not overlap.
+const BASE64URL = /[A-Za-z0-9_-]/;
+const JWT_TAIL = /^\.eyJ[A-Za-z0-9_-]{10,4080}/;
+function jwtMatch(line) {
+  if (line.indexOf('eyJ') < 0 || line.indexOf('.eyJ') < 0) return null;
+  for (let dot = line.indexOf('.eyJ'); dot >= 0; dot = line.indexOf('.eyJ', dot + 4)) {
+    let start = dot;
+    const floor = Math.max(0, dot - (WINDOW_SIZE - 1));
+    while (start > floor && BASE64URL.test(line[start - 1])) start--;
+    const header = line.slice(start, dot);
+    const prefix = header.indexOf('eyJ');
+    if (prefix < 0 || header.length - prefix < 13) continue;
+    const tail = JWT_TAIL.exec(line.slice(dot, dot + WINDOW_SIZE));
+    if (tail) return { id: 'jwt', index: start + prefix, text: header.slice(prefix) + tail[0] };
+  }
+  return null;
+}
+const URL_PATTERN = MATCH_PATTERNS.find((p) => p.id === 'url-password');
+const URL_PROBE = new RegExp(URL_PATTERN.re.source.slice(URL_PATTERN.re.source.indexOf(':')), 'y');
+const SCHEME_CHAR = /[A-Za-z0-9+.-]/;
+function urlMatch(line) {
+  // Only a separator can start a probe; long scheme-like runs without it are free.
+  for (let at = line.indexOf('://'); at >= 0; at = line.indexOf('://', at + 3)) {
+    let start = at;
+    const floor = Math.max(0, at - 64);
+    while (start > floor && SCHEME_CHAR.test(line[start - 1])) start--;
+    while (start < at && !/[A-Za-z]/.test(line[start])) start++;
+    if (start === at) continue;
+    const window = line.slice(at, at + 3 + 256 + 1 + 1024 + 2);
+    URL_PROBE.lastIndex = 0;
+    const m = URL_PROBE.exec(window);
+    if (m && URL_PATTERN.accept(m)) return { id: URL_PATTERN.id, index: start, text: line.slice(start, at) + m[0] };
+  }
+  return null;
+}
+
+// The first pattern matching a line: { id, index, text } or null. The optional
+// boundary context is for streaming pieces of one physical line, never fake ^/$.
+export function matchLine(line, extra = [], { before = '', after = '' } = {}) {
+  const hit = (id, index, text) => line.length > VALUE_LIMIT
+    ? { id, index: 0, text: line }
+    : { id, index, text };
   for (let offset = 0; offset < line.length; offset += WINDOW_SIZE - WINDOW_OVERLAP) {
     const window = line.slice(offset, offset + WINDOW_SIZE);
     const keywords = keywordLine(window);
-    for (const p of [...PATTERNS, ...extra]) {
+    for (const p of MATCH_PATTERNS) {
+      if (p.id === 'jwt' || p.id === 'url-password') continue;
       if (p.keyword && (!keywords || (window.indexOf('=') < 0 && window.indexOf(':') < 0))) continue;
-      if (p.id === 'url-password' && window.indexOf('://') < 0) continue;
       p.re.lastIndex = 0;
       let m;
       while ((m = p.re.exec(window))) {
-        if (!p.accept || p.accept(m)) {
-          // Conservative redaction prevents leaking the rest of a long token and avoids
-          // repeated rescans of a long line containing many tokens in verify/redact.mjs.
-          return line.length > VALUE_LIMIT
-            ? { id: p.id, index: 0, text: line }
-            : { id: p.id, index: offset + m.index, text: m[0] };
-        }
-        if (!p.re.global || m[0].length === 0) break;
+        if (p.id === 'openai-key' && m.index === 0 && m[1] === '' && /[A-Za-z0-9]/.test(offset ? line[offset - 1] : before)) continue;
+        if (p.re.source.endsWith('(?=#|$)') && window[m.index + m[0].length] !== '#'
+          && (offset + window.length < line.length || after)) continue;
+        if (!p.accept || p.accept(m)) return hit(p.id, offset + m.index, m[0]);
+        if (m[0].length === 0) break;
       }
     }
     if (offset + WINDOW_SIZE >= line.length) break;
+  }
+  for (const match of [jwtMatch(line), urlMatch(line)]) {
+    if (match) return hit(match.id, match.index, match.text);
+  }
+  const project = matchProjectLine(line, extra);
+  return project ? hit(project.id, project.index, project.text) : null;
+}
+
+// Project regexes keep their anchors and spans, with a separate documented cap.
+export function matchProjectLine(line, extra) {
+  const projectLine = line.slice(0, PROJECT_LINE_MAX);
+  for (const p of extra) {
+    p.re.lastIndex = 0;
+    const m = p.re.exec(projectLine);
+    if (m) return { id: p.id, index: m.index, text: m[0] };
   }
   return null;
 }
