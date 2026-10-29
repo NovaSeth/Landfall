@@ -19,7 +19,7 @@
 // Acquiring a lock this process already holds (under any spelling of its path) fails with EREENTRANT: a nested
 // critical section is a programming error.
 import { randomBytes } from 'node:crypto';
-import { closeSync, constants, fstatSync, fsyncSync, linkSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmSync, rmdirSync, writeFileSync, writeSync } from 'node:fs';
+import { closeSync, constants, fstatSync, fsyncSync, linkSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, renameSync, rmSync, rmdirSync, writeFileSync, writeSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { performance } from 'node:perf_hooks';
@@ -342,5 +342,44 @@ export function appendLine(file, bytes, { mode = 0o644, before } = {}) {
     writeSync(fd, bytes);
   } finally {
     closeSync(fd);
+  }
+}
+
+// The bytes of a regular file of at most `max` bytes named by a user (a --from <file>): a Buffer, or an error with
+// code ENOTREGULAR (a link, FIFO, device, directory), ETOOBIG, or the system's (ENOENT, EACCES). The file is opened
+// without following a link and without blocking (O_NOFOLLOW, O_NONBLOCK) and judged by fstat of the descriptor, so
+// a swap between the check and the read changes nothing; where O_NOFOLLOW does not exist, lstat of the path is
+// compared with fstat of the descriptor (same device and inode).
+export function readRegularFile(path, { max }) {
+  const refuse = (code, message) => Object.assign(new Error(`${path}: ${message}`), { code });
+  const noFollow = constants.O_NOFOLLOW;
+  let linked = null;
+  if (noFollow === undefined) {
+    linked = lstatSync(path);
+    if (!linked.isFile()) throw refuse('ENOTREGULAR', 'not a regular file');
+  }
+  let fd;
+  try {
+    fd = openSync(path, constants.O_RDONLY | (noFollow ?? 0) | (constants.O_NONBLOCK ?? 0));
+  } catch (err) {
+    if (err.code === 'ELOOP' || err.code === 'EMLINK') throw refuse('ENOTREGULAR', 'a symbolic link');
+    throw err;
+  }
+  try {
+    const st = fstatSync(fd);
+    if (!st.isFile()) throw refuse('ENOTREGULAR', 'not a regular file');
+    if (linked && (linked.dev !== st.dev || linked.ino !== st.ino)) throw refuse('ENOTREGULAR', 'changed while it was opened');
+    if (st.size > max) throw refuse('ETOOBIG', `${st.size} bytes, the limit is ${max}`);
+    const buf = Buffer.alloc(Math.min(st.size, max) + 1); // one more byte shows a file that grew
+    let got = 0;
+    for (;;) {
+      const n = readSync(fd, buf, got, buf.length - got, null);
+      if (n === 0 || got + n === buf.length) { got += n; break; }
+      got += n;
+    }
+    if (got > max) throw refuse('ETOOBIG', `more than ${max} bytes`);
+    return buf.subarray(0, got);
+  } finally {
+    quiet(() => closeSync(fd));
   }
 }

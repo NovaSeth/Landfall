@@ -53,10 +53,10 @@ import { KINDS, StateError, check, open, resolve } from '../state/index.mjs';
 import { appliedTier, readReport, reportHasEvidence, reviewNeed, reviewState } from './artifacts.mjs';
 import { measureAt } from './base.mjs';
 import { baselineSha, compareInventory, excusable, fingerprint, referenceOf, splitFailures } from './baseline.mjs';
-import { cacheKey, lookup, store as storeRuns, treeOf } from './gate-cache.mjs';
-import { runGate, tailLines } from './gates.mjs';
+import { cacheKey, lookup, machineKey, store as storeRuns, treeOf } from './gate-cache.mjs';
+import { tailLines } from './gates.mjs';
 import { runHeavy } from './heavy.mjs';
-import { redacted } from './redact.mjs';
+import { projectRedactions, runRedacted } from './redact.mjs';
 import { byCodeUnit, hashOf } from './inventory.mjs';
 import { VERIFY_KINDS } from './kinds.mjs';
 import { detectRenames, idFiles } from './rename.mjs';
@@ -349,8 +349,11 @@ export function evaluate({ where, names, env, id, mode, handle = null, at = now(
     // passed is stored (not in ci mode, which writes nothing).
     const tree = treeOf((a) => gitIn(where, env, a), { staged: mode === 'merge' });
     const key = tree ? cacheKey({ tree, gatesSha: doc.gatesSha, version }) : null;
-    const hit = key && cache ? lookup(store, { key, tree, gatesSha: doc.gatesSha, version, gates: profile.gates, at }) : null;
-    const runs = hit ? hit.runs : runHeavy(profile.gates, { names, env, cwd: where.worktree, task: id }, (g) => redacted(runGate(g, { cwd: where.worktree, env })));
+    // A critical task's verify never reuses runs; task merge may reuse an authenticated entry (T-MG-75).
+    const reuse = cache && (mode === 'merge' || task.class !== 'critical');
+    const hit = key && reuse ? lookup(store, { key, tree, gatesSha: doc.gatesSha, version, gates: profile.gates, at, secret: machineKey(where.dataDir) }) : null;
+    const extra = projectRedactions(where);
+    const runs = hit ? hit.runs : runHeavy(profile.gates, { names, env, cwd: where.worktree, task: id }, (g) => runRedacted(g, { cwd: where.worktree, env, extra }));
     reused = hit?.at ?? null;
     doc.gates = runs.map((r) => r.gate);
     output = runs.map((r) => ({ name: r.gate.name, lines: tailLines(r.output) }));
@@ -363,7 +366,7 @@ export function evaluate({ where, names, env, id, mode, handle = null, at = now(
         const { run: _run, ...collected } = part;
         return collected;
       };
-      storeRuns(store, key, { tree, gatesSha: doc.gatesSha, version, at, runs, report });
+      storeRuns(store, key, { tree, gatesSha: doc.gatesSha, version, at, runs, report, secret: machineKey(where.dataDir, { create: true }) });
     }
 
     const current = store.read('baseline', null);

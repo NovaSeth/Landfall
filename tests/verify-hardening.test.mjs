@@ -151,7 +151,7 @@ test('D7: a hand-written entry without a valid MAC is not reused, one with the m
 
 test('D7: the machine key is a 32-byte file with mode 0600 in the plugin data', async (t) => {
   const { p } = await primed(t);
-  const keys = walk(join(p.base, 'data')).filter((f) => statSync(f).size === 32);
+  const keys = walk(join(p.base, 'home')).filter((f) => f.includes('/plugins/data/')).filter((f) => statSync(f).size === 32);
   assert.equal(keys.length, 1, `one 32-byte key file under CLAUDE_PLUGIN_DATA: ${keys}`);
   assert.equal(statSync(keys[0]).mode & 0o777, 0o600);
 });
