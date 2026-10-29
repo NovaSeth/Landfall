@@ -2,12 +2,13 @@
 // prints becomes a clean, redacted state string before it reaches the run log or the record, the supervisor survives
 // any line, and output is split per stream with a pending buffer of at most 64 KiB. The hostile fake provider is
 // tests/fixtures/providers/fake-hostile.mjs. The program is the absolute path resolved at exec time and recorded in
-// the run, and the record's model is checked before it reaches argv (B-2, B-3). This file holds no plugin name or path:
-// both come from lib/name.json.
+// the run, and the record's model is checked before it reaches argv (B-2, B-3). The out directory is bound to the run
+// by its device and inode (SF-AB-10), and the review brief is read without following a link (SF-AB-1). This file holds
+// no plugin name or path: both come from lib/name.json.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -214,15 +215,16 @@ test('B-2: the provider PATH keeps only absolute entries', () => {
 
 // ---- run-supervise: a record bound to its run ----
 
-// A run record rewritten for T-TU-2 in a fresh private temp directory, so only `change` differs from a record exec
-// wrote. (The binding of the temp directory itself, SF-AB-10, comes in its own slice.)
-async function rewritten(t, change) {
+// A run record rewritten for T-TU-2 in a fresh private temp directory, bound by its device and inode as exec binds it
+// (bind: false leaves the binding out), so only `change` differs from a record exec wrote.
+async function rewritten(t, change, { bind = true } = {}) {
   const p = await project(t);
   const base = await runTo(p, 'fakeok');
   const outDir = mkdtempSync(join(tmpdir(), `${names.bin}-run-`));
   writeFileSync(join(outDir, 'brief.md'), readFileSync(`${base.outFile}.prompt`), { mode: 0o600 });
+  const st = lstatSync(outDir, { bigint: true });
   const runId = 'fakeok-T-TU-2-reviewer-1';
-  const rec = { ...base, runId, task: 'T-TU-2', status: 'starting', pid: null, endedAt: null, error: null, outFile: join(outDir, 'out.json'), ...change(p, outDir) };
+  const rec = { ...base, runId, task: 'T-TU-2', status: 'starting', pid: null, endedAt: null, error: null, outFile: join(outDir, 'out.json'), ...(bind ? { outDirId: `${st.dev}:${st.ino}` } : {}), ...change(p, outDir) };
   writeFileSync(join(p.runsDir, `${runId}.json`), `${JSON.stringify(rec)}\n`);
   const r = await p.cli(['run-supervise', runId]);
   return { p, r, rec: p.record(runId), outFile: rec.outFile };
@@ -256,4 +258,84 @@ test('B-2: a record without a binary (written by 2.4.1) is run-tampered, with th
   assert.equal(rec.error, 'run-tampered');
   assert.match(r.e.errors[0].hint, /start the run again/);
   assert.equal(existsSync(`${outFile}.args`), false, 'no provider was started');
+});
+
+// ---- SF-AB-10: the out directory bound to the run ----
+
+test('SF-AB-10: exec binds the run to its own 0700 temp directory by device and inode; the out file is out.json', async (t) => {
+  const p = await project(t);
+  const rec = await runTo(p, 'fakeok');
+  assert.equal(rec.status, 'done', JSON.stringify(rec));
+  const dir = dirname(rec.outFile);
+  const st = lstatSync(dir, { bigint: true });
+  assert.equal(rec.outFile, join(dir, 'out.json'));
+  assert.equal(rec.outDirId, `${st.dev}:${st.ino}`);
+  assert.equal(Number(st.mode) & 0o777, 0o700);
+  assert.equal(realpathSync(dirname(dir)), realpathSync(tmpdir()));
+});
+
+test('SF-AB-10: a record pointing to another 0700 temp directory (not the one exec bound) is run-tampered', async (t) => {
+  const { r, rec, outFile } = await rewritten(t, () => ({}), { bind: false });
+  assert.equal(r.code, 1, show(r));
+  assert.equal(rec.error, 'run-tampered');
+  assert.equal(existsSync(`${outFile}.args`), false, 'no provider was started');
+});
+
+test('SF-AB-10: a record whose outDirId names another directory is run-tampered', async (t) => {
+  const { r, rec, outFile } = await rewritten(t, (p) => { const st = lstatSync(p.base, { bigint: true }); return { outDirId: `${st.dev}:${st.ino}` }; });
+  assert.equal(r.code, 1, show(r));
+  assert.equal(rec.error, 'run-tampered');
+  assert.equal(existsSync(`${outFile}.args`), false, 'no provider was started');
+});
+
+test('SF-AB-10: an out file not named out.json is run-tampered', async (t) => {
+  const { r, rec } = await rewritten(t, (p, outDir) => ({ outFile: join(outDir, 'other.json') }));
+  assert.equal(r.code, 1, show(r));
+  assert.equal(rec.error, 'run-tampered');
+});
+
+test('SF-AB-10: an out file that is a link is run-tampered', async (t) => {
+  const { r, rec } = await rewritten(t, (p, outDir) => { symlinkSync(join(p.repo, 'a.txt'), join(outDir, 'out.json')); return {}; });
+  assert.equal(r.code, 1, show(r));
+  assert.equal(rec.error, 'run-tampered');
+  assert.equal(readFileSync(join(rec.cwd, 'a.txt'), 'utf8'), 'a\n');
+});
+
+// ---- SF-AB-1: the review brief is never read through a link ----
+
+const linkBrief = (p) => {
+  const outside = join(p.base, 'host-credential.txt');
+  writeFileSync(outside, 'SYNTH host secret\n');
+  const brief = join(p.state, 'tasks', 'T-TU-1', 'review-r1-brief.md');
+  unlinkSync(brief);
+  symlinkSync(outside, brief);
+};
+
+test('SF-AB-1: a review brief that is a symlink to a file outside is refused and nothing reaches a provider', async (t) => {
+  const p = await project(t);
+  linkBrief(p);
+  const r = await startRun(p, 'T-TU-1', 'fakeok');
+  assert.equal(r.code, 1, show(r));
+  assert.equal(r.e.errors[0].code, 'review-brief-unsafe');
+  assert.deepEqual(p.records(), [], 'no run was recorded');
+});
+
+test('SF-AB-1: a review brief named by --round that is a symlink is refused the same way', async (t) => {
+  const p = await project(t);
+  linkBrief(p);
+  const r = await p.cli(['exec', '--task', 'T-TU-1', '--role', 'reviewer', '--provider', 'fakeok', '--round', '1']);
+  assert.equal(r.code, 1, show(r));
+  assert.equal(r.e.errors[0].code, 'review-brief-unsafe');
+  assert.deepEqual(p.records(), [], 'no run was recorded');
+});
+
+test('SF-AB-1: a task directory that is a symlink is refused', async (t) => {
+  const p = await project(t);
+  const dir = join(p.state, 'tasks', 'T-TU-1');
+  const moved = join(p.base, 'moved-task');
+  spawnSync('mv', [dir, moved]);
+  symlinkSync(moved, dir);
+  const r = await startRun(p, 'T-TU-1', 'fakeok');
+  assert.notEqual(r.code, 0, show(r));
+  assert.deepEqual(p.records(), [], 'no run was recorded');
 });
