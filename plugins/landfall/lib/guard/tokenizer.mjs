@@ -23,10 +23,28 @@ export const why = (w) => { throw new NotPlain(w); };
 // word), a name is set or used any other way in the text (printf -v, read, declare, export, for, unset, +=, an array
 // index) or assigned twice, or a reference stands where the command name goes (a command from a variable has no shape).
 // `for NAME in <literal words>; do <body>; done` as the whole text is unrolled the same way.
-const ASSIGN = /^\s*([A-Za-z_]\w*)=(.*?)\s*$/s;
+// (linear, A-1: the value's trailing whitespace is trimmed after the match, not by a lazy `(.*?)\s*$`)
+const ASSIGN_RE = /^\s*([A-Za-z_]\w*)=(.*)$/s;
+const ASSIGN = { exec: (s) => { const m = ASSIGN_RE.exec(s); return m && [m[0], m[1], m[2].trimEnd()]; } };
 const BARE = /^[A-Za-z0-9_./:@,+=-]*$/;
 const META = /[;&|<>(){}$`\\!*?[\]#~'"\n]/;
-const FOR = /^\s*for\s+([A-Za-z_]\w*)\s+in\s+([^;\n]+?)\s*(?:;|\n)\s*do\s+([\s\S]*?)\s*(?:;|\n)?\s*done\s*$/;
+// `for NAME in WORDS (; | newline) do BODY [;] done` as the whole text: [, name, words, body] or null. Read step by step
+// (linear, A-1), not by one regex whose lazy groups sit next to \s* runs.
+const FOR_HEAD = /^for\s+([A-Za-z_]\w*)\s+in\s+/;
+const FOR = { exec(src) {
+  const t = src.trim(); const h = FOR_HEAD.exec(t);
+  if (!h || !t.endsWith('done')) return null;
+  const rest = t.slice(h[0].length); const k = rest.search(/[;\n]/);
+  if (k <= 0) return null;
+  const words = rest.slice(0, k).trimEnd();
+  const tail = rest.slice(k + 1).trimStart();
+  if (!tail.startsWith('do') || !/\s/.test(tail[2] ?? '')) return null;
+  const inner = tail.slice(2).trimStart();
+  if (!inner.endsWith('done')) return null;
+  let body = inner.slice(0, -4).trimEnd();
+  if (body.endsWith(';')) body = body.slice(0, -1).trimEnd();
+  return words ? [t, h[1], words, body] : null;
+} };
 // Names whose value the shell, a loader or a tool reads for what to run or how to split words: never a literal of the line.
 const SPECIAL = /^(?:PATH|IFS|CDPATH|HOME|PWD|OLDPWD|SHELL|TMPDIR|TMP|TEMP|USER|LOGNAME|LANG|LC_\w*|TERM|OPTIND|OPTARG|RANDOM|LINENO|SECONDS|BASH\w*|ZDOTDIR|FPATH|MODULE_PATH|NODE_PATH|NODE_OPTIONS|PYTHONPATH|PYTHONSTARTUP|PERL5LIB|PERL5OPT|RUBYLIB|RUBYOPT|GEM_PATH|GEM_HOME|CLASSPATH|GOPATH|GOFLAGS|GOROOT|CARGO_HOME|RUSTFLAGS|npm_config_\w*|NPM_CONFIG_\w*|CLAUDE\w*|ANTHROPIC\w*)$/i;
 const UNCONDITIONAL_BEFORE = new Set(['', ';', '\n']);
@@ -64,6 +82,7 @@ function segments(src) {
 }
 
 // `text` with `$NAME` / `${NAME}` of `vars` replaced outside single quotes; a reference in command position stays.
+const REF = /\$(?:\{([A-Za-z_]\w*)\}|([A-Za-z_]\w*))/y;
 function substitute(text, vars) {
   let out = '';
   let q = null;
@@ -74,7 +93,7 @@ function substitute(text, vars) {
     if (c === "'" && q === null) { q = c; out += c; atStart = false; continue; }
     if (c === '"') { q = q === '"' ? null : '"'; out += c; continue; }
     if (c === '$') {
-      const m = /^\$(?:\{([A-Za-z_]\w*)\}|([A-Za-z_]\w*))/.exec(text.slice(i));
+      REF.lastIndex = i; const m = REF.exec(text);
       const name = m ? m[1] ?? m[2] : null;
       if (name !== null && vars.has(name) && !atStart) { out += vars.get(name); i += m[0].length - 1; continue; }
       out += c; atStart = false; continue;
@@ -107,6 +126,9 @@ export function expandLiterals(src) {
     // name changes what runs: the text stays as written and the parser rejects the expansion
     if (value === null || !UNCONDITIONAL_BEFORE.has(before) || !UNCONDITIONAL_AFTER.has(s.sep) || SPECIAL.test(m[1]) || ENV_EXEC.test(m[1])) return src;
     if (vars.has(m[1])) twice.add(m[1]);
+    // a reference in an earlier command reads the value from before the line (SF-AB-2): no literal for it
+    const ref = new RegExp(`\\$\\{?${m[1]}(?!\\w)`);
+    if (rest.some((r) => ref.test(r.text))) twice.add(m[1]);
     vars.set(m[1], value);
   }
   for (const name of twice) vars.delete(name);

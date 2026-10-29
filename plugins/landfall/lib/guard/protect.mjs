@@ -88,22 +88,35 @@ export function stateText(state) {
 const MAX_MATCHES = 256;
 const GLOB = /[*?[]/;
 // A bash glob segment as a predicate; without dots a pattern that does not start with '.' skips dot entries.
+// The pattern is read into one-character tests and stars, then matched by the iterative wildcard algorithm (one star
+// remembered, the last star's start moved forward): O(pattern × name), no backtracking regex (SF-AB-4).
 export function globRe(seg, { dots = false } = {}) {
-  let re = '';
+  const parts = []; // '*' or a test (c) => boolean for one character
   for (let i = 0; i < seg.length; i++) {
     const c = seg[i];
-    if (c === '*') re += '.*';
-    else if (c === '?') re += '.';
+    if (c === '*') { if (parts[parts.length - 1] !== '*') parts.push('*'); }
+    else if (c === '?') parts.push(() => true);
     else if (c === '[' && seg.indexOf(']', i + 2) > 0) {
       const j = seg.indexOf(']', i + 2);
       const cls = seg.slice(i + 1, j);
-      re += `[${cls[0] === '!' ? `^${cls.slice(1)}` : cls}]`;
+      let rx;
+      try { rx = new RegExp(`^[${cls[0] === '!' ? `^${cls.slice(1)}` : cls}]$`, 's'); } catch { why(`a glob pattern that cannot be read: ${seg.slice(0, 40)}`); }
+      parts.push((x) => rx.test(x));
       i = j;
-    } else re += c.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
+    } else parts.push((x) => x === c);
   }
-  let rx;
-  try { rx = new RegExp(`^${re}$`, 's'); } catch { why(`a glob pattern that cannot be read: ${seg.slice(0, 40)}`); }
-  return dots || seg.startsWith('.') ? (e) => e !== '.' && e !== '..' && rx.test(e) : (e) => !e.startsWith('.') && rx.test(e);
+  const test = (e) => {
+    let p = 0; let s = 0; let star = -1; let mark = 0;
+    while (s < e.length) {
+      if (p < parts.length && parts[p] !== '*' && parts[p](e[s])) { p++; s++; }
+      else if (p < parts.length && parts[p] === '*') { star = p++; mark = s; }
+      else if (star >= 0) { p = star + 1; s = ++mark; }
+      else return false;
+    }
+    while (p < parts.length && parts[p] === '*') p++;
+    return p === parts.length;
+  };
+  return dots || seg.startsWith('.') ? (e) => e !== '.' && e !== '..' && test(e) : (e) => !e.startsWith('.') && test(e);
 }
 // The paths a glob path names on disk (each glob segment matched against the directory entries).
 function expand(abs, { dots = false } = {}) {
@@ -127,7 +140,7 @@ function expand(abs, { dots = false } = {}) {
 export function globReaches(text, name) {
   const lower = name.toLowerCase();
   for (const word of text.split(/\s+/)) {
-    const alts = /\{[^{}]*,[^{}]*\}/.test(word) ? word.replace(/^(.*?)\{([^{}]*)\}(.*)$/, (_, a, b, c) => b.split(',').map((x) => a + x + c).join(' ')).split(' ') : [word];
+    const alts = /\{[^{},]*,[^{}]*\}/.test(word) ? word.replace(/^(.*?)\{([^{}]*)\}(.*)$/, (_, a, b, c) => b.split(',').map((x) => a + x + c).join(' ')).split(' ') : [word];
     for (const w of alts) {
       if (w.toLowerCase().split('/').includes(lower)) return true;
       for (const seg of w.split('/')) if (GLOB.test(seg) && (seg.includes('**') || safeTest(seg, name))) return true;

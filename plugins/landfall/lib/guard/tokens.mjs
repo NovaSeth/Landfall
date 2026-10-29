@@ -38,7 +38,12 @@ export const GATES = Object.freeze([
 ]);
 export const gateById = (id) => GATES.find((g) => g.id === id);
 // A segment with a pipe that names a gate command, a package manager or the plugin's gate subcommands.
-const GATE_LINE = new RegExp(`(^|[\\s/])(check-secrets|budget\\.sh|npm|pnpm|yarn|bun)(\\s|$|\\.|:)|(^|[\\s/])${binRe}\\s(.*\\s)?(secrets|verify|slot|heavy)(\\s|$)`);
+// Linear (A-1): the first occurrence of the plugin's command, then a gate subcommand word anywhere after it.
+const GATE_NAME = /(^|[\s/])(check-secrets|budget\.sh|npm|pnpm|yarn|bun)(\s|$|\.|:)/;
+const BIN_WORD = new RegExp(`(^|[\\s/])${binRe}\\s`);
+const GATE_SUB = /\s(secrets|verify|slot|heavy)(\s|$)/;
+const after = (s, head, tail) => { const m = head.exec(s); return m !== null && tail.test(s.slice(m.index + m[0].length - 1)); };
+const GATE_LINE = { test: (s) => GATE_NAME.test(s) || after(s, BIN_WORD, GATE_SUB) };
 
 // The first command word of a segment (after assignments, keywords and wrappers).
 function commandWord(seg) {
@@ -60,7 +65,10 @@ function gitAliasCandidate(seg) {
     if (!/^(?:.*\/)?git$/.test(ws[k])) continue;
     let j = k + 1;
     while (j < ws.length && ws[j].startsWith('-')) j += GIT_ARG.has(ws[j]) ? 2 : 1;
-    if (j < ws.length && /^[\w-]+$/.test(ws[j]) && !GIT_BUILTINS.has(ws[j])) return true;
+    if (j >= ws.length) continue;
+    // a glob or a substitution in the subcommand word: bash may turn it into any subcommand (A-2)
+    if (/[*?[$`]/.test(ws[j])) return true;
+    if (/^[\w-]+$/.test(ws[j]) && !GIT_BUILTINS.has(ws[j])) return true;
   }
   return false;
 }
@@ -69,8 +77,13 @@ const gitConfigKey = (s) => /(^|[\s/])git(-config)?(\s|$)/.test(s) && /(^|[\s/-]
   && s.split(' ').some((w) => configKey(w.split('=')[0]) !== null || /^(--ren|rename-section)/.test(w));
 
 // operators glued to the command (a|rm, a;rm, a&&rm) count: the leading class holds | ; & ( / and whitespace
-const RM_RECURSIVE = /(^|[\s/(|;&])rm\s(.*\s)?(-[a-z]*r[a-z]*|--r[a-z]*)(\s|$)/;
-const FIND_DELETE = /(^|[\s/(|;&])find(\s.*)?\s(-delete|-(exec|execdir|ok|okdir)\s+(\S*\/)?rm)(\s|$)/;
+// Linear (A-1): the first rm / find word, then the option word anywhere after it (no `(.*\s)?` that backtracks per start).
+const RM_WORD = /(^|[\s/(|;&])rm\s/;
+const RM_FLAG = /\s(-[a-qs-z]*r[a-z]*|--r[a-z]*)(\s|$)/;
+const FIND_WORD = /(^|[\s/(|;&])find\s/;
+const FIND_FLAG = /\s(-delete|-(exec|execdir|ok|okdir)\s+(\S*\/)?rm)(\s|$)/;
+const RM_RECURSIVE = { test: (s) => after(s, RM_WORD, RM_FLAG) };
+const FIND_DELETE = { test: (s) => after(s, FIND_WORD, FIND_FLAG) };
 
 // The tokens. Checked on the normalized variants of the text: word — a word anywhere (lowercase); cased — a word with its
 // case kept; line — a construct on a segment between ; and & that may build a guarded operation from content outside
@@ -80,7 +93,8 @@ export const GUARDED = Object.freeze([
   { id: 'push', word: /push/ },
   { id: '--no-verify', word: /no-ver/ },
   { id: 'hooksPath', word: /hookspath/ },
-  { id: 'include.path', word: /include[^\s=]*\.path/ },
+  // include and .path within one run of non-space, non-= characters (linear: the first include of each run, A-1)
+  { id: 'include.path', word: { test: (v) => v.split(/[\s=]/).some((w) => { const k = w.indexOf('include'); return k >= 0 && w.indexOf('.path', k + 7) >= 0; }) } },
   { id: 'check-secrets', word: /check-secrets/ },
   { id: 'hook files', word: /\.githooks|\.husky|\.git\/hooks|(^|[\s/=])\.git\/?($|\s)/ },
   { id: 'commit', word: /commit/ },
@@ -129,11 +143,26 @@ const ansiDecoded = (text) => text.replace(/\$'((?:[^'\\]|\\[\s\S])*)'?/g, (_, b
 const flat = (s) => s.replace(/\\\r?\n/g, '').replace(/['"\\]/g, '').replace(/\s+/g, ' ');
 // Variants with the case kept (project rules, cased tokens): no quotes and backslashes, $'…' and \xHH decoded.
 export const caseVariants = (text) => { const a = ansiDecoded(text); return [flat(a), flat(decodeEscapes(a))]; };
-// Variants for the tokens (lowercase): also ${X:-default} → default, no $X / $(…) / `…`, and no {,}.
+// The text with every $(…) and `…` removed with its body (nesting counted, one pass): an empty substitution that splits
+// a word (.land$(:)fall) leaves the word whole (A-3). An unclosed one runs to the end.
+export function dropSubs(s) {
+  let out = ''; let depth = 0; let tick = false;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (tick) { if (c === '`') tick = false; continue; }
+    if (c === '$' && s[i + 1] === '(') { depth++; i++; continue; }
+    if (depth > 0) { if (c === '(') depth++; else if (c === ')') depth--; continue; }
+    if (c === '`') { tick = true; continue; }
+    out += c;
+  }
+  return out;
+}
+// Variants for the tokens (lowercase): also ${X:-default} → default, no $X / $(…) / `…`, and no {,}; and the text without
+// the substitutions and their bodies.
 export function variants(text) {
   const [v1, v2] = caseVariants(text).map((s) => s.toLowerCase());
-  const v3 = v2.replace(/\$\{[#!]?\w*(?:\[[^\]]*\])?(?::?[-=+?#%/^,]+([^}]*))?\}/g, '$1').replace(/\$(?:\w+|[@*#?$!-])/g, '').replace(/[`$()]/g, '');
-  return [v1, v2, v3, v3.replace(/[{},]/g, '')];
+  const v3 = v2.replace(/\$\{[#!]?\w*(?:\[[^\]]*\])?(?::?[-=+?#%/^,]+(?![-=+?#%/^,])([^}]*))?\}/g, '$1').replace(/\$(?:\w+|[@*#?$!-])/g, '').replace(/[`$()]/g, '');
+  return [v1, v2, v3, v3.replace(/[{},]/g, ''), dropSubs(v2)];
 }
 
 // A text longer than this gets a coarse prescan in linear time: the word tokens on the same variants as below (raw
@@ -144,8 +173,8 @@ const ROUGH = /(^|[\s/])git|\||[$`]|<\(|xargs|config|-section|(^|[\s/(;&])rm\s|\
 function coarse(text, literals) {
   const strip = (s) => s.replace(/\\\r?\n|['"\\]/g, '');
   const a = ansiDecoded(text); const c1 = strip(a); const c2 = strip(decodeEscapes(a));
-  const v3 = c2.toLowerCase().replace(/\$\{[#!]?\w*(?:\[[^\]]*\])?(?::?[-=+?#%/^,]+([^}]*))?\}/g, '$1').replace(/\$(?:\w+|[@*#?$!-])/g, '').replace(/[`$()]/g, '');
-  const vs = [c1.toLowerCase(), c2.toLowerCase(), v3, v3.replace(/[{},]/g, '')]; const cs = [c1, c2]; const hits = new Set();
+  const v3 = c2.toLowerCase().replace(/\$\{[#!]?\w*(?:\[[^\]]*\])?(?::?[-=+?#%/^,]+(?![-=+?#%/^,])([^}]*))?\}/g, '$1').replace(/\$(?:\w+|[@*#?$!-])/g, '').replace(/[`$()]/g, '');
+  const vs = [c1.toLowerCase(), c2.toLowerCase(), v3, v3.replace(/[{},]/g, ''), dropSubs(c2.toLowerCase())]; const cs = [c1, c2]; const hits = new Set();
   for (const g of GUARDED) if ((g.word && vs.some((v) => g.word.test(v))) || (g.cased && cs.some((v) => g.cased.test(v)))) hits.add(g.id);
   if (vs.some((v) => ROUGH.test(v))) hits.add('a line-token trigger in a long text');
   for (const l of literals) if (vs.some((v) => v.includes(l))) hits.add(`project rule literal "${l}"`);
