@@ -75,6 +75,13 @@ function clock(ms: number): string {
   return h ? `${h}:${pad2(Math.floor(s / 60) % 60)}:${pad2(s % 60)}` : `${pad2(Math.floor(s / 60))}:${pad2(s % 60)}`
 }
 
+function taskOf(description: string, prompt: string): string | null {
+  const described = TASK_ID.exec(description)?.[0]
+  if (described) return described
+  const tasks = prompt.match(new RegExp(TASK_ID.source, 'g')) ?? []
+  return tasks.length > 0 && tasks.every(task => task === tasks[0]) ? tasks[0] : null
+}
+
 function roundOf(text: string): number | null {
   for (const re of ROUNDS) {
     const m = re.exec(text)
@@ -433,7 +440,7 @@ export const register: Register = (on, options) => {
         type: e.subagentType,
         role: roleOf(e.subagentType),
         description: e.description,
-        task: TASK_ID.exec(text)?.[0] ?? null,
+        task: taskOf(e.description, e.prompt),
         round: roundOf(text),
         out: lastPath(text),
         status: 'running',

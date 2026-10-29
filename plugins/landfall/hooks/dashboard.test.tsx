@@ -139,6 +139,45 @@ test('a spawned agent is a row with the task, round and output file of its promp
   await ui.unmount()
 })
 
+test('a spawned agent takes its task from the description even when its prompt names other tasks', async ($, on) => {
+  const w = world(on)
+  w.agents.length = 0
+  on('agent.spawn', () => ({ model: 'sonnet', agentId: 'a2' }))
+  await $.session.start(SESSION)
+  await w.clock.settle()
+  await $.agent.spawn({ description: 'T-MG-59 slice A: method rules', prompt: 'Compare T-MG-1, T-MG-2 and T-MG-56.', subagentType: 'landfall:reviewer' })
+  await w.clock.advance(1_000)
+  const ui = await $.ui.mount(PANE)
+  expect((await ui.find({ type: 'Text', text: /^● reviewer/ }))?.text).toMatch(/^● reviewer\s+T-MG-59\s+00:00\s+running$/)
+  await ui.unmount()
+})
+
+test('a spawned audit agent has no task when only its prompt names multiple distinct tasks', async ($, on) => {
+  const w = world(on)
+  w.agents.length = 0
+  on('agent.spawn', () => ({ model: 'sonnet', agentId: 'a2' }))
+  await $.session.start(SESSION)
+  await w.clock.settle()
+  await $.agent.spawn({ description: 'Audit stale task records', prompt: 'Audit T-MG-1, T-MG-2 and T-MG-56.', subagentType: 'landfall:reviewer' })
+  await w.clock.advance(1_000)
+  const ui = await $.ui.mount(PANE)
+  expect((await ui.find({ type: 'Text', text: /^● reviewer/ }))?.text).toMatch(/^● reviewer\s+-\s+00:00\s+running$/)
+  await ui.unmount()
+})
+
+test('a spawned agent takes the sole distinct task from its prompt even when it is repeated', async ($, on) => {
+  const w = world(on)
+  w.agents.length = 0
+  on('agent.spawn', () => ({ model: 'sonnet', agentId: 'a2' }))
+  await $.session.start(SESSION)
+  await w.clock.settle()
+  await $.agent.spawn({ description: 'Review', prompt: 'Review T-MG-7 and report the result for T-MG-7.', subagentType: 'landfall:reviewer' })
+  await w.clock.advance(1_000)
+  const ui = await $.ui.mount(PANE)
+  expect((await ui.find({ type: 'Text', text: /^● reviewer/ }))?.text).toMatch(/^● reviewer\s+T-MG-7\s+00:00\s+running$/)
+  await ui.unmount()
+})
+
 test('a pane the terminal cannot place leaves the summary in a dim band above the prompt, without the plugin name twice; the status stays clear', async ($, on) => {
   const w = world(on, { placed: false })
   await $.session.start(SESSION)
