@@ -238,3 +238,26 @@ test('AR-1: a comment or a heredoc body does not hide the rest of the command fr
   // a # inside a word or quotes is no comment; an unclosed construct at the end of one line still passes (GC8)
   for (const cmd of ['echo a#b', 'echo "#"', 'echo $(unclosed', 'echo $(: "', 'cat <<EOF\nno end']) assert.equal(prescan(cmd).size, 0, cmd);
 });
+
+// ---------- fix round 3 (auto-review r2): no comment or heredoc parsing in the substitution-free variant ----------
+test('AR2: an escaped #, a heredoc or a << inside $(( )) does not hide a split state path', () => {
+  const split = `cp /tmp/f ${S.slice(0, 5)}$(:)${S.slice(5)}/tasks/T-1/verify.json`;
+  const quoted = `cp /tmp/f ${S.slice(0, 5)}$(: '(')${S.slice(5)}/tasks/T-1/verify.json`;
+  for (const cmd of [`echo \\# x; ${split}`, `cat <<'E'\nx\nE\n${split}`, `echo $(( 1 << 2 )); ${split}`,
+    // a backslash-newline joins the # to a word; no heredoc inside ${ } or (( )); a quoted ( keeps only the raw-text
+    // variant reading the substitution right
+    `echo x\\\n#; ${quoted}`, `echo \${x<<'E'}\n${quoted}`, `(( y = 1 <<"2" ))\n${quoted}`]) {
+    assert.ok(prescan(cmd, [S]).size > 0, `no hit: ${JSON.stringify(cmd)}`);
+    assert.ok(denied(cmd), `allowed: ${JSON.stringify(cmd)}`);
+  }
+});
+
+test('AR2: an unclosed $( or backtick is kept as text and the scan goes on; a newline after it is uncertain', async () => {
+  const { subsDropped } = await lib('guard/tokens.mjs');
+  for (const open of ['$(', '`']) {
+    const one = subsDropped(`echo ${open} x; cp /tmp/f ${S.slice(0, 5)}$(:)${S.slice(5)}/t`);
+    assert.ok(one.text.includes(`${S}/t`), JSON.stringify(one));
+    assert.equal(one.uncertain, false);
+    assert.equal(subsDropped(`echo ${open} x\ny`).uncertain, true);
+  }
+});
