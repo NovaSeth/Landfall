@@ -231,6 +231,20 @@ test('B-6: providers add stores validated --env names; a bad name is a usage err
   for (const bad of ['my-key', '1X', 'A,,B', 'A=B']) assert.throws(() => registry.addProvider({ names, env, id: 'other', argv: 'x {sandbox}', sandboxMap: 'reviewer=ro', envNames: bad }), (err) => err.exit === 'USAGE', bad);
 });
 
+test('T-MG-91: exec with no sandbox mapping for the role (a stale detection cache) refuses before it records a run', async (t) => {
+  const p = await project(t);
+  await p.ok(['providers', '--refresh']);
+  const file = join(p.env.CLAUDE_PLUGIN_DATA, 'providers.json');
+  const doc = JSON.parse(readFileSync(file, 'utf8'));
+  doc.generic.fakeok.sandboxMap = { implementer: 'workspace-write' };
+  writeFileSync(file, JSON.stringify(doc));
+  const r = await startRun(p, 'T-TU-1', 'fakeok');
+  assert.notEqual(r.code, 0, show(r));
+  assert.equal(r.e.errors[0].code, 'role-unavailable', show(r));
+  assert.match(r.e.errors[0].hint, /providers --refresh/);
+  assert.deepEqual(p.records(), []);
+});
+
 // ---- B-2: the absolute program path ----
 
 test('B-2: with "." first on PATH a repository-shipped ./codex never runs; the run spawns the resolved absolute path', async (t) => {
