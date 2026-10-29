@@ -194,6 +194,29 @@ test('task show is the resume card after a compaction', async (t) => {
 
 // ---- task set: the 1.x task.sh states ----
 
+test('task set dispatched preserves the started task base across executor handoffs and records each dispatch base', async (t) => {
+  const r = await active(t);
+  const created = await r.run(['task', 'new', 'Multiple slices']);
+  assert.equal(created.code, 0, show(created));
+  const id = created.out.data.id;
+  const baseA = 'aaaaaaa';
+  const baseB = 'bbbbbbb';
+  const baseC = 'ccccccc';
+  const started = await r.run(['task', 'set', id, 'started', '--branch', `task/${id}`, '--base', baseA]);
+  assert.equal(started.code, 0, show(started));
+
+  const first = await r.run(['task', 'set', id, 'dispatched', '--executor', 'claude:implementer', '--base', baseB]);
+  assert.equal(first.code, 0, show(first));
+  const afterFirst = r.task(id);
+  const second = await r.run(['task', 'set', id, 'dispatched', '--executor', 'codex:implementer', '--base', baseC]);
+  assert.equal(second.code, 0, show(second));
+  const doc = r.task(id);
+
+  assert.deepEqual(doc.events.filter((e) => e.event === 'dispatched').map((e) => e.data.base), [baseB, baseC]);
+  assert.equal(doc.base, baseA, 'the second dispatch keeps the base recorded by started');
+  assert.equal(afterFirst.base, baseA, 'the first dispatch keeps the base recorded by started');
+});
+
 test('1.x: every state is recorded with author and time in the grammar of the successor; validation writes nothing', async (t) => {
   const r = await active(t);
   const id = `T-${ME}-1`;

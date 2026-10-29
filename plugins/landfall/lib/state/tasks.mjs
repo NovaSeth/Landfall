@@ -2,7 +2,7 @@
 // with the next ID of the developer's handle (the one registered for the git email of the target repository)
 // and changed only by its owner. setTask records one state as an event { at, by, event, data } and moves the
 // status:
-//   dispatched --executor <e> --base <sha> [--lane <l>]   → dispatched (base and lane stored on the task)
+//   dispatched --executor <e> --base <sha> [--lane <l>]   → dispatched (lane stored; base stored only before the task is started)
 //   implementer --report done|done-with-concerns           → implemented
 //   implementer --report needs-context|blocked             → blocked
 //   blocked --reason <t> · cancelled --reason <t>          → blocked · cancelled
@@ -140,7 +140,7 @@ export function setTask({ cwd, env, names, id, state, options = {}, at = now() }
       if (state === 'self-verified' && data.round === undefined) data.round = Math.max(doc.round, 1);
       if (state === 'dispatched') {
         if (data.lane === undefined && doc.lane === null && lanesOn(store)) throw usage('lane-required', `${id} has no lane and the lanes capability is on`, 'pass --lane <lane>');
-        doc.base = data.base;
+        if (doc.branch == null) doc.base = data.base;
         if (data.lane !== undefined) doc.lane = data.lane;
       }
       if (state === 'started') {
