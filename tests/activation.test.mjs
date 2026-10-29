@@ -166,7 +166,8 @@ test('init: consent required; activation writes state.json, .gitignore and team/
   const res = await cli(['init', '--yes'], { cwd: join(r.dir, 'src'), env: r.env });
   assert.equal(res.code, 0, show(res));
   assert.deepEqual([res.out.data.activated, res.out.data.handle, res.out.data.dir, res.out.data.linked], [true, USER.handle, r.store, false]);
-  assert.deepEqual(filesUnder(r.store), ['.gitignore', 'state.json', `team/${USER.handle}.json`], 'exactly the activation files');
+  // T-MG-77 (intended): the first write also marks local/ as this machine's (local/.machine).
+  assert.deepEqual(filesUnder(r.store), ['.gitignore', 'local/.machine', 'state.json', `team/${USER.handle}.json`], 'exactly the activation files');
   const doc = JSON.parse(readFileSync(join(r.store, 'state.json'), 'utf8'));
   assert.deepEqual({ ...doc, activatedAt: 'x' }, { schema: state.KINDS.state.version, codename: names.codename, createdWith: VERSION, activatedAt: 'x' });
   assert.match(doc.activatedAt, ISO_TIME);
@@ -242,7 +243,7 @@ test('init --state-dir links an external directory by the real path (SD-7, SD-36
   assert.equal(res.code, 0, show(res));
   assert.deepEqual([res.out.data.dir, res.out.data.linked, res.out.data.activated], [external, true, true]);
   assert.deepEqual(projects(r), { [realpathSync(r.dir)]: { stateDir: external } });
-  assert.deepEqual(filesUnder(external), ['.gitignore', 'state.json', `team/${USER.handle}.json`]);
+  assert.deepEqual(filesUnder(external), ['.gitignore', 'local/.machine', 'state.json', `team/${USER.handle}.json`]); // T-MG-77 (intended)
   assert.ok(!existsSync(r.store), 'no state directory in the repository');
   assert.equal(status(r.dir, r.env), '', 'git status clean');
   const where = state.resolve({ cwd: r.dir, env: r.env, names });

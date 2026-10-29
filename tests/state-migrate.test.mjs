@@ -153,7 +153,7 @@ test('property: a generated chain migrates mixed-version stores exactly, lossles
       }
       assert.deepEqual(s.read('item', id), expected(steps, doc), `${label}: read ${id}`);
     }
-    const outside = (r) => r.startsWith('items') || r.startsWith('local/backup') || r.startsWith('local/locks');
+    const outside = (r) => r.startsWith('items') || r.startsWith('local/backup') || r.startsWith('local/locks') || r === 'local/.machine'; // T-MG-77 (intended): the owner marker
     assert.deepEqual(snapshot(dir, { skip: outside }), before.filter((l) => !outside(l.slice(2).split(' ')[0])), `${label}: nothing else touched`);
     if (older.length) assert.deepEqual(snapshot(join(dir, run.backup)).filter((l) => l.startsWith('F')).length, older.length, `${label}: backup holds exactly the migrated files`);
     else assert.equal(run.backup, null, `${label}: no backup when nothing migrates`);

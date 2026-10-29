@@ -38,7 +38,8 @@ const PLUGIN_ID = `${names.plugin}@${names.marketplace}`;
 const { HOOKS } = await lib('hooks/registry.mjs');
 const EVENTS = [...new Set(HOOKS.map((h) => h.event))];
 
-const ROW_IDS = ['release', 'heartbeat', 'bin-path', 'state', 'profile', 'flags', 'providers', 'scheduler', 'guard', 'context', 'permissions', 'protection'];
+// T-MG-77 A2 (intended): the local row follows flags.
+const ROW_IDS = ['release', 'heartbeat', 'bin-path', 'state', 'profile', 'flags', 'local', 'providers', 'scheduler', 'guard', 'context', 'permissions', 'protection'];
 const STATUSES = ['ok', 'warn', 'fail', 'skip'];
 const RULES = [`Bash(${names.bin} exec:*)`, `Bash(${names.bin} wait:*)`]; // U3
 const SYSTEM_DIRS = ['/usr/bin', '/bin'];
@@ -414,4 +415,25 @@ test('environment: claude or git missing exits 8 and the report is still listed'
   assert.equal(d.r.status, 8, out(d.r));
   assert.ok(d.e.errors.some((x) => x.code === 'git-missing'), JSON.stringify(d.e.errors));
   assert.deepEqual(d.e.data.rows.map((x) => x.id), ROW_IDS);
+});
+
+test('T-MG-77 A2-6: a local/ marked by another machine is reported foreign, moved aside at the next command; doctor moves nothing', (t) => {
+  const s = scratch(t);
+  fakeClaude(s.bin);
+  const project = repo(s.base, 'project');
+  const init = cli(s, project, ['init', '--yes']);
+  assert.equal(init.status, 0, out(init));
+  let d = doctor(s, { cwd: project });
+  assert.equal(d.row('local').status, 'ok', JSON.stringify(d.row('local')));
+  assert.equal(d.row('local').detail, 'local/: ours');
+  const store = join(project, names.stateDir);
+  writeFileSync(join(store, 'local', '.machine'), `${'0'.repeat(32)}\n`);
+  const before = snapshot(project);
+  d = doctor(s, { cwd: project });
+  assert.equal(d.row('local').status, 'warn', JSON.stringify(d.row('local')));
+  assert.match(d.row('local').detail, /^local\/: foreign \(.+\), moved aside at the next command$/);
+  assert.deepEqual(changed(before, snapshot(project)), [], 'doctor wrote nothing');
+  assert.equal(cli(s, project, ['init', '--yes']).status, 0);
+  d = doctor(s, { cwd: project });
+  assert.equal(d.row('local').detail, 'local.foreign-*: 1 kept (safe to delete after review)');
 });

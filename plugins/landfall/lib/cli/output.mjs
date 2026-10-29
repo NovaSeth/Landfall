@@ -41,6 +41,31 @@ export function writeResult(io, { json, bin, command, result }) {
   return code;
 }
 
+// A question at a terminal (`trust`): the prompt on stderr, then one answer line from stdin (at most 200 characters;
+// '' at the end of input). The caller checks io.stdinIsTTY first.
+export function ask(io, question) {
+  io.err(forTerminal(question));
+  return new Promise((done) => {
+    const s = io.stdin;
+    if (!s) { done(''); return; }
+    let buf = '';
+    const finish = () => {
+      s.off('data', onData);
+      s.off('end', finish);
+      s.off('error', finish);
+      s.pause?.();
+      done(buf.split('\n')[0].slice(0, 200));
+    };
+    const onData = (c) => {
+      buf += String(c);
+      if (buf.includes('\n') || buf.length > 200) finish();
+    };
+    s.on('data', onData);
+    s.once('end', finish);
+    s.once('error', finish);
+  });
+}
+
 // A hook's result { text, stderr }: protocol for Claude Code, unchanged.
 export function writeHook(io, result) {
   if (result?.stderr) io.err(result.stderr);

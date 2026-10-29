@@ -28,6 +28,11 @@ import { upgradeDoc } from './upgrade.mjs';
 const PROJECTS = MACHINE_KINDS.projects;
 const absolute = (v) => (typeof v === 'string' && isAbsolute(v) ? v : null);
 
+// The machine data directory resolve() found for a state directory in this process (the command's environment, which
+// may differ from process.env when a command runs in-process); the store asks it for the owner of local/.
+const dataDirs = new Map();
+export const resolvedDataDir = (dir) => dataDirs.get(dir) ?? null;
+
 // Spec §5.3: $CLAUDE_PLUGIN_DATA → $CLAUDE_CODE_PLUGIN_CACHE_DIR/data/<id> → ${CLAUDE_CONFIG_DIR:-$HOME/.claude}
 // /plugins/data/<id>, <id> = <plugin>-<marketplace>. Relative values are ignored; null when nothing is set.
 export function machineDataDir(names, env) {
@@ -133,6 +138,7 @@ export function resolve({ cwd, env, names, timeoutMs } = {}) {
   const linked = Boolean(entry?.stateDir);
   const dir = entry?.stateDir ?? join(repo, names.stateDir);
   const copy = !linked && worktree !== repo ? join(worktree, names.stateDir) : null;
+  if (dataDir) dataDirs.set(dir, dataDir);
   return { repo, worktree, copy, dir, local: join(dir, 'local'), linked, declined: Boolean(entry?.declinedAt), active: existsSync(join(dir, 'state.json')), dataDir };
 }
 

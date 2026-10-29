@@ -17,7 +17,7 @@ import { readRecords } from '../decisions/index.mjs';
 import { emptyProfile } from '../profile/index.mjs';
 import { PATTERNS, StateError } from '../state/index.mjs';
 import { baselineSha, excusable, fingerprint } from './baseline.mjs';
-import { tailLines } from './gates.mjs';
+import { requireTrustedGates, tailLines } from './gates.mjs';
 import { runHeavy } from './heavy.mjs';
 import { byCodeUnit } from './inventory.mjs';
 import { projectRedactions, runRedacted } from './redact.mjs';
@@ -65,6 +65,7 @@ export function pinBaseline({ cwd, env, names, decision, at = new Date().toISOSt
   const profile = store.read('profile', null) ?? emptyProfile();
   if (profile.gates.length === 0) throw fail('no-gates', 'the profile has no gates, so nothing collects the tests to pin', `${names.bin} profile observe detects them`);
   const code = codeState(where, env);
+  requireTrustedGates({ where, names, env, gates: profile.gates });
   const extra = projectRedactions(where);
   const runs = runHeavy(profile.gates.filter((g) => g.kind === 'test'), { names, env, cwd: where.worktree, task: null }, (g) => runRedacted(g, { cwd: where.worktree, env, extra }));
   const output = runs.map((r) => ({ name: r.gate.name, lines: tailLines(r.output) }));

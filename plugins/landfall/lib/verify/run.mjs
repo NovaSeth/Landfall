@@ -49,12 +49,12 @@ import { authorHandle, readRecords, stateRel } from '../decisions/index.mjs';
 import { git } from '../git/index.mjs';
 import { PROFILE_KINDS, emptyProfile, listFiles, observe, riskGlobsOf } from '../profile/index.mjs';
 import { MAX_PATHS, addedSteps, applyClass, classify, rank, recordedKeys, routeFor, routeTask, routerThresholds, weightless } from '../router/index.mjs';
-import { KINDS, StateError, check, open, resolve } from '../state/index.mjs';
+import { KINDS, StateError, check, gatesShaOf, open, resolve } from '../state/index.mjs';
 import { appliedTier, readReport, reportHasEvidence, reviewNeed, reviewState } from './artifacts.mjs';
 import { measureAt } from './base.mjs';
 import { baselineSha, compareInventory, excusable, fingerprint, referenceOf, splitFailures } from './baseline.mjs';
 import { cacheKey, lookup, machineKey, store as storeRuns, treeOf } from './gate-cache.mjs';
-import { tailLines } from './gates.mjs';
+import { requireTrustedGates, tailLines } from './gates.mjs';
 import { runHeavy } from './heavy.mjs';
 import { readProjectPatterns, runRedacted } from './redact.mjs';
 import { byCodeUnit, hashOf } from './inventory.mjs';
@@ -76,7 +76,7 @@ const some = (list, n = 5) => (list.length <= n ? list.join(', ') : `${list.slic
 export const storeOf = (where, names) => open(where.dir, { names, kinds: { ...KINDS, ...PROFILE_KINDS, ...VERIFY_KINDS } });
 export const unknownTask = (id, where, names) => usage('task-unknown', `no task ${id} in ${where.dir}`, `'${names.bin} task list' lists the tasks`);
 // The identity of a gate set: what verify ran, in order.
-export const gatesSha = (gates) => hashOf(JSON.stringify(gates.map((g) => [g.name, g.cmd, g.timeoutS, g.kind])));
+export const gatesSha = gatesShaOf;
 // The sha256 of the working baseline's content (null without one), recomputed: an edit that keeps the field shows.
 export const workingSha = (store) => {
   const doc = store.read('baseline', null);
@@ -316,6 +316,7 @@ export function evaluate({ where, names, env, id, mode, handle = null, at = now(
   const task = store.read('task', id);
   if (task === null) throw unknownTask(id, where, names);
   const profile = store.read('profile', null) ?? emptyProfile();
+  requireTrustedGates({ where, names, env, gates: profile.gates });
   const code = codeState(where, env);
   const stateShown = stateRel(where.worktree, where.dir) ?? where.dir;
   const reasons = [];

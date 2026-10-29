@@ -139,7 +139,7 @@ export async function main(argv, { commands = COMMANDS, io = processIo() } = {})
     const impl = await row.load();
     let result;
     try {
-      result = await impl({ args, flags, names, version, io, json, pluginRoot: PLUGIN_ROOT });
+      result = await impl({ args, flags, names, version, io, json, yes: globals.yes, pluginRoot: PLUGIN_ROOT });
     } catch (err) {
       if (failOpen) throw err;
       result = await typedResult(err);

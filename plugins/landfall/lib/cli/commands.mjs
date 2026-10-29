@@ -957,6 +957,19 @@ const ROWS = [
     load: () => import('../config/commands.mjs').then((m) => m.flagsSet),
   },
   {
+    name: 'trust',
+    summary: 'Show the gate commands and threshold overrides this machine does not trust yet; trust them after a y at a terminal.',
+    details: [
+      'Gate commands run (verify, baseline pin, task merge) and threshold overrides count (route) only once this machine',
+      'set or trusted them: a cloned repository can ship both. Commands of this machine that write them trust them.',
+      'Asks "[y/N]" at a terminal; without one, or with --yes, it is refused (exit 7). --json lists and writes nothing.',
+    ],
+    args: [],
+    flags: [],
+    exits: ['OK', 'FAIL', 'REFUSED', 'ENV'],
+    load: () => import('./trust.mjs').then((m) => m.trust),
+  },
+  {
     name: 'config show',
     summary: 'Show the configuration: threshold overrides with their default and decision, executor preferences, changed flags.',
     details: [

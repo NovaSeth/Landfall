@@ -21,7 +21,7 @@
 //   protection   branch protection of the claim refs needs gh, which only lib/mirror may run (spec §4.3), not in this
 //                version → skip
 // Exit 0 healthy · 1 a check or row failed · 8 claude or git missing or not runnable (the report is still listed).
-import { accessSync, constants, readFileSync, realpathSync, statSync } from 'node:fs';
+import { accessSync, constants, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, isAbsolute, join } from 'node:path';
 import { flagsOf, readConfig } from '../config/index.mjs';
@@ -33,7 +33,7 @@ import { run } from '../proc/index.mjs';
 import { detectProviders } from '../providers/index.mjs';
 import { readProfile } from '../profile/index.mjs';
 import { currentCalibration, snapshot } from '../sched/index.mjs';
-import { KINDS, StateError, machineDataDir, open as openStore, resolve as resolveRepo } from '../state/index.mjs';
+import { KINDS, StateError, localForeign, machineDataDir, open as openStore, resolve as resolveRepo } from '../state/index.mjs';
 import { EXIT } from './commands.mjs';
 
 // SD-5: the oldest Claude Code version CI runs (tests/cli-contract.test.mjs keeps the two equal).
@@ -213,10 +213,23 @@ function flagList({ flags, ignored, lowered }) {
     ...lowered.map((l) => `${l.name} ${l.mode} in config.json ignored (a committed file never lowers a protective capability; flags set --local does)`)].join(', ');
 }
 
+// The owner of the state directory's local/ (T-MG-77, lib/state localForeign) and the moved-aside copies it left.
+function localRow(where, io, names) {
+  const hint = `a local/ shipped in the repository is moved aside to local.foreign-*/ by the next ${names.bin} command; review and delete those in ${where.dir}`;
+  try {
+    const f = localForeign(where.dir, { env: io.env });
+    if (f.foreign) return row('local', 'warn', `local/: foreign (${f.why}), moved aside at the next command`, hint);
+    let kept = 0;
+    try { kept = readdirSync(where.dir).filter((n) => n.startsWith('local.foreign-')).length; } catch { /* none */ }
+    if (kept) return row('local', 'warn', `local.foreign-*: ${kept} kept (safe to delete after review)`, hint);
+    return row('local', 'ok', 'local/: ours', hint);
+  } catch (err) { return row('local', 'skip', `not readable: ${firstLine(err.message)}`, hint); }
+}
+
 // The state, profile and flags rows of the repository at cwd. A StateError is a failed row (and an error) except
 // not-a-repo (rows skipped) and git-missing (an environment error). Returns { rows, repo, env }.
 function repoRows({ names, io, id, errors }) {
-  const ids = ['state', 'profile', 'flags'];
+  const ids = ['state', 'profile', 'flags', 'local'];
   const skipAll = (detail, hint) => ids.map((x) => row(x, 'skip', detail, hint));
   let where;
   try {
@@ -273,7 +286,7 @@ function repoRows({ names, io, id, errors }) {
       flagsRow = failed('flags', err);
     }
   }
-  return { rows: [stateRow, profileRow, flagsRow], repo: where.repo, worktree: where.worktree, env: null };
+  return { rows: [stateRow, profileRow, flagsRow, localRow(where, io, names)], repo: where.repo, worktree: where.worktree, env: null };
 }
 
 // The Bash guard's blocks of the last 7 days, from the plugin data shadow log (lib/hooks/guard-bash.mjs logs every block

@@ -38,6 +38,7 @@ const examples = {
   tombstone: () => ({ schema: KINDS.tombstone.version, id: 'T-MG-7', retiredAt: AT, by: 'MG', reason: 'created by mistake' }),
   projects: () => ({ schema: MACHINE_KINDS.projects.version, projects: { '/work/repo': { stateDir: '/work/state' }, '/work/other': { declinedAt: AT, handle: 'MG' } } }),
   machineConfig: () => ({ schema: MACHINE_KINDS.machineConfig.version, flags: { 'guard-bash': 'on' }, executors: { implementer: ['claude'] } }),
+  trust: () => ({ schema: MACHINE_KINDS.trust.version, repos: { ['a'.repeat(32)]: { gates: ['b'.repeat(64)], overrides: [], adoptedAt: AT } } }),
 };
 const kindOf = (name) => KINDS[name] ?? MACHINE_KINDS[name];
 const errorsAt = (name, doc) => check(kindOf(name), doc);
@@ -51,7 +52,7 @@ const set = (obj, path, value) => {
 
 test('the kinds of the state store and of machine data: versions, paths and keys round-trip', () => {
   assert.deepEqual(Object.keys(KINDS).sort(), ['config', 'counter', 'finding', 'state', 'task', 'team', 'tombstone']);
-  assert.deepEqual(Object.keys(MACHINE_KINDS), ['projects', 'machineConfig']);
+  assert.deepEqual(Object.keys(MACHINE_KINDS), ['projects', 'machineConfig', 'trust']); // T-MG-77 A2 (intended): the machine id is derived, not stored; B: trust.json
   for (const [name, kind] of [...Object.entries(KINDS), ...Object.entries(MACHINE_KINDS)]) {
     assert.ok(Number.isInteger(kind.version) && kind.version >= 1, `${name}: integer version`);
     assert.ok(kind.readUpTo >= kind.version, `${name}: reads at least its own version`);
