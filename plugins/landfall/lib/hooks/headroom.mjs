@@ -63,10 +63,10 @@ export function headroomUsage(path) {
   return null;
 }
 
-// The context window (D-MG-22): LANDFALL_CONTEXT_WINDOW (a positive integer) overrides; a model id with [1m] is
+// The context window (D-MG-22): <envPrefix>CONTEXT_WINDOW (a positive integer) overrides; a model id with [1m] is
 // 1,000,000; an observed total above 200,000 is 1,000,000 (a 1M model whose id lacks the marker); otherwise 200,000.
 export function windowOf({ model, total }, env = process.env) {
-  const set = env.LANDFALL_CONTEXT_WINDOW;
+  const set = env[`${loadNames().envPrefix}CONTEXT_WINDOW`];
   if (typeof set === 'string' && /^[1-9][0-9]{0,11}$/.test(set)) return Number(set);
   if (model.includes('[1m]') || total > 200000) return 1000000;
   return 200000;

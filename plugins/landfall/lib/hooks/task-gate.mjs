@@ -1,5 +1,5 @@
 // TaskCompleted → `task-gate` (T-MG-16, D-MG-23, FLW-8; capability task-mirror, opt-in). The native task list mirrors
-// Landfall tasks, but the state directory stays the source of truth: a native completion whose subject starts with the
+// the plugin's tasks, but the state directory stays the source of truth: a native completion whose subject starts with the
 // ID of an active-state task that is not done or cancelled is refused (exit 2; stderr goes back to the model, ≤ 200
 // characters). Any other subject, an unknown task, an inactive state or malformed input is allowed. The subject is data:
 // only its leading ID is read, and only the ID (matched against the state's pattern) reaches the message.

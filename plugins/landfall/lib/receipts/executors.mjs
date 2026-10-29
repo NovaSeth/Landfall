@@ -2,12 +2,16 @@
 // seeded percentile bootstrap interval, and the cost per task. Pure: no I/O. A suggestion needs two cells of one role
 // with at least MIN_TASKS tasks each whose first-pass intervals separate; cost breaks no tie.
 
+
+import { readFileSync } from 'node:fs';
+const NAMES = JSON.parse(readFileSync(new URL('../name.json', import.meta.url), 'utf8'));
+
 export const MIN_TASKS = 20;
 export const RESAMPLES = 1000;
 export const ROLES = Object.freeze(['implementer', 'reviewer']);
 
-// caw: and claude: are older spellings of landfall:; a bare provider id stays.
-export const normaliseExecutor = (label) => String(label).replace(/^(?:caw|claude):/, 'landfall:');
+// caw: and claude: are older spellings of the current prefix; a bare provider id stays.
+export const normaliseExecutor = (label) => String(label).replace(/^(?:caw|claude):/, `${NAMES.plugin}:`);
 
 // A label ending in :reviewer is a reviewer; every other executor implements.
 export const roleOf = (executor) => (/:reviewer$/.test(executor) ? 'reviewer' : 'implementer');

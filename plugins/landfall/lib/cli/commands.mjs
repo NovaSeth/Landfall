@@ -13,6 +13,9 @@
 // A command returns { code?, data?, errors?: [{ code, message, hint }], text?, warnings?: [text], usage? } and never
 // prints: lib/cli/output.mjs writes it (S2). code defaults to FAIL when errors are present, else OK.
 
+import { readFileSync } from 'node:fs';
+const NAMES = JSON.parse(readFileSync(new URL('../name.json', import.meta.url), 'utf8'));
+
 export const EXIT_CODES = [
   { code: 0, name: 'OK', meaning: 'success; for `tick`: do the listed steps now (ACTION)' },
   { code: 1, name: 'FAIL', meaning: 'the command ran and the checked condition is false (verify failed, check found problems, claim held, merge conflict)' },
@@ -1032,7 +1035,7 @@ const ROWS = [
     summary: 'Mirror tasks to GitHub issues, one way: opt-in, prints its target repository, writes only with --yes or a terminal.',
     details: [
       'Runs gh auth status first (exit 8 when it fails). One issue per task titled "<task ID> <title>", marked',
-      '<!-- landfall:<task ID> -->, labelled landfall, class:<class>, status:<status>; a done or cancelled task is closed.',
+      `<!-- ${NAMES.codename}:<task ID> -->, labelled ${NAMES.codename}, class:<class>, status:<status>; a done or cancelled task is closed.`,
       'Existing issues are found by the marker and edited only when they differ: a rerun without changes writes nothing.',
       'Issues are never read back into the state. --dry-run prints the plan and writes nothing.',
     ],
@@ -1205,7 +1208,7 @@ const ROWS = [
   },
   {
     name: 'exec',
-    summary: 'Start an external reviewer (pinned review brief, latest round or --round) or implementer (task worktree, task brief or --brief).',
+    summary: 'Start an external reviewer (pinned review brief, latest round or --round) or implementer (task worktree and brief).',
     details: [
       'The provider is selected like the dispatch does (found, logged in, declared for the role; --provider names one). The',
       'record starts as {status: starting}; the supervisor (run-supervise) takes the external lease (queued while none is',
