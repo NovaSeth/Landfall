@@ -23,6 +23,7 @@ import { stateDirName } from '../state/index.mjs';
 import { admitHook, bindHook, releaseHook } from './admit.mjs';
 import { decisionsContext } from './edit-decisions.mjs';
 import { editProtect } from './edit-protect.mjs';
+import { externalBash } from './external-bash.mjs';
 import { guardBash } from './guard-bash.mjs';
 import { guardWakeup } from './guard-wakeup.mjs';
 import { loadNames, stateOf } from './loop-state.mjs';
@@ -54,6 +55,12 @@ export const HOOKS = [
   { name: 'bind-agent', event: 'PostToolUse', matcher: 'Agent', timeout: TIMEOUT_S, budgetMs: BUDGET_MS, handler: bindHook, onError: 'allow', capability: 'admission' },
   { name: 'release-agent', event: 'SubagentStop', timeout: TIMEOUT_S, budgetMs: BUDGET_MS, handler: releaseHook, onError: 'allow', capability: 'admission' },
   { name: 'stop-guard', event: 'Stop', timeout: TIMEOUT_S, budgetMs: BUDGET_MS, handler: stopGuard, onError: 'allow' },
+];
+
+// Hooks that run only for one agent: the agent's own frontmatter names `<bin> hook <name>`. They are not in hooks.json (a
+// plugin-wide hook would guard every Bash call), but `hook <name>` runs them under the same error policy.
+export const AGENT_HOOKS = [
+  { name: 'external-bash', event: 'PreToolUse', matcher: 'Bash', timeout: TIMEOUT_S, budgetMs: BUDGET_MS, handler: externalBash, onError: 'allow' },
 ];
 
 // The hooks modules (Claude Code function hooks) the plugin ships next to the command hooks: the dashboard pane and status
@@ -122,6 +129,6 @@ export function runRow(hook, text, { oversize = false, incomplete = false, ...op
 }
 
 export function runHook(name, text, opts = {}) {
-  const hook = HOOKS.find((h) => h.name === name);
+  const hook = [...HOOKS, ...AGENT_HOOKS].find((h) => h.name === name);
   return hook ? runRow(hook, text, opts) : { stdout: '' };
 }

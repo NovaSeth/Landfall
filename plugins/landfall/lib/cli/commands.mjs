@@ -391,8 +391,8 @@ const ROWS = [
   },
   {
     name: 'hook',
-    summary: 'Hook entry point named in hooks/hooks.json; reads the hook event JSON on stdin.',
-    details: ['Hooks are listed in lib/hooks/registry.mjs. Malformed input or an unknown hook name: no output (allow).',
+    summary: 'Hook entry point named in hooks/hooks.json or in an agent\'s frontmatter; reads the hook event JSON on stdin.',
+    details: ['Hooks are listed in lib/hooks/registry.mjs (HOOKS for the plugin, AGENT_HOOKS for one agent). Malformed input or an unknown hook name: no output (allow).',
       'A guard that cannot verify a Bash command holding a guarded token (an error, over its time budget, input over the size cap, a broken install) blocks it with exit 2 and the reason on stderr.'],
     args: [{ name: 'name', required: true, summary: 'hook name from the registry' }],
     flags: [],

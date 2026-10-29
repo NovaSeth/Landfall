@@ -9,26 +9,36 @@
 import { closeSync, openSync, readSync } from 'node:fs';
 
 const CHUNK = 1 << 20;
+const LINE_MAX = 1 << 20; // a longer line is skipped, not held in memory
 export const TASK_ID = /\bT-[A-Z]{2,4}-[1-9]\d{0,5}\b/;
 const TASK_SWITCH_SUBCOMMANDS = ['task', 'route', 'brief', 'verify', 'exec'];
 const escape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-// Calls fn(line) for every complete line of `file`; true when an unterminated last line was left.
-export function eachLine(file, fn) {
+// Calls fn(line) for every complete line of `file` of at most LINE_MAX bytes; true when an unterminated last line was
+// left. A longer line is never held: the reader skips to its newline and calls onSkip() once for it. Each chunk is
+// searched for a newline once, so the work is linear in the file size.
+export function eachLine(file, fn, { onSkip = () => {} } = {}) {
   const fd = openSync(file, 'r');
   try {
     const buf = Buffer.alloc(CHUNK);
-    let rest = Buffer.alloc(0);
+    let parts = []; // the pending start of a line (no newline yet)
+    let size = 0;
+    let skipping = false; // inside a line that went over LINE_MAX
     for (let n; (n = readSync(fd, buf, 0, CHUNK, null)) > 0;) {
-      const data = Buffer.concat([rest, buf.subarray(0, n)]);
+      const chunk = buf.subarray(0, n);
       let start = 0;
-      for (let end = data.indexOf(10); end !== -1; end = data.indexOf(10, start)) {
-        fn(data.toString('utf8', start, end).replace(/\r$/, ''));
+      for (let end = chunk.indexOf(10, start); end !== -1; end = chunk.indexOf(10, start)) {
+        if (skipping) skipping = false;
+        else if (size + (end - start) > LINE_MAX) onSkip();
+        else fn(Buffer.concat([...parts, chunk.subarray(start, end)]).toString('utf8').replace(/\r$/, ''));
+        parts = []; size = 0;
         start = end + 1;
       }
-      rest = data.subarray(start);
+      if (skipping || start >= n) continue;
+      size += n - start;
+      if (size > LINE_MAX) { parts = []; size = 0; skipping = true; onSkip(); } else parts.push(Buffer.from(chunk.subarray(start)));
     }
-    return rest.length > 0;
+    return skipping || size > 0;
   } finally {
     closeSync(fd);
   }
@@ -91,6 +101,6 @@ export function parseTranscript(file, { bin }) {
         req.agents.push({ toolUseId: block.id, name: typeof input.name === 'string' ? input.name : null, description: typeof input.description === 'string' ? input.description : null });
       }
     }
-  });
+  }, { onSkip: () => { malformed++; } }); // a line over the cap is a broken line
   return { requests: [...requests.values()].map(({ seen, ...r }) => r), malformed, versions };
 }
