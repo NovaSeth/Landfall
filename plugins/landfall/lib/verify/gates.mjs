@@ -35,7 +35,7 @@ export function requireTrustedGates({ where, names, env, gates }) {
   if (isTrusted({ dir: where.dir, dataDir: where.dataDir, names, env, kind: 'gates', sha: gatesShaOf(gates) }).trusted) return;
   const list = gates.map((g) => `${g.name}: ${g.cmd}`);
   throw new StateError('gates-untrusted', 'REFUSED', `the gate commands of ${where.repo} are not trusted on this machine, so none ran: ${list.join('; ')}`.slice(0, 600), {
-    hint: TRUST_HINT.replaceAll('landfall', names.bin), details: gates.map((g) => ({ name: g.name, cmd: g.cmd })),
+    hint: TRUST_HINT.replaceAll('{bin}', names.bin), details: gates.map((g) => ({ name: g.name, cmd: g.cmd })),
   });
 }
 

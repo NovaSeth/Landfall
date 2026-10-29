@@ -15,7 +15,7 @@ export async function trust({ names, io, json, yes = false }) {
   const store = state.open(where.dir, { names, kinds: { ...state.KINDS, ...PROFILE_KINDS } });
   const gates = store.read('profile', null)?.gates ?? [];
   const thresholds = store.read('config', null)?.thresholds ?? {};
-  const hint = state.TRUST_HINT.replaceAll('landfall', names.bin);
+  const hint = state.TRUST_HINT.replaceAll('{bin}', names.bin);
   const check = (kind, sha) => (sha ? state.isTrusted({ dir: where.dir, dataDir: where.dataDir, names, env: io.env, kind, sha, adopt: !json }).trusted : true);
   const gatesSha = gates.length ? state.gatesShaOf(gates) : null;
   const overridesSha = Object.keys(thresholds).length ? state.overridesShaOf(thresholds) : null;

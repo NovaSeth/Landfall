@@ -34,7 +34,7 @@ function configPair(v, where) {
 const TASK_REF = /^(refs\/(heads|remotes\/[^/]+)\/|[^/\s-][^/\s]*\/)?task\/T-[A-Za-z0-9]/;
 const namesTaskBranch = (args) => args.some((a) => TASK_REF.test(a.replace(/^\+/, '')));
 const MERGE_TASK = 'ORC-25: blocked a plain `git merge` of a task branch into the target. Instead merge task branches with '
-  + '`landfall task merge <ids…>` (one gate for the batch, recorded in the state).';
+  + 'the plugin\'s `task merge <ids…>` (one gate for the batch, recorded in the state).';
 
 // Subcommands with a transport: an ext::<command> address runs the command.
 const TRANSPORT = new Set(['clone', 'fetch', 'pull', 'ls-remote', 'push', 'remote', 'archive', 'submodule']);
@@ -108,7 +108,7 @@ export function gitShape(c, w, ctx) {
     // T-MG-80: a task branch merged by hand into the target is not in the state. Allowed on a task or batch branch (ORC-12);
     // the current branch cannot be told → ctx.branch refuses (no proof, GC8).
     const cur = ctx.branch(dir);
-    if (!/^(task|landfall)\//.test(cur)) return MERGE_TASK;
+    if (!/^task\/|\/batch-\d{8}T\d{6}/.test(cur)) return MERGE_TASK;
   }
   // a --no-verify prefix anywhere before "--" of a merge-like command, also as an option value (fail closed, as 1.5.2)
   if (MERGE_LIKE.has(sub)) {

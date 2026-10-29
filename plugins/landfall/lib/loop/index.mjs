@@ -119,7 +119,7 @@ function stateChanges(where, env) {
   return out.sort();
 }
 
-// Tasks merged outside landfall (T-MG-80): done, a recorded branch, no `merged` event, and the branch tip is an ancestor of
+// Tasks merged outside the plugin (T-MG-80): done, a recorded branch, no `merged` event, and the branch tip is an ancestor of
 // the target. The target is what `task merge` merges into: HEAD of the main checkout (the first worktree), asked there and
 // never in a task worktree, where its own branch is always an ancestor of HEAD. Every candidate is checked with one git
 // call (the branches merged into HEAD, then a set lookup; fix round 1, F6); only the display is limited (OUTSIDE_MAX).

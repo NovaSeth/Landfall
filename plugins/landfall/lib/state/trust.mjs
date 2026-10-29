@@ -1,5 +1,5 @@
 // Machine trust (T-MG-77 slice B): which gate sets and threshold overrides of a repository this machine runs or counts.
-// A cloned repository can ship .landfall/profile.json (gate commands run by sh -c) and config.json (threshold
+// A cloned repository can ship <state dir>/profile.json (gate commands run by sh -c) and config.json (threshold
 // overrides that move the router's classes). Neither runs nor counts until this machine set or trusted it.
 //   trust.json (machine data dir, schema 1): { repos: { <repoKey>: { gates: [sha…], overrides: [sha…], adoptedAt? } } },
 //   at most TRUST_MAX shas per list, newest last. Atomic replace under its own lock (trust.lock in the machine data dir).
@@ -16,7 +16,7 @@
 //     enough. A repository whose shipped local/ was moved aside has an entry without adoption, written before the
 //     rename (store.mjs moveAside), and so has one linked by `init --state-dir` from this release on (activation.mjs
 //     trustLink, fix round 2, AR-3): adoption covers only links made before this release.
-// Everything else needs `landfall trust` at a terminal.
+// Everything else needs the `trust` command at a terminal.
 import { createHash } from 'node:crypto';
 import { readFileSync, realpathSync } from 'node:fs';
 import { isAbsolute, join, resolve as resolvePath } from 'node:path';
@@ -32,7 +32,7 @@ import { format } from './schema.mjs';
 import { upgradeDoc } from './upgrade.mjs';
 
 export const TRUST_MAX = 50;
-export const TRUST_HINT = 'run `! landfall trust` in Claude Code, or `landfall trust` in a terminal';
+export const TRUST_HINT = 'run `! {bin} trust` in Claude Code, or `{bin} trust` in a terminal';
 const TRUST = MACHINE_KINDS.trust;
 const sha256 = (text) => createHash('sha256').update(String(text)).digest('hex');
 

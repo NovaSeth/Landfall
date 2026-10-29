@@ -131,7 +131,7 @@ test('guard: git merge or pull of a task branch on the target is blocked with th
   for (const c of ['git merge task/T-MG-80-x', 'git merge --no-ff -m "m" task/T-AB-3', 'git merge origin/task/T-AB-3', 'git pull origin task/T-AB-3', 'git merge refs/heads/task/T-AB-3']) {
     const v = verdict(main, c);
     assert.ok(v.deny, c);
-    assert.match(v.reason, /merge task branches with `landfall task merge <ids…>` \(one gate for the batch, recorded in the state\)/, c);
+    assert.match(v.reason, /merge task branches with the plugin's `task merge <ids…>` \(one gate for the batch, recorded in the state\)/, c);
     assert.ok(v.reason.length <= 300, 'reason within 300 characters');
   }
 });

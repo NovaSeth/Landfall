@@ -19,7 +19,7 @@
 // without effect; the error names it.
 import { thresholdsOf } from '../config/index.mjs';
 import { readRecords } from '../decisions/index.mjs';
-import { LIMITS, allocateId, isTrusted, overridesShaOf } from '../state/index.mjs';
+import { LIMITS, TRUST_HINT, allocateId, isTrusted, overridesShaOf } from '../state/index.mjs';
 import { FLAGS, THRESHOLDS, classify, publicReasons } from './classify.mjs';
 import { checkQuote, renderOverride } from './decision.mjs';
 import { RouteError, usage } from './errors.mjs';
@@ -151,7 +151,7 @@ export function countedOverrides(store) {
     const dropped = Object.keys(all).filter((k) => !Object.hasOwn(kept, k));
     const dataDir = typeof store.dataDir === 'function' ? store.dataDir() : null;
     const trust = isTrusted({ dir: store.dir, dataDir, names: store.names, kind: 'overrides', sha: overridesShaOf(all) });
-    if (!trust.trusted) return { kept: {}, ignored: 'not trusted on this machine (run `! landfall trust` in Claude Code, or `landfall trust` in a terminal)' };
+    if (!trust.trusted) return { kept: {}, ignored: `not trusted on this machine (${TRUST_HINT.replaceAll('{bin}', store.names?.bin ?? 'the CLI')})` };
     if (dropped.length) return { kept, ignored: `${dropped.slice(0, 3).join(', ')}${dropped.length > 3 ? ` (+${dropped.length - 3} more)` : ''} cite no active route-override decision or decision scoped to config.json` };
     return { kept, ignored: null };
   } catch {
