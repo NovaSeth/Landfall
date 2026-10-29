@@ -766,7 +766,7 @@ Exit codes: 0 OK · 1 FAIL · 7 REFUSED · 8 ENV
 usage: landfall profile set <key> <value> [--source <said|observed>] [--evidence <text>] [--yes] [--json]
 
 Record one profile fact with its source and evidence: the user's words (said) or a path:line (observed).
-Keys: goal, productKind, phase, people, ui, backend, dataSensitivity, deployedToUsers, deadline, stack, ci, otherHarnesses, riskGlobs, reviewFocus.
+Keys: goal, productKind, phase, people, ui, backend, llm, dataSensitivity, deployedToUsers, deadline, stack, ci, otherHarnesses, riskGlobs, reviewFocus.
 riskGlobs: the project's own risk globs (comma-separated), added to the scanned risk paths for route and verify; reviewFocus:
 what every review of the project checks (comma-separated notes), written into the task brief and the review brief.
 A said fact outranks an observed one (exit 1). Exit 7 in an inactive repository.
@@ -888,10 +888,10 @@ Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
 Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
 ```
 
-### `landfall review brief <id> [--round <k>] [--scope <ids>] [--write] [--force] [--yes] [--json]`
+### `landfall review brief <id> [--round <k>] [--scope <ids>] [--security] [--write] [--force] [--yes] [--json]`
 
 ```text
-usage: landfall review brief <id> [--round <k>] [--scope <ids>] [--write] [--force] [--yes] [--json]
+usage: landfall review brief <id> [--round <k>] [--scope <ids>] [--security] [--write] [--force] [--yes] [--json]
 
 Review brief of a task: range pinned to HEAD, diff saved to a file, acceptance, risks, output shape; --write saves it.
 Round: --round, else the next after the recorded review rounds. Range: the task base (a later round: the HEAD its previous review
@@ -900,6 +900,7 @@ directory left out) goes to local/review/<id>-r<k>.diff in the state directory. 
 points of tasks/<id>/brief.md, the risks (profile risk paths the diff touches, the profile's review focus, decisions cited in the
 changed files), the previous round's findings to re-check (--scope narrows them), the severity rule and the output shape.
 --write saves tasks/<id>/review-r<k>-brief.md; a brief edited by hand is kept unless --force. Exit 1: no such task, not routed, no base.
+Security focus (SEC-13): a changed file on a security or AI path (lib/router/focus.json), the route flag security, or --security names the security reviewer and the OWASP checklists.
 
 Arguments:
   id  task ID such as T-AB-1
@@ -907,6 +908,7 @@ Arguments:
 Options:
   --round <k>    the review round (default: the next one)
   --scope <ids>  comma-separated finding IDs of the previous round to re-check (default: all of them)
+  --security     security focus: the security reviewer and the OWASP checklists, also without a security trigger
   --write        save it as tasks/<id>/review-r<k>-brief.md in the state directory (the task's owner)
   --force        with --write: replace a brief written or edited by hand
 

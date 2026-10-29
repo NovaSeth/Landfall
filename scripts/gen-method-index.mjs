@@ -30,7 +30,7 @@ const DEFAULT_DIR = join(pluginDir(ROOT) ?? join(ROOT, 'plugins', 'missing-plugi
 
 // Rule-ID prefixes of the method, one per topic file (RES and ADP are reserved family prefixes without a file).
 export const V2_PREFIXES = ['PRI', 'FLW', 'DSC', 'SPC', 'COD', 'ORC', 'RES', 'REV', 'SEC', 'DSG', 'MEM', 'TRP', 'ADP', 'COL', 'RUN',
-  'SCR', 'CTR', 'WRT', 'SVC', 'SCD', 'REL'];
+  'SCR', 'CTR', 'WRT', 'SVC', 'SCD', 'REL', 'OWA', 'LLM', 'AGT'];
 
 // Packs and the profile facts or engine signals that activate them. "any" is evaluated by activePacks() (lib/method);
 // "when" is the same condition for people. Every pack can also be loaded on request.
@@ -41,6 +41,7 @@ export const PACKS = {
   // Fail-safe: a sensitivity value that is neither listed nor "none" counts as sensitive.
   security: { when: 'dataSensitivity personal, payment, health or any unknown non-empty value (not none), or tier >= L3',
     any: [{ key: 'dataSensitivity', in: ['personal', 'payment', 'health'], off: ['none'], unknown: 'activate' }, { key: 'tier', atLeast: 'L3' }] },
+  ai: { when: 'llm', any: [{ key: 'llm', is: true }] },
   team: { when: 'tier >= L2', any: [{ key: 'tier', atLeast: 'L2' }] },
   runbooks: { when: 'deployedToUsers, or incidents30 >= 1', any: [{ key: 'deployedToUsers', is: true }, { key: 'incidents30', atLeast: 1 }] },
   release: { when: 'deployedToUsers, or incidents30 >= 1, or tier >= L3', any: [{ key: 'deployedToUsers', is: true }, { key: 'incidents30', atLeast: 1 }, { key: 'tier', atLeast: 'L3' }] },

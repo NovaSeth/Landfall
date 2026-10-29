@@ -15,6 +15,6 @@ Rules: `landfall rule PRI-3 PRI-4 PRI-18 ORC-1 ORC-2 ORC-3 ORC-4 ORC-7 ORC-8 ORC
 3. Record: `landfall task set <id> dispatched --executor <name> --base <sha> --yes`; the agent gets only the brief path (PRI-3, ORC-3). It runs `landfall secrets` (exit 0) before its report.
 4. Its report: `landfall report <id> --from <file> --yes` stores it, records the event (a fix round: `--round <k>`) (ORC-7).
 5. Check it: commits, tree, scope, red/green (ORC-8, FLW-6); then in the worktree `landfall verify <id> --yes`. Fail: `task set <id> fix-round --round <k> --addressed <n> --open <n>`.
-6. Review as `landfall brief <id>` says (none, `landfall:reviewer` or `landfall:external`): `landfall review brief <id> --write --yes`, the `review` skill, `landfall review record <id> --from <file> --yes`.
+6. Review as `landfall brief <id>` says (none, `landfall:reviewer`, `landfall:security-reviewer` or `landfall:external`): `landfall review brief <id> --write --yes`, the `review` skill, `landfall review record <id> --from <file> --yes`.
 7. At most 2 fix rounds; then `landfall decide --kind review-close --task <id> --remaining <blocking IDs> --yes`.
 8. Finish: `landfall task done <id> --yes`, `landfall task merge <id> --yes`, `landfall commit --yes`. After compaction: `landfall task show <id>` (MEM-11).

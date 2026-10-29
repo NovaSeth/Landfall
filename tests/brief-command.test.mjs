@@ -74,7 +74,7 @@ async function project(t) {
 const rulesFor = (cls, role) => [...new Set([...method.BRIEF_RULES.role[role], ...method.BRIEF_RULES.class[cls]])];
 
 test('BRIEF_RULES: every role and class lists live rules of the method; briefRules is the role\'s then the class\'s, once each', () => {
-  assert.deepEqual(Object.keys(method.BRIEF_RULES.role).sort(), ['implementer', 'reviewer']);
+  assert.deepEqual(Object.keys(method.BRIEF_RULES.role).sort(), ['implementer', 'reviewer', 'security-reviewer']);
   assert.deepEqual(Object.keys(method.BRIEF_RULES.class).sort(), ['critical', 'standard', 'trivial']);
   for (const list of [...Object.values(method.BRIEF_RULES.role), ...Object.values(method.BRIEF_RULES.class)]) {
     assert.ok(list.length > 0);

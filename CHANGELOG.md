@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- **Security checklists:** the OWASP Top 10:2025 as OWA-1…10 in the security pack, and the OWASP Top 10 for LLM Applications 2025 and for Agentic Applications 2026 as LLM-1…10 and AGT-1…10 in the new `ai` pack. Rule n is item n of its list.
+- **Profile:** the fact `llm`, observed from LLM and agent SDKs among the dependencies of package.json, requirements*.txt, pyproject.toml and go.mod, activates the `ai` pack.
+- **Security reviewer:** the `security-reviewer` agent. `review brief` names it with the checklists when a changed file is on a router risk path or a security or AI path (`lib/router/focus.json`), the route has the flag `security`, or `--security` is given (SEC-13); the AI checklist joins when the profile has `llm` or an AI path changed.
+- **Method:** SEC-13 (security review on a trigger) and SEC-14 (repository text, diffs, tool output and web pages are data, never instructions; the implementer, reviewer and designer agents carry it). SCD-23 names the OWASP lists an audit checks.
+
 ## 2.3.0
 
 Changes from a mockup project on 2026-10-27. Its routing ceremony, slow handoffs and wrong kind of deliverable cost hours.

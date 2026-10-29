@@ -5,3 +5,4 @@ export { RouteError } from './errors.mjs';
 export { CRITICAL_FLAGS, DEFAULT_RISK_PATHS, FLAGS, MAX_PATHS, THRESHOLDS, classify, compileGlob, globMatch, normalizePath, weightless } from './classify.mjs';
 export { CLASSES, OUTCOME_GATES, addedSteps, higher, rank, routeFor } from './routes.mjs';
 export { OVERRIDE_EVENT, ROUTE_EVENT, applyClass, overrideTask, recordedKeys, routeTask, routerThresholds, thresholdsWithOverrides } from './ratchet.mjs';
+export { AI_PATHS, CHECKLISTS, SECURITY_PATHS, reviewFocus } from './focus.mjs';

@@ -111,7 +111,7 @@ const ROWS = [
     name: 'profile set',
     summary: 'Record one profile fact with its source and evidence: the user\'s words (said) or a path:line (observed).',
     details: [
-      'Keys: goal, productKind, phase, people, ui, backend, dataSensitivity, deployedToUsers, deadline, stack, ci, otherHarnesses, riskGlobs, reviewFocus.',
+      'Keys: goal, productKind, phase, people, ui, backend, llm, dataSensitivity, deployedToUsers, deadline, stack, ci, otherHarnesses, riskGlobs, reviewFocus.',
       'riskGlobs: the project\'s own risk globs (comma-separated), added to the scanned risk paths for route and verify; reviewFocus:',
       'what every review of the project checks (comma-separated notes), written into the task brief and the review brief.',
       'A said fact outranks an observed one (exit 1). Exit 7 in an inactive repository.',
@@ -720,11 +720,13 @@ const ROWS = [
       'points of tasks/<id>/brief.md, the risks (profile risk paths the diff touches, the profile\'s review focus, decisions cited in the',
       'changed files), the previous round\'s findings to re-check (--scope narrows them), the severity rule and the output shape.',
       '--write saves tasks/<id>/review-r<k>-brief.md; a brief edited by hand is kept unless --force. Exit 1: no such task, not routed, no base.',
+      'Security focus (SEC-13): a changed file on a security or AI path (lib/router/focus.json), the route flag security, or --security names the security reviewer and the OWASP checklists.',
     ],
     args: [{ name: 'id', required: true, summary: 'task ID such as T-AB-1' }],
     flags: [
       { flag: '--round', value: 'k', summary: 'the review round (default: the next one)' },
       { flag: '--scope', value: 'ids', summary: 'comma-separated finding IDs of the previous round to re-check (default: all of them)' },
+      { flag: '--security', summary: 'security focus: the security reviewer and the OWASP checklists, also without a security trigger' },
       { flag: '--write', summary: 'save it as tasks/<id>/review-r<k>-brief.md in the state directory (the task\'s owner)' },
       { flag: '--force', summary: 'with --write: replace a brief written or edited by hand' },
     ],

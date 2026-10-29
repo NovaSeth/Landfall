@@ -203,3 +203,14 @@ test('lib/method: lookup, unknown IDs and pack resolution; the generator imports
   assert.match(readFileSync(join(root, 'scripts', 'gen-method-index.mjs'), 'utf8'), /lib', 'method'/, 'the generator loads lib/method');
   assert.doesNotMatch(readFileSync(join(root, 'scripts', 'gen-method-index.mjs'), 'utf8'), /function activePacks/, 'no second copy of activePacks');
 });
+
+test('OWASP, LLM and agent rules resolve by ID and the ai pack activates on the llm fact', async () => {
+  const r = cli(['rule', 'OWA-1', 'OWA-10', 'LLM-1', 'LLM-10', 'AGT-1', 'AGT-10', 'SEC-13', 'SEC-14', 'SCD-23']);
+  assert.equal(r.status, 0, out(r));
+  for (const id of ['OWA-1', 'OWA-10', 'LLM-1', 'LLM-10', 'AGT-1', 'AGT-10', 'SEC-13', 'SEC-14', 'SCD-23']) assert.match(r.stdout, new RegExp(`${id}\\. `));
+  const { activePacks: active } = await lib('method/index.mjs');
+  assert.ok(active(index.packs, { llm: true }).includes('ai'));
+  assert.ok(!active(index.packs, { llm: false }).includes('ai'));
+  assert.ok(!active(index.packs, {}).includes('ai'));
+  assert.ok(index.packs.security.topics.includes('packs/security/owasp'));
+});

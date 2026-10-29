@@ -16,7 +16,7 @@ const sub = (f, agent_type) => hook('subagent-start', { session_id: 's', hook_ev
 test('executor rules: the plugin agents in an active repository get ≤ 800 characters with the five rules and valid rule IDs', (t) => {
   const f = repo(t);
   assert.equal(EXECUTOR_MAX, 800);
-  for (const agent of ['implementer', 'reviewer', 'designer']) {
+  for (const agent of ['implementer', 'reviewer', 'designer', 'security-reviewer']) {
     const v = sub(f, `${names.plugin}:${agent}`);
     assert.equal(v.event, 'SubagentStart', agent); assert.deepEqual(v.keys, ['hookSpecificOutput']);
     const c = v.context;

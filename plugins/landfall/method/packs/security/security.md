@@ -42,7 +42,7 @@
 
 ### Audit
 **SCD-22.** Run an audit on the strongest model with high effort, because it needs architectural judgment (permission model, multi-tenancy).
-**SCD-23.** An audit covers changes in the guidelines (OWASP ASVS, API Security Top 10, platform documentation, MASVS and MASTG for mobile), the whole guide against the whole code, a dependency audit, the secrets scan over the full history and a key-leak check of every built artifact.
+**SCD-23.** An audit covers changes in the guidelines (OWASP Top 10 and ASVS, API Security Top 10, the LLM and Agentic Top 10 for AI features, platform documentation, MASVS and MASTG for mobile), the whole guide against the whole code, a dependency audit, the secrets scan over the full history and a key-leak check of every built artifact.
 **SCD-24.** Audit tools: static (Semgrep, Gitleaks, the package manager's audit or osv-scanner, MobSF for mobile binaries) and dynamic only against your own stack (OWASP ZAP driven by OpenAPI, mitmproxy, deep-link fuzzing, another tenant's identifiers).
 **SCD-25.** MUST NOT run load tests or scans against external systems, staging or production without the PO's consent; against your own local or test stack they are allowed.
 

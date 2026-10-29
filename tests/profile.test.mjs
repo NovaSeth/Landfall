@@ -123,7 +123,7 @@ const WEB = {
 // ---- keys ----
 
 test('the profile keys are the spec §7.3 list, fixed in keys.mjs; the deployment fact is deployedToUsers (§7.4a)', () => {
-  assert.deepEqual(profile.KEYS, ['goal', 'productKind', 'phase', 'people', 'ui', 'backend', 'dataSensitivity', 'deployedToUsers', 'deadline', 'stack', 'ci', 'otherHarnesses', 'riskGlobs', 'reviewFocus', 'gates', 'riskPaths']);
+  assert.deepEqual(profile.KEYS, ['goal', 'productKind', 'phase', 'people', 'ui', 'backend', 'llm', 'dataSensitivity', 'deployedToUsers', 'deadline', 'stack', 'ci', 'otherHarnesses', 'riskGlobs', 'reviewFocus', 'gates', 'riskPaths']);
   assert.ok(!profile.KEYS.includes('deployed'), '`deployed` is not a key (§7.4a)');
   const F = profile.FACT_KEYS;
   assert.deepEqual(Object.keys(F), profile.KEYS.filter((k) => k !== 'gates' && k !== 'riskPaths'), 'gates and riskPaths are profile fields of their own (§5.1)');
@@ -155,7 +155,7 @@ test('method pack activation (activePacks) reads exactly the profile keys, with 
   const ENGINE_SIGNALS = ['incidents30', 'tier']; // spec §7.4 engine signals, not profile facts
   const used = [...new Set(Object.values(PACKS).flatMap((p) => p.any.map((c) => c.key)))].sort();
   const fromProfile = used.filter((k) => !ENGINE_SIGNALS.includes(k));
-  assert.deepEqual(fromProfile, ['backend', 'dataSensitivity', 'deployedToUsers', 'phase', 'ui']);
+  assert.deepEqual(fromProfile, ['backend', 'dataSensitivity', 'deployedToUsers', 'llm', 'phase', 'ui']);
   for (const k of fromProfile) assert.ok(Object.hasOwn(profile.FACT_KEYS, k), `${k} is a profile key`);
   for (const k of ENGINE_SIGNALS) assert.ok(!profile.KEYS.includes(k), `${k} is not a profile key`);
   for (const [name, pack] of Object.entries(PACKS)) {

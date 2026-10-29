@@ -1,4 +1,4 @@
-// `<bin> review brief <id> [--round <k>] [--scope <ids>] [--write [--force]]` (ORC-5, REV-6): the review brief of a task
+// `<bin> review brief <id> [--round <k>] [--scope <ids>] [--security] [--write [--force]]` (ORC-5, REV-6): the review brief of a task
 // rendered from templates/task/review-brief.md of the plugin and the state: the range pinned to HEAD (round 1: the task
 // base; a later round: the HEAD the previous review brief pinned), the diff (-U10, the state directory left out) saved to
 // local/review/<id>-r<k>.diff in the state directory, the changed files, the acceptance points of the task brief, the risks
@@ -13,7 +13,7 @@ import { citedIn, readRecords, stateRel, summarize } from '../decisions/index.mj
 import { git } from '../git/index.mjs';
 import { briefRules } from '../method/index.mjs';
 import { openStore as profileStore } from '../profile/index.mjs';
-import { globMatch } from '../router/index.mjs';
+import { CHECKLISTS, globMatch, recordedKeys, reviewFocus } from '../router/index.mjs';
 import { KINDS, open, resolve, writeTaskText } from '../state/index.mjs';
 import { codeState } from '../verify/run.mjs';
 import { openStore } from '../verify/index.mjs';
@@ -110,7 +110,12 @@ export function reviewBrief({ args, flags, names, io, pluginRoot }) {
 
   const acceptance = acceptanceOf(store.readText(`tasks/${id}/brief.md`));
   const profile = profileStore(where.dir, names).read('profile');
-  const risks = [];
+  const review = reviewFocus({ files, security: Boolean(flags.security), routeFlags: recordedKeys(task).flags, llm: profile?.facts?.llm?.value === true });
+  const risks = review.triggers.map((t) => `security trigger: ${t}`);
+  if (review.focus === 'security') {
+    risks.push(`security checklist (OWASP Top 10:2025): ${CHECKLISTS.web.join(' ')}, read them with \`${bin} rule <ID…>\``);
+    if (review.checklists.includes('ai')) risks.push(`AI checklist (OWASP Top 10 for LLM Applications 2025, Agentic Applications 2026): ${CHECKLISTS.ai.join(' ')}`);
+  }
   for (const file of files) for (const glob of profile?.riskPaths ?? []) if (globMatch(glob, file)) risks.push(`${file}: risk path ${glob}`);
   const focus = profile?.facts?.reviewFocus?.value;
   if (Array.isArray(focus)) for (const item of focus) risks.push(`review focus: ${item}`);
@@ -132,7 +137,7 @@ export function reviewBrief({ args, flags, names, io, pluginRoot }) {
 
   const taskDir = join(where.dir, 'tasks', id);
   const reportFile = join(taskDir, 'report.md');
-  const rules = briefRules({ cls: task.class, role: 'reviewer' });
+  const rules = briefRules({ cls: task.class, role: review.focus === 'security' ? 'security-reviewer' : 'reviewer' });
   const template = readFileSync(join(pluginRoot, 'templates', 'task', 'review-brief.md'), 'utf8');
   const body = renderReviewBrief(template, {
     '<Task title>': task.title,
@@ -151,12 +156,14 @@ export function reviewBrief({ args, flags, names, io, pluginRoot }) {
     '<previous findings>': round > 1 ? ['| ID | Severity | Where | Finding |', '|---|---|---|---|', ...rows].join('\n') : '(first review: no previous findings)',
     '<risks>': risks.map((r) => `- ${r}`).join('\n'),
     '<schema path>': join(pluginRoot, 'templates', 'review.schema.json'),
+    '<reviewer agent>': review.focus === 'security' ? 'security-reviewer' : 'reviewer',
+    '<reviewer id>': review.focus === 'security' ? 'claude:security-reviewer' : 'claude:reviewer',
     '{{bin}}': bin,
     '{{plugin}}': names.plugin,
   });
   const text = seal(body, bin);
   const data = {
-    task: id, round, class: task.class, range: { from, head }, diffFile, files, acceptance, risks, previous, rules, written: null, file: null,
+    task: id, round, class: task.class, range: { from, head }, diffFile, files, acceptance, risks, previous, rules, focus: review.focus, checklists: review.checklists, triggers: review.triggers, written: null, file: null,
   };
   if (!flags.write) return { data, text };
   const w = writeTaskText({ cwd: io.cwd, env: io.env, names, id, name: 'review-brief', round, text, replace: (cur) => Boolean(flags.force) || unedited(cur) });
