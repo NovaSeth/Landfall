@@ -86,3 +86,15 @@ test('through the launcher with stdin JSON', () => {
   assert.equal(launch('guard-bash', input('cat README.md')).decision, 'allow');
   assert.equal(launch('external-bash', { tool_name: 'Bash', tool_input: { command: 'cat x' } }).decision, 'allow', 'no separate hook command any more');
 });
+
+test('F1: a quoted command substitution with a heredoc, or $?, is not a literal word and is denied', () => {
+  const sub = `${BIN} rule "$(cat <<'EOF'\nPRI-3\nEOF\n)"`;
+  for (const c of [sub, `${BIN} rule $?`, `${BIN} rule "$?"`, `${BIN} method "$(id)"`]) {
+    const r = bash(c);
+    assert.equal(r.decision, 'deny', JSON.stringify(c));
+    assert.equal(r.code, 2, c);
+  }
+  const input = (command) => ({ session_id: 's', hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command }, cwd: tmpdir(), agent_type: AGENT });
+  assert.equal(launch('guard-bash', input(sub)).decision, 'deny', 'through the launcher');
+  assert.equal(bash(`${BIN} rule "PRI-3" 'ORC-2'`).decision, 'allow', 'quoted literal words stay allowed');
+});
