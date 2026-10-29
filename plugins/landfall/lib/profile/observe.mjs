@@ -160,8 +160,8 @@ function llmOf(repo, files) {
       const key = /^([A-Za-z0-9][A-Za-z0-9._-]*)\s*=/.exec(line);
       if (key) names.push(key[1]);
       for (const q of line.matchAll(/"([^"]*)"|'([^']*)'/g)) {
-        const m = PY_NAME.exec((q[1] ?? q[2]).trim());
-        if (m) names.push(m[0]);
+        const m = /^([A-Za-z0-9][A-Za-z0-9._-]*)\s*(?:$|[[<>=!~;@])/.exec((q[1] ?? q[2]).trim());
+        if (m) names.push(m[1]);
       }
     }
     const hit = pyHit(names);
