@@ -6,10 +6,14 @@
 // own records (settings, plugin cache), and nothing lands in a project (spec §7.1 step 4). No consent prompt: running it
 // is the install the user asked for, like the README command it replaces.
 // Exit 0 installed and enabled, or the commands printed · 1 the plugin is not enabled afterwards (the outputs say why).
+import { realpathSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { run } from '../proc/index.mjs';
 import { EXIT } from './commands.mjs';
 
 const TIMEOUT_MS = 180000; // a marketplace clone over a slow network; well under the Bash tool's 600 s cap
+// `claude` runs from a neutral directory, never the repository: Claude Code may read project settings from its cwd.
+const neutralCwd = () => { const d = tmpdir(); try { return realpathSync(d); } catch { return d; } };
 const tail = (s) => String(s ?? '').trim().split('\n').slice(-3).join(' | ').slice(0, 300);
 
 // The SD-3 commands for these names: { install, fallback: [add, install] } as argv lists for `claude`.
@@ -25,8 +29,9 @@ const RELOAD = 'Then type /reload-plugins in Claude Code (or restart it); that i
 export function install({ names, io }) {
   const cmds = sd3Commands(names);
   const id = `${names.plugin}@${names.marketplace}`;
+  const cwd = neutralCwd();
   const claude = (args) => {
-    const r = run('claude', args, { unit: 'cli', cwd: io.cwd, env: io.env, timeoutMs: TIMEOUT_MS });
+    const r = run('claude', args, { unit: 'cli', cwd, env: io.env, timeoutMs: TIMEOUT_MS });
     return { argv: ['claude', ...args], exit: r.status, error: r.error, output: tail(r.stderr || r.stdout) };
   };
   const first = claude(cmds.install);
@@ -42,7 +47,7 @@ export function install({ names, io }) {
   }
   const ran = [first];
   if (first.exit !== 0) for (const c of cmds.fallback) ran.push(claude(c));
-  const list = run('claude', ['plugin', 'list', '--json'], { unit: 'cli', cwd: io.cwd, env: io.env, timeoutMs: 30000 });
+  const list = run('claude', ['plugin', 'list', '--json'], { unit: 'cli', cwd, env: io.env, timeoutMs: 30000 });
   let entry = null;
   try { entry = JSON.parse(list.stdout).find((p) => p?.id === id) ?? null; } catch { entry = null; }
   const enabled = entry?.enabled === true;

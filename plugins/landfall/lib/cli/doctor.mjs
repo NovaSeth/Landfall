@@ -22,6 +22,7 @@
 //                version → skip
 // Exit 0 healthy · 1 a check or row failed · 8 claude or git missing or not runnable (the report is still listed).
 import { accessSync, constants, readFileSync, realpathSync, statSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { delimiter, isAbsolute, join } from 'node:path';
 import { flagsOf, readConfig } from '../config/index.mjs';
 import { trackedSideFiles } from '../gen/index.mjs';
@@ -37,6 +38,8 @@ import { EXIT } from './commands.mjs';
 // SD-5: the oldest Claude Code version CI runs (tests/cli-contract.test.mjs keeps the two equal).
 export const CLAUDE_CODE_FLOOR = '2.1.300';
 const TIMEOUT_MS = 30000;
+// `claude` runs from a neutral directory, never the repository: Claude Code may read project settings from its cwd.
+const neutralCwd = () => { const d = tmpdir(); try { return realpathSync(d); } catch { return d; } };
 // Offline-safe release check: a source that does not answer within this is "unknown".
 export const RELEASE_TIMEOUT_MS = 2000;
 // SC3: `claude plugin details` "Always-on" ≤ 1,000 tok.
@@ -334,7 +337,7 @@ function render(bin, checks, rows, errors) {
 
 export function doctor({ names, io, version, pluginRoot }) {
   const id = `${names.plugin}@${names.marketplace}`;
-  const opts = { unit: 'cli', cwd: io.cwd, env: io.env, timeoutMs: TIMEOUT_MS };
+  const opts = { unit: 'cli', cwd: neutralCwd(), env: io.env, timeoutMs: TIMEOUT_MS };
   const envErrors = []; // exit 8
   const errors = []; // exit 1
   const side = sideFiles({ names, io });

@@ -14,6 +14,7 @@
 
 ## Edge cases
 - Secrets scan: built-in patterns match bounded forms (very long keys, JWT segments over the window size or URL fields over 1 KiB can escape); project patterns run on the first 4 KiB of a line, and a pattern with two adjacent unbounded wildcards is refused (overlapping character classes are checked conservatively even across delimiters); anchors apply to that prefix, so `$` can match its end and patterns requiring more than 4096 characters cannot match; a file over 64 MiB makes the scan incomplete (exit 1), never clean.
+- The npm package ships the eval suite (`plugins/landfall/evals/`, with its fixture tests) and the dashboard's own test on purpose: they belong to the plugin. A test runner started inside an installed package's `plugins/` directory would pick them up; run your tests from your project root.
 - External executors: `landfall exec --role implementer` is refused in this release (reviewer runs only, read-only sandbox in the task worktree); the implementer role with its own worktree follows.
 - Rename detection reads JS and TS sources only; a Python, Go or Rust test that changes its title is still a removal and needs a decision. Titles built at run time, tests declared in loops and template literals with nested braces are not read.
 - Profile scan: `llm` is read from dependency manifests by a section-aware reader, not a TOML parser; a malformed pyproject.toml may still yield the fact, and multi-line inline tables or arrays inside inline tables are not read. Override with `landfall profile set llm true|false`.
