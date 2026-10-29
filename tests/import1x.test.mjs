@@ -176,7 +176,7 @@ test('apply writes decisions, tasks, shared tasks, findings, profile facts and t
   const found = (await ok(['decisions', 'find', '--json'])).stdout;
   for (const k of ['R1', 'R2', 'R3', 'R4', 'R-CD-2']) assert.ok(found.includes(m[k]), k);
   // tasks: status mapped; shared tasks in the lane shared
-  const tasks = Object.fromEntries(JSON.parse((await ok(['task', 'list', '--all', '--json'])).stdout).data.tasks.map((x) => [x.id, x]));
+  const tasks = Object.fromEntries(JSON.parse((await ok(['task', 'list', '--json'])).stdout).data.tasks.map((x) => [x.id, x]));
   assert.deepEqual(['T1', 'T2', 'T3', 'T4'].map((k) => tasks[m[k]]?.status), ['done', 'dispatched', 'blocked', 'cancelled']);
   assert.deepEqual(['S1', 'S2'].map((k) => tasks[m[k]]?.lane), ['shared', 'shared']);
   assert.match(tasks[m.S1].title, /^\[S1\] shared parser cleanup/);
