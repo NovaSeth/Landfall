@@ -1,0 +1,103 @@
+{
+  "schema": 2,
+  "id": "T-MG-2",
+  "kind": "task",
+  "title": "HTTP API over the notes store with input validation",
+  "lane": null,
+  "owner": "MG",
+  "class": "standard",
+  "classHistory": [
+    {
+      "class": "standard",
+      "reason": "standard: 3 files > 2; 140 LOC > 30",
+      "at": "2026-10-29T19:22:24.311Z"
+    }
+  ],
+  "status": "done",
+  "round": 0,
+  "events": [
+    {
+      "at": "2026-10-29T19:08:42.934Z",
+      "by": "MG",
+      "event": "created",
+      "data": {
+        "after": [
+          "T-MG-1"
+        ]
+      }
+    },
+    {
+      "at": "2026-10-29T19:22:24.311Z",
+      "by": "MG",
+      "event": "route",
+      "data": {
+        "computed": "standard",
+        "keys": [
+          "files-over-trivial",
+          "loc-over-trivial"
+        ]
+      }
+    },
+    {
+      "at": "2026-10-29T19:22:24.549Z",
+      "by": "MG",
+      "event": "started",
+      "data": {
+        "branch": "task/T-MG-2-http-api",
+        "base": "31da66ed577c73501186cce44ff49b88edc4445e",
+        "worktree": "../notes-api-wt/T-MG-2"
+      }
+    },
+    {
+      "at": "2026-10-29T19:22:44.860Z",
+      "by": "MG",
+      "event": "dispatched",
+      "data": {
+        "executor": "landfall:implementer",
+        "base": "31da66e"
+      }
+    },
+    {
+      "at": "2026-10-29T19:23:58.558Z",
+      "by": "MG",
+      "event": "implementer",
+      "data": {
+        "report": "done"
+      }
+    },
+    {
+      "at": "2026-10-29T19:23:58.772Z",
+      "by": "MG",
+      "event": "verify",
+      "data": {
+        "result": "pass",
+        "head": "aad8799765588d71de41b9a7774ecd3d2df4a4e2",
+        "class": "standard",
+        "attempt": 1
+      }
+    },
+    {
+      "at": "2026-10-29T19:24:00.085Z",
+      "by": "MG",
+      "event": "done",
+      "data": {
+        "head": "aad8799765588d71de41b9a7774ecd3d2df4a4e2"
+      }
+    },
+    {
+      "at": "2026-10-29T19:24:05.214Z",
+      "by": "MG",
+      "event": "merged",
+      "data": {
+        "commit": "38b3c0e0e8e99b54e8ec9dbe4027f40b90849a55",
+        "target": "main",
+        "batch": null,
+        "adopted": false,
+        "verify": "966d20d4eaa5750f950aaf407da2aac8c1067979"
+      }
+    }
+  ],
+  "base": "31da66ed577c73501186cce44ff49b88edc4445e",
+  "branch": "task/T-MG-2-http-api",
+  "mergedAt": "2026-10-29T19:24:05.214Z"
+}

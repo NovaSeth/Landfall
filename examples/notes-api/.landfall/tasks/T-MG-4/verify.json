@@ -1,0 +1,151 @@
+{
+  "schema": 1,
+  "task": "T-MG-4",
+  "head": "15270091e143894c5f50094c1bd2d7d2e9a07550",
+  "gatesSha": "1773616c2ebb8ceb1858bb2cd23b8b3d076bd7ac8f14dafc5d6a541dc9d3705a",
+  "baselineSha": "b8d65142fd3616b1a6a3d53470616a9f462e8060a078d60c76f6b5adee13a86e",
+  "class": "standard",
+  "startedAt": "2026-10-29T19:42:40.855Z",
+  "durationMs": 373,
+  "gates": [
+    {
+      "name": "test",
+      "cmd": "NODE_OPTIONS=\"$NODE_OPTIONS --test-reporter=tap\" npm run test",
+      "exit": 0,
+      "durationMs": 731,
+      "result": "pass"
+    }
+  ],
+  "inventory": {
+    "collector": "node-test",
+    "total": 20,
+    "added": [
+      "[\"\",\"after the overflow no more body bytes reach the request, also after the 413 finishes\",1]"
+    ],
+    "removed": [
+      "[\"\",\"after the overflow the request is paused: at most one chunk passes the limit\",1]"
+    ],
+    "newlySkipped": [],
+    "allowedBy": [
+      "D-MG-4"
+    ],
+    "weak": false,
+    "tests": [
+      {
+        "id": "[\"\",\"1: notes survive a new openStore on the same file\",1]",
+        "file": "",
+        "skipped": false
+      },
+      {
+        "id": "[\"\",\"2: writes go through a temp file renamed onto the file\",1]",
+        "file": "",
+        "skipped": false
+      },
+      {
+        "id": "[\"\",\"3: a corrupt file throws an Error naming the file\",1]",
+        "file": "",
+        "skipped": false
+      },
+      {
+        "id": "[\"\",\"4: create validates title and body with a TypeError\",1]",
+        "file": "",
+        "skipped": false
+      },
+      {
+        "id": "[\"\",\"GET /notes returns 200 and an array\",1]",
+        "file": "",
+        "skipped": false
+      },
+      {
+        "id": "[\"\",\"GET and DELETE by id; unknown id is 404\",1]",
+        "file": "",
+        "skipped": false
+      },
+      {
+        "id": "[\"\",\"POST /notes returns 201 with the created note\",1]",
+        "file": "",
+        "skipped": false
+      },
+      {
+        "id": "[\"\",\"a 17 KiB body with content-length gets 413\",1]",
+        "file": "",
+        "skipped": false
+      },
+      {
+        "id": "[\"\",\"a chunked body past the limit gets 413\",1]",
+        "file": "",
+        "skipped": false
+      },
+      {
+        "id": "[\"\",\"a missing file reads as no notes\",1]",
+        "file": "",
+        "skipped": false
+      },
+      {
+        "id": "[\"\",\"a wrong content type gets 415, a charset parameter is accepted\",1]",
+        "file": "",
+        "skipped": false
+      },
+      {
+        "id": "[\"\",\"after the overflow no more body bytes reach the request, also after the 413 finishes\",1]",
+        "file": "",
+        "skipped": false
+      },
+      {
+        "id": "[\"\",\"an unexpected TypeError from the store returns 500 internal error and logs once\",1]",
+        "file": "",
+        "skipped": false
+      },
+      {
+        "id": "[\"\",\"an unexpected URIError from the store returns 500 internal error and logs once\",1]",
+        "file": "",
+        "skipped": false
+      },
+      {
+        "id": "[\"\",\"an unexpected error returns exactly {\\\"error\\\":\\\"internal error\\\"} and logs once\",1]",
+        "file": "",
+        "skipped": false
+      },
+      {
+        "id": "[\"\",\"create returns a note; list is oldest first; get and remove work\",1]",
+        "file": "",
+        "skipped": false
+      },
+      {
+        "id": "[\"\",\"invalid JSON returns 400 with error\",1]",
+        "file": "",
+        "skipped": false
+      },
+      {
+        "id": "[\"\",\"other paths 404, other methods 405, all JSON\",1]",
+        "file": "",
+        "skipped": false
+      },
+      {
+        "id": "[\"\",\"store TypeError returns 400 with error\",1]",
+        "file": "",
+        "skipped": false
+      },
+      {
+        "id": "[\"\",\"the package is an ES module service with a test script\",1]",
+        "file": "",
+        "skipped": false
+      }
+    ]
+  },
+  "failures": {
+    "preexisting": [],
+    "new": []
+  },
+  "route": {
+    "declared": "standard",
+    "actual": "standard",
+    "escalated": false,
+    "missingSteps": []
+  },
+  "artifacts": {
+    "report": true,
+    "review": "not-required"
+  },
+  "result": "pass"
+}

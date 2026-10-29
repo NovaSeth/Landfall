@@ -1,0 +1,109 @@
+{
+  "schema": 2,
+  "id": "T-MG-4",
+  "kind": "task",
+  "title": "Backlog: 1 findings (B-MG-1)",
+  "lane": null,
+  "owner": "MG",
+  "class": "standard",
+  "classHistory": [
+    {
+      "class": "standard",
+      "reason": "standard: 40 LOC > 30",
+      "at": "2026-10-29T19:39:12.404Z"
+    }
+  ],
+  "status": "done",
+  "round": 0,
+  "events": [
+    {
+      "at": "2026-10-29T19:38:55.660Z",
+      "by": "MG",
+      "event": "created",
+      "data": {}
+    },
+    {
+      "at": "2026-10-29T19:39:12.404Z",
+      "by": "MG",
+      "event": "route",
+      "data": {
+        "computed": "standard",
+        "keys": [
+          "loc-over-trivial"
+        ]
+      }
+    },
+    {
+      "at": "2026-10-29T19:39:12.640Z",
+      "by": "MG",
+      "event": "started",
+      "data": {
+        "branch": "task/T-MG-4-body-stops-after-413",
+        "base": "650c296bc1982835994e81543f0973f542123d17",
+        "worktree": "../notes-api-wt/T-MG-4"
+      }
+    },
+    {
+      "at": "2026-10-29T19:39:26.356Z",
+      "by": "MG",
+      "event": "dispatched",
+      "data": {
+        "executor": "landfall:implementer",
+        "base": "650c296"
+      }
+    },
+    {
+      "at": "2026-10-29T19:42:29.387Z",
+      "by": "MG",
+      "event": "implementer",
+      "data": {
+        "report": "done"
+      }
+    },
+    {
+      "at": "2026-10-29T19:42:29.586Z",
+      "by": "MG",
+      "event": "verify",
+      "data": {
+        "result": "baseline-shrunk",
+        "head": "15270091e143894c5f50094c1bd2d7d2e9a07550",
+        "class": "standard",
+        "attempt": 1
+      }
+    },
+    {
+      "at": "2026-10-29T19:42:40.855Z",
+      "by": "MG",
+      "event": "verify",
+      "data": {
+        "result": "pass",
+        "head": "15270091e143894c5f50094c1bd2d7d2e9a07550",
+        "class": "standard",
+        "attempt": 2
+      }
+    },
+    {
+      "at": "2026-10-29T19:42:41.481Z",
+      "by": "MG",
+      "event": "done",
+      "data": {
+        "head": "15270091e143894c5f50094c1bd2d7d2e9a07550"
+      }
+    },
+    {
+      "at": "2026-10-29T19:42:47.293Z",
+      "by": "MG",
+      "event": "merged",
+      "data": {
+        "commit": "b58efd119c075303c533fd117dee4365848688ee",
+        "target": "main",
+        "batch": "batch-20261029T194247",
+        "adopted": false,
+        "verify": "7ec90403de27bd9816cb11b1f775b29360b6fb4d"
+      }
+    }
+  ],
+  "base": "650c296bc1982835994e81543f0973f542123d17",
+  "branch": "task/T-MG-4-body-stops-after-413",
+  "mergedAt": "2026-10-29T19:42:47.293Z"
+}
