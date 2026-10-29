@@ -166,3 +166,17 @@ test('fix round 1 (F6): every eligible task is checked, only the display is limi
   assert.equal(adopt.length, loop.OUTSIDE_MAX);
   assert.ok(table.info.some((x) => x.state === `… ${60 - loop.OUTSIDE_MAX} more merged outside ${BIN}`), JSON.stringify(table.info));
 });
+
+test('fix round 2 (F8): outside merges are filtered to the caller\'s tasks before the cap', () => {
+  const others = Array.from({ length: loop.OUTSIDE_MAX }, (_, k) => ({ id: `T-AA-${k + 1}`, owner: 'aa', status: 'done', branch: `task/T-AA-${k + 1}`, events: [] }));
+  const mine = { id: 'T-ZZ-1', owner: 'zz', status: 'done', branch: 'task/T-ZZ-1', events: [] };
+  const table = loop.nextSteps({ tasks: [...others, mine], handles: ['aa', 'zz'], me: 'zz', caps: loop.DEFAULT_CAPS, now: Date.now(), bin: BIN, outside: [...others.map((x) => x.id), mine.id] });
+  assert.equal(table.outcome, 'action', JSON.stringify(table));
+  assert.ok(table.steps.some((s) => s.task === 'T-ZZ-1' && /task merge --adopt T-ZZ-1/.test(s.step)), JSON.stringify(table.steps));
+  assert.ok(!table.info.some((x) => /more merged outside/.test(x.state)), 'no overflow: one actionable outside merge');
+  // the overflow counts the caller's own outside merges only
+  const own = Array.from({ length: loop.OUTSIDE_MAX + 3 }, (_, k) => ({ id: `T-ZZ-${k + 1}`, owner: 'zz', status: 'done', branch: `task/T-ZZ-${k + 1}`, events: [] }));
+  const many = loop.nextSteps({ tasks: [...others, ...own], handles: ['aa', 'zz'], me: 'zz', caps: loop.DEFAULT_CAPS, now: Date.now(), bin: BIN, outside: [...others, ...own].map((x) => x.id) });
+  assert.equal(many.steps.filter((s) => /task merge --adopt/.test(s.step)).length, loop.OUTSIDE_MAX);
+  assert.ok(many.info.some((x) => x.state === `… 3 more merged outside ${BIN}`), JSON.stringify(many.info));
+});

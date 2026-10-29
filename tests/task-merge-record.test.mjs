@@ -177,3 +177,60 @@ test('fix round 1: --adopt and --ready together are a usage error', async (t) =>
   assert.equal(res.code, 2);
   assert.equal(res.env.errors[0].code, 'unexpected-flag');
 });
+
+// ---- fix round 2 (review r2 F1): a run whose tree did not hold leaves no gate-cache entry, so a retry runs the gates ----
+const DIRTY_GATE = "node --test; s=$?; case \"$PWD\" in */repo) echo run >> ../runs.log; echo '// changed' >> calc.test.mjs;; esac; exit $s";
+const cacheEntries = (r) => {
+  const d = join(r.stateDir, 'local', 'gate-cache');
+  return existsSync(d) ? readdirSync(d).filter((f) => f.endsWith('.json')).length : 0;
+};
+const gateRuns = (r) => (existsSync(join(r.dir, '..', 'runs.log')) ? readFileSync(join(r.dir, '..', 'runs.log'), 'utf8').split('\n').filter(Boolean).length : 0);
+
+test('fix round 2 (F1): --adopt rejected by merge-tree-changed stores no gate-cache entry; the retry runs the gates and records nothing', async (t) => {
+  const r = repo(t, { gate: DIRTY_GATE });
+  r.branch('feat/a', 'a.test.mjs');
+  const a = r.task('feat/a');
+  r.git('add', '-A');
+  r.git('commit', '-q', '-m', 'task');
+  r.git('merge', '-q', '--no-ff', '-m', 'by hand', 'feat/a');
+  const first = await cli(['task', 'merge', '--adopt', a, '--yes'], r);
+  assert.ok(first.env.errors.some((e) => e.code === 'merge-tree-changed'), JSON.stringify(first.env.errors));
+  assert.equal(cacheEntries(r), 0, 'a rejected run publishes no gate-cache entry');
+  const before = gateRuns(r);
+  r.git('checkout', '-q', '--', 'calc.test.mjs'); // the adoption's tree restored, as the reviewer's retry did
+  const retry = await cli(['task', 'merge', '--adopt', a, '--yes'], r);
+  assert.ok(gateRuns(r) > before, 'the retry ran the gates');
+  assert.equal(retry.code, 1, JSON.stringify(retry.env.errors));
+  assert.ok(retry.env.errors.some((e) => e.code === 'merge-tree-changed'), JSON.stringify(retry.env.errors));
+  assert.equal(merges(r, a).length, 0, 'nothing is recorded');
+});
+
+test('fix round 2 (F1): a single merge rejected by merge-tree-changed stores no gate-cache entry; the retry runs the gates and merges nothing', async (t) => {
+  const r = repo(t, { gate: DIRTY_GATE });
+  r.branch('feat/a', 'a.test.mjs');
+  const a = r.task('feat/a');
+  r.git('add', '-A');
+  r.git('commit', '-q', '-m', 'task');
+  const tip = r.git('rev-parse', 'HEAD');
+  const first = await cli(['task', 'merge', a, '--yes'], r);
+  assert.ok(first.env.errors.some((e) => e.code === 'merge-tree-changed'), JSON.stringify(first.env.errors));
+  assert.equal(cacheEntries(r), 0, 'a rejected run publishes no gate-cache entry');
+  const before = gateRuns(r);
+  const retry = await cli(['task', 'merge', a, '--yes'], r);
+  assert.ok(gateRuns(r) > before, 'the retry ran the gates');
+  assert.ok(retry.env.errors.some((e) => e.code === 'merge-tree-changed'), JSON.stringify(retry.env.errors));
+  assert.equal(r.git('rev-parse', 'HEAD'), tip, 'nothing merged');
+  assert.equal(merges(r, a).length, 0);
+});
+
+test('fix round 2 (F1): a passing adoption still publishes its gate-cache entry', async (t) => {
+  const r = repo(t);
+  r.branch('feat/a', 'a.test.mjs');
+  const a = r.task('feat/a');
+  r.git('add', '-A');
+  r.git('commit', '-q', '-m', 'task');
+  r.git('merge', '-q', '--no-ff', '-m', 'by hand', 'feat/a');
+  const res = await cli(['task', 'merge', '--adopt', a, '--yes'], r);
+  assert.equal(res.code, 0, JSON.stringify(res.env.errors));
+  assert.equal(cacheEntries(r), 1);
+});

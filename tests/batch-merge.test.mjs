@@ -335,3 +335,83 @@ test('a second failure after the culprit: only the prefix before the culprit mer
   r.git('merge-base', '--is-ancestor', 'feat/a', 'HEAD');
   cleaned(r, res);
 });
+
+// ---- fix round 2 (review r2 F1 F5) ----
+const cacheEntries = (r) => {
+  const d = join(r.stateDir, 'local', 'gate-cache');
+  return existsSync(d) ? readdirSync(d).filter((f) => f.endsWith('.json')).length : 0;
+};
+
+test('fix round 2 (F1): a batch rejected by merge-tree-changed stores no gate-cache entry; the retry runs the gates and merges nothing', async (t) => {
+  const r = repo(t, { extra: IN_BATCH("echo '// changed' >> calc.test.mjs") });
+  const ids = [r.task('feat/a', 'a.test.mjs'), r.task('feat/b', 'b.test.mjs')];
+  const tip = r.git('rev-parse', 'HEAD');
+  const first = await cli(['task', 'merge', ...ids, '--yes'], r);
+  assert.ok(first.env.errors.some((e) => e.code === 'merge-tree-changed'), JSON.stringify(first.env.errors));
+  assert.equal(cacheEntries(r), 0, 'a rejected run publishes no gate-cache entry');
+  const before = r.runs();
+  const retry = await cli(['task', 'merge', ...ids, '--yes'], r);
+  assert.ok(r.runs() > before, 'the retry ran the gates');
+  assert.equal(retry.code, 1, JSON.stringify(retry.env.errors));
+  assert.ok(retry.env.errors.some((e) => e.code === 'merge-tree-changed'), JSON.stringify(retry.env.errors));
+  nothingMoved(r, tip, ids);
+  cleaned(r, retry);
+});
+
+test('fix round 2 (F1): a passing batch still publishes its gate-cache entry', async (t) => {
+  const r = repo(t);
+  const ids = [r.task('feat/a', 'a.test.mjs'), r.task('feat/b', 'b.test.mjs')];
+  const res = await cli(['task', 'merge', ...ids, '--yes'], r);
+  assert.equal(res.code, 0, JSON.stringify(res.env.errors));
+  assert.equal(cacheEntries(r), 1);
+});
+
+// The checkout switched to `other` at the same tip after the last check, right before the target is updated: a git
+// wrapper on PATH switches once, on the first command that would move a ref of the main checkout.
+function switchBeforeUpdate(t, r) {
+  const real = spawnSync('sh', ['-c', 'command -v git'], { env: r.env, encoding: 'utf8' }).stdout.trim();
+  const bin = realpathSync(mkdtempSync(join(tmpdir(), 'batch-git-')));
+  t.after(() => rmSync(bin, { recursive: true, force: true }));
+  const mark = join(bin, 'switched');
+  writeFileSync(join(bin, 'git'), [
+    '#!/bin/sh',
+    'case " $* " in',
+    `  *" update-ref "*|*" --ff-only "*|*" reset "*) if [ "$PWD" = '${r.dir}' ] && [ ! -e '${mark}' ]; then : > '${mark}'; '${real}' checkout -q -b other; fi;;`,
+    'esac',
+    `exec '${real}' "$@"`,
+    '',
+  ].join('\n'), { mode: 0o755 });
+  r.env.PATH = `${bin}:${r.env.PATH}`;
+  return mark;
+}
+
+test('fix round 2 (F5): the checkout switched to another branch after the final read: no branch other than the target moves', async (t) => {
+  const r = repo(t);
+  const ids = [r.task('feat/a', 'a.test.mjs'), r.task('feat/b', 'b.test.mjs')];
+  const tip = r.git('rev-parse', 'HEAD');
+  const mark = switchBeforeUpdate(t, r);
+  const res = await cli(['task', 'merge', ...ids, '--yes'], r);
+  assert.ok(existsSync(mark), 'the probe switched the checkout');
+  assert.equal(r.git('rev-parse', 'other'), tip, 'the branch checked out meanwhile does not move');
+  assert.equal(res.code, 1, JSON.stringify(res.env.errors));
+  assert.ok(res.env.errors.some((e) => e.code === 'target-moved'), JSON.stringify(res.env.errors));
+  nothingMoved(r, tip, ids);
+  cleaned(r, res);
+});
+
+test('fix round 2 (F5): a batch updates the target ref and its checkout and keeps uncommitted state writes', async (t) => {
+  const r = repo(t);
+  const ids = [r.task('feat/a', 'a.test.mjs'), r.task('feat/b', 'b.test.mjs')];
+  writeFileSync(join(r.stateDir, 'note.txt'), 'kept\n');
+  r.git('add', '--', join(r.stateDir, 'note.txt'));
+  r.git('commit', '-q', '-m', 'note');
+  writeFileSync(join(r.stateDir, 'note.txt'), 'kept, edited\n'); // an uncommitted write in the state directory
+  const res = await cli(['task', 'merge', ...ids, '--yes'], r);
+  assert.equal(res.code, 0, JSON.stringify(res.env.errors));
+  assert.equal(r.git('rev-parse', 'main'), res.env.data.commit);
+  assert.equal(r.git('symbolic-ref', 'HEAD'), 'refs/heads/main');
+  assert.ok(existsSync(join(r.dir, 'a.test.mjs')) && existsSync(join(r.dir, 'b.test.mjs')), 'the checkout holds the merged files');
+  assert.equal(readFileSync(join(r.stateDir, 'note.txt'), 'utf8'), 'kept, edited\n', 'the uncommitted state write is kept');
+  assert.equal(r.git('status', '--porcelain', '--', '.', `:(exclude)${names.stateDir}`), '', 'the code is clean');
+  cleaned(r, res);
+});
