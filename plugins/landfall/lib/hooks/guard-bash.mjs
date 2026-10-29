@@ -83,16 +83,25 @@ function autoAllowMode(opts, env, where, names) {
 }
 
 const AGENT_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
-// After the decision: refresh the heartbeat of the agent lease held by input.agent_id (lib/sched, at most once a minute).
-// An error or a timeout is ignored, so it never changes the decision (GC8).
-function beat(input, env) {
-  if (!AGENT_ID.test(String(input?.agent_id))) return;
-  try { heartbeatAgent(input.agent_id, { names: loadNames(), env, lockTimeoutMs: 100 }); } catch { /* never changes the decision */ }
+// After the decision: refresh the heartbeat of the agent lease bound to input.agent_id (lib/sched, at most once a
+// minute). Only a string agent_id of the ID pattern is matched, so an event without one never refreshes an unbound
+// lease (T-MG-96 F4). It runs only while BEAT_MIN_LEFT_MS of the guard's deadline remains, with the lock wait capped
+// so BEAT_MARGIN_MS stays for the rest, and an error or a timeout is ignored: it never changes the decision nor pushes
+// it past its budget (GC8, T-MG-96 F5).
+export const BEAT_MIN_LEFT_MS = 150;
+const BEAT_MARGIN_MS = 100;
+const BEAT_LOCK_MS = 100;
+function beat(input, env, deadline = Infinity) {
+  const agentId = input?.agent_id;
+  if (typeof agentId !== 'string' || !AGENT_ID.test(agentId)) return;
+  const left = deadline - performance.now();
+  if (!(left >= BEAT_MIN_LEFT_MS)) return;
+  try { heartbeatAgent(agentId, { names: loadNames(), env, lockTimeoutMs: Math.floor(Math.min(BEAT_LOCK_MS, left - BEAT_MARGIN_MS)) }); } catch { /* never changes the decision */ }
 }
 
 export function guardBash(input, opts = {}) {
   const r = guardDecision(input, opts);
-  beat(input, opts.env ?? process.env);
+  beat(input, opts.env ?? process.env, opts.deadline ?? Infinity);
   return r;
 }
 

@@ -8,6 +8,23 @@ import { forTerminal } from '../text/clean.mjs';
 
 export const PROBE_MS = 2000;
 
+// The provider's PATH: only absolute entries, so neither an empty entry nor "." can find a program in the repository.
+export const childPath = (path) => String(path ?? '').split(delimiter).filter((d) => isAbsolute(d)).join(delimiter);
+
+// The provider's environment (B-6), for its runs and its detection probes alike (T-MG-96 F2): the base variables (PATH
+// as childPath keeps it), LANG and LC_*, the lease variables, and the adapter's own envNames (NAME or a NAME_* prefix);
+// nothing else of the parent passes.
+const BASE_ENV = ['HOME', 'USER', 'LOGNAME', 'SHELL', 'TMPDIR', 'LANG'];
+export function childEnv(adapter, parent, lease = {}) {
+  const names = (adapter?.envNames ?? []).filter((n) => typeof n === 'string');
+  const own = (k) => BASE_ENV.includes(k) || /^LC_[A-Z0-9_]+$/.test(k) || names.some((n) => (n.endsWith('*') ? k.startsWith(n.slice(0, -1)) : k === n));
+  const out = {};
+  for (const [k, v] of Object.entries(parent ?? {})) if (typeof v === 'string' && k !== 'PATH' && own(k)) out[k] = v;
+  if (typeof parent?.PATH === 'string') out.PATH = childPath(parent.PATH);
+  for (const [k, v] of Object.entries(lease ?? {})) if (typeof v === 'string') out[k] = v;
+  return out;
+}
+
 // The absolute path of an executable program: itself when absolute, else the first match on env.PATH; null when none.
 export function which(program, env = {}) {
   const ok = (p) => {

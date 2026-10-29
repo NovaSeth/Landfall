@@ -381,9 +381,10 @@ export function refreshAttached(pid) {
 // Agent leases (spec §7.8 admission points): PostToolUse binds the agentId to the lease keyed by tool_use_id;
 // hooks carrying that agent_id refresh its heartbeat (at most once a minute); SubagentStop releases it.
 export const bindAgent = ({ key, agentId }, opts = {}) => update(opts, ['agent'], (d) => d.owner.key === key, (d) => ({ ...d, owner: { ...d.owner, agentId } }));
-export const heartbeatAgent = (agentId, opts = {}) => update(opts, ['agent'], (d) => d.owner.agentId === agentId,
+const isAgentId = (id) => typeof id === 'string' && id !== '';
+export const heartbeatAgent = (agentId, opts = {}) => update(opts, ['agent'], (d) => isAgentId(agentId) && d.owner.agentId === agentId,
   (d) => (Date.now() - Date.parse(d.heartbeatAt) < (opts.minIntervalMs ?? 60e3) ? undefined : { ...d, heartbeatAt: iso(Date.now()) }));
-export const releaseAgent = (agentId, opts = {}) => update(opts, ['agent'], (d) => d.owner.agentId === agentId, () => null);
+export const releaseAgent = (agentId, opts = {}) => update(opts, ['agent'], (d) => isAgentId(agentId) && d.owner.agentId === agentId, () => null);
 
 // Read-only view for `slots`: { leases, queues, used, queued }. Nothing is reaped or written.
 export function snapshot(opts = {}) {

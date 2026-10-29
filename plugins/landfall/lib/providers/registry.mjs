@@ -12,6 +12,7 @@ import * as codex from './codex.mjs';
 import * as gemini from './gemini.mjs';
 import { fromEntry, parseEnvNames, parseSandboxMap, parseTemplate } from './generic.mjs';
 import { PROVIDERS, PROVIDER_ID, ROLES } from './kind.mjs';
+import { childEnv } from './probe.mjs';
 
 export const BUILTINS = Object.freeze([codex, gemini].map((a) => Object.freeze({ ...a, kind: 'builtin' })));
 export const CACHE_MS = 60 * 60 * 1000;
@@ -57,7 +58,10 @@ export function adapters({ names, env }) {
   return [...BUILTINS, ...Object.entries(doc.generic).map(([id, entry]) => fromEntry(id, entry))];
 }
 
-function detectOne(a, env) {
+// Every probe of a provider (--version, auth) gets the allowlist environment of its runs, without lease variables
+// (probe childEnv, T-MG-96 F2): no unrelated credential or loader setting reaches a provider program.
+function detectOne(a, parent) {
+  const env = childEnv(a, parent);
   const d = a.detect({ env });
   const auth = d.found ? a.auth({ env }) : 'missing';
   const roles = ROLES.filter((r) => Object.hasOwn(a.sandboxes, r));
