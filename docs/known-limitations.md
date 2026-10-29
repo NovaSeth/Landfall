@@ -13,6 +13,7 @@
 - The task rows come from `landfall status --json` in the session's working directory: a task in another repository is not shown.
 
 ## Edge cases
+- The npm package ships the eval suite (`plugins/landfall/evals/`, with its fixture tests) and the dashboard's own test on purpose: they belong to the plugin. A test runner started inside an installed package's `plugins/` directory would pick them up; run your tests from your project root.
 - External executors: `landfall exec --role implementer` is refused in this release (reviewer runs only, read-only sandbox in the task worktree); the implementer role with its own worktree follows.
 - Rename detection reads JS and TS sources only; a Python, Go or Rust test that changes its title is still a removal and needs a decision. Titles built at run time, tests declared in loops and template literals with nested braces are not read.
 - Profile scan: `llm` is read from dependency manifests by a section-aware reader, not a TOML parser; a malformed pyproject.toml may still yield the fact, and multi-line inline tables or arrays inside inline tables are not read. Override with `landfall profile set llm true|false`.

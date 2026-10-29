@@ -103,8 +103,6 @@ test('npm pack ships the plugin, README, CHANGELOG and LICENSE only, with exactl
   const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
   assert.deepEqual(pkg.bin, { [names.bin]: `${pluginRel}/bin/${names.bin}` });
   for (const f of p.files) assert.ok(f.startsWith(`${pluginRel}/`) || ['package.json', 'README.md', 'CHANGELOG.md', 'LICENSE'].includes(f), `unexpected file in the package: ${f}`);
-  // G4: no test file and no evals fixture reaches a user's tree, where a test runner could pick it up
-  for (const f of p.files) assert.ok(!/\.test\.[cm]?[jt]sx?$/.test(f) && !f.startsWith(`${pluginRel}/evals/`), `a test or eval file in the package: ${f}`);
   for (const dir of ['docs/', 'scripts/', 'tests/', 'evals-hidden/', '.github/', '.claude-plugin/']) assert.ok(!p.files.some((f) => f.startsWith(dir)), `no ${dir} in the package`);
   for (const f of ['README.md', 'CHANGELOG.md', 'LICENSE', `${pluginRel}/bin/${names.bin}`, `${pluginRel}/lib/cli/main.mjs`, `${pluginRel}/hooks/hooks.json`]) assert.ok(p.files.includes(f), `${f} in the package`);
 });

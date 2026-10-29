@@ -17,8 +17,6 @@
   },
   "files": [
     "plugins",
-    "!plugins/landfall/evals/**",
-    "!plugins/**/*.test.*",
     "README.md",
     "CHANGELOG.md",
     "LICENSE"
