@@ -18,7 +18,7 @@ import { StateError, emailHash, gitIdentity, open, resolve } from '../state/inde
 import { reviewShown } from '../verify/artifacts.mjs';
 import { classify } from './classify.mjs';
 import { RouteError, usage } from './errors.mjs';
-import { overrideTask, routeTask, routerThresholds } from './ratchet.mjs';
+import { ignoredReasons, overrideTask, routeTask, routerThresholds } from './ratchet.mjs';
 import { rank, routeFor } from './routes.mjs';
 
 const list = (value) => String(value).split(',').map((s) => s.trim()).filter(Boolean);
@@ -88,10 +88,11 @@ function probe(f, { io, names, readRisk }) {
     if (!(err instanceof StateError && err.exit === 'ENV')) throw err; // outside git: paths stay as given
   }
   const riskPaths = where?.active ? readRisk({ dir: where.dir, names }) : [];
-  const thresholds = where?.active ? routerThresholds(open(where.dir, { names })) : undefined;
+  const store = where?.active ? open(where.dir, { names }) : null;
+  const thresholds = store ? routerThresholds(store) : undefined;
   const plan = classify({ paths: inRepo(where?.worktree ?? null, f.paths), loc: f.loc, flags: f.flags, riskPaths, thresholds });
   return {
-    task: null, class: plan.class, computed: plan.class, previous: null, outcome: 'probed', escalated: false, reasons: plan.reasons,
+    task: null, class: plan.class, computed: plan.class, previous: null, outcome: 'probed', escalated: false, reasons: [...plan.reasons, ...(store ? ignoredReasons(store) : [])],
     route: routeFor(plan.class, { flags: plan.flags }), addedSteps: [], decision: null, review: reviewShown(where?.active ? open(where.dir, { names }) : NO_STORE, plan.class, { names, env: io.env }), input: { files: plan.files, loc: plan.loc, flags: plan.flags },
   };
 }

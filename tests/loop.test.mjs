@@ -1139,3 +1139,27 @@ test('fix r1 F2: a review round with Unicode line separators stays inside its ta
   for (const l of r.text.split(/\r?\n|\u2028|\u2029/)) assert.ok(!l.startsWith('## REVIEW_SENTINEL'), r.text);
   assert.ok(!/[\u2028\u2029]/.test(r.text), 'no Unicode line separators in the tick text');
 });
+
+test('T-MG-85: the text tick keeps a step command byte-exact: a | in it is Markdown-escaped, and unescaping gives the --json step', async (t) => {
+  const p = await repo(t);
+  mkdirSync(join(p.cwd, 'docs', 'plans'), { recursive: true });
+  writeFileSync(join(p.cwd, 'docs', 'plans', 'x.md'), '### Task Q1: A|B\n');
+  const j = await cli(['tick', '--plan', 'docs/plans/x.md'], p);
+  const step = j.out.data.steps[0].step;
+  assert.ok(step.includes('A|B'), step);
+  const r = await cliText(['tick', '--plan', 'docs/plans/x.md'], p);
+  const line = r.text.split('\n').find((l) => l.startsWith('| Q1') || l.includes('A\\|B') || l.includes('A/B'));
+  assert.ok(line, r.text);
+  assert.ok(line.includes(step.replace(/\|/g, '\\|')), `the command is in the table as in --json, | escaped:\n${line}\n${step}`);
+});
+
+test('T-MG-85: a live-status run record with neither a valid startedAt nor a valid queuedAt has no deadline: it is not live', () => {
+  const t1 = task('T-TU-1', 'dispatched', { events: [ev('dispatched', 1)] });
+  const run = (o) => ({ runId: 'R-1', task: 'T-TU-1', status: 'running', pid: null, pidStart: null, pidMethod: null, capS: 600, queuedAt: at(0), startedAt: at(0), ...o });
+  const now = T0 + 5 * MIN;
+  assert.equal(table([t1], { now, runs: [run({})] }).liveRuns, 1, 'a valid start: live');
+  assert.equal(table([t1], { now, runs: [run({ startedAt: null })] }).liveRuns, 1, 'a valid queuedAt alone counts');
+  assert.equal(table([t1], { now, runs: [run({ startedAt: 'never', queuedAt: null })] }).liveRuns, 0, 'no valid time');
+  assert.equal(table([t1], { now, runs: [run({ startedAt: undefined, queuedAt: undefined })] }).liveRuns, 0, 'no time at all');
+  assert.equal(table([t1], { now, runs: [run({ startedAt: 'x', queuedAt: 'y' })] }).liveRuns, 0, 'both invalid');
+});

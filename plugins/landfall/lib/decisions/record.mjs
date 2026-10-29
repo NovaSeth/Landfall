@@ -15,8 +15,6 @@ export const DECISION_KINDS = Object.freeze(['general', 'tier', 'tier-pin', 'rou
 // Spec §5.1 limits (title, scope) plus defaults for the fields the spec leaves open.
 export const RECORD_LIMITS = Object.freeze({ title: 120, scope: 20, glob: 120, supersedes: 100, testIds: 1000, testId: 300, signalsBytes: 4096, legacy: 40, remaining: 200, findingId: 40 });
 export const FILE_NAME = /^(D-[A-Z]{2,4}-[1-9]\d{0,5})\.md$/;
-// SD-21: a citation anywhere in a file. A match that is not a valid ID (number 0, leading zeros, seven digits) is an unknown ID.
-export const citationPattern = () => /\bD-[A-Z]{2,4}-\d+\b/g;
 
 const DATE = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
 const str = (max, extra = {}) => ({ t: 'str', max, ...extra });

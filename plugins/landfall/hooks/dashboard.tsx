@@ -288,7 +288,11 @@ export function linesOf(snap: Snapshot, width: number, rows: number): Line[] {
   for (const a of snap.agents) if (RUNNING.has(a.status) && a.task) named.add(a.task)
   for (const r of snap.runs) if (r.live && r.task) named.add(r.task)
   const working = (t: TaskRow) => ACTIVE.has(t.status) || named.has(t.id)
-  const ordered = [...snap.tasks.filter(working), ...snap.tasks.filter(t => !working(t))]
+  // a new task nobody routed (and no --after holds, nothing blocks) is backlog: one dim line, not a row
+  const backlog = (t: TaskRow) => !working(t) && t.status === 'new' && t.cls === null && t.kind !== 'blocked' && !t.state.startsWith('waits for')
+  const rowsOf = snap.tasks.filter(t => !backlog(t))
+  const folded = snap.tasks.length - rowsOf.length
+  const ordered = [...rowsOf.filter(working), ...rowsOf.filter(t => !working(t))]
   const shownTasks = ordered.slice(0, ordered.length > taskRoom ? taskRoom - 1 : taskRoom)
   for (const t of shownTasks) {
     const w = working(t)
@@ -296,7 +300,8 @@ export function linesOf(snap: Snapshot, width: number, rows: number): Line[] {
     const stage = blocked ? `blocked · ${t.state.replace(/^blocked:\s*/, '')}` : `${w ? 'working' : 'waiting'} · ${t.state}`
     out.push({ text: `${w ? '▶' : '⏸'} ${t.id}${t.round ? ` r${t.round}` : ''} ${t.cls ? CLASS_TAG[t.cls] ?? t.cls : '-'}  ${stage}`, style: blocked ? 'bad' : w ? 'row' : 'dim' })
   }
-  if (snap.tasks.length > shownTasks.length) out.push({ text: `  … ${snap.tasks.length - shownTasks.length} more (landfall task list)`, style: 'dim' })
+  if (ordered.length > shownTasks.length) out.push({ text: `  … ${ordered.length - shownTasks.length} more (landfall task list)`, style: 'dim' })
+  if (folded > 0) out.push({ text: `⏸ ${folded} in backlog (landfall task list)`, style: 'dim' })
   if (snap.tasks.length === 0) out.push({ text: '  no open tasks (landfall task new)', style: 'dim' })
 
   out.push({ text: 'AGENTS', style: 'section' })

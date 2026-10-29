@@ -7,7 +7,7 @@
 // `{a,b}` alternatives (not nested); everything else is literal.
 import { readFileSync, realpathSync, statSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
-import { citationPattern } from './record.mjs';
+import { citationPattern } from './citation.mjs';
 
 export const CONTEXT_BUDGET = 1200; // characters of additionalContext for decisions (spec §8.3)
 export const READ_MAX = 256 * 1024; // a target file is read for citations only up to this size (spec §7.10)

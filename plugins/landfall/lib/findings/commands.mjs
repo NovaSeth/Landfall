@@ -55,7 +55,24 @@ export function take(ctx) {
     if (notOpen) throw usage(`${notOpen.id} is ${notOpen.status}; only open findings can be taken`);
     const title = flags.title ?? [...`Backlog: ${findings.length} findings (${findings.slice(0, 5).map((f) => f.id).join(', ')})`].slice(0, 120).join('');
     const task = createTaskInStore({ store: s, handle, title });
-    for (const f of findings) s.write('finding', f.id, { ...f, status: 'taken', takenBy: task.id });
+    // The task is written first; a failure while the findings are assigned puts them back to open and cancels it.
+    const done = [];
+    try {
+      for (const f of findings) {
+        done.push(f); // before the write: a write that failed late is rolled back too
+        s.write('finding', f.id, { ...f, status: 'taken', takenBy: task.id });
+      }
+    } catch (err) {
+      for (const f of done) { try { s.write('finding', f.id, f); } catch { /* best effort: the original error is the one reported */ } }
+      try {
+        s.update('task', task.id, (doc) => {
+          doc.status = 'cancelled';
+          doc.events.push({ at: new Date().toISOString(), by: handle, event: 'cancelled', data: { reason: 'take failed' } });
+          return doc;
+        });
+      } catch { /* the original error is the one reported */ }
+      throw err;
+    }
     return { task: task.id, findings: findings.map((f) => f.id) };
   });
   return { data: result, text: `${result.task}\nnext: ${names.bin} route ${result.task} --paths <p,…> --loc <n>\n` };

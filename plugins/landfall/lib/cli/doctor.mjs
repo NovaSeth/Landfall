@@ -9,6 +9,7 @@
 //                capped at 2 s; offline, no tag or no git source → skip "unknown"); a newer tag warns (SD-4)
 //   heartbeat    hook heartbeat per event: no hook writes one in this version → skip "not recorded"
 //   bin-path     the first <bin> on PATH is this launcher (Claude Code puts the plugin's bin/ on the Bash tool PATH)
+//   git          the git version: below 2.24 warns (batch merge uses --end-of-options)
 //   state        state.json schema vs this plugin: newer or invalid → fail (writes are refused)
 //   profile      profile freshness (lib/profile scanDue): a scan due → warn
 //   flags        the capability flags (lib/config: machine overrides, config.json, defaults); a machine entry that is
@@ -189,6 +190,17 @@ function firstOnPath(name, pathValue) {
   return null;
 }
 const realPath = (p) => { try { return realpathSync(p); } catch { return null; } };
+
+// `git merge --end-of-options` (task merge --batch) needs git 2.24 or later: older warns, unreadable skips.
+export const GIT_FLOOR = '2.24.0';
+function gitRow({ io }) {
+  const hint = `update git to ${GIT_FLOOR} or newer (batch merge uses --end-of-options)`;
+  const r = git(['--version'], { cwd: neutralCwd(), env: io.env, timeoutMs: TIMEOUT_MS });
+  const v = r.status === 0 ? parseVersion(r.stdout) : null;
+  if (!v) return row('git', 'skip', 'version not readable', hint);
+  const text = v.join('.');
+  return compareVersions(v, parseVersion(GIT_FLOOR)) >= 0 ? row('git', 'ok', `${text} (floor ${GIT_FLOOR})`, hint) : row('git', 'warn', `${text} is older than ${GIT_FLOOR}: batch merge needs it`, hint);
+}
 
 function binRow({ names, io, pluginRoot }) {
   const own = join(pluginRoot, 'bin', names.bin);
@@ -435,6 +447,7 @@ export function doctor({ names, io, version, pluginRoot }) {
     releaseRow({ names, io, id, installed: entry?.version ?? version, marketplaces }),
     row('heartbeat', 'skip', 'not recorded: no hook writes a heartbeat in this version', 'nothing to fix; if hooks seem inactive, run /reload-plugins or restart Claude Code'),
     binRow({ names, io, pluginRoot }),
+    gitRow({ io }),
     ...repo.rows,
     ...outsideRows({ names, io }),
     providersRow({ names, io }),

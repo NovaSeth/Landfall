@@ -14,7 +14,7 @@ const pluginDir = (() => {
   assert.equal(hits.length, 1, 'exactly one plugins/*/lib/name.json');
   return join(root, 'plugins', hits[0]);
 })();
-const { DATA_MARKER, codeSpan, codeText, dataLine, shellQuote } = await import(pathToFileURL(join(pluginDir, 'lib', 'text', 'data.mjs')).href);
+const { DATA_MARKER, codeSpan, dataLine, shellQuote } = await import(pathToFileURL(join(pluginDir, 'lib', 'text', 'data.mjs')).href);
 
 test('dataLine: newline, CR and tab become one space; control, bidi and zero-width characters go; trimmed', () => {
   assert.equal(dataLine('a\nb\r\nc\td'), 'a b c d');
@@ -48,12 +48,6 @@ test('shellQuote: one single-quoted POSIX word; the shell prints it literally an
     assert.equal(existsSync(pwned), false, 'no command substitution ran');
     assert.equal(shellQuote("it's"), `'it'\\''s'`);
   } finally { rmSync(dir, { recursive: true, force: true }); }
-});
-
-test('AR-1: codeText is dataLine with backticks and | replaced by \', so a value cannot close a Markdown code span', () => {
-  assert.equal(codeText('a`b|c\n`d'), "a'b'c 'd");
-  assert.equal(codeText('abcdef', 4), 'abc…');
-  assert.ok(!/[`|\n]/.test(codeText('`x`|\n||``')));
 });
 
 test('fix r2 F4: codeSpan keeps the bytes and picks a backtick run longer than any inside (CommonMark), padded at a backtick edge', () => {

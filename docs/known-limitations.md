@@ -37,6 +37,7 @@
 - Verify: the base gates run once more whenever no stored baseline describes the task base; with in-repo state the temporary worktree sits under `.landfall/local/` meanwhile.
 - Verify: a hand-edited `verify.json` (for example dropping tests from `inventory.tests`) changes the reference of that task.
 - Verify: the integration line is origin's HEAD branch, `origin/main`, `origin/master` or a local `main` or `master`; in a repository with none of them, work merged into the task branch from its integration branch counts as the task's own (the class may rise, never fall).
+- Git: `task merge --batch` uses `--end-of-options`, which needs git 2.24 or later; `landfall doctor` warns on an older git.
 - Worktrees: `gen apply` from a linked worktree writes into the main checkout; state files edited after verify do not make the worktree dirty for `task done` or `task merge` (both check the code tree only; `landfall commit` commits the pending state writes after the merge).
 - Lease: after SIGKILL a stale lease lock stays until `landfall slots --unlock-stale`.
 - Flags: `landfall flags set guard-bash off --local --yes` turns the guard off on that machine (the intended rollback); a mixed team on older plugin versions does not see `config.json`.

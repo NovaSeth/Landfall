@@ -15,6 +15,7 @@ import { CARRIED_PLAN, UNMEASURED, fixedPrompt, parseCaps, showLoop, startLoop, 
 const CODE = Object.freeze({ ACTION: EXIT.OK, WAIT: EXIT.WAIT, DONE: EXIT.DONE, STALLED: EXIT.STALLED, BUDGET: EXIT.BUDGET });
 const usd = (micro) => `$${(micro / 1e6).toFixed(2)}`;
 const cell = (s) => dataLine(s).replace(/\|/g, '/'); // one data line first (SEC-14): U+2028 and other separators too
+const stepCell = (s) => dataLine(s).replace(/\|/g, '\\|'); // a Markdown-escaped | keeps the copied command byte-exact
 const minutes = (loop, now) => Math.max(0, Math.floor((now - Date.parse(loop.startedAt)) / 60000));
 
 // The loop document as data (every field the hooks and the user see).
@@ -30,7 +31,7 @@ function usage(l, now) {
 
 function table(rows, head) {
   const lines = [head, '|---|---|---|---|'];
-  for (const r of rows) lines.push(`| ${cell(r.task)} | ${cell(r.state)} | ${cell(r.step ?? '—')} | ${r.rules?.length ? r.rules.join(', ') : '—'} |`);
+  for (const r of rows) lines.push(`| ${cell(r.task)} | ${cell(r.state)} | ${r.step === undefined || r.step === null ? '—' : stepCell(r.step)} | ${r.rules?.length ? r.rules.join(', ') : '—'} |`);
   return lines.join('\n');
 }
 
