@@ -1,6 +1,6 @@
 # Getting started
 
-Landfall is a Claude Code plugin. You talk to Claude Code as usual; the plugin sizes the work and checks the outcome.
+Landfall is a Claude Code plugin. You use Claude Code as usual. The plugin sizes the work and checks the result.
 
 ## 1. Install
 
@@ -8,20 +8,20 @@ Landfall is a Claude Code plugin. You talk to Claude Code as usual; the plugin s
 claude plugin install landfall --marketplace NovaSeth/Landfall
 ```
 
-Type `/reload-plugins`. If the install fails, run `claude plugin marketplace add NovaSeth/Landfall`, then `claude plugin install landfall@landfall-plugins`. Check the setup with `landfall doctor`; every row that is not OK has a fix hint.
+Type `/reload-plugins`. If the install fails, run `claude plugin marketplace add NovaSeth/Landfall`, then `claude plugin install landfall@landfall-plugins`. `landfall doctor` checks the setup; every row that is not OK has a fix hint.
 
 ## 2. Ask for a change
 
-Open Claude Code in a git repository and describe the change. A trivial change runs as plain Claude Code and writes no files. For larger work the agent says it will track the repository and runs `landfall init`; the state goes in `.landfall/`. Say "no landfall here" to opt out; the choice is remembered outside the repository. To activate tracking yourself, type `/landfall:start`; `/landfall:status` shows the state and `/landfall:doctor` checks the setup.
+Open Claude Code in a git repository and describe the change. A trivial change runs as plain Claude Code and writes no files. For larger work the agent announces that it will track the repository, runs `landfall init` and keeps the state in `.landfall/`. Say "no landfall here" to opt out; the choice is stored outside the repository. To activate tracking yourself, type `/landfall:start`; `/landfall:status` shows the state and `/landfall:doctor` checks the setup.
 
 ## 3. What happens next
 
 1. `landfall profile observe` scans the repository (stack, test command, CI); the agent asks at most three questions and records the answers with `landfall profile set`.
 2. `landfall task new "<title>"` creates a task such as `T-AB-1`; `landfall route T-AB-1` classes it trivial, standard or critical.
 3. The agent writes a failing test, then the change, and a report with a RED and a GREEN result.
-4. `landfall verify T-AB-1` re-runs the gates itself and compares the tests with the baseline. `landfall task done T-AB-1` works only after a passing verify for the code at HEAD.
+4. `landfall verify T-AB-1` re-runs the gates itself and compares the tests with the baseline. `landfall task done T-AB-1` works only after a passing verify of the code at HEAD.
 
-The full session is in the README demo. In a fullscreen terminal wide enough (144 columns) the `Landfall` pane opens beside the transcript and shows the open tasks, the agents at work with their task, role and time, the slots and the next step; `/landfall:dashboard` opens it from 110 columns, and narrower terminals get its one-line summary in the status bar.
+The README demo shows a full session. In a fullscreen terminal at least 144 columns wide, the `Landfall` pane opens beside the transcript. It lists the open tasks, the agents at work with their task, role and time, the slots and the next step; `/landfall:dashboard` opens it from 110 columns, and narrower terminals get its one-line summary in the status bar.
 
 ### First run in a cloned repository
 

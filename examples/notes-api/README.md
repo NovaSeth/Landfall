@@ -1,6 +1,6 @@
 # notes-api: an example project built with Landfall
 
-A small JSON notes service with zero dependencies (Node ≥ 18). It was built end to end with the [Landfall](https://github.com/NovaSeth/Landfall) plugin for Claude Code. Its Landfall state is committed next to the code in `.landfall/`, so the whole process can be read back from the files.
+A small JSON notes service with zero dependencies (Node ≥ 18). It was built from start to finish with the [Landfall](https://github.com/NovaSeth/Landfall) plugin for Claude Code. Its Landfall state is committed next to the code in `.landfall/`, so you can read the whole process back from the files.
 
 ## The service
 - `npm start` serves on port 3000, or on `PORT` if set, and stores notes in `data/notes.json`.
@@ -27,4 +27,4 @@ One orchestrating Claude Code session ran the `landfall` CLI, and every change w
 2. In an empty git repository, start from the first commit's `package.json` and smoke test. Ask Claude Code for the same three tasks; the `landfall:work` and `landfall:dispatch` skills drive the steps above.
 3. A cross-provider review needs the Codex CLI logged in (`landfall providers` shows it). Without it, the critical route asks for a Claude review instead.
 
-The commit history in this directory is not kept: this copy holds the final tree and its state, rebuilt for each major release.
+This directory keeps no commit history. It holds the final tree and its state, rebuilt for each major release.

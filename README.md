@@ -5,9 +5,9 @@
   </picture>
 </p>
 
-# Landfall <sup>2.5.0</sup>
+# Landfall (2.5.0)
 
-Landfall is a Claude Code plugin that turns one session into a small engineering team and holds it to outcomes checked in code. The session orchestrates: it sizes the task, writes a brief, hands the work to a fresh implementer in its own worktree (a Claude agent, or an external CLI such as Codex, which can also review; every run is a row in the agent panel), routes each role to the cheapest model that can do it, has the result reviewed, and closes the task only when `landfall verify` has re-run the project's gates on the code. A trivial change skips all of that, and every task leaves a receipt of what it cost. Formerly `caw`.
+Landfall is a Claude Code plugin that turns one session into a small engineering team and accepts its work only when code has checked the outcome. The session sizes the task, writes a brief and hands the work to a fresh implementer in its own worktree (a Claude agent, or an external CLI such as Codex, which can also review). Every run gets a row in the agent panel. Each role runs on the cheapest model that can do it, the result is reviewed, and the task closes only after `landfall verify` has re-run the project's gates on the code. A trivial change skips all of this. Every task leaves a receipt of what it cost. Landfall was formerly called `caw`.
 
 ## Install
 
@@ -15,93 +15,105 @@ Landfall is a Claude Code plugin that turns one session into a small engineering
 claude plugin install landfall --marketplace NovaSeth/Landfall
 ```
 
-Then type `/reload-plugins` (or restart Claude Code). If the command fails, add the marketplace first:
+Then type `/reload-plugins` or restart Claude Code. If the command fails, add the marketplace first:
 
 ```
 claude plugin marketplace add NovaSeth/Landfall
 claude plugin install landfall@landfall-plugins
 ```
 
-If Claude Code says `landfall-plugins` is already known from another source (for example a local clone), run `claude plugin marketplace remove landfall-plugins`, which also uninstalls the plugin, then install again.
+If Claude Code says `landfall-plugins` is already known from another source, such as a local clone, run `claude plugin marketplace remove landfall-plugins` and install again. Removing the marketplace also uninstalls the plugin.
 
-First use: open Claude Code in your repository and ask for a change, as in the demo below; nothing needs to be invoked. Three slash commands are yours: `/landfall:start` activates tracking in the repository now, `/landfall:status` shows the state, `/landfall:doctor` checks the setup.
+To start, open Claude Code in your repository and ask for a change, as in the demo below. You don't need to invoke anything. There are three slash commands: `/landfall:start` turns on tracking in the repository right away, `/landfall:status` shows the state and `/landfall:doctor` checks the setup.
 
-Agents: check `claude plugin list --json` for `"id":"landfall@landfall-plugins","enabled":true`, then run `landfall doctor`. Installing writes nothing into your projects. Requirements: Claude Code and git. First steps: [docs/getting-started.md](docs/getting-started.md).
+An agent can confirm the install by finding `"id":"landfall@landfall-plugins","enabled":true` in `claude plugin list --json` and then running `landfall doctor`. Installing writes nothing into your projects. You need Claude Code and git. First steps are in [docs/getting-started.md](docs/getting-started.md).
 
 ## 60-second demo
 
-
-An abridged session in a repository the plugin has not seen before. The agent runs each `landfall` command with `--json`; output is shortened here.
+An abridged session in a repository Landfall has not seen before. The square brackets show what Landfall does; the agent runs those commands itself, with `--json`.
 
 ```text
 You     Add a CSV export to the monthly report page.
 
-Claude  $ landfall route --probe --paths src/reports/export.ts,src/reports/page.tsx --loc 80
-        standard
-        This is a standard-size change, so I will track it with Landfall; its state
-        goes in .landfall/ in this repository. Say "no landfall here" to work without it.
+Claude  This touches two files and about 80 lines, a standard-size change, so I'll
+        track it with Landfall.
+          [Landfall sizes the change: $ landfall route --probe \
+              --paths src/reports/export.ts,src/reports/page.tsx --loc 80 → standard]
+        Its state goes in .landfall/ in this repository. If you'd rather I work
+        without it, say "no landfall here".
 
 You     OK.
 
-Claude  $ landfall init --yes
-        handle AB
-        $ landfall profile observe --yes
-        stack: node · gate: npm test
-        Two questions: is this app deployed to users? Is there a deadline?
+Claude  I've started tracking. Your handle is AB, so your tasks are T-AB-1, T-AB-2
+        and so on.
+          [Landfall sets up .landfall/: $ landfall init --yes]
+        It's a Node project, and npm test is the gate.
+          [Landfall reads the stack and the test command: $ landfall profile observe --yes]
+        Two questions before I start: is this app deployed to users? Is there a
+        deadline?
 
 You     Yes, about 40 customers use it. No deadline.
 
-Claude  $ landfall profile set deployedToUsers true --source said \
-            --evidence "Yes, about 40 customers use it" --yes
-        $ landfall task new "CSV export on the monthly report page" --yes
-        T-AB-1
-        $ landfall route T-AB-1 --paths src/reports/export.ts,src/reports/page.tsx \
-            --loc 80 --yes
-        standard: test first, plan in the task
-        RED    npm test: 1 failing, "exports report rows as CSV" (no export yet)
-        GREEN  npm test: all passing; committed
-        report with RED and GREEN written to .landfall/tasks/T-AB-1/ and committed
-        $ landfall verify T-AB-1 --yes
-        pass: gates re-run, no test removed, baseline +1
-        $ landfall task done T-AB-1 --yes
-        T-AB-1 done
+Claude  Noted. I've opened a task for the export.
+          [Landfall records your answer as evidence: $ landfall profile set deployedToUsers true \
+              --source said --evidence "Yes, about 40 customers use it" --yes]
+          [Landfall opens T-AB-1: $ landfall task new "CSV export on the monthly report page" --yes]
+        It's standard, so the test comes first and the plan lives in the task.
+          [Landfall routes the task: $ landfall route T-AB-1 \
+              --paths src/reports/export.ts,src/reports/page.tsx --loc 80 --yes]
 
-        Done: CSV export added test-first; verify passed for the code at HEAD.
+        The new test, "exports report rows as CSV", fails because there is no
+        export yet. With the export written, all tests pass, and I've committed
+        the change. The task report in .landfall/tasks/T-AB-1/ holds both runs and
+        is committed too.
+
+        Then Landfall re-ran the gates on its own: no test was removed, and there
+        is one test more than before.
+          [Landfall re-runs the gates against the baseline: $ landfall verify T-AB-1 --yes → pass]
+        The check passed for the code at HEAD, so I've closed the task.
+          [Landfall closes the task: $ landfall task done T-AB-1 --yes]
 ```
 
 ## What it does
 
-- **Orchestration built in.** `landfall task start` (worktree, branch, base) → brief → implementer → `landfall report` → verify → `landfall review brief` → reviewer → at most two fix rounds → merge → `landfall commit`, driven by skills that name the exact commands; an agent gets a brief file with exact values, never the session history, and `landfall task show` is the card a session resumes from.
-- **Done means verified.** `landfall verify` re-runs the gate commands itself and compares the test inventory with a baseline: a removed or newly skipped test fails without a recorded decision, while a test that only changed its title is reported as renamed. `landfall task done` and `landfall task merge` refuse otherwise; the merge commits only when the gates pass on the merged tree. The state directory is not code: a decision or a report written after verify needs no new commit.
-- **Ceremony scaled to the task and the project.** `landfall route` classes a change trivial, standard or critical from its paths, size and risk flags; documentation and images weigh nothing, the project's own risk globs and review focus live in the profile, and a task is classed from its own commits, not from main merged into it. The review need follows the project tier (`landfall tier`); a critical change gets a spec, a plan and a review from another provider.
-- **Decisions with IDs.** `landfall decide` records what, why and the cost if wrong under an ID such as `D-AB-3`; an agent that edits the code citing it sees the decision.
-- **A loop that ends, a machine that stays usable.** Unattended runs end with a typed exit (done, stalled, budget) and never reschedule after the end; `landfall heavy` queues full suites and builds per machine so parallel agents wait their turn.
-- **Security that follows the risk.** A change on a risk path (auth, money, migrations, CI, agent instructions) or with the security flag gets the security reviewer, which works through the OWASP Top 10:2025, the OWASP Top 10 for LLM Applications 2025 and the OWASP Top 10 for Agentic Applications (rules `OWA-*`, `LLM-*` and `AGT-*`, read with `landfall rule`); a critical change is also reviewed by another model provider when one is installed (`landfall providers`). A Bash guard blocks destructive and unproven commands, `landfall secrets` scans before a report leaves the worktree, repository text reaches agents only as quoted data, and a cloned repository's gate commands run only after `landfall trust`.
-- **Learning that needs evidence.** Review findings still open at the round cap go to a backlog (`landfall findings list`) instead of away; a lesson (`landfall lessons add`) is admitted only with evidence that exists in the state and becomes active only when later receipts show its effect; `landfall route --executor` suggests an executor only when the receipts separate.
-- **External executors as first-class agents.** `landfall exec`, `landfall wait` and `landfall runs` run Codex or Gemini CLI as reviewers or implementers, in supervised, recorded runs with agent-panel rows; a provider gets a minimal environment and starts by the path exec resolved.
-- **A dashboard beside the transcript.** In a wide fullscreen terminal the `Landfall` pane shows, from general to detail, the project and its loop, how many tasks are open and in which stage, the agents at work (Claude subagents and external runs) with role, task, round, elapsed time and where their result landed, the slots in use and the next step; `/landfall:dashboard` opens it, and a narrower terminal gets its one line in the status bar. It reads the plugin's own `status --json`, never the model's context.
-- **Tokens spent where they count.** Roles are routed to model tiers: the orchestrating session plans, dispatches and merges but never implements; the implementer and the reviewer run on Sonnet, the external wrapper on Haiku, the designer on Opus. Method rules load by ID on demand (always-on context about 550 tokens), trivial work calls nothing, and `landfall receipt` shows tokens and cost per task, loop, class or executor, with a dollar cap on unattended loops.
-- **Zero footprint until you say yes.** Installed once per user; a project gets one `.landfall/` directory only when real work starts there and you agree.
+- **Orchestration.** Skills take each task through `landfall task start` (worktree, branch, base) → brief → implementer → `landfall report` → verify → `landfall review brief` → reviewer → at most two fix rounds → merge → `landfall commit`, and name the exact command for every step. An agent gets a brief file with exact values and never sees the session history; a session resumes from the card that `landfall task show` prints.
+- **Verification.** `landfall verify` re-runs the gate commands itself and compares the test inventory with a baseline: a removed or newly skipped test fails unless a decision records it, and a test whose title alone changed is reported as renamed. `landfall task done` and `landfall task merge` refuse without a passing verify, and a merge commits only if the gates pass on the merged tree. The state directory is not code, so a decision or report written after verify needs no new commit.
+- **Task sizing.** `landfall route` classes a change as trivial, standard or critical from its paths, size and risk flags. It counts only the task's own commits, not main merged into it, and gives documentation and images no weight. The profile holds the project's risk globs and review focus, the review need follows the project tier (`landfall tier`), and a critical change gets a spec, a plan and a review from another provider.
+- **Decisions.** `landfall decide` records what was decided, why, and the cost if it is wrong, under an ID such as `D-AB-3`. An agent that edits code citing a decision sees that decision.
+- **Loops and machine load.** An unattended run ends with a typed exit (done, stalled or budget) and never reschedules after that. `landfall heavy` queues full test suites and builds per machine, so parallel agents take turns.
+- **Security review.** A change on a risk path (auth, money, migrations, CI, agent instructions) or with the security flag gets the security reviewer, which works through the OWASP Top 10:2025, the OWASP Top 10 for LLM Applications 2025 and the OWASP Top 10 for Agentic Applications (rules `OWA-*`, `LLM-*` and `AGT-*`, read with `landfall rule`). A critical change is also reviewed by another model provider when one is installed (`landfall providers`).
+- **Guards.** A Bash guard blocks destructive and unproven commands, and `landfall secrets` scans a report before it leaves the worktree. Agents see repository text only as quoted data, and a cloned repository's gate commands run only after `landfall trust`.
+- **Learning.** Review findings still open at the round cap go to a backlog (`landfall findings list`). A lesson (`landfall lessons add`) is admitted only with evidence that exists in the state and becomes active only when later receipts show its effect. `landfall route --executor` suggests an executor only once the receipts tell the executors apart.
+- **External executors.** `landfall exec`, `landfall wait` and `landfall runs` run Codex or Gemini CLI as a reviewer or an implementer, in supervised, recorded runs that get rows in the agent panel. The provider gets a minimal environment and is started by the path exec resolved.
+- **Dashboard.** In a wide fullscreen terminal, `/landfall:dashboard` opens the `Landfall` pane beside the transcript. From the overview down to the detail, it shows the project and its loop, how many tasks are open and at which stage, the agents at work (Claude subagents and external runs) with role, task, round, elapsed time and where each result landed, the slots in use and the next step. A narrower terminal gets one line in the status bar. The pane reads the plugin's own `status --json`, never the model's context.
+- **Model tiers and cost.** The implementer and the reviewer run on Sonnet, the external wrapper on Haiku and the designer on Opus; the orchestrating session plans, dispatches and merges but never implements. Method rules load by ID on demand, so the always-on context is about 550 tokens, and trivial work calls nothing. `landfall receipt` shows tokens and cost per task, loop, class or executor, and unattended loops have a dollar cap.
+- **Footprint.** Landfall is installed once per user. A project gets one `.landfall/` directory only when real work starts there and you agree.
 
 ## What's new in 2.5.0
 
-- External implementers. `landfall exec --role implementer` runs Codex, Gemini or a declared provider in the task's worktree, and the run shows in the dashboard like a review (ORC-26). External runs are hardened: a minimal environment, the provider binary by absolute path, output redacted and bounded, and records bound to what exec started. An external review is recorded only from its run.
-- Lessons. `landfall lessons add|find|promote` keep evidence-gated lessons. A lesson becomes active only when receipts show its effect, and briefs list the ones that match.
-- Executor suggestion. `landfall route --executor` suggests an executor from your receipts once the data separates.
-- Context headroom warnings (shadow), an opt-in mirror of tasks in Claude Code's task list with a completion gate, a one-way GitHub issue mirror (`landfall mirror github`), and `landfall import-1x` for 1.x ledgers.
-- An example project in [examples/notes-api](examples/notes-api), built end to end with Landfall, its state committed.
+- External implementers. `landfall exec --role implementer` runs Codex, Gemini or a declared provider in the task's worktree, and the dashboard shows the run like a review (ORC-26).
+- Hardened external runs. Each run gets a minimal environment, the provider binary by absolute path, redacted and bounded output, and records bound to what exec started. An external review is recorded only from its run.
+- Lessons. `landfall lessons add|find|promote` add, find and promote lessons backed by evidence. A lesson becomes active only when receipts show its effect, and briefs list the lessons that match.
+- Executor suggestion. `landfall route --executor` suggests an executor from your receipts once they tell the executors apart.
+- Also new: context headroom warnings (shadow), an opt-in mirror of tasks in Claude Code's task list with a completion gate, a one-way GitHub issue mirror (`landfall mirror github`) and `landfall import-1x` for 1.x ledgers.
+- An example project, [examples/notes-api](examples/notes-api), built end to end with Landfall and committed with its state.
 
 ## What's new in 2.4.1
 
-- Security audit fixes. The Bash guard scans in linear time, blocks globbed git subcommands and split state paths, and treats repository text as data. The secrets scanner knows more formats, matches long lines in linear time, streams large files and fails closed past 64 MiB. `gen apply` never writes into `.git`, refuses `${{` in CI gate commands, and `--commit <sha>` pins CI to a commit. `verify` redacts with project patterns, signs its gate cache with a machine key and reads `--from` files safely. Agent-instruction files (CLAUDE.md, AGENTS.md, SKILL.md, `.claude/**`, prompts) are risk paths, and the external wrapper agent may run only `landfall exec|wait|runs|rule|method`.
-- Machine trust. A repository's gate commands and threshold overrides run or count only once this machine set or trusted them. `landfall trust` asks for confirmation in a terminal (`! landfall trust` in Claude Code) and refuses `--yes`. An existing repository with a machine-side record is adopted once, and a `local/` directory shipped inside a repository is ignored and moved aside to `local.foreign-*`.
-- Findings backlog. Review findings still open when a review closes at the round cap go into `landfall findings list`; `landfall findings take` turns them into a task, and its `task done` closes them.
-- Batch merge. `landfall task merge <ids…>` or `--ready` merges ready tasks as one batch with one gate run on the integrated tree, bisected on a failure. Every merge is recorded on the task; `status`, `tick` and `doctor` report a merge done by hand, and `task merge --adopt` records it. The Bash guard blocks a plain `git merge` of a task branch on the target.
-- Orchestrator watchdog. The orchestrator checks agents, gates and load on a schedule and unblocks what is slow; `status` and `tick` flag a long heavy-queue wait and high load.
-- External reviews. `landfall exec --role reviewer` feeds the stored review brief (`--round <k>`) and Codex's review schema.
-- Dashboard. TASKS shows the open tasks as `▶ working` or `⏸ waiting`; AGENTS lists only the agents and runs at work.
+- Security audit fixes:
+  - The Bash guard scans in linear time, blocks globbed git subcommands and split state paths, and treats repository text as data.
+  - The secrets scanner knows more formats, matches long lines in linear time, streams large files and fails closed past 64 MiB.
+  - `gen apply` never writes into `.git` and refuses `${{` in CI gate commands; `--commit <sha>` pins CI to a commit.
+  - `verify` redacts with project patterns, signs its gate cache with a machine key and reads `--from` files safely.
+  - Agent-instruction files (CLAUDE.md, AGENTS.md, SKILL.md, `.claude/**`, prompts) are risk paths, and the external wrapper agent may run only `landfall exec|wait|runs|rule|method`.
+- Machine trust. A repository's gate commands and threshold overrides run or count only after this machine has set or trusted them. `landfall trust` asks for confirmation in a terminal (`! landfall trust` in Claude Code) and refuses `--yes`. An existing repository with a machine-side record is adopted once; a `local/` directory shipped inside a repository is ignored and moved aside to `local.foreign-*`.
+- Findings backlog. Review findings still open when a review closes at the round cap go to `landfall findings list`. `landfall findings take` turns them into a task, and that task's `task done` closes them.
+- Batch merge. `landfall task merge <ids…>` or `--ready` merges ready tasks as one batch with one gate run on the integrated tree, and bisects the batch on a failure. Every merge is recorded on the task: `status`, `tick` and `doctor` report a merge done by hand, and `task merge --adopt` records it. The Bash guard blocks a plain `git merge` of a task branch on the target.
+- Orchestrator watchdog. The orchestrator checks agents, gates and load on a schedule and unblocks slow work. `status` and `tick` flag high load and a long wait in the heavy queue.
+- External reviews. `landfall exec --role reviewer` passes the stored review brief (`--round <k>`) and Codex's review schema to the run.
+- Dashboard. TASKS marks each open task `▶ working` or `⏸ waiting`, and AGENTS lists only the agents and runs at work.
 
-Details: [docs/cli.md](docs/cli.md).
+Command details are in [docs/cli.md](docs/cli.md).
 
 ## How it compares
 
@@ -125,11 +137,11 @@ Details: [docs/cli.md](docs/cli.md).
 | Roles routed to model tiers, cost receipts per task | manual | — | — | — | manual | ✓ |
 | Agent cockpit or IDE integration | — | — | — | — | ✓ | — |
 
-The table lists what each tool documents (public READMEs as read on 2026-10-19, and on 2026-10-29 for the security, review, findings, lessons and example rows; corrections are welcome as issues), not how well it works. Claude Code's `/security-review` reviews pending changes without a checklist; BMAD carries decisions forward as durable context, without the evidence gate. Landfall adds a process, cost and enforcement layer to Claude Code sessions; it does not replace an editor or a cockpit such as orca, and can run inside one. A measured comparison with these tools is pre-registered in [docs/benchmark.md](docs/benchmark.md) but not run yet.
+The table shows what each tool documents, which says nothing about how well it works. The sources are the public READMEs, read on 2026-10-19, and on 2026-10-29 for the security, review, findings, lessons and example rows. Corrections are welcome as issues. Claude Code's `/security-review` reviews pending changes without a checklist. BMAD carries decisions forward as durable context, without the evidence gate. Landfall adds process, cost tracking and enforcement to Claude Code sessions. It can run inside an editor or a cockpit such as orca and does not replace one. A measured comparison with these tools is pre-registered in [docs/benchmark.md](docs/benchmark.md) but not run yet.
 
 ## Measured
 
-With/without evaluation on the plugin's own suite (10 small tasks with hidden tests, 5 runs per arm, 2026-10-19): quality delta **0** (49/50 complete in both arms), cost **+29 %** with the plugin, and two of three trivial cases over the suite's overhead limits. The plugin does not improve these small tasks and costs more on them. After a skill change the same day, the token overhead of two of the three trivial cases is at or near the limit; the remaining extra time is the test run the plugin asks for after every change. Details and the reading in [docs/evaluation.md](docs/evaluation.md).
+A with/without evaluation on the plugin's own suite (10 small tasks with hidden tests, 5 runs per arm, 2026-10-19) found that the plugin does not improve these small tasks and costs more on them. The quality delta was 0 (49/50 complete in both arms), cost rose 29 % with the plugin, and two of the three trivial cases went over the suite's overhead limits. After a skill change the same day, the token overhead of two of the three trivial cases is at or near the limit. The rest of the extra time is the test run the plugin asks for after every change. Details and how to read them: [docs/evaluation.md](docs/evaluation.md).
 
 ## Commands at a glance
 
@@ -153,15 +165,15 @@ With/without evaluation on the plugin's own suite (10 small tasks with hidden te
 | `landfall task show <task>` | The resume card: class, branch, rounds, last verify, next step |
 | `landfall status` | Activation, open tasks, loop and leases |
 
-Commands that change files need a terminal or `--yes`. With `--json` every command prints one JSON line; exit codes are typed. Full reference: [docs/cli.md](docs/cli.md) or `landfall <command> --help`.
+Commands that change files need a terminal or `--yes`. With `--json`, every command prints one JSON line, and exit codes are typed. The full reference is [docs/cli.md](docs/cli.md) or `landfall <command> --help`.
 
 ## Known limitations
 
-[docs/known-limitations.md](docs/known-limitations.md). The Bash guard is a seat belt, not a security boundary; `verify` enforces outcomes in code.
+See [docs/known-limitations.md](docs/known-limitations.md). The Bash guard is a seat belt, not a security boundary. Outcomes are enforced in code by `verify`.
 
 ## Update, uninstall, contribute
 
-Update: `claude plugin update landfall@landfall-plugins`, then `/reload-plugins`. Uninstall: `claude plugin uninstall landfall@landfall-plugins`; a project's `.landfall/` stays until you run `landfall deactivate` there. Before a pull request run `npm test`; for a bug report attach `landfall doctor --json`.
+To update, run `claude plugin update landfall@landfall-plugins`, then `/reload-plugins`. To uninstall, run `claude plugin uninstall landfall@landfall-plugins`. A project's `.landfall/` stays until you run `landfall deactivate` there. Run `npm test` before a pull request, and attach `landfall doctor --json` to a bug report.
 
 ## License
 
