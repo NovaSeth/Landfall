@@ -10,7 +10,8 @@ import { fileURLToPath } from 'node:url';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const plugin = join(root, 'plugins', readdirSync(join(root, 'plugins')).find((d) => existsSync(join(root, 'plugins', d, 'lib', 'name.json'))));
 const read = (...p) => readFileSync(join(...p), 'utf8');
-const rule = (topic, id) => {
+const { bin } = JSON.parse(read(plugin, 'lib', 'name.json'));
+const rule =(topic, id) => {
   const line = read(plugin, 'method', `${topic}.md`).split('\n').find((l) => l.startsWith(`**${id}.**`));
   assert.ok(line, `${id} in method/${topic}.md`);
   return line;
@@ -35,7 +36,14 @@ test('the external agent passes --yes, waits, and starts reviewer or implementer
   assert.doesNotMatch(rule('orchestration', 'ORC-14'), /workspace-write for fixes/);
   assert.match(rule('orchestration', 'ORC-21'), /give it slices and reviews/);
   assert.match(rule('orchestration', 'ORC-26'), /only through `exec`/);
-  assert.doesNotMatch(read(root, 'README.md'), /implementer in its own worktree \(a Claude agent or an external CLI/);
+  // 2.5.0 (T-MG-97): external implementers exist, so the README says so and promises nothing for a later release
+  const readme = read(root, 'README.md');
+  assert.match(readme, /implementer in its own worktree \(a Claude agent, or an external CLI such as Codex/);
+  assert.doesNotMatch(readme, /implementations follow in a later release/);
+  const start = read(root, 'docs', 'getting-started.md');
+  assert.ok(start.includes(`commit it once (\`${bin} commit --yes\`) before the first \`task start\``), 'getting started: the state commit before the first task start');
+  assert.ok(start.includes(`${bin} exec --task <task> --role reviewer|implementer`), 'getting started: exec with both roles');
+  assert.doesNotMatch(read(root, 'docs', 'known-limitations.md'), /runs after this release/, 'the benchmark is postponed (D-MG-26)');
 });
 
 test('the dispatch skill: verify failure goes back before any fix-round record, merge forms read as commands, the reviewer dispatch is recorded', () => {

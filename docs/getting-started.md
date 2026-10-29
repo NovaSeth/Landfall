@@ -38,7 +38,9 @@ Review findings still open when a review closes at the round cap are kept. `land
 ## 4. Useful commands
 
 - `landfall status` shows open tasks and their next step; `landfall task show <task>` is the card of one task (branch, rounds, last verify, next step).
-- `landfall task start <task>` creates the worktree and the branch; `landfall report <task> --from <file>` stores the report; `landfall review brief <task>` renders the review brief; `landfall commit` commits the state directory.
+- `landfall task start <task>` creates the worktree and the branch; `landfall report <task> --from <file>` stores the report; `landfall review brief <task>` renders the review brief; `landfall commit` commits the state directory. With the state inside the repository, commit it once (`landfall commit --yes`) before the first `task start`.
+- `landfall exec --task <task> --role reviewer|implementer` runs Codex, Gemini or a declared provider (`landfall providers` lists them); `landfall wait <run>` waits for it, and `landfall review record <task> --kind external --run <run>` records its review.
+- `landfall lessons add` records a lesson with its evidence; `landfall lessons find <words>` looks one up.
 - `landfall decide` records a decision; `landfall decide --from-verify <task>` allows the tests verify saw removed; `landfall decisions check` fails on a cited decision that is unknown or retired.
 - `landfall heavy <command>` runs a full suite or build from the machine queue.
 - `landfall <command> --help` prints help; the reference is [cli.md](cli.md).

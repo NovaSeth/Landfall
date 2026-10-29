@@ -2,7 +2,7 @@
 
 ## Not in this release
 - The adaptive engine runs in shadow mode: `landfall tier` explains the recommended tier; tier changes are not applied automatically.
-- The evaluation covers small tasks only ([evaluation.md](evaluation.md)); the outcome benchmark against other frameworks is pre-registered ([benchmark.md](benchmark.md)) and runs after this release.
+- The evaluation covers small tasks only ([evaluation.md](evaluation.md)); the outcome benchmark against other frameworks is pre-registered ([benchmark.md](benchmark.md)) but not run yet.
 - Context headroom warnings run in shadow (they are logged, not shown) until a decision turns them on; the native task mirror is off by default (`landfall flags set task-mirror on`).
 - Lessons become active only through `landfall lessons promote`, which needs 20 or more receipts on each side; matching lessons appear in briefs only, not at edit time.
 - A task created `--after` others waits until they are done or cancelled; the loop does not merge them for it, and the brief's base is still the orchestrator's to fill.
