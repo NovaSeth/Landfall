@@ -94,7 +94,7 @@ test('E1: a parent directory that is a symbolic link out of the repository stops
   symlinkSync(out, join(dir, '.github'));
   const r = cli(['gen', 'apply', 'ci', '--yes', '--json'], dir);
   assert.equal(r.status, 1, show(r));
-  assert.deepEqual(envelope(r).errors.map((x) => x.code), ['unsafe']);
+  assert.deepEqual(envelope(r).errors.map((x) => x.code), ['manifest-path-refused']);
   assert.deepEqual(readdirSync(out), [], 'nothing was written through the link');
 });
 
@@ -128,4 +128,58 @@ test('G3: the package ref is the release tag or a 40-hex commit; anything else i
   const out = gen.render(REAL('ci'), { ...gen.DEFAULT_OPTIONS, package: gen.packageSpec(names, '2.4.0', sha) }, names);
   assert.ok(out.includes(`'${names.repository}#${sha}'`), 'the npx spec carries #<sha>');
   assert.throws(() => gen.render(REAL('ci'), { ...gen.DEFAULT_OPTIONS, package: spec('main') }, names), /options/);
+});
+
+test('F1 (review): a manifest target that is neither named nor enabled by default is refused, also an unknown one; nothing is written', (t) => {
+  const hook = REAL('pre-push').path(names);
+  for (const [id, path] of [['pre-push', hook], ['no-such-target', 'docs/x.md']]) {
+    for (const args of [['gen', 'apply', '--yes', '--json'], ['gen', 'apply', 'ci', '--yes', '--json']]) {
+      const { dir } = repoWith(t, { flags: { 'ci-gate': 'on' }, manifest: { [path]: entry(id) } });
+      const r = cli(args, dir);
+      assert.equal(r.status, 1, `${id} ${args.join(' ')}\n${show(r)}`);
+      assert.deepEqual(envelope(r).errors.map((x) => x.code), ['manifest-path-refused'], show(r));
+      assert.ok(!existsSync(join(dir, ...hook.split('/'))), 'no hook');
+      assert.ok(!existsSync(join(dir, '.github')), 'nothing else written');
+    }
+  }
+  // Named, or enabled by default: accepted.
+  const named = repoWith(t, { manifest: { [hook]: entry('pre-push') } });
+  assert.equal(cli(['gen', 'apply', 'pre-push', '--yes', '--json'], named.dir).status, 0);
+  const on = repoWith(t, { flags: { 'pre-push': 'on' }, manifest: { [hook]: entry('pre-push') } });
+  assert.equal(cli(['gen', 'apply', '--yes', '--json'], on.dir).status, 0);
+});
+
+test('F2 (review): an escaping symbolic link stops the whole run; a safe target of the same run is not written either', (t) => {
+  const { dir, store } = repoWith(t, { flags: { 'ci-gate': 'on', 'pre-push': 'on' } });
+  const out = realpathSync(mkdtempSync(join(tmpdir(), 'gen-paths-out-')));
+  t.after(() => rmSync(out, { recursive: true, force: true }));
+  symlinkSync(out, join(dir, '.github'));
+  const r = cli(['gen', 'apply', 'ci', 'pre-push', '--yes', '--json'], dir);
+  assert.equal(r.status, 1, show(r));
+  assert.ok(envelope(r).errors.some((x) => x.code === 'manifest-path-refused'), show(r));
+  assert.ok(!existsSync(join(dir, '.githooks', 'pre-push')), 'the safe target was not written');
+  assert.deepEqual(readdirSync(out), []);
+  assert.equal(store.read('generated', null), null, 'the record was not touched');
+  // The library: the same, in one call.
+  const items = gen.targetItems({ root: dir, store, names, options: gen.DEFAULT_OPTIONS, targets: [REAL('ci'), REAL('pre-push')] });
+  const rep = gen.applyGen({ root: dir, store, names, version: PLUGIN_VERSION, items, now: () => AT });
+  assert.equal(rep.ok, false);
+  assert.deepEqual(rep.written, []);
+  assert.ok(!existsSync(join(dir, '.githooks', 'pre-push')));
+});
+
+test('F3 (review): --commit <40-hex> pins the npx spec of the generated workflow; a bad value is a usage error', (t) => {
+  const sha = 'b'.repeat(40);
+  const { dir } = repoWith(t, { flags: { 'ci-gate': 'on' } });
+  for (const bad of ['main', 'abc', 'B'.repeat(40), 'b'.repeat(41)]) {
+    const x = cli(['gen', 'apply', 'ci', '--commit', bad, '--dry-run', '--json'], dir);
+    assert.equal(x.status, 2, `${bad}\n${show(x)}`);
+    assert.ok(!existsSync(join(dir, '.github')));
+  }
+  assert.equal(cli(['gen', 'plan', 'ci', '--commit', sha, '--json'], dir).status, 0);
+  const r = cli(['gen', 'apply', 'ci', '--commit', sha, '--yes', '--json'], dir);
+  assert.equal(r.status, 0, show(r));
+  const wf = readFileSync(join(dir, REAL('ci').path(names)), 'utf8');
+  assert.ok(wf.includes(`${names.repository}#${sha}`), 'the workflow carries #<sha>');
+  assert.ok(!wf.includes(`#${names.plugin}--v`));
 });
