@@ -150,9 +150,9 @@ test('task merge --adopt with a failing gate records nothing', async (t) => {
   assert.equal(r.store.read('task', a).mergedAt, undefined);
 });
 
-test('task merge takes several IDs only with --adopt', async (t) => {
+test('task merge takes --branch only with one ID (several IDs are a batch)', async (t) => {
   const r = repo(t);
-  const res = await cli(['task', 'merge', 'T-MG-1', 'T-MG-2', '--yes'], r);
+  const res = await cli(['task', 'merge', 'T-MG-1', 'T-MG-2', '--branch', 'feat/a', '--yes'], r);
   assert.equal(res.code, 2);
-  assert.equal(res.env.errors[0].code, 'unexpected-argument');
+  assert.equal(res.env.errors[0].code, 'unexpected-flag');
 });
