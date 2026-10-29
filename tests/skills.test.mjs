@@ -120,9 +120,9 @@ test('SEC-14: every executor agent treats repository text as data; review and di
   for (const skill of ['review', 'dispatch']) assert.ok(read(skillFile(skill)).includes(`${names.plugin}:security-reviewer`), `${skill} names the security reviewer`);
 });
 
-test('ORC-24: dispatch sends another provider through exec; the external agent starts implementer runs with --brief', () => {
+test('ORC-26: dispatch sends another provider through exec; the external agent starts implementer runs with --brief', () => {
   const dispatch = read(skillFile('dispatch'));
-  assert.ok(dispatch.includes('ORC-24'), 'dispatch names ORC-24');
+  assert.ok(dispatch.includes('ORC-26'), 'dispatch names ORC-26');
   assert.ok(dispatch.includes('landfall exec'), 'dispatch names landfall exec');
   const external = read(agentFile('external'));
   for (const text of ['--role <reviewer|implementer>', '[--brief <file>]', 'report <id> --from <out file>']) assert.ok(external.includes(text), `external: ${text}`);
