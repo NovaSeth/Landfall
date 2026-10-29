@@ -10,7 +10,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { accessSync, chmodSync, constants, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { accessSync, chmodSync, constants, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, realpathSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { delimiter, dirname, join, relative } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { isolatedEnv, isolateProcessEnv } from './helpers/isolated-env.mjs';
@@ -64,6 +65,7 @@ function fakeClaude(bin, { version = '2.1.300 (Claude Code)', list = healthyList
   const answers = JSON.stringify({ version, list, details, marketplaces, id: PLUGIN_ID });
   writeFileSync(join(bin, 'claude'), `#!/usr/bin/env node
 const a = process.argv.slice(2).join(' ');
+if (process.env.FAKE_CWD_LOG) require('node:fs').appendFileSync(process.env.FAKE_CWD_LOG, require('node:fs').realpathSync(process.cwd()) + '\\n');
 const o = ${answers};
 if (a === '--version') process.stdout.write(o.version + '\\n');
 else if (a === 'plugin list --json') process.stdout.write(o.list);
@@ -129,6 +131,22 @@ function snapshot(base) {
   return snap;
 }
 const changed = (a, b) => [...new Set([...a.keys(), ...b.keys()])].filter((k) => a.get(k) !== b.get(k)).sort();
+
+test('doctor runs claude from the real temp directory, never from the repository (E3)', (t) => {
+  const s = scratch(t);
+  fakeClaude(s.bin);
+  const project = join(s.base, 'project');
+  mkdirSync(project);
+  gitIn(project, 'init', '-q');
+  const log = join(s.base, 'cwd.log');
+  const { r } = doctor(s, { cwd: project, env: { ...s.env, FAKE_CWD_LOG: log } });
+  assert.equal(r.status, 0, out(r));
+  const cwds = readFileSync(log, 'utf8').trim().split('\n');
+  assert.ok(cwds.length >= 3, 'claude ran several times');
+  const neutral = realpathSync(s.env.TMPDIR || tmpdir());
+  for (const c of cwds) assert.equal(c, neutral);
+  assert.ok(!cwds.includes(realpathSync(project)));
+});
 
 test('full report: the v0 checks stay as pinned, one row per item with a status and a fix hint; healthy exits 0', (t) => {
   const s = scratch(t);

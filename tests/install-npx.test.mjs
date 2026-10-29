@@ -63,6 +63,7 @@ function fakeClaude(base) {
 const fs = require('node:fs');
 const argv = process.argv.slice(2);
 fs.appendFileSync(process.env.FAKE_CLAUDE_LOG, JSON.stringify(argv) + '\\n');
+fs.appendFileSync(process.env.FAKE_CLAUDE_LOG + '.cwd', fs.realpathSync(process.cwd()) + '\\n');
 if (argv.join(' ') === 'plugin list --json') { process.stdout.write(fs.readFileSync(process.env.FAKE_CLAUDE_LIST, 'utf8')); process.exit(0); }
 if (argv.includes('--marketplace')) process.exit(Number(process.env.FAKE_PRIMARY_EXIT || 0));
 process.exit(0);
@@ -102,6 +103,8 @@ test('npm pack ships the plugin, README, CHANGELOG and LICENSE only, with exactl
   const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
   assert.deepEqual(pkg.bin, { [names.bin]: `${pluginRel}/bin/${names.bin}` });
   for (const f of p.files) assert.ok(f.startsWith(`${pluginRel}/`) || ['package.json', 'README.md', 'CHANGELOG.md', 'LICENSE'].includes(f), `unexpected file in the package: ${f}`);
+  // G4: no test file and no evals fixture reaches a user's tree, where a test runner could pick it up
+  for (const f of p.files) assert.ok(!/\.test\.[cm]?[jt]sx?$/.test(f) && !f.startsWith(`${pluginRel}/evals/`), `a test or eval file in the package: ${f}`);
   for (const dir of ['docs/', 'scripts/', 'tests/', 'evals-hidden/', '.github/', '.claude-plugin/']) assert.ok(!p.files.some((f) => f.startsWith(dir)), `no ${dir} in the package`);
   for (const f of ['README.md', 'CHANGELOG.md', 'LICENSE', `${pluginRel}/bin/${names.bin}`, `${pluginRel}/lib/cli/main.mjs`, `${pluginRel}/hooks/hooks.json`]) assert.ok(p.files.includes(f), `${f} in the package`);
 });
@@ -126,11 +129,22 @@ test('npx <tarball> install without claude on PATH prints exactly the SD-3 comma
   assert.deepEqual(readdirSync(cwd), [], 'nothing written where it ran');
 });
 
-async function inProcess(s, extraEnv) {
-  const io = { out: (x) => io.o.push(x), err: (x) => io.e.push(x), o: [], e: [], stdinIsTTY: false, env: { ...s.env, PATH: `${s.fake}${delimiter}${s.env.PATH}`, ...extraEnv }, cwd: s.base, stdin: null };
+async function inProcess(s, extraEnv, cwd = s.base) {
+  const io = { out: (x) => io.o.push(x), err: (x) => io.e.push(x), o: [], e: [], stdinIsTTY: false, env: { ...s.env, PATH: `${s.fake}${delimiter}${s.env.PATH}`, ...extraEnv }, cwd, stdin: null };
   const code = await main(['install', '--json'], { io });
   return { code, env: JSON.parse(io.o.join('')) };
 }
+
+test('install: claude never runs in the repository: its cwd is the real temp directory (E3)', async (t) => {
+  const s = setup(t);
+  const repo = join(s.base, 'repo');
+  mkdirSync(repo);
+  await inProcess(s, { FAKE_PRIMARY_EXIT: '1' }, repo);
+  const cwds = readFileSync(`${s.env.FAKE_CLAUDE_LOG}.cwd`, 'utf8').trim().split('\n');
+  assert.equal(cwds.length, 4);
+  for (const c of cwds) assert.equal(c, realpathSync(tmpdir()), 'a neutral directory');
+  assert.ok(!cwds.includes(realpathSync(repo)));
+});
 
 test('install: a failing one-command install runs the two-command fallback; a plugin not enabled afterwards is exit 1', async (t) => {
   const s = setup(t);
