@@ -317,13 +317,59 @@ test('T-MG-83 F2: a project pattern match straddling a window edge is masked, fa
   for (const at of [4090, 2048 * 5 - 7, 4096 * 7 - 10, 100000]) {
     const out = redactLib.redact(`${'.'.repeat(at)}synth_custom_PRIVATE ${'.'.repeat(5000)}`, extra);
     assert.ok(!out.includes('PRIVATE'), `at ${at}: ${out.slice(at - 20, at + 60)}`);
-    assert.ok(out.endsWith('.'.repeat(5000)), 'the rest of the line stays');
+    // Intended change (fix round 3): a long line with a hit is one whole-line marker; no part of it is kept.
+    assert.match(out, WHOLE_LINE, 'a long line with a hit is masked whole');
   }
 });
 
-test('T-MG-83 F2: a line longer than 1 MiB keeps only its first 1 MiB, the rest is masked', () => {
+test('T-MG-83 F2: a line longer than 1 MiB without a hit is kept as it is (no truncation)', () => {
+  // Intended change (fix round 3): detection runs over the whole line; a long line with no hit is kept whole.
   const extra = secretsLib.projectPatterns('synth_custom_[A-Z]+').patterns;
-  const out = redactLib.redact(`${'.'.repeat(1024 * 1024 + 10)}tail_visible`, extra);
-  assert.ok(!out.includes('tail_visible'), out.slice(-80));
-  assert.ok(out.startsWith('.'.repeat(1024 * 1024)));
+  const line = `${'.'.repeat(1024 * 1024 + 10)}tail_visible`;
+  assert.equal(redactLib.redact(line, extra), line);
+});
+
+// T-MG-83 fix round 3 (review r2 F1-F3, automated review AR-1 AR-2): a line longer than 4096 bytes with any hit is
+// masked whole as one marker, so no window edge or cut shows a byte of the secret.
+const WHOLE_LINE = /^\[redacted: \d+ chars, secret detected\]$/;
+const noByteOf = (out, secret) => {
+  for (let i = 0; i + 4 <= secret.length; i++) assert.ok(!out.includes(secret.slice(i, i + 4)), `"${secret.slice(i, i + 4)}" shows`);
+};
+
+test('T-MG-83 r2 F1: a JWT the span regex cannot see is masked even when another span matches the line', () => {
+  const out = redactLib.redact(`safe x eyJ${'A'.repeat(4085)}.eyJ${'B'.repeat(20)}SYNTHTAIL`, secretsLib.projectPatterns('safe').patterns);
+  assert.ok(!out.includes('SYNTHTAIL') && !out.includes('AAAA') && !out.includes('BBBB'), out.slice(-80));
+  assert.match(out, WHOLE_LINE);
+});
+
+test('T-MG-83 r2 F2: a project match longer than a window is masked whole', () => {
+  const out = redactLib.redact(`synth_custom_${'A'.repeat(5000)}SYNTH_END`, secretsLib.projectPatterns('synth_custom_[A-Z_]+').patterns);
+  assert.ok(!out.includes('SYNTH_END') && !out.includes('AAAA'), out.slice(-80));
+  assert.match(out, WHOLE_LINE);
+});
+
+test('T-MG-83 AR-1: a project match that runs past a window end shows no byte of it', () => {
+  const extra = secretsLib.projectPatterns('synth_custom_[A-Z_]+').patterns;
+  for (const at of [4090, 2048 * 3 - 5]) {
+    const secret = `synth_custom_${'Q'.repeat(3000)}SYNTH_END`;
+    const out = redactLib.redact(`${'.'.repeat(at)}${secret} after`, extra);
+    noByteOf(out, secret);
+    assert.match(out, WHOLE_LINE, `at ${at}`);
+  }
+});
+
+test('T-MG-83 r2 F3 and AR-2: a key across the 1 MiB mark shows no byte of it', () => {
+  for (const before of [1048566, 1024 * 1024 - 5, 1024 * 1024 + 3]) {
+    const out = redactLib.redact(`${'.'.repeat(before)}AKIAABCDEFGHIJKLMNOP`);
+    noByteOf(out, 'AKIAABCDEFGHIJKLMNOP');
+    assert.match(out, WHOLE_LINE, `at ${before}`);
+  }
+});
+
+test('T-MG-83 r2: a long line masked whole leaves the other lines of the text as they are', () => {
+  const out = redactLib.redact(`first\n${'.'.repeat(5000)}AKIAABCDEFGHIJKLMNOP\nlast`);
+  const [a, b, c] = out.split('\n');
+  assert.equal(a, 'first');
+  assert.match(b, WHOLE_LINE);
+  assert.equal(c, 'last');
 });
