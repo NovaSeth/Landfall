@@ -107,3 +107,106 @@ test('a symlinked state directory: decision records are refused as for writes', 
   symlinkSync(store, link);
   assert.throws(() => readRecords(link), (err) => err.code === 'state-invalid');
 });
+
+// ---- slice A2: one machine id per user and machine, tracked means foreign, every reader, hooks never move ----
+const { main } = await import(lib('cli/main.mjs'));
+const { loopStatus } = await import(lib('hooks/loop-state.mjs'));
+const LAUNCHER = join(pluginDir, 'bin', names.bin);
+async function cli(cwd, args, env = ISO.env) {
+  const io = { stdout: '', stderr: '', stdinIsTTY: false, env, cwd, stdin: null };
+  io.out = (s) => { io.stdout += s; };
+  io.err = (s) => { io.stderr += s; };
+  const code = await main(args, { io });
+  return { code, stdout: io.stdout, stderr: io.stderr, json: args.includes('--json') && io.stdout ? JSON.parse(io.stdout.trim().split('\n').pop()) : null };
+}
+const commit = (cwd) => git(cwd, '-c', 'user.name=T', '-c', 'user.email=t@example.com', 'commit', '-qm', 'ship state');
+const RUN = 'codex-T-AB-1-implementer-1';
+const identify = (d) => { git(d, 'config', 'user.name', 'Test User'); git(d, 'config', 'user.email', 'test@example.com'); };
+// A repository activated on this machine whose local/ (this machine's marker, a loop, a running run) was committed,
+// then cloned: the clone's local/ is tracked, and its marker equals this machine's id.
+async function shippedClone(t, { decision = false } = {}) {
+  const base = realpathSync(mkdtempSync(join(tmpdir(), 'state-local-owner-')));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  const origin = join(base, 'origin');
+  mkdirSync(origin);
+  git(origin, '-c', 'init.defaultBranch=main', 'init', '-q');
+  identify(origin);
+  writeFileSync(join(origin, 'README.md'), 'x\n');
+  const init = await cli(origin, ['init', '--yes', '--handle', 'AB', '--json']);
+  assert.equal(init.code, 0, init.stdout + init.stderr);
+  if (decision) {
+    const r = await cli(origin, ['decide', '--title', 'Sources stay small', '--why', 'Because small. More detail.', '--cost', 'low, easy to change', '--scope', 'src/**', '--yes', '--json']);
+    assert.equal(r.code, 0, r.stdout + r.stderr);
+  }
+  const local = join(origin, names.stateDir, 'local');
+  assert.match(readFileSync(join(local, '.machine'), 'utf8'), /^[0-9a-f]{32}\n$/, 'this machine marked it');
+  writeFileSync(join(local, 'loop.json'), JSON.stringify({ schema: 1, id: 'L-20991231000000-abcdef', startedAt: AT, ticks: 0, exit: 'DONE' }));
+  mkdirSync(join(local, 'runs'), { recursive: true });
+  writeFileSync(join(local, 'runs', `${RUN}.json`), JSON.stringify({ schema: 1, runId: RUN, status: 'running', startedAt: AT }));
+  git(origin, 'add', '-f', '.');
+  commit(origin);
+  const dir = join(base, 'clone');
+  git(base, 'clone', '-q', origin, dir);
+  identify(dir);
+  const store = join(dir, names.stateDir);
+  assert.ok(existsSync(join(store, 'local', 'loop.json')), 'the clone ships local/');
+  return { base, dir, store };
+}
+
+test('A2-1: two plugin data and config dirs of one user on one machine both own a marked local/; nothing moves aside', async (t) => {
+  const base = realpathSync(mkdtempSync(join(tmpdir(), 'state-local-owner-')));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  const envOf = (n) => ({ ...ISO.env, CLAUDE_CONFIG_DIR: join(base, `config-${n}`), CLAUDE_PLUGIN_DATA: join(base, `data-${n}`) });
+  const mk = (name) => { const d = join(base, name); mkdirSync(d); git(d, '-c', 'init.defaultBranch=main', 'init', '-q'); identify(d); return d; };
+  const repoA = mk('a');
+  const other = mk('other');
+  assert.equal((await cli(repoA, ['init', '--yes', '--handle', 'AB'], envOf(1))).code, 0);
+  assert.equal((await cli(other, ['init', '--yes', '--handle', 'AB'], envOf(2))).code, 0); // the second config dir has written state before
+  const r = await cli(repoA, ['init', '--yes', '--handle', 'AB'], envOf(2));
+  assert.equal(r.code, 0, r.stdout + r.stderr);
+  assert.deepEqual(foreignDirs(join(repoA, names.stateDir)), [], 'a fresh install through another CLAUDE_CONFIG_DIR moves nothing aside');
+});
+
+test('A2-2: a tracked local/ whose marker equals this machine\'s id is foreign; once moved aside, a new process keeps the fresh local/', async (t) => {
+  const { base, dir, store } = await shippedClone(t);
+  assert.equal(showLoop({ cwd: dir, env: ISO.env, names }).loop, null, 'the shipped loop is not this machine\'s');
+  const s = state.open(store, { names });
+  s.write('config', null, config);
+  assert.equal(foreignDirs(store).length, 1, 'moved aside although its marker names this machine');
+  const script = join(base, 'write.mjs');
+  writeFileSync(script, `const s = await import(${JSON.stringify(lib('state/index.mjs'))});\nconst names = ${JSON.stringify(names)};\ns.open(${JSON.stringify(store)}, { names }).write('config', null, ${JSON.stringify(config)});\n`);
+  const r = spawnSync(process.execPath, [script], { env: ISO.env, encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(foreignDirs(store).length, 1, 'the fresh local/ (git still lists the shipped paths) is not moved again');
+});
+
+test('A2-3, A2-5: the stop guard, status --json and runs list --json see a shipped local/ as empty; the move-aside is gitignored', async (t) => {
+  const { dir, store } = await shippedClone(t);
+  const env = { ...ISO.env, CLAUDE_PROJECT_DIR: dir };
+  assert.equal(loopStatus({ cwd: dir }, env).kind, 'none', 'the stop guard sees no loop');
+  const status = await cli(dir, ['status', '--json']);
+  assert.equal(status.code, 0, status.stdout + status.stderr);
+  assert.ok(!JSON.stringify(status.json.data).includes(RUN), `no shipped run in status: ${status.stdout}`);
+  const runs = await cli(dir, ['runs', 'list', '--json']);
+  assert.equal(runs.code, 0, runs.stdout + runs.stderr);
+  assert.deepEqual(runs.json.data.runs, []);
+  assert.deepEqual(foreignDirs(store), [], 'reads move nothing');
+  const again = await cli(dir, ['init', '--yes', '--handle', 'AB']); // a command's write: the activation write
+  assert.equal(again.code, 0, again.stdout + again.stderr);
+  assert.equal(foreignDirs(store).length, 1);
+  assert.ok(readFileSync(join(store, '.gitignore'), 'utf8').split('\n').includes('local.foreign-*/'), 'an existing .gitignore gains the line');
+  const porcelain = spawnSync('git', ['status', '--porcelain', '--untracked-files=all'], { cwd: dir, env: ISO.env, encoding: 'utf8' }).stdout;
+  assert.ok(!porcelain.includes('local.foreign-'), porcelain);
+});
+
+test('A2-4: a hook run in a repository with a shipped local/ moves nothing aside and writes nothing there', async (t) => {
+  const { dir, store } = await shippedClone(t, { decision: true });
+  mkdirSync(join(dir, 'src'));
+  writeFileSync(join(dir, 'src', 'a.js'), 'x\n');
+  const before = readdirSync(join(store, 'local')).sort();
+  const input = { session_id: 's1', cwd: dir, hook_event_name: 'PreToolUse', tool_name: 'Edit', tool_input: { file_path: join(dir, 'src', 'a.js') } };
+  const r = spawnSync(process.execPath, [LAUNCHER, 'hook', 'decisions-context'], { cwd: dir, env: ISO.env, input: JSON.stringify(input), encoding: 'utf8', timeout: 60000 });
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(foreignDirs(store), [], 'a hook never moves local/ aside');
+  assert.deepEqual(readdirSync(join(store, 'local')).sort(), before, 'and writes nothing into it');
+});
