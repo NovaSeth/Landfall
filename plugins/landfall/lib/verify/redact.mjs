@@ -42,39 +42,85 @@ export const projectRedactions = (where) => readProjectPatterns(where).extra;
 const bytesOf = (s) => Buffer.from(s, 'utf8').toString('latin1');
 const textOf = (b) => Buffer.from(b, 'latin1').toString('utf8');
 
-// The [start, end) spans of every match of every pattern in `line` (latin1), overlapping ones merged.
-function spans(line, extra) {
+// The [start, end) spans of every match of every pattern in `line` (latin1), overlapping ones merged (merge).
+// A line is redacted when the scanner (matchLine) marks it or a project span is found. Built-in patterns run over the
+// whole line. A built-in match of 1024 bytes or more has reached a bounded probe
+// (VALUE_LIMIT): its span runs on to the end of the value (a closing quote, whitespace or the end of the line), so no
+// suffix beyond the probe shows. Project patterns run in WINDOW-byte windows that overlap by OVERLAP bytes, so a
+// match anywhere in the line is found at a linear cost; a match found in any window is masked.
+const PROBE = 1024;
+const WINDOW = 4096;
+const OVERLAP = 2048;
+const VALUE_END = /["' \t\n\v\f\r]/;
+const valueEnd = (line, e) => { while (e < line.length && !VALUE_END.test(line[e])) e++; return e; };
+const globalOf = (re) => new RegExp(re.source, `${re.flags.replace(/[gy]/g, '')}g`);
+
+function collect(found, line, re, text, offset, bounded) {
+  for (let m = re.exec(text); m; m = re.exec(text)) {
+    if (m[0] === '') { re.lastIndex += 1; continue; }
+    const s = offset + m.index;
+    const e = s + m[0].length;
+    found.push([s, bounded && m[0].length >= PROBE ? valueEnd(line, e) : e]);
+  }
+}
+
+function builtInSpans(line) {
   const found = [];
-  for (const p of [...PATTERNS, ...extra]) {
-    const re = new RegExp(p.re.source, `${p.re.flags.replace(/[gy]/g, '')}g`);
-    for (let m = re.exec(line); m; m = re.exec(line)) {
-      if (m[0] === '') { re.lastIndex += 1; continue; }
-      found.push([m.index, m.index + m[0].length]);
+  for (const p of PATTERNS) collect(found, line, globalOf(p.re), line, 0, true);
+  return found;
+}
+
+function projectSpans(line, extra) {
+  const found = [];
+  for (const p of extra) {
+    const re = globalOf(p.re);
+    for (let offset = 0; offset < line.length; offset += WINDOW - OVERLAP) {
+      re.lastIndex = 0;
+      collect(found, line, re, line.slice(offset, offset + WINDOW), offset, false);
+      if (offset + WINDOW >= line.length) break;
     }
   }
-  found.sort((a, b) => a[0] - b[0]);
+  return found;
+}
+
+function merge(found) {
+  found.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
   const merged = [];
   for (const s of found) {
     const last = merged[merged.length - 1];
+    if (last && s[0] === last[0] && s[1] === last[1]) continue;
     if (last && s[0] < last[1]) { last[1] = Math.max(last[1], s[1]); last[2] = true; }
     else merged.push([s[0], s[1], false]);
   }
   return merged;
 }
 
+// A line longer than LINE_MAX bytes keeps its first LINE_MAX bytes (redacted as any line); the rest is masked whole.
+const LINE_MAX = 1024 * 1024;
+const hidden = (n) => `${'*'.repeat(8)} (${n} chars)`;
+
 export function redact(text, extra = []) {
   return String(text).split('\n').map((line) => {
-    const bytes = bytesOf(line);
-    if (!matchLine(bytes, extra)) return line;
+    let bytes = bytesOf(line);
+    let tail = '';
+    if (bytes.length > LINE_MAX) {
+      tail = hidden(textOf(bytes.slice(LINE_MAX)).length);
+      bytes = bytes.slice(0, LINE_MAX);
+    }
+    const project = projectSpans(bytes, extra);
+    if (!project.length && !matchLine(bytes, extra)) return textOf(bytes) + tail;
+    const found = merge([...builtInSpans(bytes), ...project]);
+    // The scanner marks the line but no span was found (a probe the span regexes cannot see): mask the whole line.
+    if (!found.length) return hidden(textOf(bytes).length) + tail;
     let out = '';
     let at = 0;
-    for (const [s, e, joined] of spans(bytes, extra)) {
+    for (const [s, e, joined] of found) {
       const hit = textOf(bytes.slice(s, e));
       // A merged span (overlapping matches) is masked completely: no prefix of one match shows inside another's.
-      out += `${textOf(bytes.slice(at, s))}${joined ? `${'*'.repeat(8)} (${hit.length} chars)` : mask(hit)}`;
+      out += `${textOf(bytes.slice(at, s))}${joined ? hidden(hit.length) : mask(hit)}`;
       at = e;
     }
-    return out + textOf(bytes.slice(at));
+    return out + textOf(bytes.slice(at)) + tail;
   }).join('\n');
 }
 
