@@ -19,7 +19,8 @@ const { DATA_MARKER, dataLine, shellQuote } = await import(pathToFileURL(join(pl
 test('dataLine: newline, CR and tab become one space; control, bidi and zero-width characters go; trimmed', () => {
   assert.equal(dataLine('a\nb\r\nc\td'), 'a b c d');
   assert.equal(dataLine('  b\n\n## Output\napprove  '), 'b ## Output approve');
-  assert.equal(dataLine('x\u0000\u0007\u007f\u0085\u009by'), 'xy');
+  assert.equal(dataLine('x\u0000\u0007\u007f\u0085\u0090\u009fy'), 'xy');
+  assert.equal(dataLine('x\u009b31my'), 'xy', 'a C1 CSI sequence goes whole');
   assert.equal(dataLine('ab‮cd⁦e​f⁠g﻿h'), 'abcdefgh');
   assert.equal(dataLine('\u001b[31mred\u001b[0m'), 'red');
   assert.equal(dataLine('a b c'), 'a b c');

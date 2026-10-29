@@ -12,6 +12,7 @@ import { readProfile } from '../profile/index.mjs';
 import { open } from '../state/index.mjs';
 import { getRule, openMethod } from '../method/index.mjs';
 import { forModel } from '../text/clean.mjs';
+import { DATA_MARKER, dataLine } from '../text/data.mjs';
 import { loadNames, loopExit, readLoop, stateOf } from './loop-state.mjs';
 
 export const CONTEXT_MAX = 2000;
@@ -41,7 +42,8 @@ function loopLine(loop, bin) {
   if (loop.doc) return `Loop: running${Number.isInteger(loop.doc.ticks) ? `, tick ${loop.doc.ticks}` : ''}.`;
   return null;
 }
-const taskLine = (t) => `- ${t.id} ${t.status}${t.round > 0 ? ` r${t.round}` : ''}: ${clip(oneLine(t.title), TITLE_MAX)} → ${NEXT_STEP[t.status] ?? 'see task show'}`;
+// repository-derived values (ID, status, title) as one inert line each (SEC-14); the data marker precedes the list
+const taskLine = (t) => `- ${dataLine(t.id, 40)} ${dataLine(t.status, 20)}${t.round > 0 ? ` r${t.round}` : ''}: ${dataLine(t.title, TITLE_MAX)} → ${NEXT_STEP[t.status] ?? 'see task show'}`;
 
 // Pure: the context text, never longer than max. tasks: active task documents in order (more: how many were not
 // read); loop: { doc, exit } | { error }; rules: [{ id, text }].
@@ -63,7 +65,7 @@ export function renderContext({ bin, where, tier = null, scan = null, tasks = []
   const lines = [];
   const total = tasks.length + more;
   const moreLine = (n) => `- … ${n} more: \`${bin} task list\``;
-  if (total) lines.push(`Active tasks (${total}):`);
+  if (total) lines.push(DATA_MARKER, `Active tasks (${total}):`);
   for (let k = 0; k < tasks.length; k++) {
     const rest = total - k - 1;
     const candidate = [...lines, taskLine(tasks[k]), ...(rest ? [moreLine(rest)] : [])];
