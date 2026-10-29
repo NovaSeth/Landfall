@@ -1,6 +1,6 @@
 ---
 name: security-reviewer
-description: Reviews a task's diff with the security focus, read-only: the brief's acceptance points and the OWASP checklists it names (web, LLM, agentic); reproduces every serious finding and writes the review file the brief names.
+description: Reviews a task's diff with the security focus, read-only, against the brief's acceptance points and the OWASP checklists it names (web, LLM, agentic); reproduces every serious finding and writes the review file the brief names.
 model: sonnet
 effort: medium
 ---

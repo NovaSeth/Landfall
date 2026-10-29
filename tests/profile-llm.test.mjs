@@ -40,11 +40,12 @@ test('llm: requirements, pyproject and go.mod', (t) => {
   assert.equal(scan(t, { 'go.mod': 'module x\n\nrequire github.com/openai/openai-go v1.0.0\n' }).evidence, 'go.mod: github.com/openai/openai-go');
   assert.equal(scan(t, { 'go.mod': 'module x\n\nrequire (\n\tgithub.com/a/b v1\n\tgithub.com/tmc/langchaingo v0.1.0\n)\n' }).value, true);
   assert.equal(scan(t, { 'requirements.txt': '# anthropic\n--index-url https://x\nanthropic-tools-helper==1\n' }), undefined);
-  assert.equal(scan(t, { 'pyproject.toml': '[project]\nname = "anthropic"\n' }) !== undefined, true, 'a name = key counts per the brief');
+  assert.equal(scan(t, { 'pyproject.toml': '[tool.poetry.dependencies]\nanthropic = "1"\n' }).value, true, 'a name = key counts in a poetry dependency table');
+  assert.equal(scan(t, { 'pyproject.toml': '[project]\nname = "anthropic"\n' }), undefined, 'the project name is no dependency');
   assert.equal(scan(t, { 'pyproject.toml': '[project]\ndescription = "openai wrapper"\n' }), undefined);
-  assert.equal(scan(t, { 'pyproject.toml': 'x = ["openai wrapper"]\n' }), undefined);
-  assert.equal(scan(t, { 'pyproject.toml': 'x = ["anthropic[bedrock]; python_version>\'3.9\'"]\n' }).evidence, 'pyproject.toml: anthropic');
-  assert.equal(scan(t, { 'pyproject.toml': 'x = ["openai"]\n' }).evidence, 'pyproject.toml: openai');
+  assert.equal(scan(t, { 'pyproject.toml': '[project.optional-dependencies]\nx = ["openai wrapper"]\n' }), undefined);
+  assert.equal(scan(t, { 'pyproject.toml': '[project.optional-dependencies]\nx = ["anthropic[bedrock]; python_version>\'3.9\'"]\n' }).evidence, 'pyproject.toml: anthropic');
+  assert.equal(scan(t, { 'pyproject.toml': '[project.optional-dependencies]\nx = ["openai"]\n' }).evidence, 'pyproject.toml: openai');
 });
 
 test('llm: the scanner version and the scanned keys', () => {

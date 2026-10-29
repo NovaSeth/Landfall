@@ -130,6 +130,50 @@ function gatesOf(repo, files, has) {
   return { gates, pkg };
 }
 
+// A line without its TOML comment: `#` to the end of the line when outside a quoted string.
+function stripToml(line) {
+  let q = null;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (q) { if (c === '\\' && q === '"') i++; else if (c === q) q = null; }
+    else if (c === '"' || c === "'") q = c;
+    else if (c === '#') return line.slice(0, i);
+  }
+  return line;
+}
+
+// Dependency names of a pyproject.toml, section-aware: requirement strings inside closed arrays of `[project]
+// dependencies`, `[project.optional-dependencies]` and `[dependency-groups]`; `name = …` keys of the poetry
+// dependency tables. Everything else (keywords, descriptions, other tools, comments, unclosed arrays) counts nothing.
+function pyprojectNames(text) {
+  const names = [];
+  const lines = text.split(/\r?\n/).map(stripToml);
+  let section = '';
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    const head = /^\[\[?\s*([^\]]*?)\s*\]\]?$/.exec(line);
+    if (head) { section = head[1]; continue; }
+    const key = /^([A-Za-z0-9][A-Za-z0-9._-]*|"[^"]*"|'[^']*')\s*=\s*(.*)$/.exec(line);
+    if (!key) continue;
+    if (section === 'tool.poetry.dependencies' || /^tool\.poetry\.group\.[^.]+\.dependencies$/.test(section)) {
+      names.push(key[1].replace(/^["']|["']$/g, ''));
+      continue;
+    }
+    const inArray = (section === 'project' && key[1] === 'dependencies') || section === 'project.optional-dependencies' || section === 'dependency-groups';
+    if (!inArray || !key[2].startsWith('[')) continue;
+    let body = key[2];
+    let j = i;
+    while (!/\]\s*$/.test(body) && j + 1 < lines.length) body += `\n${lines[++j]}`;
+    if (!/\]\s*$/.test(body)) continue;
+    for (const q of body.matchAll(/"([^"]*)"|'([^']*)'/g)) {
+      const m = /^([A-Za-z0-9][A-Za-z0-9._-]*)\s*(?:$|[[<>=!~;@])/.exec((q[1] ?? q[2]).trim());
+      if (m) names.push(m[1]);
+    }
+    i = j;
+  }
+  return names;
+}
+
 // The first LLM or agent SDK among the dependencies of the root manifests, as `<manifest>: <package>`, else null.
 function llmOf(repo, files) {
   const root = files.filter((f) => !f.includes('/'));
@@ -155,16 +199,7 @@ function llmOf(repo, files) {
     if (hit) return `${f}: ${hit}`;
   }
   if (root.includes('pyproject.toml')) {
-    const names = [];
-    for (const line of (readRoot(repo, 'pyproject.toml') ?? '').split(/\r?\n/)) {
-      const key = /^([A-Za-z0-9][A-Za-z0-9._-]*)\s*=/.exec(line);
-      if (key) names.push(key[1]);
-      for (const q of line.matchAll(/"([^"]*)"|'([^']*)'/g)) {
-        const m = /^([A-Za-z0-9][A-Za-z0-9._-]*)\s*(?:$|[[<>=!~;@])/.exec((q[1] ?? q[2]).trim());
-        if (m) names.push(m[1]);
-      }
-    }
-    const hit = pyHit(names);
+    const hit = pyHit(pyprojectNames(readRoot(repo, 'pyproject.toml') ?? ''));
     if (hit) return `pyproject.toml: ${hit}`;
   }
   if (root.includes('go.mod')) {
@@ -176,7 +211,7 @@ function llmOf(repo, files) {
       else if (/^require\s+/.test(l)) l = l.replace(/^require\s+/, '');
       else continue;
       const mod = l.split(/\s+/)[0];
-      if (GO_LLM.some((p) => mod.startsWith(p))) return `go.mod: ${mod}`;
+      if (GO_LLM.some((p) => mod === p || mod.startsWith(`${p}/`))) return `go.mod: ${mod}`;
     }
   }
   return null;

@@ -1,12 +1,12 @@
 // Review focus (SEC-13): whether a diff gets the security reviewer and which OWASP checklists. The globs and the
 // checklist rule IDs live in focus.json; matching is the router's globMatch. Pure: no I/O besides loading the JSON.
 import { readFileSync } from 'node:fs';
-import { globMatch } from './classify.mjs';
+import { DEFAULT_RISK_PATHS, globMatch } from './classify.mjs';
 
 const data = JSON.parse(readFileSync(new URL('./focus.json', import.meta.url), 'utf8'));
 const MAX_TRIGGERS = 10;
 
-export const SECURITY_PATHS = Object.freeze([...data.securityPaths]);
+export const SECURITY_PATHS = Object.freeze([...new Set([...DEFAULT_RISK_PATHS, ...data.securityPaths])]);
 export const AI_PATHS = Object.freeze([...data.aiPaths]);
 export const CHECKLISTS = Object.freeze({ web: Object.freeze([...data.checklists.web]), ai: Object.freeze([...data.checklists.ai]) });
 
