@@ -130,9 +130,9 @@ test('G3: the package ref is the release tag or a 40-hex commit; anything else i
   assert.throws(() => gen.render(REAL('ci'), { ...gen.DEFAULT_OPTIONS, package: spec('main') }, names), /options/);
 });
 
-test('F1 (review): a manifest target that is neither named nor enabled by default is refused, also an unknown one; nothing is written', (t) => {
+test('F1 (review): a manifest entry of an unknown target is refused; nothing is written; a known one at its path is applied', (t) => {
   const hook = REAL('pre-push').path(names);
-  for (const [id, path] of [['pre-push', hook], ['no-such-target', 'docs/x.md']]) {
+  for (const [id, path] of [['no-such-target', 'docs/x.md'], ['no-such-target', hook]]) {
     for (const args of [['gen', 'apply', '--yes', '--json'], ['gen', 'apply', 'ci', '--yes', '--json']]) {
       const { dir } = repoWith(t, { flags: { 'ci-gate': 'on' }, manifest: { [path]: entry(id) } });
       const r = cli(args, dir);
@@ -142,11 +142,13 @@ test('F1 (review): a manifest target that is neither named nor enabled by defaul
       assert.ok(!existsSync(join(dir, '.github')), 'nothing else written');
     }
   }
-  // Named, or enabled by default: accepted.
+  // Named, enabled, or already generated (the default targets): accepted.
   const named = repoWith(t, { manifest: { [hook]: entry('pre-push') } });
   assert.equal(cli(['gen', 'apply', 'pre-push', '--yes', '--json'], named.dir).status, 0);
   const on = repoWith(t, { flags: { 'pre-push': 'on' }, manifest: { [hook]: entry('pre-push') } });
   assert.equal(cli(['gen', 'apply', '--yes', '--json'], on.dir).status, 0);
+  const managed = repoWith(t, { manifest: { [hook]: entry('pre-push') } });
+  assert.equal(cli(['gen', 'apply', '--yes', '--json'], managed.dir).status, 0);
 });
 
 test('F2 (review): an escaping symbolic link stops the whole run; a safe target of the same run is not written either', (t) => {

@@ -59,11 +59,13 @@ export function assertWritable(path) {
 }
 // Every entry of the manifest: its path is plain, and for a known target it is one the target declares (targetItems
 // applies this to the manifest; applyGen itself checks every item path as plain, so a caller cannot reach .git).
+// A target that is unknown is refused as well. (A target already in the manifest is applied by default, gen apply.)
 export function assertManifest(files, names) {
   for (const [path, e] of Object.entries(files)) {
     assertWritable(path);
     const target = TARGETS.find((t) => t.id === e.target);
-    if (target && !declaredPaths(target, names).includes(path)) throw refusal(path, `it is not a path of the ${target.id} target`);
+    if (!target) throw refusal(path, `the target ${JSON.stringify(String(e.target)).slice(0, 40)} is unknown`);
+    if (!declaredPaths(target, names).includes(path)) throw refusal(path, `it is not a path of the ${target.id} target`);
   }
 }
 
@@ -166,6 +168,10 @@ function decide(item, ctx) {
   return offer(m.status === 'lost-hunk' ? 'lost-hunk' : 'conflict');
 }
 
+// One path that cannot be written safely (a link or a non-regular file on it) stops the whole run: the other
+// decisions are reported as held and nothing is written, not even the record (review of T-MG-73, F2).
+const isUnsafe = (d) => d.action === 'unsafe';
+const held = (ds) => ds.map((d) => (isUnsafe(d) ? d : { ...d, action: 'held', ok: false, write: null, side: null, removeSide: false }));
 const hasWrites = (d) => Boolean(d.write || d.side || d.removeSide);
 const entryChanged = (d, files) => d.entry !== undefined && !isDeepStrictEqual(d.entry, files[d.path]);
 
@@ -227,6 +233,7 @@ export function applyGen({ root, store, names, version, items, dryRun = false, n
   const plan = (files) => items.map((item) => decide(item, { root, names, files, version, at, env, merge: merged }));
   const files0 = readManifest(store).files;
   const first = plan(files0);
+  if (first.some(isUnsafe)) return report(held(first), { dryRun, manifest: false });
   const recordChanges = first.some((d) => entryChanged(d, files0));
   if (dryRun || (!recordChanges && !first.some(hasWrites))) return report(first, { dryRun, manifest: recordChanges });
   for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
@@ -240,11 +247,13 @@ export function applyGen({ root, store, names, version, items, dryRun = false, n
 function attemptRun({ root, store, version, at, plan }) {
   // 1. Under the lock: fresh decisions; entries without file writes are committed, the others get their intent.
   let decisions;
+  let blocked = false;
   const intents = new Map();
   let manifest = false;
   store.update('generated', null, (cur) => {
     const files = cur?.files ?? {};
     decisions = plan(files);
+    if (decisions.some(isUnsafe)) { blocked = true; return undefined; }
     const next = { ...files };
     const committed = { ...files };
     for (const d of decisions) {
@@ -266,6 +275,7 @@ function attemptRun({ root, store, version, at, plan }) {
     manifest = true;
     return validated(next);
   });
+  if (blocked) return { decisions: held(decisions), manifest: false };
   if (intents.size === 0) return { decisions, manifest };
 
   // 2. Under the lock again: the intents and the bytes are as decided, then the writes and the commit.
