@@ -74,6 +74,18 @@ Claude  $ landfall profile set deployedToUsers true --source said \
 - **Tokens spent where they count.** Roles are routed to model tiers: the orchestrating session plans, dispatches and merges but never implements; the implementer and the reviewer run on Sonnet, the external wrapper on Haiku, the designer on Opus. Method rules load by ID on demand (always-on context about 550 tokens), trivial work calls nothing, and `landfall receipt` shows tokens and cost per task, loop, class or executor, with a dollar cap on unattended loops.
 - **Zero footprint until you say yes.** Installed once per user; a project gets one `.landfall/` directory only when real work starts there and you agree.
 
+## What's new in 2.4.1
+
+- Security audit fixes. The Bash guard scans in linear time, blocks globbed git subcommands and split state paths, and treats repository text as data. The secrets scanner knows more formats, matches long lines in linear time, streams large files and fails closed past 64 MiB. `gen apply` never writes into `.git`, refuses `${{` in CI gate commands, and `--commit <sha>` pins CI to a commit. `verify` redacts with project patterns, signs its gate cache with a machine key and reads `--from` files safely. Agent-instruction files (CLAUDE.md, AGENTS.md, SKILL.md, `.claude/**`, prompts) are risk paths, and the external wrapper agent may run only `landfall exec|wait|runs|rule|method`.
+- Machine trust. A repository's gate commands and threshold overrides run or count only once this machine set or trusted them. `landfall trust` asks for confirmation in a terminal (`! landfall trust` in Claude Code) and refuses `--yes`. An existing repository with a machine-side record is adopted once, and a `local/` directory shipped inside a repository is ignored and moved aside to `local.foreign-*`.
+- Findings backlog. Review findings still open when a review closes at the round cap go into `landfall findings list`; `landfall findings take` turns them into a task, and its `task done` closes them.
+- Batch merge. `landfall task merge <ids…>` or `--ready` merges ready tasks as one batch with one gate run on the integrated tree, bisected on a failure. Every merge is recorded on the task; `status`, `tick` and `doctor` report a merge done by hand, and `task merge --adopt` records it. The Bash guard blocks a plain `git merge` of a task branch on the target.
+- Orchestrator watchdog. The orchestrator checks agents, gates and load on a schedule and unblocks what is slow; `status` and `tick` flag a long heavy-queue wait and high load.
+- External reviews. `landfall exec --role reviewer` feeds the stored review brief (`--round <k>`) and Codex's review schema.
+- Dashboard. TASKS shows the open tasks as `▶ working` or `⏸ waiting`; AGENTS lists only the agents and runs at work.
+
+Details: [docs/cli.md](docs/cli.md).
+
 ## How it compares
 
 | Capability | Claude Code | Superpowers | Spec Kit | BMAD | orca | Landfall |
@@ -110,7 +122,9 @@ With/without evaluation on the plugin's own suite (10 small tasks with hidden te
 | `landfall review brief <task>` | Render the review brief: range pinned to HEAD, diff file, acceptance, risks |
 | `landfall verify <task>` | Re-run the gates and compare with the baseline (renames need no decision) |
 | `landfall task done <task>` | Close a task; refused without a passing verify |
-| `landfall task merge <task>` | Merge a branch; commit only if the gates pass on the merged tree |
+| `landfall task merge <task…>` or `--ready` | Merge ready tasks as one batch; commit only if the gates pass on the integrated tree; `--adopt` records a merge done by hand |
+| `landfall trust` | Trust this repository's gate commands on this machine (terminal only) |
+| `landfall findings list` | Open review findings left at the round cap; `take` turns one into a task |
 | `landfall commit` | Commit the state directory as one chore commit |
 | `landfall decide` | Record a decision (`--from-verify` allows the tests verify saw removed) |
 | `landfall task show <task>` | The resume card: class, branch, rounds, last verify, next step |
