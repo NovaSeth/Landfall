@@ -56,8 +56,8 @@ function spans(line, extra) {
   const merged = [];
   for (const s of found) {
     const last = merged[merged.length - 1];
-    if (last && s[0] < last[1]) last[1] = Math.max(last[1], s[1]);
-    else merged.push([...s]);
+    if (last && s[0] < last[1]) { last[1] = Math.max(last[1], s[1]); last[2] = true; }
+    else merged.push([s[0], s[1], false]);
   }
   return merged;
 }
@@ -68,8 +68,10 @@ export function redact(text, extra = []) {
     if (!matchLine(bytes, extra)) return line;
     let out = '';
     let at = 0;
-    for (const [s, e] of spans(bytes, extra)) {
-      out += `${textOf(bytes.slice(at, s))}${mask(textOf(bytes.slice(s, e)))}`;
+    for (const [s, e, joined] of spans(bytes, extra)) {
+      const hit = textOf(bytes.slice(s, e));
+      // A merged span (overlapping matches) is masked completely: no prefix of one match shows inside another's.
+      out += `${textOf(bytes.slice(at, s))}${joined ? `${'*'.repeat(8)} (${hit.length} chars)` : mask(hit)}`;
       at = e;
     }
     return out + textOf(bytes.slice(at));
