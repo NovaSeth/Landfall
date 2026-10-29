@@ -12,6 +12,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fd3CpuMs, fd3Preload } from './helpers/cpu-time.mjs';
 import { isolateProcessEnv } from './helpers/isolated-env.mjs';
 
 // No test here touches the real HOME: git and the launcher run with a throwaway HOME and an empty global git config
@@ -91,8 +92,7 @@ function eventFor(h, dir, command) {
 }
 
 // The preload reports the hook process's own CPU time (user + system) on fd 3 when it exits.
-const PROBE = join(mkdtempSync(join(tmpdir(), 'perf-cpu-')), 'cpu.cjs');
-writeFileSync(PROBE, "process.on('exit', () => { const u = process.cpuUsage(); require('node:fs').writeSync(3, JSON.stringify(u)); });\n");
+const PROBE = fd3Preload('perf-cpu-');
 const runOnce = (name, input, cwd) => new Promise((done) => {
   const started = performance.now();
   const p = spawn(process.execPath, ['--require', PROBE, LAUNCHER, 'hook', name], { cwd, env: { ...process.env, CLAUDE_PROJECT_DIR: cwd }, stdio: ['pipe', 'pipe', 'pipe', 'pipe'] });
@@ -101,7 +101,7 @@ const runOnce = (name, input, cwd) => new Promise((done) => {
   p.stdio[3].on('data', (d) => { cpu += d; });
   p.on('close', (status) => {
     let cpuMs = NaN;
-    try { const u = JSON.parse(cpu); cpuMs = (u.user + u.system) / 1000; } catch { /* judged as "not reported" */ }
+    cpuMs = fd3CpuMs(cpu); // NaN is judged as "not reported"
     done({ status, stdout, cpuMs, wallMs: performance.now() - started });
   });
   p.stdin.on('error', () => {}); p.stdin.end(input);
