@@ -113,8 +113,9 @@ export const VERIFY_KINDS = Object.freeze({
       gatesSha: str(64, { re: PATTERNS.sha256 }),
       collectors: str(200, { min: 1 }),
       version: str(LIMITS.version, { null: true }),
+      patterns: str(64, { re: /^(none|[0-9a-f]{64})$/ }),
       at: time,
-      mac: str(64, { re: PATTERNS.sha256 }),
+      mac:str(64, { re: PATTERNS.sha256 }),
       runs: many({
         t: 'obj',
         f: {

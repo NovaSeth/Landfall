@@ -70,16 +70,18 @@ export function treeOf(gitIn, { staged = false } = {}) {
 
 // The collectors that read gate output: a reporter added or changed reads the same output differently.
 export const COLLECTORS = REPORTERS.join('+');
-export const cacheKey = ({ tree, gatesSha, version }) => hashOf(JSON.stringify([tree, gatesSha, COLLECTORS, version ?? null]));
+// `patterns`: the sha256 of the project pattern file's bytes, or 'none' (redact.mjs readProjectPatterns): the stored
+// output was redacted with those patterns, so a pattern change is another key and the gates run again (T-MG-75).
+export const cacheKey = ({ tree, gatesSha, version, patterns }) => hashOf(JSON.stringify([tree, gatesSha, COLLECTORS, version ?? null, patterns]));
 
 // The stored gate list is the current one: the same gates in the same order, by name, command and kind.
 const sameGates = (runs, gates) => runs.length === gates.length && gates.every((g, k) => runs[k].name === g.name && runs[k].cmd === g.cmd && runs[k].kind === g.kind);
 
 // The stored runs for `key` as runGate results ({ gate, output, kind, report }), with `at`; null without a usable
-// entry. An entry is usable only when its MAC is valid, its content repeats the key (tree, gatesSha, collectors, version: the key
+// entry. An entry is usable only when its MAC is valid, its content repeats the key (tree, gatesSha, collectors, version, patterns: the key
 // recomputed from the file equals the file's name), lists exactly the current gates, holds passes only and is at most
 // MAX_AGE_MS old; a file that does not parse or fails its schema is no entry. A mismatch is a miss, never a pass.
-export function lookup(st, { key, tree, gatesSha, version, gates, at, secret }) {
+export function lookup(st, { key, tree, gatesSha, version, patterns, gates, at, secret }) {
   if (!secret) return null; // no machine key, no way to authenticate an entry
   let doc;
   try {
@@ -90,7 +92,7 @@ export function lookup(st, { key, tree, gatesSha, version, gates, at, secret }) 
   }
   if (!doc) return null;
   const fits = doc.tree === tree && doc.gatesSha === gatesSha && doc.collectors === COLLECTORS && (doc.version ?? null) === (version ?? null)
-    && cacheKey(doc) === key && macMatches(secret, doc) && sameGates(doc.runs, gates) && doc.runs.every((r) => r.result === 'pass');
+    && doc.patterns === patterns && cacheKey(doc) === key && macMatches(secret, doc) && sameGates(doc.runs, gates) && doc.runs.every((r) => r.result === 'pass');
   if (!fits || !(Date.parse(at) - Date.parse(doc.at) <= MAX_AGE_MS)) return null;
   return { at: doc.at, runs: doc.runs.map(({ kind, tail, report = null, ...gate }) => ({ gate, kind, output: tail.join('\n'), report })) };
 }
@@ -98,10 +100,10 @@ export function lookup(st, { key, tree, gatesSha, version, gates, at, secret }) 
 // Stores the runs under `key` when every gate passed; `report(run)` gives a test run's collected inventory (null when
 // its output is no report). The key fields are stored with the runs, so a read can check them. Returns whether an
 // entry was written.
-export function store(st, key, { tree, gatesSha, version, at, runs, report, secret }) {
+export function store(st, key, { tree, gatesSha, version, patterns, at, runs, report, secret }) {
   if (!secret || runs.length === 0 || runs.some((r) => r.gate.result !== 'pass')) return false;
   const doc = {
-    tree, gatesSha, collectors: COLLECTORS, version: version ?? null, at,
+    tree, gatesSha, collectors: COLLECTORS, version: version ?? null, patterns, at,
     runs: runs.map((r) => {
       const collected = r.kind === 'test' ? report(r) : null;
       return { ...r.gate, kind: r.kind, tail: tailLines(r.output), ...(collected ? { report: collected } : {}) };

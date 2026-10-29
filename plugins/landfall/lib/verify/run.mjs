@@ -56,7 +56,7 @@ import { baselineSha, compareInventory, excusable, fingerprint, referenceOf, spl
 import { cacheKey, lookup, machineKey, store as storeRuns, treeOf } from './gate-cache.mjs';
 import { tailLines } from './gates.mjs';
 import { runHeavy } from './heavy.mjs';
-import { projectRedactions, runRedacted } from './redact.mjs';
+import { readProjectPatterns, runRedacted } from './redact.mjs';
 import { byCodeUnit, hashOf } from './inventory.mjs';
 import { VERIFY_KINDS } from './kinds.mjs';
 import { detectRenames, idFiles } from './rename.mjs';
@@ -347,12 +347,13 @@ export function evaluate({ where, names, env, id, mode, handle = null, at = now(
     }
     // The gate cache (gate-cache.mjs): the runs stored for this tree, gate set and version are reused; a set that
     // passed is stored (not in ci mode, which writes nothing).
+    // The project patterns first: an unreadable or invalid file refuses before any gate runs (T-MG-75).
+    const { extra, sha: patterns } = readProjectPatterns(where);
     const tree = treeOf((a) => gitIn(where, env, a), { staged: mode === 'merge' });
-    const key = tree ? cacheKey({ tree, gatesSha: doc.gatesSha, version }) : null;
+    const key = tree ? cacheKey({ tree, gatesSha: doc.gatesSha, version, patterns }) : null;
     // A critical task's verify never reuses runs; task merge may reuse an authenticated entry (T-MG-75).
     const reuse = cache && (mode === 'merge' || task.class !== 'critical');
-    const hit = key && reuse ? lookup(store, { key, tree, gatesSha: doc.gatesSha, version, gates: profile.gates, at, secret: machineKey(where.dataDir) }) : null;
-    const extra = projectRedactions(where);
+    const hit = key && reuse ? lookup(store, { key, tree, gatesSha: doc.gatesSha, version, patterns, gates: profile.gates, at, secret: machineKey(where.dataDir) }) : null;
     const runs = hit ? hit.runs : runHeavy(profile.gates, { names, env, cwd: where.worktree, task: id }, (g) => runRedacted(g, { cwd: where.worktree, env, extra }));
     reused = hit?.at ?? null;
     doc.gates = runs.map((r) => r.gate);
@@ -366,7 +367,7 @@ export function evaluate({ where, names, env, id, mode, handle = null, at = now(
         const { run: _run, ...collected } = part;
         return collected;
       };
-      storeRuns(store, key, { tree, gatesSha: doc.gatesSha, version, at, runs, report, secret: machineKey(where.dataDir, { create: true }) });
+      storeRuns(store, key, { tree, gatesSha: doc.gatesSha, version, patterns, at, runs, report, secret: machineKey(where.dataDir, { create: true }) });
     }
 
     const current = store.read('baseline', null);

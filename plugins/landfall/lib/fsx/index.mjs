@@ -349,37 +349,42 @@ export function appendLine(file, bytes, { mode = 0o644, before } = {}) {
 // code ENOTREGULAR (a link, FIFO, device, directory), ETOOBIG, or the system's (ENOENT, EACCES). The file is opened
 // without following a link and without blocking (O_NOFOLLOW, O_NONBLOCK) and judged by fstat of the descriptor, so
 // a swap between the check and the read changes nothing; where O_NOFOLLOW does not exist, lstat of the path is
-// compared with fstat of the descriptor (same device and inode).
-export function readRegularFile(path, { max }) {
+// compared with fstat of the descriptor (same device and inode). The descriptor is read in chunks to its end or to
+// max + 1 bytes, whatever fstat said: a file that grew after fstat is read whole or refused, never cut at its old
+// size. `fs`: the file operations (tests replace them).
+const FILE_OPS = Object.freeze({ openSync, fstatSync, lstatSync, readSync, closeSync });
+export function readRegularFile(path, { max, fs = FILE_OPS }) {
   const refuse = (code, message) => Object.assign(new Error(`${path}: ${message}`), { code });
   const noFollow = constants.O_NOFOLLOW;
   let linked = null;
   if (noFollow === undefined) {
-    linked = lstatSync(path);
+    linked = fs.lstatSync(path);
     if (!linked.isFile()) throw refuse('ENOTREGULAR', 'not a regular file');
   }
   let fd;
   try {
-    fd = openSync(path, constants.O_RDONLY | (noFollow ?? 0) | (constants.O_NONBLOCK ?? 0));
+    fd = fs.openSync(path, constants.O_RDONLY | (noFollow ?? 0) | (constants.O_NONBLOCK ?? 0));
   } catch (err) {
     if (err.code === 'ELOOP' || err.code === 'EMLINK') throw refuse('ENOTREGULAR', 'a symbolic link');
     throw err;
   }
   try {
-    const st = fstatSync(fd);
+    const st = fs.fstatSync(fd);
     if (!st.isFile()) throw refuse('ENOTREGULAR', 'not a regular file');
     if (linked && (linked.dev !== st.dev || linked.ino !== st.ino)) throw refuse('ENOTREGULAR', 'changed while it was opened');
     if (st.size > max) throw refuse('ETOOBIG', `${st.size} bytes, the limit is ${max}`);
-    const buf = Buffer.alloc(Math.min(st.size, max) + 1); // one more byte shows a file that grew
+    const chunks = [];
     let got = 0;
     for (;;) {
-      const n = readSync(fd, buf, got, buf.length - got, null);
-      if (n === 0 || got + n === buf.length) { got += n; break; }
+      const buf = Buffer.alloc(Math.min(65536, max + 1 - got)); // at most one byte past max: enough to refuse
+      const n = fs.readSync(fd, buf, 0, buf.length, null);
+      if (n === 0) break;
+      chunks.push(buf.subarray(0, n));
       got += n;
+      if (got > max) throw refuse('ETOOBIG', `more than ${max} bytes`);
     }
-    if (got > max) throw refuse('ETOOBIG', `more than ${max} bytes`);
-    return buf.subarray(0, got);
+    return Buffer.concat(chunks, got);
   } finally {
-    quiet(() => closeSync(fd));
+    quiet(() => fs.closeSync(fd));
   }
 }
