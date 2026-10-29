@@ -61,7 +61,7 @@ export const verify = typed(({ args, flags, names, version, io }) => {
 export const taskDone = typed(({ args, names, io }) => {
   const r = markDone({ cwd: io.cwd, env: io.env, names, id: args.id });
   const text = r.changed ? `${r.id}: done (verified at ${r.head.slice(0, 12)})` : `${r.id}: already done`;
-  return { data: { task: r.id, status: r.task.status, changed: r.changed, head: r.head }, text: `${text}\n` };
+  return { data: { task: r.id, status: r.task.status, changed: r.changed, head: r.head, fixed: r.fixed }, text: `${text}\n${r.fixed.length ? `findings fixed: ${r.fixed.join(', ')}\n` : ''}` };
 });
 
 export const taskMerge = typed(({ args, flags, names, version, io }) => {

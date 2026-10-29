@@ -276,6 +276,25 @@ export class Store {
 
   // ---- public ----
 
+  // Synchronous group of typed operations under one lock. Each operation keeps its ordinary
+  // schema/path checks; callers validate the full selection before the first write. Files are
+  // atomically replaced individually, not a crash-atomic multi-file transaction.
+  batch(fn) {
+    return this.locked(() => {
+      const scoped = Object.create(this);
+      let active = true;
+      scoped.locked = (op) => {
+        if (!active) throw new TypeError('state.batch: the scoped store cannot outlive its callback');
+        return op();
+      };
+      try {
+        const result = fn(scoped);
+        if (result && typeof result.then === 'function') throw new TypeError('state.batch requires a synchronous callback');
+        return result;
+      } finally { active = false; }
+    });
+  }
+
   // The document of `key` (null when absent), upgraded to the kind's schema.
   read(name, key) {
     const kind = this.kind(name);

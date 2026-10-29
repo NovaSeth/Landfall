@@ -4,7 +4,7 @@
 - The adaptive engine runs in shadow mode: `landfall tier` explains the recommended tier; tier changes are not applied automatically.
 - No example project; the evaluation covers small tasks only ([evaluation.md](evaluation.md)).
 - A task created `--after` others waits until they are done or cancelled; the loop does not merge them for it, and the brief's base is still the orchestrator's to fill.
-- Dashboard: rows only, no buttons; no round-by-round view of a task's findings; no agent transcript opened from the pane; no band above the prompt. No `qa` pack or agent; no backlog of minor findings across tasks.
+- Dashboard: rows only, no buttons; no round-by-round view of a task's findings; no agent transcript opened from the pane; no band above the prompt. No `qa` pack or agent.
 
 ## Dashboard
 - The pane is a Claude Code hooks module (function hooks, Claude Code 2.1.30x or newer); an older Claude Code ignores it and shows no pane and no status line.

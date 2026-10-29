@@ -8,6 +8,7 @@
 // leases } with every open task and step.
 // Writes nothing. Exit 0 · 1 a state file is invalid · 7 a newer state schema · 8 not a git repository, git missing.
 import { join } from 'node:path';
+import { findingCounts } from '../findings/index.mjs';
 import { TIER_NAMES, evaluate } from '../engine/index.mjs';
 import { describe } from '../loop/command.mjs';
 import { DEFAULT_CAPS, LOOP, STORE_KINDS, nextSteps, readBudgets } from '../loop/index.mjs';
@@ -74,8 +75,10 @@ export function status({ names, io }) {
   const t = where.active ? tasksOf(where, names, env) : { all: [], open: [], rows: [], loop: null };
   const leases = where.dataDir ? snapshot({ names, env }).leases.filter((l) => l.project === where.worktree) : []; // leases name their checkout (lib/sched)
 
+  const findings = where.active ? findingCounts(open(where.dir, { names })) : { open: 0, taken: 0 };
   const head = [where.repo, `State: ${state.text}`, `Tier: ${tier.text}`];
   const tail = [];
+  if (findings.open + findings.taken > 0) tail.push(`Findings: ${findings.open} open, ${findings.taken} taken (${names.bin} findings list)`);
   if (t.loop) tail.push(...describe(t.loop, Date.now()).trimEnd().split('\n').map((x, i) => (i === 0 ? `Loop: ${x}` : `      ${x}`)));
   if (leases.length) {
     tail.push(`Leases: ${leases.length}`, ...leases.slice(0, LEASES_SHOWN).map(leaseText));
@@ -100,6 +103,7 @@ export function status({ names, io }) {
       steps: t.rows,
       loop: t.loop,
       leases,
+      findings,
     },
     text: `${[...head, ...body, ...tail].join('\n')}\n`,
   };

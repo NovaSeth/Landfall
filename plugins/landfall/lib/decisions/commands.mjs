@@ -153,6 +153,7 @@ function create({ flags: given, names, io }, supersedes) {
   const input = { title: flags.title.trim(), why: flags.why, cost: flags.cost, scope: splitList(flags.scope), kind, supersedes, allowsTestRemoval, ...review };
   const result = createDecision({ store, where, names, env: io.env, handle, input });
   const lines = [`${result.id} created: ${result.file}`, ...result.supersedes.map((old) => `${old} superseded by ${result.id}`)];
+  if (result.filed) lines.push(`filed: ${result.filed.length ? result.filed.join(', ') : 'none'}`);
   return { data: result, text: `${lines.join('\n')}\n`, warnings: result.warnings.map((w) => w.message) };
 }
 
