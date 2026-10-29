@@ -1,5 +1,5 @@
 // Commands of the verify unit (spec §8.1, §8.2), loaded by their rows in lib/cli/commands.mjs: `verify <id> [--ci]`,
-// `task done <id>`, `task merge <id> [--branch <b>]` (several IDs or --ready: a batch, batch.mjs), `review record <id> --from <file>`, `baseline show`,
+// `task done <id>`, `task merge <id> [--branch <b>]` (several IDs or --ready: a batch, batch.mjs), `review record <id> --from <file> | --kind external --run <runId>`, `baseline show`,
 // `baseline pin --decision <D>`. Context comes from io (cwd, env), never from process state (COD-9). A typed error
 // of lib/state, lib/router or lib/profile becomes its exit code with message and hint.
 // Exit: verify and task merge by result (pass 0 · error 8 · any other 1); task done 0 when done; review record 0
@@ -14,7 +14,7 @@ import { batchMerge } from './batch.mjs';
 import { markDone } from './done.mjs';
 import { adoptMerged, mergeTask } from './merge.mjs';
 import { pinBaseline, showBaseline } from './pin.mjs';
-import { recordReview } from './review.mjs';
+import { EXTERNAL_HINT, recordReview } from './review.mjs';
 import { verifyTask } from './run.mjs';
 
 const exitOf = (result) => (result === 'pass' ? EXIT.OK : result === 'error' ? EXIT.ENV : EXIT.FAIL);
@@ -98,10 +98,18 @@ export const taskMerge = typed(({ args, flags, names, version, io }) => {
 });
 
 export const reviewRecord = typed(({ args, flags, names, io }) => {
-  if (typeof flags.from !== 'string' || flags.from === '') {
-    return { code: EXIT.USAGE, errors: [{ code: 'missing-flag', message: 'review record needs --from <file>: the typed review JSON', hint: `${names.bin} review record ${args.id} --from <file>` }] };
+  const kind = flags.kind ?? 'claude';
+  const given = (v) => typeof v === 'string' && v !== '';
+  const bad = (code, message, hint) => ({ code: EXIT.USAGE, errors: [{ code, message, hint }] });
+  if (kind !== 'claude' && kind !== 'external') return bad('invalid-value', `--kind ${String(kind).slice(0, 40)}: expected claude or external`, `${names.bin} review record ${args.id} --from <file> | --kind external --run <runId>`);
+  if (kind === 'external') {
+    if (flags.from !== undefined) return bad('unexpected-flag', '--from does not apply to --kind external', EXTERNAL_HINT);
+    if (!given(flags.run)) return bad('missing-flag', 'review record --kind external needs --run <runId>', EXTERNAL_HINT);
+  } else {
+    if (flags.run !== undefined) return bad('unexpected-flag', '--run applies to --kind external only', `${names.bin} review record ${args.id} --kind external --run <runId>`);
+    if (!given(flags.from)) return bad('missing-flag', 'review record needs --from <file>: the typed review JSON', `${names.bin} review record ${args.id} --from <file>`);
   }
-  const r = recordReview({ cwd: io.cwd, env: io.env, names, id: args.id, from: flags.from });
+  const r = recordReview({ cwd: io.cwd, env: io.env, names, id: args.id, ...(kind === 'external' ? { run: flags.run } : { from: flags.from }) });
   if (r.invalid) {
     const hint = 'the file must match templates/review.schema.json in the plugin; nothing was written';
     return { code: EXIT.USAGE, data: { task: args.id, written: false }, errors: r.invalid.map((message) => ({ code: 'invalid-review', message, hint })) };

@@ -27,6 +27,8 @@ const testId = str(TEST_ID_MAX, { min: 1 });
 const fingerprint = str(TEST_ID_MAX + 13, { min: 1 }); // <id>@<12 hex>
 const collector = str(80, { re: /^[a-z][a-z0-9-]*(?:\+[a-z][a-z0-9-]*)*$/ });
 const REVIEW_KEY = /^T-[A-Z]{2,4}-[1-9]\d{0,5}\/review-r[1-9]\d{0,2}$/;
+// The run ID of a reviewer run (lib/runs RUN_ID with role reviewer); written here so hooks reach no provider code.
+const REVIEWER_RUN = /^[a-z0-9]{1,20}-T-[A-Z]{2,4}-[1-9]\d{0,5}-reviewer-[1-9]\d{0,5}$/;
 
 export const VERIFY_KINDS = Object.freeze({
   baseline: defineKind('baseline', 1, {
@@ -142,7 +144,11 @@ export const VERIFY_KINDS = Object.freeze({
           line: { t: 'int', min: 1, max: 100000000, null: true }, rule: str(40, { null: true }), text: str(500, { min: 1 }),
         },
       }, 1000),
+      // An external round is bound to its run (D4): the run ID and the sha256 of the run's out file.
+      run: str(80, { re: REVIEWER_RUN }),
+      sha256: str(64, { re: PATTERNS.sha256 }),
     },
+    opt: ['run', 'sha256'],
   }),
 });
 
