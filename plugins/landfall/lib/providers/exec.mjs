@@ -12,6 +12,7 @@ import { tolerateClosedStreams } from '../cli/output.mjs';
 import { closeSync, constants, fstatSync, lstatSync, mkdtempSync, openSync, readFileSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
+import { StringDecoder } from 'node:string_decoder';
 import { EXIT } from '../cli/commands.mjs';
 import { createExclusive } from '../fsx/index.mjs';
 import { start } from '../proc/index.mjs';
@@ -19,7 +20,9 @@ import { capFor, liveRun, nextRunId, runsStore, LOG_LINE, LOG_LINES } from '../r
 import { SYSTEM, acquireWait, attachChild, identify, release, supervise } from '../sched/index.mjs';
 import { KINDS, TASK_TEXTS, resolve, taskTextFile } from '../state/index.mjs';
 import { adapters, chooseProvider, detectProviders } from './index.mjs';
+import { redact } from '../verify/redact.mjs';
 import { LAST_LINE, ROLES } from './kind.mjs';
+import { cleanLine } from './probe.mjs';
 
 const GRACE_MS = 2000;
 const FLUSH_MS = 1000;
@@ -88,6 +91,47 @@ function ownOutFile(f) {
 
 const clip = (s, max) => (s.length > max ? s.slice(0, max) : s);
 
+// Pending characters of one output stream: a longer line is cut there and counts as truncated (B-5, SF-AB-7).
+export const PENDING_MAX = 64 * 1024;
+
+// What a provider prints, as a state string: hidden characters (escapes, controls, tabs) removed, secrets masked by
+// the shared redaction, then cut to max code points ('' when nothing visible is left). Cleaned whole first, so a
+// secret is masked before a cut could show a prefix of it.
+export const safeLine = (text, max) => cleanLine(redact(cleanLine(text, PENDING_MAX) ?? ''), max) ?? '';
+
+// A line splitter for one stream: feed(chunk) calls onLine(line, truncated) per complete line; end() emits the rest.
+// At most PENDING_MAX characters stay pending; past it the rest of the line is dropped.
+export function lineSplitter(onLine) {
+  const decoder = new StringDecoder('utf8');
+  let rest = '';
+  let dropping = false;
+  const emit = () => {
+    const line = rest;
+    const truncated = dropping;
+    rest = '';
+    dropping = false;
+    onLine(line, truncated);
+  };
+  const take = (s) => {
+    for (let at = 0; ;) {
+      const nl = s.indexOf('\n', at);
+      const part = nl < 0 ? s.slice(at) : s.slice(at, nl);
+      if (!dropping) {
+        const room = PENDING_MAX - rest.length;
+        if (part.length > room) { rest += part.slice(0, room); dropping = true; } else rest += part;
+      }
+      if (nl < 0) return;
+      at = nl + 1;
+      emit();
+    }
+  };
+  return {
+    feed: (chunk) => take(decoder.write(chunk)),
+    end: () => { take(decoder.end()); if (rest || dropping) emit(); },
+    pending: () => rest.length,
+  };
+}
+
 // Open without following a link or blocking on a FIFO, then check the opened file itself.
 function pinnedBrief(outFile) {
   let fd;
@@ -136,27 +180,34 @@ export async function runSupervise({ args, names, io, pluginRoot }) {
   child.stdin.end(brief);
   let live = { tokens: null, lastLine: null, unknownEvents: 0, lines: [] };
   let dirty = false;
-  let rest = '';
-  const onLine = (line) => {
-    const parsed = adapter.parse(line) ?? {};
-    if (parsed.tokens) live.tokens = parsed.tokens;
-    if (parsed.lastLine) live.lastLine = clip(parsed.lastLine, LAST_LINE);
-    if (!Object.keys(parsed).length) live.unknownEvents += 1;
-    live.lines.push(clip(line, LOG_LINE));
-    if (live.lines.length > LOG_LINES) live.lines = live.lines.slice(-LOG_LINES);
+  // Each line is cleaned and redacted before the adapter, the record or the log sees it (B-1, SF-AB-6, SF-AB-8); a
+  // line that still cannot be handled counts as unknown, never throws out of a stream callback.
+  const onLine = (raw) => {
+    try {
+      const line = safeLine(raw, PENDING_MAX);
+      if (!line) return;
+      const parsed = adapter.parse(line) ?? {};
+      if (parsed.tokens) live.tokens = parsed.tokens;
+      if (parsed.lastLine) live.lastLine = safeLine(parsed.lastLine, LAST_LINE) || live.lastLine;
+      if (!Object.keys(parsed).length) live.unknownEvents += 1;
+      live.lines.push(safeLine(line, LOG_LINE));
+      if (live.lines.length > LOG_LINES) live.lines = live.lines.slice(-LOG_LINES);
+    } catch {
+      live.unknownEvents += 1;
+    }
     dirty = true;
   };
-  const out = (d) => {
-    rest += d.toString();
-    const parts = rest.split('\n');
-    rest = parts.pop();
-    for (const line of parts) if (line.trim()) onLine(line);
-  };
+  const streams = { out: lineSplitter(onLine), err: lineSplitter(onLine) };
+  // flush catches its own errors: a failed write is tried again at the next flush, never a dead supervisor.
   const flush = () => {
     if (!dirty) return;
     dirty = false;
-    patch((cur) => ({ ...cur, elapsedMs: Date.now() - began, tokens: live.tokens, lastLine: live.lastLine, unknownEvents: live.unknownEvents }));
-    store.write('runLog', runId, { runId, lines: live.lines });
+    try {
+      patch((cur) => ({ ...cur, elapsedMs: Date.now() - began, tokens: live.tokens, lastLine: live.lastLine, unknownEvents: live.unknownEvents }));
+      store.write('runLog', runId, { runId, lines: live.lines });
+    } catch {
+      dirty = true;
+    }
   };
   const timer = setInterval(flush, FLUSH_MS);
   try {
@@ -165,16 +216,24 @@ export async function runSupervise({ args, names, io, pluginRoot }) {
     const onStop = () => abort.abort();
     process.once('SIGTERM', onStop);
     process.once('SIGINT', onStop);
-    const done = supervise(child, { timeoutMs: rec.capS * 1000, idleMs: rec.capS * 1000, graceMs: GRACE_MS, out, err: out, signal: abort.signal });
+    const done = supervise(child, { timeoutMs: rec.capS * 1000, idleMs: rec.capS * 1000, graceMs: GRACE_MS, out: (d) => streams.out.feed(d), err: (d) => streams.err.feed(d), signal: abort.signal });
     if (Number.isInteger(child.pid)) attachChild(got.lease, child.pid, opts);
     const result = await done.finally(() => { process.off('SIGTERM', onStop); process.off('SIGINT', onStop); });
-    if (rest.trim()) onLine(rest);
+    streams.out.end();
+    streams.err.end();
     clearInterval(timer);
     flush();
     const status = result.ended === 'aborted' ? 'stopped' : result.ended === 'timeout' || result.ended === 'idle' ? 'timeout' : result.status === 0 ? 'done' : 'failed';
     const error = result.error ? `could not start: ${result.error}` : status === 'failed' ? (result.signal ? `ended by ${result.signal}` : `exited with ${result.status}`) : status === 'timeout' ? `wall cap ${rec.capS} s reached; the process group was stopped` : status === 'stopped' ? 'stopped by runs stop' : null;
     patch((cur) => ({ ...cur, status, exit: result.status, endedAt: new Date().toISOString(), elapsedMs: Date.now() - began, tokensReason: cur.tokens ? null : 'not reported', error }));
     return { data: { runId, status, exit: result.status } };
+  } catch (err) {
+    // Any supervisor failure ends the run as failed: the group is killed here, the lease released below.
+    try { if (Number.isInteger(child.pid)) process.kill(-child.pid, 'SIGKILL'); } catch { /* the group is gone */ }
+    try {
+      patch((cur) => ({ ...cur, status: 'failed', endedAt: new Date().toISOString(), elapsedMs: Date.now() - began, error: safeLine(`supervisor failed: ${err?.message ?? err}`, 300) || 'supervisor failed' }));
+    } catch { /* the record cannot be written; the lease is still released */ }
+    return fail('supervisor-failed', `${runId}: the supervisor failed`, 'start the run again with exec');
   } finally {
     clearInterval(timer);
     release(got.lease, opts); // supervise resolved: the group is gone or got SIGKILL
