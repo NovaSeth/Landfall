@@ -5,7 +5,7 @@
   </picture>
 </p>
 
-# Landfall
+# Landfall <sup>2.5.0</sup>
 
 Landfall is a Claude Code plugin that turns one session into a small engineering team and holds it to outcomes checked in code. The session orchestrates: it sizes the task, writes a brief, hands the work to a fresh implementer in its own worktree (a Claude agent, or an external CLI such as Codex, which can also review; every run is a row in the agent panel), routes each role to the cheapest model that can do it, has the result reviewed, and closes the task only when `landfall verify` has re-run the project's gates on the code. A trivial change skips all of that, and every task leaves a receipt of what it cost. Formerly `caw`.
 
@@ -76,7 +76,9 @@ Claude  $ landfall profile set deployedToUsers true --source said \
 - **Ceremony scaled to the task and the project.** `landfall route` classes a change trivial, standard or critical from its paths, size and risk flags; documentation and images weigh nothing, the project's own risk globs and review focus live in the profile, and a task is classed from its own commits, not from main merged into it. The review need follows the project tier (`landfall tier`); a critical change gets a spec, a plan and a review from another provider.
 - **Decisions with IDs.** `landfall decide` records what, why and the cost if wrong under an ID such as `D-AB-3`; an agent that edits the code citing it sees the decision.
 - **A loop that ends, a machine that stays usable.** Unattended runs end with a typed exit (done, stalled, budget) and never reschedule after the end; `landfall heavy` queues full suites and builds per machine so parallel agents wait their turn.
-- **External executors as first-class agents.** `landfall exec`, `landfall wait` and `landfall runs` run Codex or Gemini CLI as reviewers or implementers, in supervised, recorded runs with agent-panel rows; `landfall secrets` scans before a report leaves the worktree.
+- **Security that follows the risk.** A change on a risk path (auth, money, migrations, CI, agent instructions) or with the security flag gets the security reviewer, which works through the OWASP Top 10:2025, the OWASP Top 10 for LLM Applications 2025 and the OWASP Top 10 for Agentic Applications (rules `OWA-*`, `LLM-*` and `AGT-*`, read with `landfall rule`); a critical change is also reviewed by another model provider when one is installed (`landfall providers`). A Bash guard blocks destructive and unproven commands, `landfall secrets` scans before a report leaves the worktree, repository text reaches agents only as quoted data, and a cloned repository's gate commands run only after `landfall trust`.
+- **Learning that needs evidence.** Review findings still open at the round cap go to a backlog (`landfall findings list`) instead of away; a lesson (`landfall lessons add`) is admitted only with evidence that exists in the state and becomes active only when later receipts show its effect; `landfall route --executor` suggests an executor only when the receipts separate.
+- **External executors as first-class agents.** `landfall exec`, `landfall wait` and `landfall runs` run Codex or Gemini CLI as reviewers or implementers, in supervised, recorded runs with agent-panel rows; a provider gets a minimal environment and starts by the path exec resolved.
 - **A dashboard beside the transcript.** In a wide fullscreen terminal the `Landfall` pane shows, from general to detail, the project and its loop, how many tasks are open and in which stage, the agents at work (Claude subagents and external runs) with role, task, round, elapsed time and where their result landed, the slots in use and the next step; `/landfall:dashboard` opens it, and a narrower terminal gets its one line in the status bar. It reads the plugin's own `status --json`, never the model's context.
 - **Tokens spent where they count.** Roles are routed to model tiers: the orchestrating session plans, dispatches and merges but never implements; the implementer and the reviewer run on Sonnet, the external wrapper on Haiku, the designer on Opus. Method rules load by ID on demand (always-on context about 550 tokens), trivial work calls nothing, and `landfall receipt` shows tokens and cost per task, loop, class or executor, with a dollar cap on unattended loops.
 - **Zero footprint until you say yes.** Installed once per user; a project gets one `.landfall/` directory only when real work starts there and you agree.
@@ -114,10 +116,16 @@ Details: [docs/cli.md](docs/cli.md).
 | Loop with typed exits and caps | — | — | — | — | — | ✓ |
 | Machine-wide queue for heavy commands | — | — | — | — | — | ✓ |
 | External provider runs | — | — | — | — | ✓ | ✓ |
+| Security review by the OWASP lists (web, LLM, agentic) | `/security-review` | — | — | — | — | ✓ |
+| Review by another model provider | — | — | — | — | — | ✓ (critical tasks) |
+| Secrets scan before work leaves the worktree | — | — | — | — | — | ✓ |
+| Open review findings kept as a backlog | — | — | — | — | — | ✓ |
+| Lessons admitted on evidence, promoted by receipts | — | — | — | — | — | ✓ |
+| Example project with its process state committed | — | — | — | — | — | ✓ |
 | Roles routed to model tiers, cost receipts per task | manual | — | — | — | manual | ✓ |
 | Agent cockpit or IDE integration | — | — | — | — | ✓ | — |
 
-The table lists what each tool documents (public READMEs as read on 2026-10-19; corrections are welcome as issues), not how well it works. Landfall adds a process, cost and enforcement layer to Claude Code sessions; it does not replace an editor or a cockpit such as orca, and can run inside one. A comparison with these tools will run under the pre-registered rules in [docs/benchmark.md](docs/benchmark.md).
+The table lists what each tool documents (public READMEs as read on 2026-10-19, and on 2026-10-29 for the security, review, findings, lessons and example rows; corrections are welcome as issues), not how well it works. Claude Code's `/security-review` reviews pending changes without a checklist; BMAD carries decisions forward as durable context, without the evidence gate. Landfall adds a process, cost and enforcement layer to Claude Code sessions; it does not replace an editor or a cockpit such as orca, and can run inside one. A measured comparison with these tools is pre-registered in [docs/benchmark.md](docs/benchmark.md) but not run yet.
 
 ## Measured
 

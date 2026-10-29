@@ -71,6 +71,34 @@ test('no SVG asset holds the codename, as text or in its path', () => {
   }
 });
 
+// The mark is a construction (T-MG-99): a quarter circle that meets the horizon tangentially, at exactly one point,
+// marked by the dot. The arc runs from (x1 - r, y1 - r) to (x1, y1), so its centre (x1, y1 - r) is straight above the
+// point of contact and the horizon y = y1 is its tangent there.
+function mark(file) {
+  const src = readFileSync(join(assets, file), 'utf8');
+  const arc = src.match(/<path d="M(\d+) (\d+) A(\d+) (\d+) 0 0 0 (\d+) (\d+)"\/>/);
+  const line = src.match(/<path d="M(\d+) (\d+) H(\d+)"\/>/);
+  const dot = src.match(/<circle cx="(\d+)" cy="(\d+)" r="(\d+)"/);
+  assert.ok(arc && line && dot, `${file}: one arc, one horizon and one dot`);
+  const [x0, y0, rx, ry, x1, y1] = arc.slice(1).map(Number);
+  const [lx0, ly, lx1] = line.slice(1).map(Number);
+  const [cx, cy] = dot.slice(1).map(Number);
+  return { x0, y0, rx, ry, x1, y1, lx0, ly, lx1, cx, cy };
+}
+
+test('the logo is a quarter circle landing tangent on the horizon at the dot, the same in the light and dark variant', () => {
+  const m = mark('logo.svg');
+  assert.equal(m.rx, m.ry, 'a circular arc');
+  assert.deepEqual([m.x1 - m.x0, m.y1 - m.y0], [m.rx, m.rx], 'a quarter circle from its leftmost point to its lowest point');
+  assert.equal(m.y1, m.ly, 'the arc ends on the horizon');
+  assert.ok(m.lx0 < m.x1 && m.x1 < m.lx1, 'the point of contact lies on the horizon segment');
+  assert.deepEqual([m.cx, m.cy], [m.x1, m.y1], 'the dot marks the point of contact');
+  const { cx, cy, ...shape } = m;
+  const dark = mark('logo-dark.svg');
+  assert.deepEqual({ ...dark, cx: undefined, cy: undefined }, { ...shape, cx: undefined, cy: undefined }, 'the dark variant has the same geometry');
+  assert.deepEqual([dark.cx, dark.cy], [cx, cy]);
+});
+
 test('the README header shows the light and the dark logo before the first heading', () => {
   const readme = readFileSync(join(root, 'README.md'), 'utf8');
   const head = readme.slice(0, Math.max(0, readme.search(/^#\s/m)));
