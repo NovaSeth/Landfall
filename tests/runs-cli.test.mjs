@@ -83,6 +83,8 @@ async function project(t, { envExtra = {} } = {}) {
   for (const id of ['T-TU-1', 'T-TU-2']) {
     await p.ok(['route', id, '--paths', 'src/a.js', '--loc', '10']);
     await p.ok(['brief', id, '--write']);
+    await p.ok(['task', 'set', id, 'started', '--branch', 'main', '--base', git(repo, env, ['rev-parse', 'HEAD'])]);
+    await p.ok(['review', 'brief', id, '--write']);
   }
   for (const mode of ['ok', 'gate', 'stubborn']) {
     await p.ok(['providers', 'add', `fake${mode}`, '--argv', `${process.execPath} ${FAKE} ${mode} {out} {sandbox} {cwd}`, '--sandbox-map', 'reviewer=read-only,implementer=workspace-write']);
