@@ -19,6 +19,7 @@ import { isAbsolute, join } from 'node:path';
 import { modeOf, readConfig, rollout } from '../config/index.mjs';
 import { evaluate } from '../guard/index.mjs';
 import { realPath } from '../guard/protect.mjs';
+import { heartbeatAgent } from '../sched/index.mjs';
 import { open, stateDirName } from '../state/index.mjs';
 import { externalBash, isExternalAgent } from './external-bash.mjs';
 import { loadNames, stateOf } from './loop-state.mjs';
@@ -81,7 +82,21 @@ function autoAllowMode(opts, env, where, names) {
   try { return modeOf(AUTO_ALLOW, readConfig(where, { names, env })); } catch { return rollout(AUTO_ALLOW).default; }
 }
 
+const AGENT_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+// After the decision: refresh the heartbeat of the agent lease held by input.agent_id (lib/sched, at most once a minute).
+// An error or a timeout is ignored, so it never changes the decision (GC8).
+function beat(input, env) {
+  if (!AGENT_ID.test(String(input?.agent_id))) return;
+  try { heartbeatAgent(input.agent_id, { names: loadNames(), env, lockTimeoutMs: 100 }); } catch { /* never changes the decision */ }
+}
+
 export function guardBash(input, opts = {}) {
+  const r = guardDecision(input, opts);
+  beat(input, opts.env ?? process.env);
+  return r;
+}
+
+function guardDecision(input, opts = {}) {
   const command = input.tool_input?.command;
   if (typeof command !== 'string' || !command) return { stdout: '' };
   const env = opts.env ?? process.env;
