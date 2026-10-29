@@ -107,8 +107,10 @@ test('the pane says, from general to detail, the project, the tasks with their s
   // the Claude subagent the engine lists and the external run, each with role, task, time and status
   expect((await ui.find({ type: 'Text', text: /● reviewer/ }))?.text).toBe('● reviewer     T-TU-1   r2  00:00  running')
   expect((await ui.find({ type: 'Text', text: /codex reviewer/ }))?.text).toBe('● codex reviewer  T-TU-1       05:00  running  → T-TU-1-r1.json  1.2k tok  reading the diff')
-  // a stopped run is not live: its error stands where the last line would
-  expect((await ui.find({ type: 'Text', text: /codex implementer/ }))?.text).toBe('✗ codex implementer  T-TU-2       01:01  stopped  stopped by the orchestrator')
+  // a stopped run is not live and its summary carries no end time: it counts as ended long ago and folds into the count
+  // line (an intended change: it used to be a row of its own)
+  expect(await ui.find({ type: 'Text', text: /codex implementer/ })).toBeUndefined()
+  expect((await ui.find({ type: 'Text', text: /ended/ }))?.text).toBe('  ✓ 1 ended (1 failed)')
   expect((await ui.find({ type: 'Text', text: /^SLOTS/ }))?.text).toBe('SLOTS heavy 1')
   expect((await ui.find({ type: 'Text', text: /^NEXT/ }))?.text).toBe('NEXT T-TU-1: {{bin}} verify T-TU-1')
   await ui.unmount()
@@ -135,6 +137,25 @@ test('a spawned agent is a row with the task, round and output file of its promp
   await w.clock.advance(1_000)
   ui = await $.ui.mount(PANE)
   expect((await ui.find({ type: 'Text', text: /T-TU-9/ }))?.text).toBe('✓ reviewer     T-TU-9   r2  01:01  completed  → T-TU-9-review-r2.json  1.5k tok')
+  await ui.unmount()
+  // a minute after it ended the row folds into the count line
+  await w.clock.advance(60_000)
+  ui = await $.ui.mount(PANE)
+  expect(await ui.find({ type: 'Text', text: /T-TU-9/ })).toBeUndefined()
+  expect((await ui.find({ type: 'Text', text: /ended/ }))?.text).toBe('  ✓ 1 ended')
+  await ui.unmount()
+})
+
+test('an external run that ended 10 s ago is a row; one that ended 2 minutes ago is folded', async ($, on) => {
+  const at = Date.parse('2026-10-22T10:05:00.000Z')
+  const ended = (runId: string, ago: number, status = 'done') => ({ runId, status, provider: 'codex', role: 'implementer', task: 'T-TU-5', elapsedMs: 5000, tokens: null, lastLine: null, outFile: null, error: null, endedAt: new Date(at - ago).toISOString() })
+  const runs = { ...RUNS, data: { runs: [ended('r5', 10_000), ended('r6', 120_000, 'failed')] } }
+  const w = world(on, { runs })
+  await $.session.start(SESSION)
+  await w.clock.settle()
+  const ui = await $.ui.mount(PANE)
+  expect((await ui.find({ type: 'Text', text: /codex implementer/ }))?.text).toBe('✓ codex implementer  T-TU-5       00:05  done')
+  expect((await ui.find({ type: 'Text', text: /ended/ }))?.text).toBe('  ✓ 1 ended (1 failed)')
   await ui.unmount()
 })
 

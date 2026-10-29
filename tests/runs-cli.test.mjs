@@ -105,8 +105,12 @@ test('wait: exit 3 while the run runs, exit 0 with a summary under 1 KB when it 
   await p.until('the run to run', () => p.record(id).status === 'running');
   const w = await p.cli(['wait', id, '--timeout', '1']);
   assert.equal(w.code, 3, show(w));
+  assert.equal(w.e.data.endedAt, null, 'a live run has no end time');
   writeFileSync(`${p.record(id).outFile}.go`, '');
   await p.ended(id);
+  const listed = (await p.ok(['runs', 'list'])).e.data.runs.find((r) => r.runId === id);
+  assert.equal(listed.endedAt, p.record(id).endedAt, 'runs list carries the recorded end time');
+  assert.ok(Date.parse(listed.endedAt) > 0, 'an ended run has its time');
   const d = await p.ok(['wait', id, '--timeout', '5']);
   assert.ok(JSON.stringify(d.e.data).length <= 1024, 'summary ≤ 1 KB');
   assert.equal(d.e.data.status, 'done');
