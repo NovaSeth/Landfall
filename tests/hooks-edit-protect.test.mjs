@@ -174,7 +174,7 @@ test('edit hook: a repository state that cannot be resolved blocks an edit insid
 
 test('owned state files: every committed lib/state kind is owned, and an Edit names its command (FLW-7)', async (t) => {
   const { KINDS } = await lib('state/kinds.mjs');
-  const keys = { team: 'AB', task: 'T-AB-1', tombstone: 'D-AB-3', counter: 'T-AB', finding: 'B-AB-1' };
+  const keys = { team: 'AB', task: 'T-AB-1', tombstone: 'D-AB-3', counter: 'T-AB', finding: 'B-AB-1', lesson: 'L-AB-1' };
   const f = fixture(t);
   for (const kind of Object.values(KINDS)) {
     assert.ok(!kind.keyPattern || keys[kind.name], `${kind.name}: add a sample key to this test`);
