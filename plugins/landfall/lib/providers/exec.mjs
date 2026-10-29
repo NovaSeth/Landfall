@@ -9,10 +9,11 @@
 // Exit (exec) 0 · 1 no such task, no brief, a live run of the task and role · 2 bad role or provider · 7 inactive
 // repository, newer schema · 8 provider missing or logged out.
 import { tolerateClosedStreams } from '../cli/output.mjs';
-import { closeSync, constants, fstatSync, lstatSync, mkdtempSync, openSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { closeSync, constants, fstatSync, lstatSync, mkdtempSync, openSync, readFileSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { EXIT } from '../cli/commands.mjs';
+import { createExclusive } from '../fsx/index.mjs';
 import { start } from '../proc/index.mjs';
 import { capFor, liveRun, nextRunId, runsStore, LOG_LINE, LOG_LINES } from '../runs/index.mjs';
 import { SYSTEM, acquireWait, attachChild, identify, release, supervise } from '../sched/index.mjs';
@@ -57,7 +58,8 @@ export function exec({ flags, names, io, pluginRoot }) {
   const capS = capFor(role, io.env, names.envPrefix);
   const outDir = mkdtempSync(join(tmpdir(), `${bin}-run-`)); // 0700
   const input = `${brief}\n## External run (overrides the Output section above)\nYou run as ${row.id}:reviewer in a read-only sandbox: write no file. Your final message is the review JSON object alone, with "reviewer": {"kind": "external", "id": "${row.id}:reviewer"}, per the schema the Output section names. The orchestrator records it from the run's out file with \`${bin} review record ${id} --from <out file>\`.\n`;
-  writeFileSync(join(outDir, 'brief.md'), input, { flag: 'wx', mode: 0o600 }); // exclusive creation never follows a link
+  const briefFile = join(outDir, 'brief.md');
+  if (!createExclusive(briefFile, input, { mode: 0o600 })) throw Object.assign(new Error(`${briefFile}: file already exists`), { code: 'EEXIST' });
   const runId = nextRunId(store, row.id, id, role);
   const record = {
     runId, task: id, role, provider: row.id, adapterVersion: row.version ?? null, model: null, sandbox: adapter.sandboxes[role], cwd: w.repo,
