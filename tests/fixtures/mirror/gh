@@ -1,0 +1,29 @@
+#!/usr/bin/env node
+// Fake gh for the mirror tests: records argv (and stdin) as one JSON line in $FAKE_GH_LOG and answers from files.
+//   $FAKE_GH_AUTH=fail   `auth status` exits 1
+//   $FAKE_GH_ISSUES      JSON file answered by `issue list`
+// `issue create` prints an issue URL numbered 100 + the count of earlier creates.
+import { appendFileSync, existsSync, readFileSync } from 'node:fs';
+
+const args = process.argv.slice(2);
+const chunks = [];
+process.stdin.on('data', (c) => chunks.push(c));
+process.stdin.on('end', () => {
+  const stdin = Buffer.concat(chunks).toString('utf8');
+  const log = process.env.FAKE_GH_LOG;
+  const lines = existsSync(log) ? readFileSync(log, 'utf8').split('\n').filter(Boolean) : [];
+  appendFileSync(log, `${JSON.stringify({ args, stdin })}\n`);
+  const [a, b] = args;
+  if (a === 'auth') {
+    if (process.env.FAKE_GH_AUTH === 'fail') { process.stderr.write('You are not logged into any GitHub hosts.\n'); process.exit(1); }
+    process.stdout.write('Logged in\n');
+  } else if (a === 'repo' && b === 'view') {
+    process.stdout.write('{"nameWithOwner":"acme/widgets"}\n');
+  } else if (a === 'issue' && b === 'list') {
+    process.stdout.write(process.env.FAKE_GH_ISSUES && existsSync(process.env.FAKE_GH_ISSUES) ? readFileSync(process.env.FAKE_GH_ISSUES, 'utf8') : '[]');
+  } else if (a === 'issue' && b === 'create') {
+    const n = 100 + lines.filter((l) => { const j = JSON.parse(l).args; return j[0] === 'issue' && j[1] === 'create'; }).length;
+    process.stdout.write(`https://github.com/acme/widgets/issues/${n}\n`);
+  }
+  process.exit(0);
+});
