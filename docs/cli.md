@@ -55,7 +55,7 @@ Commands:
   decisions supersede  Record a decision replacing an active one; the old record gets status superseded and supersededBy.
   decline              Opt out of tracking this repository; remembered in machine data by its real path, never in the repository.
   doctor               Health report: Claude Code floor, plugin and hooks, release, state, profile, flags, context cost, permissions.
-  exec                 Start an external reviewer with a pinned review brief: latest round or --round; save with review brief <id> --write.
+  exec                 Start an external reviewer (pinned review brief, latest round or --round) or implementer (task worktree, task brief or --brief).
   findings add         File findings from a recorded review round, once per source task, round and finding ID.
   findings close       Mark open or taken backlog findings fixed by an existing task.
   findings drop        Drop open or taken backlog findings with a reason recorded in a decision.
@@ -405,15 +405,17 @@ Exit codes: 0 OK · 1 FAIL · 8 ENV
 ```text
 usage: landfall exec [--task <id>] [--role <role>] [--provider <id>] [--round <k>] [--brief <file>] [--yes] [--json]
 
-Start an external reviewer with a pinned review brief: latest round or --round; save with review brief <id> --write.
+Start an external reviewer (pinned review brief, latest round or --round) or implementer (task worktree, task brief or --brief).
 The provider is selected like the dispatch does (found, logged in, declared for the role; --provider names one). The
 record starts as {status: starting}; the supervisor (run-supervise) takes the external lease (queued while none is
 free), runs the provider in its own process group under the wall cap (reviewer 900 s, implementer 2700 s, or the env
 <PREFIX>EXTERNAL_TIMEOUT), feeds the saved brief on stdin and keeps the record current at most once a second:
 running, elapsedMs, tokens, lastLine; at the end exit, outFile, tokens and the status done, failed or timeout. On the
 cap the whole group gets SIGTERM, a grace, then SIGKILL; the lease is released only after the group is gone.
-A reviewer runs read-only in the repository checkout; the out file lives in a private temp directory (0700). Exit 1:
-no such task, no saved brief (brief <id> --write), a live run of the task and role. Implementer runs: not yet (exit 2).
+A reviewer runs read-only in the repository checkout; the out file lives in a private temp directory (0700). An
+implementer runs in the task worktree under the implementer sandbox, fed the task brief or --brief <file>, with the
+brief sha pinned; it is refused without a worktree, without a mapping, or with an unsafe brief. Exit 1: no such task,
+no saved brief (brief <id> --write), a live run of the task and role.
 
 Options:
   --task <id>      required: the task ID, such as T-AB-1
