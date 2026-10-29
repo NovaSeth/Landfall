@@ -132,21 +132,48 @@ export function judge(record, current) {
   return current.start === record.start ? 'same' : 'other';
 }
 
-// Members of the process group led by the recorded child { pid, start, method } (findings r1 7; the group id is the
-// child's pid): pids with that group id that started no earlier than the child. [] when the group is gone or its id
-// now names another process (a group id is not reused while a member lives); null when it cannot be told (no table,
-// another method, a start that cannot be read).
-export function groupMembers(child, table) {
+// The process group led by the recorded child { pid, start, method, members? } (findings r1 7; the group id is the
+// child's pid): { members, skip }. members: pids with that group id that started no earlier than the child; [] when
+// the group is gone or its id now names another process. A group whose leader is gone is ours only while a member
+// identity recorded at attach ({ pid, start }, SF-AB-9) still matches a live member (same pid, start and group):
+// otherwise members is [] and skip names why ('no-recorded-member', 'no-recorded-member-matches'), since a group id
+// is reused once its members are gone. null when it cannot be told (no table, another method, a start that cannot
+// be read).
+export function groupCheck(child, table) {
   if (!table || child.start === null || child.method !== table.method) return null;
   const leader = table.rows.get(child.pid);
-  if (leader && !leader.zombie && leader.start !== child.start) return leader.start === null ? null : [];
+  const led = Boolean(leader && !leader.zombie);
+  if (led && leader.start !== child.start) return leader.start === null ? null : { members: [], skip: null };
   const members = [];
   for (const [pid, row] of table.rows) {
     if (row.pgid !== child.pid || row.zombie) continue;
     if (row.start === null) return null;
     if (Number(row.start) >= Number(child.start)) members.push(pid);
   }
-  return members;
+  if (led || !members.length) return { members, skip: null };
+  const recorded = Array.isArray(child.members) ? child.members : [];
+  if (!recorded.length) return { members: [], skip: 'no-recorded-member' };
+  const matches = recorded.some((m) => {
+    const row = table.rows.get(m.pid);
+    return Boolean(row && !row.zombie && row.pgid === child.pid && row.start !== null && row.start === m.start);
+  });
+  return matches ? { members, skip: null } : { members: [], skip: 'no-recorded-member-matches' };
+}
+
+// The members of that group (groupCheck), or null when it cannot be told.
+export const groupMembers = (child, table) => groupCheck(child, table)?.members ?? null;
+
+// The member identities [{ pid, start }] of the group the running child { pid, start } leads, from one table
+// reading (the reaper's rule: live, same group id, a readable start no earlier than the child's; not the child).
+export const MAX_MEMBERS = 64;
+export function memberIdentities(child, table) {
+  if (!table || child.start === null || child.start === undefined) return [];
+  const out = [];
+  for (const [pid, row] of table.rows) {
+    if (pid === child.pid || row.pgid !== child.pid || row.zombie || row.start === null) continue;
+    if (Number(row.start) >= Number(child.start)) out.push({ pid, start: row.start });
+  }
+  return out.slice(0, MAX_MEMBERS);
 }
 
 // The record of an identity as a holder or child: { pid, start, method } (start and method null when unknown).
