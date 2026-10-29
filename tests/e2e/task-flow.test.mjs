@@ -124,7 +124,10 @@ test('task flow: task new → route → implement → report from the template �
   const m = p.ok(p.cli('task', 'merge', task.id, '--branch', task.branch));
   assert.deepEqual([m.data.merged, m.data.result], [true, 'pass']);
   assert.deepEqual(p.git('rev-list', '--parents', '-n', '1', 'HEAD').split(' ').slice(1), [tip, p.git('rev-parse', task.branch)]);
-  assert.equal(p.git('status', '--porcelain'), '');
+  // T-MG-80 (intended change): the code is clean; the merge record is an uncommitted state write, like task done's.
+  assert.equal(p.git('status', '--porcelain', '--', '.', `:(exclude)${names.stateDir}`), '');
+  assert.deepEqual(p.git('status', '--porcelain').split('\n').map((l) => l.replace(/^\s*\S+\s+/, '')), [`${names.stateDir}/tasks/${task.id}/task.json`]);
+  assert.equal(p.read(`tasks/${task.id}/task.json`).events.at(-1).event, 'merged');
   assert.equal(p.read(`tasks/${task.id}/task.json`).status, 'done');
   assert.deepEqual(p.read(`tasks/${task.id}/review-r1.json`).verdict, 'approved');
   assert.equal(p.read('baseline/tests.json').tests.length, 2, 'main\'s baseline holds the new test');
@@ -166,6 +169,8 @@ test('task flow with a removed test: verify, task done and task merge refuse it 
   p.git('checkout', '-q', 'main');
   const m = p.ok(p.cli('task', 'merge', task.id, '--branch', task.branch));
   assert.deepEqual([m.data.merged, m.data.verify.inventory.allowedBy], [true, [allow.data.id]]);
-  assert.equal(p.git('status', '--porcelain'), '');
+  // T-MG-80 (intended change): the code is clean; the merge record is an uncommitted state write, like task done's.
+  assert.equal(p.git('status', '--porcelain', '--', '.', `:(exclude)${names.stateDir}`), '');
+  assert.deepEqual(p.git('status', '--porcelain').split('\n').map((l) => l.replace(/^\s*\S+\s+/, '')), [`${names.stateDir}/tasks/${task.id}/task.json`]);
   assert.deepEqual(p.read('baseline/tests.json').tests.map((x) => x.id).filter((id) => id.includes('subtracts')), []);
 });

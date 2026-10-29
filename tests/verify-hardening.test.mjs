@@ -201,11 +201,13 @@ test('D8: review record and report refuse a FIFO without waiting for it', { time
 const redactLib = await lib('verify/redact.mjs');
 const secretsLib = await lib('secrets/index.mjs');
 
-test('F1: a project pattern that matches its own mask ends (redaction never re-matches the replacement)', () => {
+test('F1: a project pattern that matches its own mask ends (redaction never re-matches the replacement)', (t) => {
+  const iso = isolatedEnv({ prefix: 'verify-hard-redact-' });
+  t.after(iso.cleanup);
   const href = new URL(`file://${join(dirname(new URL(import.meta.url).pathname), '..', 'plugins', 'landfall', 'lib')}/`).href;
   const script = `const r = await import(${JSON.stringify(`${href}verify/redact.mjs`)}); const s = await import(${JSON.stringify(`${href}secrets/index.mjs`)});
 const out = r.redact('a tok_1234567890123456 b', s.projectPatterns('tok_.*').patterns); process.stdout.write(out);`;
-  const c = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', timeout: 1500 });
+  const c = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', timeout: 1500, env: iso.env });
   assert.equal(c.error?.code ?? null, null, 'redact ended within 1500 ms');
   assert.equal(c.status, 0, c.stderr);
   assert.ok(!c.stdout.includes('1234567890123456'), c.stdout);
