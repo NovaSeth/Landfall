@@ -29,6 +29,22 @@ test('the README heading shows the package version, and its What\'s new names it
   assert.ok(readme.includes(`## What's new in ${version}`), `a What's new section for ${version}`);
 });
 
+// The prose reads like a person wrote it (T-MG-102, the humanizer pass): no em or en dash joins clauses in the README
+// or the hand-written docs. Table rows (where "—" means "no"), code blocks and inline code are not prose.
+test('README and the hand-written docs use no em or en dash in their prose', () => {
+  const files = ['README.md', 'docs/getting-started.md', 'docs/known-limitations.md', 'docs/evaluation.md', 'docs/benchmark.md', 'examples/notes-api/README.md'];
+  const hits = [];
+  for (const f of files) {
+    let code = false;
+    read(f).split('\n').forEach((line, i) => {
+      if (line.startsWith('```')) { code = !code; return; }
+      if (code || line.startsWith('|')) return;
+      if (/[–—]/.test(line.replace(/`[^`]*`/g, ''))) hits.push(`${f}:${i + 1}`);
+    });
+  }
+  assert.deepEqual(hits, []);
+});
+
 // The README tells what the plugin does today: security review by the OWASP lists (2.4.0) and evidence-gated learning
 // (2.4.1, 2.5.0) are in What it does, and the comparison has a row for each.
 test('the README describes the security review and the evidence-gated learning, and compares them', () => {
