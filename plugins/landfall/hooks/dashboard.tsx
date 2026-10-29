@@ -24,6 +24,8 @@ const DEBOUNCE_MS = 700
 const RUN_TIMEOUT_MS = 8_000
 const KEEP_AGENTS = 30
 const LIST_GRACE_MS = 30_000
+// an agent or run that ended stays a row this long, then it folds into the count line
+const LINGER_MS = 60_000
 const TASK_ID = /\bT-[A-Z]{2,4}-\d+\b/
 // the round of a brief or an answer, the most specific spelling first (review r1 F5: prose says "round" too)
 const ROUNDS = [/\breview-r(\d+)\b/i, /--round[ =](\d+)\b/, /\bfix round (\d+)\b/i, /\bround (\d+)\b/i]
@@ -161,6 +163,7 @@ function runsOf(env: Json | null): RunRow[] {
         error: str(r.error) || null,
         lastLine: str(r.lastLine) || null,
         live: !RUN_TERMINAL.has(status),
+        endedAt: Date.parse(str(r.endedAt)) || null,
       }
     })
     .slice(0, KEEP_AGENTS)
@@ -240,7 +243,7 @@ function inactiveSnapshot(project: string, now: number, error: string | null): S
 // ---- the drawing -------------------------------------------------------------------------------------------------
 
 type Line = { text: string; style: 'head' | 'dim' | 'section' | 'row' | 'live' | 'ok' | 'bad' | 'next' }
-type AgentLine = { line: Line; live: boolean; since: number }
+type AgentLine = { line: Line; live: boolean; since: number; endedAt: number | null; failed: boolean }
 
 function agentLine(r: AgentRecord, at: number): AgentLine {
   const running = RUNNING.has(r.status)
@@ -253,7 +256,7 @@ function agentLine(r: AgentRecord, at: number): AgentLine {
     ...(r.out ? [`→ ${baseName(r.out)}`] : []),
     ...(r.tokens ? [`${(r.tokens / 1000).toFixed(1)}k tok`] : []),
   ]
-  return { line: { text: parts.join('  '), style: running ? 'live' : r.status === 'completed' ? 'ok' : r.status === 'idle' ? 'dim' : 'bad' }, live: running, since: r.startedAt }
+  return { line: { text: parts.join('  '), style: running ? 'live' : r.status === 'completed' ? 'ok' : r.status === 'idle' ? 'dim' : 'bad' }, live: running, since: r.startedAt, endedAt: r.endedAt, failed: !running && r.status !== 'completed' && r.status !== 'idle' }
 }
 
 function runLine(r: RunRow, at: number): AgentLine {
@@ -267,7 +270,7 @@ function runLine(r: RunRow, at: number): AgentLine {
     ...(r.tokens ? [`${(r.tokens / 1000).toFixed(1)}k tok`] : []),
     ...(r.error ? [r.error] : r.lastLine ? [r.lastLine] : []),
   ]
-  return { line: { text: parts.join('  '), style: r.live ? 'live' : r.status === 'done' ? 'ok' : 'bad' }, live: r.live, since: at - r.elapsedMs }
+  return { line: { text: parts.join('  '), style: r.live ? 'live' : r.status === 'done' ? 'ok' : 'bad' }, live: r.live, since: at - r.elapsedMs, endedAt: r.endedAt, failed: !r.live && r.status !== 'done' }
 }
 
 export function linesOf(snap: Snapshot, width: number, rows: number): Line[] {
@@ -292,9 +295,15 @@ export function linesOf(snap: Snapshot, width: number, rows: number): Line[] {
 
   out.push({ text: 'AGENTS', style: 'section' })
   const all = [...snap.agents.map(r => agentLine(r, snap.at)), ...snap.runs.map(r => runLine(r, snap.at))].sort((a, b) => Number(b.live) - Number(a.live) || b.since - a.since)
-  const shownAgents = all.slice(0, all.length > agentRoom ? agentRoom - 1 : agentRoom)
+  // the live rows and the ones that ended a moment ago; the rest fold into one count line that keeps its place
+  const shown = all.filter(a => a.live || (a.endedAt !== null && snap.at - a.endedAt <= LINGER_MS))
+  const folded = all.filter(a => !shown.includes(a))
+  const failed = folded.filter(a => a.failed).length
+  const rowRoom = Math.max(0, agentRoom - (folded.length > 0 ? 1 : 0))
+  const shownAgents = shown.slice(0, shown.length > rowRoom ? Math.max(0, rowRoom - 1) : rowRoom)
   for (const a of shownAgents) out.push(a.line)
-  if (all.length > shownAgents.length) out.push({ text: `  … ${all.length - shownAgents.length} more`, style: 'dim' })
+  if (shown.length > shownAgents.length) out.push({ text: `  … ${shown.length - shownAgents.length} more`, style: 'dim' })
+  if (folded.length > 0) out.push({ text: `  ✓ ${folded.length} ended${failed > 0 ? ` (${failed} failed)` : ''}`, style: 'dim' })
   if (all.length === 0) out.push({ text: '  none yet', style: 'dim' })
 
   const slots = Object.entries(snap.slots)

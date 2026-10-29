@@ -138,11 +138,11 @@ test('a spawned agent is a row with the task, round and output file of its promp
   ui = await $.ui.mount(PANE)
   expect((await ui.find({ type: 'Text', text: /T-TU-9/ }))?.text).toBe('✓ reviewer     T-TU-9   r2  01:01  completed  → T-TU-9-review-r2.json  1.5k tok')
   await ui.unmount()
-  // a minute after it ended the row folds into the count line
-  await w.clock.advance(60_000)
+  // past a minute after it ended (the pane refreshes every 15 s) the row folds into the count line, next to the fixture's stopped run
+  await w.clock.advance(75_000)
   ui = await $.ui.mount(PANE)
   expect(await ui.find({ type: 'Text', text: /T-TU-9/ })).toBeUndefined()
-  expect((await ui.find({ type: 'Text', text: /ended/ }))?.text).toBe('  ✓ 1 ended')
+  expect((await ui.find({ type: 'Text', text: /ended/ }))?.text).toBe('  ✓ 2 ended (1 failed)')
   await ui.unmount()
 })
 

@@ -23,6 +23,7 @@ export type RunRow = {
   error: string | null
   lastLine: string | null
   live: boolean
+  endedAt: number | null
 }
 
 export type AgentRecord = {

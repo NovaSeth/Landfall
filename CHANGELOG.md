@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Dashboard:** AGENTS lists the running agents and runs; one that ended stays for a minute, then folds into one line (`✓ 5 ended (1 failed)`). `runs list --json` carries `endedAt`.
+
 ## 2.4.0
 
 Security review on the OWASP lists, for web code and for code that calls a model or runs agents.
