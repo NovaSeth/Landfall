@@ -6,8 +6,8 @@
 // gets the TAP reporter through NODE_OPTIONS, a single jest or vitest command JSON output, so verify reads runtime
 // results instead of scanning sources, verify review r1 #6), ui (*.tsx, *.jsx, *.vue,
 // *.svelte, *.swift, HTML-like files under templates/), backend (migrations/, prisma/, schema.sql, ORM configs),
-// ci (provider or none), otherHarnesses (.codex/, .cursor/, GEMINI.md, AGENTS.md), risk globs (the router's
-// defaults, the one list, plus the directories of package.json `bin` and `exports`). ui and backend are observed
+// llm (LLM and agent SDKs among the dependencies of the root manifests), ci (provider or none), otherHarnesses (.codex/, .cursor/, GEMINI.md, AGENTS.md), risk globs (the router's
+// defaults, the one list, plus the directories of package.json `bin` and `exports`). ui, backend and llm are observed
 // only when present: their absence in a young repository answers nothing.
 import { lstatSync, readFileSync } from 'node:fs';
 import { join, posix } from 'node:path';
@@ -15,9 +15,9 @@ import { git } from '../git/index.mjs';
 import { DEFAULT_RISK_PATHS } from '../router/index.mjs';
 import { CONFIDENCE_OF, LIMITS, ProfileError, cleanText, hasForbidden } from './keys.mjs';
 
-export const SCANNER = 2; // bump when detection changes, so cached observations are scanned again
+export const SCANNER = 3; // bump when detection changes, so cached observations are scanned again
 // The fact keys this scan observes; an observed fact of another key (set by an agent) is never dropped by a scan.
-export const SCANNED_KEYS = Object.freeze(['stack', 'ui', 'backend', 'ci', 'otherHarnesses']);
+export const SCANNED_KEYS = Object.freeze(['stack', 'ui', 'backend', 'llm', 'ci', 'otherHarnesses']);
 const MAX_READ = 256 * 1024;
 export const GATE_TIMEOUT_S = 1800;
 
@@ -34,6 +34,14 @@ const CI = [
 ];
 const HARNESSES = [['.codex/', 'codex'], ['.cursor/', 'cursor'], ['GEMINI.md', 'gemini'], ['AGENTS.md', 'agents-md']];
 const NPM_GATES = [['test', 'test'], ['lint', 'lint'], ['typecheck', 'typecheck'], ['build', 'build']];
+
+// LLM and agent SDKs (frozen; read only by llmOf). package.json: dependencies, peer and optional, never dev.
+const NPM_LLM = Object.freeze(['@anthropic-ai/sdk', '@anthropic-ai/claude-agent-sdk', '@anthropic-ai/bedrock-sdk', '@anthropic-ai/vertex-sdk', 'openai', '@openai/agents', 'ai', 'langchain', 'llamaindex', 'ollama', 'cohere-ai', 'groq-sdk', 'replicate', '@mistralai/mistralai', '@google/genai', '@google/generative-ai', '@huggingface/inference', '@modelcontextprotocol/sdk', '@aws-sdk/client-bedrock-runtime']);
+const NPM_LLM_PREFIXES = Object.freeze(['@ai-sdk/', '@langchain/', '@llamaindex/', '@mastra/']);
+const PY_LLM = Object.freeze(['anthropic', 'claude-agent-sdk', 'openai', 'openai-agents', 'langchain', 'langchain-core', 'langchain-community', 'langchain-openai', 'langchain-anthropic', 'langgraph', 'llama-index', 'llama-index-core', 'litellm', 'google-genai', 'google-generativeai', 'mistralai', 'cohere', 'mcp', 'fastmcp', 'ollama', 'crewai', 'autogen-agentchat', 'pyautogen', 'pydantic-ai', 'dspy', 'dspy-ai', 'instructor', 'semantic-kernel', 'smolagents', 'haystack-ai']);
+const GO_LLM = Object.freeze(['github.com/anthropics/anthropic-sdk-go', 'github.com/openai/openai-go', 'github.com/sashabaranov/go-openai', 'github.com/tmc/langchaingo', 'github.com/mark3labs/mcp-go', 'github.com/modelcontextprotocol/go-sdk', 'google.golang.org/genai', 'github.com/firebase/genkit/go']);
+const PY_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*/;
+const pyNorm = (n) => n.toLowerCase().replace(/[_.]/g, '-');
 
 const MAX_ENTRY_DEPTH = 8;
 const MAX_ENTRY_PATHS = 200;
@@ -122,6 +130,58 @@ function gatesOf(repo, files, has) {
   return { gates, pkg };
 }
 
+// The first LLM or agent SDK among the dependencies of the root manifests, as `<manifest>: <package>`, else null.
+function llmOf(repo, files) {
+  const root = files.filter((f) => !f.includes('/'));
+  if (root.includes('package.json')) {
+    const pkg = jsonOf(readRoot(repo, 'package.json') ?? '');
+    for (const key of ['dependencies', 'peerDependencies', 'optionalDependencies']) {
+      const deps = pkg?.[key];
+      if (!deps || typeof deps !== 'object' || Array.isArray(deps)) continue;
+      const hit = Object.keys(deps).find((n) => NPM_LLM.includes(n) || NPM_LLM_PREFIXES.some((p) => n.startsWith(p)));
+      if (hit) return `package.json: ${hit}`;
+    }
+  }
+  const pyHit = (names) => names.map((n) => pyNorm(n)).find((n) => PY_LLM.includes(n));
+  for (const f of root.filter((n) => /^requirements.*\.txt$/.test(n))) {
+    const names = [];
+    for (const line of (readRoot(repo, f) ?? '').split(/\r?\n/)) {
+      const l = line.trim();
+      if (!l || l.startsWith('#') || l.startsWith('-')) continue;
+      const m = PY_NAME.exec(l);
+      if (m) names.push(m[0]);
+    }
+    const hit = pyHit(names);
+    if (hit) return `${f}: ${hit}`;
+  }
+  if (root.includes('pyproject.toml')) {
+    const names = [];
+    for (const line of (readRoot(repo, 'pyproject.toml') ?? '').split(/\r?\n/)) {
+      const key = /^([A-Za-z0-9][A-Za-z0-9._-]*)\s*=/.exec(line);
+      if (key) names.push(key[1]);
+      for (const q of line.matchAll(/"([^"]*)"|'([^']*)'/g)) {
+        const m = PY_NAME.exec((q[1] ?? q[2]).trim());
+        if (m) names.push(m[0]);
+      }
+    }
+    const hit = pyHit(names);
+    if (hit) return `pyproject.toml: ${hit}`;
+  }
+  if (root.includes('go.mod')) {
+    let inBlock = false;
+    for (const line of (readRoot(repo, 'go.mod') ?? '').split(/\r?\n/)) {
+      let l = line.replace(/\/\/.*$/, '').trim();
+      if (inBlock) { if (l.startsWith(')')) { inBlock = false; continue; } }
+      else if (/^require\s*\(/.test(l)) { inBlock = true; continue; }
+      else if (/^require\s+/.test(l)) l = l.replace(/^require\s+/, '');
+      else continue;
+      const mod = l.split(/\s+/)[0];
+      if (GO_LLM.some((p) => mod.startsWith(p))) return `go.mod: ${mod}`;
+    }
+  }
+  return null;
+}
+
 // The observation of a file list (relative paths of the repository at `repo`).
 export function observeFiles(repo, files) {
   const set = new Set(files);
@@ -145,6 +205,8 @@ export function observeFiles(repo, files) {
   if (ui) facts.ui = { value: true, evidence: clip(ui), confidence: CONFIDENCE_OF.files };
   const backend = files.find((f) => BACKEND.test(f));
   if (backend) facts.backend = { value: true, evidence: clip(backend), confidence: CONFIDENCE_OF.files };
+  const llm = llmOf(repo, files);
+  if (llm) facts.llm = { value: true, evidence: clip(llm), confidence: CONFIDENCE_OF.manifest };
 
   let ci = null;
   for (const [re, name] of CI) {
