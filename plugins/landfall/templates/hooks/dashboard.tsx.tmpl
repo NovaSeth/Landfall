@@ -49,6 +49,10 @@ function heatColor(ratio: number): string {
 }
 // A task counts as touched when something happened to it since this module started, or an agent or run names it.
 const SESSION_START = Date.now()
+// Task IDs touched in this session: the run and agent lists are bounded, so the fact outlives the row that showed it.
+const TOUCHED = new Set<string>()
+// The snapshot plus the time of the last successful read of the CLI (a failed refresh leaves it), which the live clocks count from.
+type SnapView = Snapshot & { sampledAt?: number }
 // the timing fields `status --json` gives a task (slice A); an older CLI gives none of them
 type TaskView = TaskRow & { startedAt?: string | null; lastEventAt?: string | null; expectedMs?: number | null; expectedFrom?: 'history' | 'default' }
 
@@ -236,11 +240,12 @@ function nextOf(rows: TaskRow[]): Snapshot['next'] {
   return { task: t.id, state: t.state, command: t.step ? COMMAND_IN_STEP.exec(t.step)?.[1] ?? null : null }
 }
 
-function snapshotOf(data: Json, runsEnv: Json | null, agents: AgentRecord[], now: number): Snapshot {
+function snapshotOf(data: Json, runsEnv: Json | null, agents: AgentRecord[], now: number): SnapView {
   const tier = obj(data.tier)
   const { rows, counts } = tasksOf(data)
   return {
     at: now,
+    sampledAt: now,
     active: true,
     project: baseName(str(data.repo)),
     tier: tier ? str(tier.tier) || null : null,
@@ -317,26 +322,28 @@ function barOf(t: TaskView, now: number): { bar: string; clock: string } | null 
   }
 }
 
-// One task on one line: icon, id, round, class, the title, the bar and clock, the stage last. Narrow: the stage is cut first,
-// then dropped, then the clock, then the bar; the title is shortened last.
+// One task on one line: icon, id, round, class, the timing (bar, then clock), the title shortened to the room that is left, the
+// stage if room remains. Narrow: the title is shortened first; only when too little of it would stay, the clock goes, then the bar.
 function taskText(t: TaskView, icon: string, stage: string, now: number, width: number): string {
   const head = `${icon} ${t.id}${t.round ? ` r${t.round}` : ''} ${t.cls ? CLASS_TAG[t.cls] ?? t.cls : '-'}`
-  const title = t.title ? ` ${t.title}` : ''
+  const title = t.title ?? ''
+  const titleLen = [...title].length
   const b = barOf(t, now)
-  const variants: { mid: string; stage: boolean }[] = [
-    { mid: b ? `  ${b.bar} ${b.clock}` : '', stage: true },
-    { mid: b ? `  ${b.bar} ${b.clock}` : '', stage: false },
-    { mid: b ? `  ${b.bar}` : '', stage: false },
-    { mid: '', stage: false },
-  ]
-  for (const v of variants) {
-    const base = `${head}${title}${v.mid}`
-    if (v.stage) {
-      const room = width - [...base].length - 2
-      if (room >= 8) return `${base}  ${cut(stage, room)}`
-    } else if ([...base].length <= width) return base
+  const mids = b ? [`  ${b.bar} ${b.clock}`, `  ${b.bar}`, ''] : ['']
+  for (const mid of mids) {
+    const base = `${head}${mid}`
+    const room = width - [...base].length - 1
+    if (room < Math.min(titleLen, 12)) continue
+    if (titleLen === 0) return addStage(base, stage, width)
+    if (titleLen > room) return `${base} ${cut(title, room)}`
+    return addStage(`${base} ${title}`, stage, width)
   }
-  return cut(`${head}${title}`, width)
+  return cut(`${head} ${title}`, width)
+}
+
+function addStage(base: string, stage: string, width: number): string {
+  const room = width - [...base].length - 2
+  return room >= 8 ? `${base}  ${cut(stage, room)}` : base
 }
 
 // `now` is the time of the render, so every clock counts live between two refreshes of the data.
@@ -357,11 +364,12 @@ export function linesOf(snap: Snapshot, width: number, rows: number, now: number
   for (const a of snap.agents) if (RUNNING.has(a.status) && a.task) named.add(a.task)
   for (const r of snap.runs) if (r.live && r.task) named.add(r.task)
   const working = (t: TaskRow) => ACTIVE.has(t.status) || named.has(t.id)
-  // touched: an event since this session began, or any agent or run (live or ended) names it
-  const touchedIds = new Set<string>()
-  for (const a of snap.agents) if (a.task) touchedIds.add(a.task)
-  for (const r of snap.runs) if (r.task) touchedIds.add(r.task)
-  const touched = (t: TaskView) => touchedIds.has(t.id) || Date.parse(t.lastEventAt ?? '') >= SESSION_START
+  // touched in this session: live work names it, or a run or agent started or ended, or an event happened, since it began
+  for (const id of named) TOUCHED.add(id)
+  for (const a of snap.agents) if (a.task && (a.startedAt >= SESSION_START || (a.endedAt ?? 0) >= SESSION_START)) TOUCHED.add(a.task)
+  for (const r of snap.runs) if (r.task && (r.endedAt ?? 0) >= SESSION_START) TOUCHED.add(r.task)
+  for (const t of snap.tasks as TaskView[]) if (Date.parse(t.lastEventAt ?? '') >= SESSION_START) TOUCHED.add(t.id)
+  const touched = (t: TaskView) => TOUCHED.has(t.id)
   const beat = Math.floor(now / PULSE_MS) % 2 === 0
   // a new task nobody routed (and no --after holds, nothing blocks) is backlog: one dim line, not a row
   const backlog = (t: TaskRow) => !working(t) && t.status === 'new' && t.cls === null && t.kind !== 'blocked' && !t.state.startsWith('waits for')
@@ -373,8 +381,10 @@ export function linesOf(snap: Snapshot, width: number, rows: number, now: number
     const w = working(t)
     const blocked = t.kind === 'blocked'
     const stage = blocked ? `blocked · ${t.state.replace(/^blocked:\s*/, '')}` : `${w ? 'working' : 'waiting'} · ${t.state}`
-    const seen = w || touched(t)
-    out.push({ text: taskText(t, w ? '▶' : seen ? '⏸' : '■', stage, now, width), style: blocked ? 'bad' : w ? (beat ? 'live' : 'row') : seen ? 'row' : 'dim' })
+    // the pulsing play is for live work only; an active status alone is a pause when the task was touched in this session
+    const atWork = named.has(t.id)
+    const seen = atWork || touched(t)
+    out.push({ text: taskText(t, atWork ? '▶' : seen ? '⏸' : '■', stage, now, width), style: blocked ? 'bad' : atWork ? (beat ? 'live' : 'row') : seen ? 'row' : 'dim' })
   }
   if (ordered.length > shownTasks.length) out.push({ text: `  … ${ordered.length - shownTasks.length} more ({{bin}} task list)`, style: 'dim' })
   if (folded > 0) out.push({ text: `⏸ ${folded} in backlog ({{bin}} task list)`, style: 'dim' })
@@ -382,7 +392,7 @@ export function linesOf(snap: Snapshot, width: number, rows: number, now: number
 
   out.push({ text: 'AGENTS', style: 'section' })
   // only the agents and runs at work
-  const shown = [...snap.agents.map(r => agentLine(r, now)), ...snap.runs.map(r => runLine(r, snap.at, now))].filter(a => a.live).sort((a, b) => b.since - a.since)
+  const shown = [...snap.agents.map(r => agentLine(r, now)), ...snap.runs.map(r => runLine(r, (snap as SnapView).sampledAt ?? snap.at, now))].filter(a => a.live).sort((a, b) => b.since - a.since)
   const shownAgents = shown.slice(0, shown.length > agentRoom ? Math.max(0, agentRoom - 1) : agentRoom)
   for (const a of shownAgents) out.push(a.line)
   if (shown.length > shownAgents.length) out.push({ text: `  … ${shown.length - shownAgents.length} more`, style: 'dim' })
@@ -506,6 +516,7 @@ export const register: Register = (on, options) => {
 
   on('session.start', async ($, e, next) => {
     live.cwd = e.cwd
+    TOUCHED.clear()
     live.root = $.plugin.root
     await $.command.register({ name: COMMAND, description: 'Open the {{displayName}} dashboard: tasks, agents, slots and the next step, beside the transcript' })
     const r = await next(e)
