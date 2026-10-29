@@ -240,10 +240,19 @@ function nextOf(rows: TaskRow[]): Snapshot['next'] {
   return { task: t.id, state: t.state, command: t.step ? COMMAND_IN_STEP.exec(t.step)?.[1] ?? null : null }
 }
 
+// Touched in this session: live work names the task, or an agent started or ended, a run ended, or an event happened
+// since the session began. Noted on every successful read (review r2 F3), so a bounded list that later drops an
+// older run cannot forget the touch, and again while drawing.
+function noteTouches(snap: { agents: readonly AgentRecord[]; runs: readonly RunRow[]; tasks: readonly TaskRow[] }): void {
+  for (const a of snap.agents) if (a.task && (RUNNING.has(a.status) || a.startedAt >= SESSION_START || (a.endedAt ?? 0) >= SESSION_START)) TOUCHED.add(a.task)
+  for (const r of snap.runs) if (r.task && (r.live || (r.endedAt ?? 0) >= SESSION_START)) TOUCHED.add(r.task)
+  for (const t of snap.tasks as TaskView[]) if (Date.parse(t.lastEventAt ?? '') >= SESSION_START) TOUCHED.add(t.id)
+}
+
 function snapshotOf(data: Json, runsEnv: Json | null, agents: AgentRecord[], now: number): SnapView {
   const tier = obj(data.tier)
   const { rows, counts } = tasksOf(data)
-  return {
+  const snap: SnapView = {
     at: now,
     sampledAt: now,
     active: true,
@@ -259,6 +268,8 @@ function snapshotOf(data: Json, runsEnv: Json | null, agents: AgentRecord[], now
     next: nextOf(rows),
     error: null,
   }
+  noteTouches(snap)
+  return snap
 }
 
 function inactiveSnapshot(project: string, now: number, error: string | null): Snapshot {
@@ -364,11 +375,8 @@ export function linesOf(snap: Snapshot, width: number, rows: number, now: number
   for (const a of snap.agents) if (RUNNING.has(a.status) && a.task) named.add(a.task)
   for (const r of snap.runs) if (r.live && r.task) named.add(r.task)
   const working = (t: TaskRow) => ACTIVE.has(t.status) || named.has(t.id)
-  // touched in this session: live work names it, or a run or agent started or ended, or an event happened, since it began
   for (const id of named) TOUCHED.add(id)
-  for (const a of snap.agents) if (a.task && (a.startedAt >= SESSION_START || (a.endedAt ?? 0) >= SESSION_START)) TOUCHED.add(a.task)
-  for (const r of snap.runs) if (r.task && (r.endedAt ?? 0) >= SESSION_START) TOUCHED.add(r.task)
-  for (const t of snap.tasks as TaskView[]) if (Date.parse(t.lastEventAt ?? '') >= SESSION_START) TOUCHED.add(t.id)
+  noteTouches(snap)
   const touched = (t: TaskView) => TOUCHED.has(t.id)
   const beat = Math.floor(now / PULSE_MS) % 2 === 0
   // a new task nobody routed (and no --after holds, nothing blocks) is backlog: one dim line, not a row
