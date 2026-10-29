@@ -233,3 +233,27 @@ test('REV-22 resolves to the findings backlog rule', async (t) => {
   assert.match(r.stdout, /review-close decision files it/);
   assert.match(r.stdout, /findings take/);
 });
+
+test('T-MG-85: a failure while the findings are assigned rolls them back to open and cancels the new task with "take failed"', async (t) => {
+  const f = await fixture(t);
+  await f.add();
+  const proto = Object.getPrototypeOf(f.store);
+  const write = proto.write;
+  proto.write = function patched(name, key, doc) {
+    if (name === 'finding' && key === B(2) && doc.status === 'taken') throw new Error('injected: disk full at the 2nd finding');
+    return write.call(this, name, key, doc);
+  };
+  let r;
+  try { r = await f.cli(['findings', 'take', B(1), B(2), '--yes']); } finally { proto.write = write; }
+  assert.notEqual(r.code, 0, show(r));
+  for (const id of [B(1), B(2)]) {
+    const doc = f.store.read('finding', id);
+    assert.deepEqual([doc.status, doc.takenBy], ['open', null], `${id} is open again`);
+  }
+  const task = f.store.read('task', 'T-AB-2');
+  assert.equal(task.status, 'cancelled');
+  const last = task.events.at(-1);
+  assert.deepEqual([last.event, last.data.reason], ['cancelled', 'take failed']);
+  const again = await f.ok(['findings', 'take', B(1), B(2), '--yes']);
+  assert.match(again.stdout, /T-AB-3/, 'the findings can be taken again');
+});

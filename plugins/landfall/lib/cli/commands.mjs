@@ -13,6 +13,9 @@
 // A command returns { code?, data?, errors?: [{ code, message, hint }], text?, warnings?: [text], usage? } and never
 // prints: lib/cli/output.mjs writes it (S2). code defaults to FAIL when errors are present, else OK.
 
+import { readFileSync } from 'node:fs';
+const NAMES = JSON.parse(readFileSync(new URL('../name.json', import.meta.url), 'utf8'));
+
 export const EXIT_CODES = [
   { code: 0, name: 'OK', meaning: 'success; for `tick`: do the listed steps now (ACTION)' },
   { code: 1, name: 'FAIL', meaning: 'the command ran and the checked condition is false (verify failed, check found problems, claim held, merge conflict)' },
@@ -53,6 +56,65 @@ const DECISION_FLAGS = [
 ];
 
 const ROWS = [
+  {
+    name: 'lessons add',
+    summary: 'Admit a lesson into shadow: a cue, one lesson naming a component, and evidence that exists in the state.',
+    details: ['Admission is code: all problems are listed at once. A lesson with no evidence, missing evidence or only confounded verdicts is refused.'],
+    args: [],
+    flags: [
+      { flag: '--cue', value: 'text', summary: 'the situation, one line of at most 200 characters (required)' },
+      { flag: '--lesson', value: 'text', summary: 'what to do, one line of at most 300 characters (required)' },
+      { flag: '--component', value: 'c', summary: 'route, gate, rule, skill, hook or brief (required)' },
+      { flag: '--evidence', value: 'ids', summary: 'comma-separated receipt, run, verify attempt (<task>#<n>) or task IDs, 1 to 20 (required)' },
+      { flag: '--verdict', value: 'change=v', repeat: true, summary: 'a change and its verdict: helped, hurt, no-effect or confounded; repeatable' },
+    ],
+    mutating: true,
+    exits: ['OK', 'FAIL', 'USAGE', 'REFUSED', 'ENV'],
+    load: () => import('../lessons/commands.mjs').then((m) => m.add),
+  },
+  {
+    name: 'lessons list',
+    summary: 'List lessons; retired ones only with --status retired.',
+    args: [],
+    flags: [{ flag: '--status', value: 'status', summary: 'shadow, active or retired (default: shadow and active)' }],
+    exits: ['OK', 'FAIL', 'USAGE', 'REFUSED', 'ENV'],
+    load: () => import('../lessons/commands.mjs').then((m) => m.list),
+  },
+  {
+    name: 'lessons show',
+    summary: 'Print one lesson with its evidence and verdicts.',
+    args: [{ name: 'id', required: true, summary: 'the L-<handle>-<number> lesson ID' }],
+    flags: [],
+    exits: ['OK', 'FAIL', 'USAGE', 'REFUSED', 'ENV'],
+    load: () => import('../lessons/commands.mjs').then((m) => m.show),
+  },
+  {
+    name: 'lessons find',
+    summary: 'List active lessons whose cue shares a word of 3 or more letters with the given words, best match first, at most 5.',
+    args: [{ name: 'words', variadic: true, summary: 'the words to match against the cues (case-insensitive)' }],
+    flags: [],
+    exits: ['OK', 'FAIL', 'USAGE', 'REFUSED', 'ENV'],
+    load: () => import('../lessons/commands.mjs').then((m) => m.find),
+  },
+  {
+    name: 'lessons promote',
+    summary: 'Turn a shadow lesson active when later receipts confirm it; otherwise refuse with the numbers (exit 7).',
+    details: ['Needs at least 20 receipts after and 20 before the lesson in the class of its evidence, and 90 % first-pass intervals that separate in the direction of its verdict (helped: up, hurt: down). No lesson is ever forced.'],
+    args: [{ name: 'id', required: true, summary: 'the L-<handle>-<number> lesson ID' }],
+    flags: [],
+    mutating: true,
+    exits: ['OK', 'FAIL', 'USAGE', 'REFUSED', 'ENV'],
+    load: () => import('../lessons/commands.mjs').then((m) => m.promote),
+  },
+  {
+    name: 'lessons retire',
+    summary: 'Retire a lesson with a reason; the record and its number stay.',
+    args: [{ name: 'id', required: true, summary: 'the L-<handle>-<number> lesson ID' }],
+    flags: [{ flag: '--why', value: 'text', summary: 'why it is retired (required, at most 300 characters)' }],
+    mutating: true,
+    exits: ['OK', 'FAIL', 'USAGE', 'REFUSED', 'ENV'],
+    load: () => import('../lessons/commands.mjs').then((m) => m.retire),
+  },
   {
     name: 'findings list',
     summary: 'List review findings kept in the backlog; defaults to open and taken.',
@@ -157,6 +219,27 @@ const ROWS = [
     load: () => import('./doctor.mjs').then((m) => m.doctor),
   },
   {
+    name: 'import-1x',
+    summary: 'Import a 1.x ledger as decisions, tasks, backlog findings and profile facts, once; --dry-run prints the mapping.',
+    details: [
+      'Reads <dir>/.workflow/progress.md and config.json (--from, default: the repository root); 1.x files are never changed.',
+      'Rulings become decisions with a legacy field, corrections supersede, tasks keep their status, S<n> become tasks in the lane shared,',
+      'SEC-<n> become open backlog findings (reviewer import-1x), config keys that are profile facts become facts with source default;',
+      'rule citations are translated by lib/import1x/legacy.json. The state file import-1x.json maps each legacy ID to its new ID,',
+      'so a second run imports nothing new (already imported: <n>). After the apply it lists the 1.x files to remove by hand.',
+      'Malformed entries are reported and skipped. No ledger: exit 8.',
+    ],
+    args: [],
+    flags: [
+      { flag: '--from', value: 'dir', summary: 'the 1.x project root holding .workflow/ (default: this repository)' },
+      { flag: '--handle', value: 'H', summary: 'the registered handle that owns the imported records (default: your author handle)' },
+      { flag: '--dry-run', summary: 'print the mapping; write nothing' },
+    ],
+    mutating: (flags) => !flags.dryRun,
+    exits: ['OK', 'USAGE', 'REFUSED', 'ENV'],
+    load: () => import('./import1x.mjs').then((m) => m.importOneX),
+  },
+  {
     name: 'profile observe',
     summary: 'Scan the repository (manifests, files, CI, harnesses) and merge what it shows into the project profile.',
     details: [
@@ -252,6 +335,7 @@ const ROWS = [
       { flag: '--loc', value: 'n', summary: 'estimated lines changed' },
       { flag: '--flags', value: 'f,…', summary: 'risk flags, comma-separated: migration, public-api, security, data-write, irreversible, new-dependency' },
       { flag: '--probe', summary: 'classify the plan only: no task, nothing written' },
+      { flag: '--executor', summary: 'add a line per role: the executor the receipts favour for the class (two cells of 20+ tasks, separated 90% first-pass intervals), else the role defaults' },
       { flag: '--override', value: 'class', summary: 'set the class on the user\'s word (lowering records a decision): trivial, standard, critical' },
       { flag: '--by', value: 'who', summary: 'who decided the override; only user is accepted' },
       { flag: '--quote', value: 'text', summary: 'the user\'s own words, at most 300 characters, kept in the decision' },
@@ -820,9 +904,16 @@ const ROWS = [
       '(the output schema external reviewers get). Invalid: exit 2 with each failing field, nothing written.',
       'Only the task\'s owner records, while the task is open; the task gets a review event. verify and task done read',
       'the latest round; a review recorded after a passing verify needs no second verify.',
+      'An external review comes from its run: --kind external --run <runId> reads the out file of a done reviewer run of',
+      'the task (no link followed) and stores the run ID and the sha256 of its bytes. --from with kind external, or a file',
+      'claiming an external reviewer, is refused.',
     ],
     args: [{ name: 'id', required: true, summary: 'task ID such as T-AB-1' }],
-    flags: [{ flag: '--from', value: 'file', summary: 'required: the review JSON file (a regular file of at most 1 MB)' }],
+    flags: [
+      { flag: '--from', value: 'file', summary: 'kind claude: the review JSON file (a regular file of at most 1 MB)' },
+      { flag: '--kind', value: 'kind', summary: 'claude (default) or external' },
+      { flag: '--run', value: 'runId', summary: 'kind external: the done reviewer run whose out file holds the review' },
+    ],
     exits: ['OK', 'FAIL', 'USAGE', 'REFUSED', 'ENV'],
     mutating: true,
     load: () => import('../verify/command.mjs').then((m) => m.reviewRecord),
@@ -956,6 +1047,24 @@ const ROWS = [
     exits: ['OK', 'FAIL', 'USAGE', 'REFUSED', 'ENV'],
     mutating: true,
     load: () => import('../config/commands.mjs').then((m) => m.flagsSet),
+  },
+  {
+    name: 'mirror github',
+    summary: 'Mirror tasks to GitHub issues, one way: opt-in, prints its target repository, writes only with --yes or a terminal.',
+    details: [
+      'Runs gh auth status first (exit 8 when it fails). One issue per task titled "<task ID> <title>", marked',
+      `<!-- ${NAMES.codename}:<task ID> -->, labelled ${NAMES.codename}, class:<class>, status:<status>; a done or cancelled task is closed.`,
+      'Existing issues are found by the marker and edited only when they differ: a rerun without changes writes nothing.',
+      'Issues are never read back into the state. --dry-run prints the plan and writes nothing.',
+    ],
+    args: [],
+    flags: [
+      { flag: '--repo', value: 'owner/name', summary: 'target repository (default: the gh default repository of this directory)' },
+      { flag: '--dry-run', summary: 'print the target and the plan, make no write' },
+    ],
+    exits: ['OK', 'FAIL', 'USAGE', 'REFUSED', 'ENV'],
+    mutating: (flags) => !flags.dryRun,
+    load: () => import('../mirror/commands.mjs').then((m) => m.github),
   },
   {
     name: 'trust',
@@ -1101,12 +1210,15 @@ const ROWS = [
     details: [
       'The template is split on spaces (no shell); placeholders are whole words: {cwd} {sandbox} {out} {model} ({model} is',
       'dropped when unset). The brief goes to stdin. The roles are the keys of --sandbox-map. A word or mode naming a way to',
-      'lift the sandbox or the approvals is refused (exit 2). Declaring an ID again replaces it. Kept in plugin data providers.json.',
+      'lift the sandbox or the approvals is refused (exit 2); {sandbox} is required and no word may fix a sandbox or write mode.',
+      'Every load checks the entry again: a role with an unsafe or invalid mode cannot run (providers lists why). Declaring an',
+      'ID again replaces it. Kept in plugin data providers.json.',
     ],
     args: [{ name: 'id', required: true, summary: 'provider ID: 1-20 lowercase letters or digits, not a built-in one' }],
     flags: [
       { flag: '--argv', value: 'template', summary: "required: the command, such as 'mycli run --dir {cwd} --mode {sandbox} -o {out}'" },
       { flag: '--sandbox-map', value: 'role=mode,…', summary: 'required: the mode per role, such as reviewer=read-only,implementer=workspace-write' },
+      { flag: '--env', value: 'NAME,…', summary: 'the variables the provider gets from your environment (at most 20), such as MYCLI_API_KEY; no other passes' },
     ],
     exits: ['OK', 'USAGE', 'REFUSED', 'ENV'],
     mutating: true,
@@ -1114,7 +1226,7 @@ const ROWS = [
   },
   {
     name: 'exec',
-    summary: 'Start an external reviewer with a pinned review brief: latest round or --round; save with review brief <id> --write.',
+    summary: 'Start an external reviewer (pinned review brief, latest round or --round) or implementer (task worktree and brief).',
     details: [
       'The provider is selected like the dispatch does (found, logged in, declared for the role; --provider names one). The',
       'record starts as {status: starting}; the supervisor (run-supervise) takes the external lease (queued while none is',
@@ -1122,8 +1234,10 @@ const ROWS = [
       '<PREFIX>EXTERNAL_TIMEOUT), feeds the saved brief on stdin and keeps the record current at most once a second:',
       'running, elapsedMs, tokens, lastLine; at the end exit, outFile, tokens and the status done, failed or timeout. On the',
       'cap the whole group gets SIGTERM, a grace, then SIGKILL; the lease is released only after the group is gone.',
-      'A reviewer runs read-only in the repository checkout; the out file lives in a private temp directory (0700). Exit 1:',
-      'no such task, no saved brief (brief <id> --write), a live run of the task and role. Implementer runs: not yet (exit 2).',
+      'A reviewer runs read-only in the repository checkout; the out file lives in a private temp directory (0700). An',
+      'implementer runs in the task worktree under the implementer sandbox, fed the task brief or --brief <file>, with the',
+      'brief sha pinned; it is refused without a worktree, without a mapping, or with an unsafe brief. Exit 1: no such task,',
+      'no saved brief (brief <id> --write), a live run of the task and role.',
     ],
     args: [],
     flags: [
@@ -1131,6 +1245,7 @@ const ROWS = [
       { flag: '--role', value: 'role', summary: 'required: reviewer or implementer' },
       { flag: '--provider', value: 'id', summary: 'a declared or built-in provider instead of the selection' },
       { flag: '--round', value: 'k', summary: 'review brief round, 1 to 999 (default: highest stored round)' },
+      { flag: '--brief', value: 'file', summary: 'implementer: this brief file instead of the task brief' },
     ],
     exits: ['OK', 'FAIL', 'USAGE', 'REFUSED', 'ENV'],
     mutating: true,

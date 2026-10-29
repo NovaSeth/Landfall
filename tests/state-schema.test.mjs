@@ -35,6 +35,7 @@ const examples = {
     classHistory: [{ class: 'critical', reason: 'touches state', at: AT }], status: 'new', round: 0,
     events: [{ at: AT, by: 'MG', event: 'created', data: { note: 'x' } }], base: 'f2bb128', branch: 'feat/state-I2.1',
   }),
+  lesson: () => ({ schema: KINDS.lesson.version, id: 'L-MG-1', cue: 'a gate fails at load', lesson: 'run the heavy gate alone', component: 'gate', evidence: ['T-MG-87'], verdicts: [{ change: 'serialized gates', verdict: 'helped' }], status: 'shadow', at: AT, by: 'MG' }),
   tombstone: () => ({ schema: KINDS.tombstone.version, id: 'T-MG-7', retiredAt: AT, by: 'MG', reason: 'created by mistake' }),
   projects: () => ({ schema: MACHINE_KINDS.projects.version, projects: { '/work/repo': { stateDir: '/work/state' }, '/work/other': { declinedAt: AT, handle: 'MG' } } }),
   machineConfig: () => ({ schema: MACHINE_KINDS.machineConfig.version, flags: { 'guard-bash': 'on' }, executors: { implementer: ['claude'] } }),
@@ -51,13 +52,13 @@ const set = (obj, path, value) => {
 };
 
 test('the kinds of the state store and of machine data: versions, paths and keys round-trip', () => {
-  assert.deepEqual(Object.keys(KINDS).sort(), ['config', 'counter', 'finding', 'state', 'task', 'team', 'tombstone']);
+  assert.deepEqual(Object.keys(KINDS).sort(), ['config', 'counter', 'finding', 'lesson', 'state', 'task', 'team', 'tombstone']);
   assert.deepEqual(Object.keys(MACHINE_KINDS), ['projects', 'machineConfig', 'trust']); // T-MG-77 A2 (intended): the machine id is derived, not stored; B: trust.json
   for (const [name, kind] of [...Object.entries(KINDS), ...Object.entries(MACHINE_KINDS)]) {
     assert.ok(Number.isInteger(kind.version) && kind.version >= 1, `${name}: integer version`);
     assert.ok(kind.readUpTo >= kind.version, `${name}: reads at least its own version`);
   }
-  const keys = { finding: 'B-MG-12', state: null, config: null, team: 'MG', task: 'T-MG-12', tombstone: 'D-ABCD-999999', counter: 'T-MG' };
+  const keys = { finding: 'B-MG-12', state: null, config: null, team: 'MG', task: 'T-MG-12', tombstone: 'D-ABCD-999999', counter: 'T-MG', lesson: 'L-MG-12' };
   for (const [name, key] of Object.entries(keys)) {
     const rel = KINDS[name].path(key);
     const m = KINDS[name].match.exec(rel);

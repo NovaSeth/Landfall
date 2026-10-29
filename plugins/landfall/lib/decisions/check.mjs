@@ -15,7 +15,7 @@ import { join } from 'node:path';
 import { git } from '../git/index.mjs';
 import { PATTERNS, StateError, open } from '../state/index.mjs';
 import { inside } from './context.mjs';
-import { citationPattern } from './record.mjs';
+import { citationPattern } from './citation.mjs';
 import { readRecords } from './records.mjs';
 
 export const SCAN_MAX = 8 * 1024 * 1024;

@@ -914,3 +914,20 @@ test('fix2 N2: valid anchored patterns scan a long line within 500 ms and retain
   assert.equal(secretPatterns.PROJECT_LINE_MAX, 4096);
   assert.equal(secretPatterns.matchLine('.' + input, patterns), null);
 });
+
+test('T-MG-85: run in a linked worktree, tree and staged scans read that worktree, not the main checkout', async (t) => {
+  const d = repo(t);
+  commit(d, 'src/a.ts', 'export const x = 1;\n');
+  const wt = join(scratch(t, 'secrets-wt-'), 'feat');
+  git(d, 'worktree', 'add', '-q', '-b', 'feat/x', wt);
+  put(wt, 'src/leak.ts', `const t = "${ghToken}";\n`);
+  let r = await scan(wt);
+  assert.equal(r.status, 1, show(r));
+  assert.deepEqual(where(r), ['src/leak.ts:1']);
+  git(wt, 'add', 'src/leak.ts');
+  r = await scan(wt, '--staged');
+  assert.equal(r.status, 1, show(r));
+  assert.deepEqual(where(r), ['src/leak.ts:1']);
+  r = await scan(d);
+  assert.equal(r.status, 0, show(r));
+});

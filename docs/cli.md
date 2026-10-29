@@ -55,7 +55,7 @@ Commands:
   decisions supersede  Record a decision replacing an active one; the old record gets status superseded and supersededBy.
   decline              Opt out of tracking this repository; remembered in machine data by its real path, never in the repository.
   doctor               Health report: Claude Code floor, plugin and hooks, release, state, profile, flags, context cost, permissions.
-  exec                 Start an external reviewer with a pinned review brief: latest round or --round; save with review brief <id> --write.
+  exec                 Start an external reviewer (pinned review brief, latest round or --round) or implementer (task worktree and brief).
   findings add         File findings from a recorded review round, once per source task, round and finding ID.
   findings close       Mark open or taken backlog findings fixed by an existing task.
   findings drop        Drop open or taken backlog findings with a reason recorded in a decision.
@@ -67,6 +67,7 @@ Commands:
   gen apply            Write the generated files (CI workflow, pre-push hook, PR template, CODEOWNERS and AGENTS.md blocks); edits survive.
   gen plan             Show what gen apply would do for each generated file; writes nothing.
   heavy                Run a heavy command (full tests, build) in the machine-wide FIFO queue under a heavy lease, with time and output limits.
+  import-1x            Import a 1.x ledger as decisions, tasks, backlog findings and profile facts, once; --dry-run prints the mapping.
   init                 Activate tracking in this repository: state.json, .gitignore and your handle in team/<H>.json.
   install              Install the plugin for an agent without it (npx channel): run the SD-3 commands with claude, or print them.
   lane claim           Claim a lane on origin for 7 days: free → yours, yours → renewed, another's past expiry + 24 h → taken over.
@@ -74,11 +75,18 @@ Commands:
   lane release         Release your lane: its claim on origin is deleted only while it is still the one you hold (lease).
   lane renew           Renew your lane for 7 more days; at most once a day (a claim made less than 24 h ago is kept as it is).
   lane takeover        Take over another developer's lane once its claim expired more than 24 h ago; the new claim records it.
+  lessons add          Admit a lesson into shadow: a cue, one lesson naming a component, and evidence that exists in the state.
+  lessons find         List active lessons whose cue shares a word of 3 or more letters with the given words, best match first, at most 5.
+  lessons list         List lessons; retired ones only with --status retired.
+  lessons promote      Turn a shadow lesson active when later receipts confirm it; otherwise refuse with the numbers (exit 7).
+  lessons retire       Retire a lesson with a reason; the record and its number stay.
+  lessons show         Print one lesson with its evidence and verdicts.
   loop start           Start a loop with caps (defaults: wallMin=480,ticks=200,usd=25,rounds=2); a running loop is never replaced.
   loop status          Print the loop: ticks, wall time and cost against the caps, the stall count, and the exit once it ended.
   loop stop            End the running loop: exit DONE, so no wakeup is scheduled again; an ended loop is left as it is.
   method               Print one pack or one section of the method by name, or the names of every pack and section.
   migrate              Run the forward migrations on every state file of this repository; --dry-run lists the steps and writes nothing.
+  mirror github        Mirror tasks to GitHub issues, one way: opt-in, prints its target repository, writes only with --yes or a terminal.
   profile gates apply  Replace the profile gates with the candidates the scan detects; only with an active gate-change decision.
   profile gates set    Add a profile gate or replace the one of that name; only with an active gate-change decision.
   profile observe      Scan the repository (manifests, files, CI, harnesses) and merge what it shows into the project profile.
@@ -399,26 +407,29 @@ Read-only.
 Exit codes: 0 OK · 1 FAIL · 8 ENV
 ```
 
-### `landfall exec [--task <id>] [--role <role>] [--provider <id>] [--round <k>] [--yes] [--json]`
+### `landfall exec [--task <id>] [--role <role>] [--provider <id>] [--round <k>] [--brief <file>] [--yes] [--json]`
 
 ```text
-usage: landfall exec [--task <id>] [--role <role>] [--provider <id>] [--round <k>] [--yes] [--json]
+usage: landfall exec [--task <id>] [--role <role>] [--provider <id>] [--round <k>] [--brief <file>] [--yes] [--json]
 
-Start an external reviewer with a pinned review brief: latest round or --round; save with review brief <id> --write.
+Start an external reviewer (pinned review brief, latest round or --round) or implementer (task worktree and brief).
 The provider is selected like the dispatch does (found, logged in, declared for the role; --provider names one). The
 record starts as {status: starting}; the supervisor (run-supervise) takes the external lease (queued while none is
 free), runs the provider in its own process group under the wall cap (reviewer 900 s, implementer 2700 s, or the env
 <PREFIX>EXTERNAL_TIMEOUT), feeds the saved brief on stdin and keeps the record current at most once a second:
 running, elapsedMs, tokens, lastLine; at the end exit, outFile, tokens and the status done, failed or timeout. On the
 cap the whole group gets SIGTERM, a grace, then SIGKILL; the lease is released only after the group is gone.
-A reviewer runs read-only in the repository checkout; the out file lives in a private temp directory (0700). Exit 1:
-no such task, no saved brief (brief <id> --write), a live run of the task and role. Implementer runs: not yet (exit 2).
+A reviewer runs read-only in the repository checkout; the out file lives in a private temp directory (0700). An
+implementer runs in the task worktree under the implementer sandbox, fed the task brief or --brief <file>, with the
+brief sha pinned; it is refused without a worktree, without a mapping, or with an unsafe brief. Exit 1: no such task,
+no saved brief (brief <id> --write), a live run of the task and role.
 
 Options:
   --task <id>      required: the task ID, such as T-AB-1
   --role <role>    required: reviewer or implementer
   --provider <id>  a declared or built-in provider instead of the selection
   --round <k>      review brief round, 1 to 999 (default: highest stored round)
+  --brief <file>   implementer: this brief file instead of the task brief
 
 Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
 Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
@@ -628,6 +639,28 @@ Read-only.
 Exit codes: 0 OK · 1 FAIL · 2 USAGE · 3 WAIT · 5 STALLED · 6 BUDGET · 7 REFUSED · 8 ENV
 ```
 
+### `landfall import-1x [--from <dir>] [--handle <H>] [--dry-run] [--yes] [--json]`
+
+```text
+usage: landfall import-1x [--from <dir>] [--handle <H>] [--dry-run] [--yes] [--json]
+
+Import a 1.x ledger as decisions, tasks, backlog findings and profile facts, once; --dry-run prints the mapping.
+Reads <dir>/.workflow/progress.md and config.json (--from, default: the repository root); 1.x files are never changed.
+Rulings become decisions with a legacy field, corrections supersede, tasks keep their status, S<n> become tasks in the lane shared,
+SEC-<n> become open backlog findings (reviewer import-1x), config keys that are profile facts become facts with source default;
+rule citations are translated by lib/import1x/legacy.json. The state file import-1x.json maps each legacy ID to its new ID,
+so a second run imports nothing new (already imported: <n>). After the apply it lists the 1.x files to remove by hand.
+Malformed entries are reported and skipped. No ledger: exit 8.
+
+Options:
+  --from <dir>  the 1.x project root holding .workflow/ (default: this repository)
+  --handle <H>  the registered handle that owns the imported records (default: your author handle)
+  --dry-run     print the mapping; write nothing
+
+Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED. Read-only with --dry-run: no consent needed.
+Exit codes: 0 OK · 2 USAGE · 7 REFUSED · 8 ENV
+```
+
 ### `landfall init [--state-dir <path>] [--handle <H>] [--yes] [--json]`
 
 ```text
@@ -740,6 +773,99 @@ Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
 Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
 ```
 
+### `landfall lessons add [--cue <text>] [--lesson <text>] [--component <c>] [--evidence <ids>] [--verdict <change=v>] [--yes] [--json]`
+
+```text
+usage: landfall lessons add [--cue <text>] [--lesson <text>] [--component <c>] [--evidence <ids>] [--verdict <change=v>] [--yes] [--json]
+
+Admit a lesson into shadow: a cue, one lesson naming a component, and evidence that exists in the state.
+Admission is code: all problems are listed at once. A lesson with no evidence, missing evidence or only confounded verdicts is refused.
+
+Options:
+  --cue <text>          the situation, one line of at most 200 characters (required)
+  --lesson <text>       what to do, one line of at most 300 characters (required)
+  --component <c>       route, gate, rule, skill, hook or brief (required)
+  --evidence <ids>      comma-separated receipt, run, verify attempt (<task>#<n>) or task IDs, 1 to 20 (required)
+  --verdict <change=v>  a change and its verdict: helped, hurt, no-effect or confounded; repeatable
+
+Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
+Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
+```
+
+### `landfall lessons find [<words…>] [--json]`
+
+```text
+usage: landfall lessons find [<words…>] [--json]
+
+List active lessons whose cue shares a word of 3 or more letters with the given words, best match first, at most 5.
+
+Arguments:
+  words  the words to match against the cues (case-insensitive)
+
+Read-only.
+Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
+```
+
+### `landfall lessons list [--status <status>] [--json]`
+
+```text
+usage: landfall lessons list [--status <status>] [--json]
+
+List lessons; retired ones only with --status retired.
+
+Options:
+  --status <status>  shadow, active or retired (default: shadow and active)
+
+Read-only.
+Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
+```
+
+### `landfall lessons promote <id> [--yes] [--json]`
+
+```text
+usage: landfall lessons promote <id> [--yes] [--json]
+
+Turn a shadow lesson active when later receipts confirm it; otherwise refuse with the numbers (exit 7).
+Needs at least 20 receipts after and 20 before the lesson in the class of its evidence, and 90 % first-pass intervals that separate in the direction of its verdict (helped: up, hurt: down). No lesson is ever forced.
+
+Arguments:
+  id  the L-<handle>-<number> lesson ID
+
+Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
+Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
+```
+
+### `landfall lessons retire <id> [--why <text>] [--yes] [--json]`
+
+```text
+usage: landfall lessons retire <id> [--why <text>] [--yes] [--json]
+
+Retire a lesson with a reason; the record and its number stay.
+
+Arguments:
+  id  the L-<handle>-<number> lesson ID
+
+Options:
+  --why <text>  why it is retired (required, at most 300 characters)
+
+Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
+Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
+```
+
+### `landfall lessons show <id> [--json]`
+
+```text
+usage: landfall lessons show <id> [--json]
+
+Print one lesson with its evidence and verdicts.
+
+Arguments:
+  id  the L-<handle>-<number> lesson ID
+
+Read-only.
+Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
+```
+
 ### `landfall loop start [--caps <k=v,…>] [--yes] [--json]`
 
 ```text
@@ -810,6 +936,25 @@ Exit 7: a file with a newer schema (update the plugin), before any byte is writt
 
 Options:
   --dry-run  list the steps (file, kind, schema from → to, migration IDs); write nothing
+
+Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED. Read-only with --dry-run: no consent needed.
+Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
+```
+
+### `landfall mirror github [--repo <owner/name>] [--dry-run] [--yes] [--json]`
+
+```text
+usage: landfall mirror github [--repo <owner/name>] [--dry-run] [--yes] [--json]
+
+Mirror tasks to GitHub issues, one way: opt-in, prints its target repository, writes only with --yes or a terminal.
+Runs gh auth status first (exit 8 when it fails). One issue per task titled "<task ID> <title>", marked
+<!-- landfall:<task ID> -->, labelled landfall, class:<class>, status:<status>; a done or cancelled task is closed.
+Existing issues are found by the marker and edited only when they differ: a rerun without changes writes nothing.
+Issues are never read back into the state. --dry-run prints the plan and writes nothing.
+
+Options:
+  --repo <owner/name>  target repository (default: the gh default repository of this directory)
+  --dry-run            print the target and the plan, make no write
 
 Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED. Read-only with --dry-run: no consent needed.
 Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
@@ -921,15 +1066,17 @@ Read-only.
 Exit codes: 0 OK · 2 USAGE · 7 REFUSED · 8 ENV
 ```
 
-### `landfall providers add <id> [--argv <template>] [--sandbox-map <role=mode,…>] [--yes] [--json]`
+### `landfall providers add <id> [--argv <template>] [--sandbox-map <role=mode,…>] [--env <NAME,…>] [--yes] [--json]`
 
 ```text
-usage: landfall providers add <id> [--argv <template>] [--sandbox-map <role=mode,…>] [--yes] [--json]
+usage: landfall providers add <id> [--argv <template>] [--sandbox-map <role=mode,…>] [--env <NAME,…>] [--yes] [--json]
 
 Declare another provider CLI (generic adapter): its argv template and the sandbox mode per role.
 The template is split on spaces (no shell); placeholders are whole words: {cwd} {sandbox} {out} {model} ({model} is
 dropped when unset). The brief goes to stdin. The roles are the keys of --sandbox-map. A word or mode naming a way to
-lift the sandbox or the approvals is refused (exit 2). Declaring an ID again replaces it. Kept in plugin data providers.json.
+lift the sandbox or the approvals is refused (exit 2); {sandbox} is required and no word may fix a sandbox or write mode.
+Every load checks the entry again: a role with an unsafe or invalid mode cannot run (providers lists why). Declaring an
+ID again replaces it. Kept in plugin data providers.json.
 
 Arguments:
   id  provider ID: 1-20 lowercase letters or digits, not a built-in one
@@ -937,6 +1084,7 @@ Arguments:
 Options:
   --argv <template>            required: the command, such as 'mycli run --dir {cwd} --mode {sandbox} -o {out}'
   --sandbox-map <role=mode,…>  required: the mode per role, such as reviewer=read-only,implementer=workspace-write
+  --env <NAME,…>               the variables the provider gets from your environment (at most 20), such as MYCLI_API_KEY; no other passes
 
 Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
 Exit codes: 0 OK · 2 USAGE · 7 REFUSED · 8 ENV
@@ -1025,10 +1173,10 @@ Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
 Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
 ```
 
-### `landfall review record <id> [--from <file>] [--yes] [--json]`
+### `landfall review record <id> [--from <file>] [--kind <kind>] [--run <runId>] [--yes] [--json]`
 
 ```text
-usage: landfall review record <id> [--from <file>] [--yes] [--json]
+usage: landfall review record <id> [--from <file>] [--kind <kind>] [--run <runId>] [--yes] [--json]
 
 Record a typed review result as the next round tasks/<id>/review-r<k>.json; the Markdown review closes nothing.
 The file holds one JSON object {verdict: approved|needs-fixes, reviewer: {kind: claude|external, id}, findings: [{id,
@@ -1036,21 +1184,26 @@ severity: blocking|minor, path, line, rule, text}]}, validated against templates
 (the output schema external reviewers get). Invalid: exit 2 with each failing field, nothing written.
 Only the task's owner records, while the task is open; the task gets a review event. verify and task done read
 the latest round; a review recorded after a passing verify needs no second verify.
+An external review comes from its run: --kind external --run <runId> reads the out file of a done reviewer run of
+the task (no link followed) and stores the run ID and the sha256 of its bytes. --from with kind external, or a file
+claiming an external reviewer, is refused.
 
 Arguments:
   id  task ID such as T-AB-1
 
 Options:
-  --from <file>  required: the review JSON file (a regular file of at most 1 MB)
+  --from <file>  kind claude: the review JSON file (a regular file of at most 1 MB)
+  --kind <kind>  claude (default) or external
+  --run <runId>  kind external: the done reviewer run whose out file holds the review
 
 Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
 Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
 ```
 
-### `landfall route [<task>] [--paths <p,…>] [--loc <n>] [--flags <f,…>] [--probe] [--override <class>] [--by <who>] [--quote <text>] [--yes] [--json]`
+### `landfall route [<task>] [--paths <p,…>] [--loc <n>] [--flags <f,…>] [--probe] [--executor] [--override <class>] [--by <who>] [--quote <text>] [--yes] [--json]`
 
 ```text
-usage: landfall route [<task>] [--paths <p,…>] [--loc <n>] [--flags <f,…>] [--probe] [--override <class>] [--by <who>] [--quote <text>] [--yes] [--json]
+usage: landfall route [<task>] [--paths <p,…>] [--loc <n>] [--flags <f,…>] [--probe] [--executor] [--override <class>] [--by <who>] [--quote <text>] [--yes] [--json]
 
 Classify a task as trivial, standard or critical from its plan and print its route; the class only rises.
 Critical: a path matching a risk glob, a risk flag, or a large change; trivial: a small change without flags.
@@ -1068,6 +1221,7 @@ Options:
   --loc <n>           estimated lines changed
   --flags <f,…>       risk flags, comma-separated: migration, public-api, security, data-write, irreversible, new-dependency
   --probe             classify the plan only: no task, nothing written
+  --executor          add a line per role: the executor the receipts favour for the class (two cells of 20+ tasks, separated 90% first-pass intervals), else the role defaults
   --override <class>  set the class on the user's word (lowering records a decision): trivial, standard, critical
   --by <who>          who decided the override; only user is accepted
   --quote <text>      the user's own words, at most 300 characters, kept in the decision

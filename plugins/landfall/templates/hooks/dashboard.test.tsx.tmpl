@@ -102,7 +102,8 @@ test('the pane says, from general to detail, the project, the tasks with their s
   expect((await ui.find({ type: 'Text', text: /open · / }))?.text).toBe('2 open · 1 active · 0 planned · 1 new · 1 done')
   // the task being worked on first (an agent and a run name it), with its round, class and stage; the waiting one next; the closed one not at all
   expect((await ui.find({ type: 'Text', text: /T-TU-1 r1/ }))?.text).toBe('▶ T-TU-1 r1 crit  working · review r2 approved')
-  expect((await ui.find({ type: 'Text', text: /T-TU-2/ }))?.text).toBe('⏸ T-TU-2 -  waiting · new, not routed')
+  expect(await ui.find({ type: 'Text', text: /T-TU-2/ })).toBeUndefined() // an unrouted new task is folded into the backlog line (T-MG-85)
+  expect((await ui.find({ type: 'Text', text: /in backlog/ }))?.text).toBe('⏸ 1 in backlog ({{bin}} task list)')
   expect(await ui.find({ type: 'Text', text: /T-TU-3/ })).toBeUndefined()
   // the Claude subagent the engine lists and the external run, each with role, task, time and status
   expect((await ui.find({ type: 'Text', text: /● reviewer/ }))?.text).toBe('● reviewer     T-TU-1   r2  00:00  running')
@@ -334,4 +335,39 @@ test('a CLI that does not answer leaves the last rows standing with the error on
   const again = await $.ui.mount(PANE)
   expect(await again.find({ type: 'Text', text: /did not answer/ })).toBeUndefined()
   await again.unmount()
+})
+
+test('unrouted new tasks fold into one backlog line; routed, blocked and held tasks stay as rows', async ($, on) => {
+  const row = (n: number, o: object = {}) => ({ id: `T-TU-${n}`, kind: 'task', title: `t${n}`, status: 'new', class: null, owner: 'TU', lane: null, round: 0, ...o })
+  const tasks = [
+    ...Array.from({ length: 9 }, (_, i) => row(10 + i)),
+    row(30, { status: 'planned', class: 'standard' }),
+    row(31, { status: 'blocked', class: 'standard' }),
+  ]
+  const steps = [
+    ...Array.from({ length: 9 }, (_, i) => ({ task: `T-TU-${10 + i}`, state: 'new, not routed', step: '', rules: [], kind: 'info' })),
+    { task: 'T-TU-30', state: 'planned', step: '', rules: [], kind: 'info' },
+    { task: 'T-TU-31', state: 'blocked: waits on review', step: '', rules: [], kind: 'blocked' },
+  ]
+  const w = world(on, { status: { ...STATUS, data: { ...STATUS.data, tasks, steps } }, runs: { ...RUNS, data: { runs: [] } } })
+  w.agents.length = 0
+  await $.session.start(SESSION)
+  await w.clock.settle()
+  const ui = await $.ui.mount(PANE)
+  expect((await ui.find({ type: 'Text', text: /T-TU-30/ }))?.text).toBe('⏸ T-TU-30 std  waiting · planned')
+  expect(await ui.find({ type: 'Text', text: /T-TU-31/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /T-TU-1[0-8]/ })).toBeUndefined()
+  expect((await ui.find({ type: 'Text', text: /in backlog/ }))?.text).toBe('⏸ 9 in backlog ({{bin}} task list)')
+  await ui.unmount()
+})
+
+test('with no unrouted new task there is no backlog line', async ($, on) => {
+  const status = { ...STATUS, data: { ...STATUS.data, tasks: STATUS.data.tasks.filter(t => t.id !== 'T-TU-2') } }
+  const w = world(on, { status, runs: { ...RUNS, data: { runs: [] } } })
+  w.agents.length = 0
+  await $.session.start(SESSION)
+  await w.clock.settle()
+  const ui = await $.ui.mount(PANE)
+  expect(await ui.find({ type: 'Text', text: /in backlog/ })).toBeUndefined()
+  await ui.unmount()
 })

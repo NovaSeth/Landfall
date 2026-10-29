@@ -1,0 +1,20 @@
+{
+  "schema": 1,
+  "verdict": "needs-fixes",
+  "reviewer": {
+    "kind": "external",
+    "id": "codex:reviewer"
+  },
+  "findings": [
+    {
+      "id": "F2",
+      "severity": "blocking",
+      "path": "src/app.mjs",
+      "line": 51,
+      "rule": "OWA-10",
+      "text": "F2 NOT ADDRESSED (acceptance 1): On Node 26, feed an in-memory http.Server/Duplex nine 4096-byte HTTP chunks in one buffer and count data through response completion: 413, 36864 bytes, isPaused=false. resOnFinish calls _dump()/resume(), undoing the pause before req.destroy(). Ensure response finalization cannot restart body consumption and add this complete-body burst regression."
+    }
+  ],
+  "run": "codex-T-MG-3-reviewer-2",
+  "sha256": "c5a9c26040cbf3af075cceb5d75a3ad6c7ddded12f165885820884c552bdee28"
+}

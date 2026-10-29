@@ -25,14 +25,16 @@ test('merging is task merge everywhere: REV-11 and the tick name no squashed pul
   assert.doesNotMatch(read(plugin, 'lib', 'loop', 'table.mjs'), /squashed pull request|locally without a remote/);
 });
 
-test('the external agent passes --yes, waits, and starts reviewer runs only; ORC-14, ORC-21 and the README agree', () => {
+test('the external agent passes --yes, waits, and starts reviewer or implementer runs through exec (ORC-26); ORC-14, ORC-21 and the README agree', () => {
   const ext = read(plugin, 'agents', 'external.md');
   const exec = ext.split('\n').find((l) => l.includes(' exec --task '));
   assert.ok(exec && /--yes/.test(exec), exec);
   assert.match(ext, / wait <run>/);
-  assert.doesNotMatch(ext, /implementer|an implementation/, 'exec --role implementer is refused in this release');
+  assert.match(exec, /--role <reviewer\|implementer>/, 'exec takes both roles (T-MG-64)');
+  assert.match(exec, /\[--brief <file>\]/, 'an implementer run takes --brief');
   assert.doesNotMatch(rule('orchestration', 'ORC-14'), /workspace-write for fixes/);
-  assert.doesNotMatch(rule('orchestration', 'ORC-21'), /give it slices/);
+  assert.match(rule('orchestration', 'ORC-21'), /give it slices and reviews/);
+  assert.match(rule('orchestration', 'ORC-26'), /only through `exec`/);
   assert.doesNotMatch(read(root, 'README.md'), /implementer in its own worktree \(a Claude agent or an external CLI/);
 });
 

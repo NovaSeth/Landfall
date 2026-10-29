@@ -111,6 +111,21 @@
             "timeout": 5
           }
         ]
+      },
+      {
+        "matcher": "Bash|Edit|Write|Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": [
+              "${CLAUDE_PLUGIN_ROOT}/bin/landfall",
+              "hook",
+              "headroom"
+            ],
+            "timeout": 5
+          }
+        ]
       }
     ],
     "SubagentStop": [
@@ -123,6 +138,22 @@
               "${CLAUDE_PLUGIN_ROOT}/bin/landfall",
               "hook",
               "release-agent"
+            ],
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "TaskCompleted": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": [
+              "${CLAUDE_PLUGIN_ROOT}/bin/landfall",
+              "hook",
+              "task-gate"
             ],
             "timeout": 5
           }

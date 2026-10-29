@@ -1,0 +1,3 @@
+# An example project's state is part of the example (D-MG-21); its machine-local part is not.
+!*/.landfall/
+*/.landfall/local/

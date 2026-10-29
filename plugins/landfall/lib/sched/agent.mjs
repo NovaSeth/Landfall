@@ -2,7 +2,7 @@
 // implementer subagent of this plugin asks for an `agent` lease keyed by its tool_use_id. Every other agent type,
 // an inactive repository, the capability off and malformed input pass. Mode from the `admission` capability flag
 // (lib/config: machine override, config.json, default shadow): shadow allows and returns the would-deny record with
-// the readings; on denies with "machine busy: <reasons>; run `<bin> tick` later". A scheduler error never blocks a spawn (allow + record).
+// the readings; on denies with "machine busy: <reasons>; run `<bin> slots` to see them". A scheduler error never blocks a spawn (allow + record).
 // The caller (the admit-agent hook) emits the decision and logs the shadow record.
 import { isAbsolute } from 'node:path';
 import { modeOf as flagMode, readConfig } from '../config/index.mjs';
@@ -45,6 +45,6 @@ export function admitAgent(input, opts = {}) {
     return { action: 'allow', lease: null, env: {}, shadow: record([{ code: 'error', message: String(err?.message ?? err).slice(0, 200) }]) };
   }
   if (r.ok) return { action: 'allow', lease: r.lease, env: r.env, shadow: r.shadow.length ? record(r.shadow) : null };
-  if (mode === 'on') return { action: 'deny', reasons: r.reasons, message: `machine busy: ${r.reasons.map((x) => x.message).join(', ')}; run \`${names.bin} tick\` later` };
+  if (mode === 'on') return { action: 'deny', reasons: r.reasons, message: `machine busy: ${r.reasons.map((x) => x.message).join(', ')}; run \`${names.bin} slots\` to see them` };
   return { action: 'allow', lease: null, env: {}, shadow: record(r.reasons) };
 }

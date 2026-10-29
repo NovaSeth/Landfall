@@ -13,6 +13,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fd3CpuMs, fd3Preload } from './helpers/cpu-time.mjs';
 import { isolateProcessEnv } from './helpers/isolated-env.mjs';
 
 // No test here touches the real HOME: git, the hook and the launcher run with a throwaway HOME and an empty global git
@@ -698,8 +699,7 @@ const blocked = (v) => v.decision === 'deny';
 const label = ([c, , ctx = 'none']) => `[${ctx}] ${c}`;
 
 // The launcher end to end, with the hook process's own CPU time reported on fd 3 by a preload (process.cpuUsage).
-const PROBE = join(mkdtempSync(join(tmpdir(), 'guard-cpu-')), 'cpu.cjs');
-writeFileSync(PROBE, "process.on('exit', () => { const u = process.cpuUsage(); require('node:fs').writeSync(3, JSON.stringify(u)); });\n");
+const PROBE = fd3Preload('guard-cpu-');
 function launch(input, extraEnv = {}) {
   return new Promise((done) => {
     const p = spawn(process.execPath, ['--require', PROBE, LAUNCHER, 'hook', 'guard-bash'], { env: { ...process.env, ...extraEnv }, stdio: ['pipe', 'pipe', 'pipe', 'pipe'] });
@@ -707,7 +707,7 @@ function launch(input, extraEnv = {}) {
     p.stdout.on('data', (d) => { stdout += d; }); p.stderr.on('data', (d) => { stderr += d; }); p.stdio[3].on('data', (d) => { cpu += d; });
     p.on('close', (status) => {
       let cpuMs = NaN;
-      try { const u = JSON.parse(cpu); cpuMs = (u.user + u.system) / 1000; } catch { /* reported below */ }
+      cpuMs = fd3CpuMs(cpu); // NaN is reported below
       done({ status, stdout, stderr, cpuMs, ...decode({ stdout, stderr, status }) });
     });
     p.stdin.on('error', () => {}); p.stdin.end(input);

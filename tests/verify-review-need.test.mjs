@@ -21,7 +21,9 @@ const REVIEWERS = { claude: { kind: 'claude', id: 'claude:reviewer' }, external:
 function store(t, { rounds = [], flags = {} } = {}) {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), 'review-need-')));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
-  const docs = new Map(rounds.map(([verdict, who], i) => [`T-AB-1/review-r${i + 1}`, { schema: 1, verdict, reviewer: REVIEWERS[who], findings: [] }]));
+  const docs = new Map(rounds.map(([verdict, who], i) => [`T-AB-1/review-r${i + 1}`, { schema: 1, verdict, reviewer: REVIEWERS[who], findings: [],
+    // an external round counts only with its run and the sha256 of its out file (T-MG-91)
+    ...(who === 'external' ? { run: `codex-T-AB-1-reviewer-${i + 1}`, sha256: 'a'.repeat(64) } : {}) }]));
   return {
     dir,
     list: (kind) => (kind === 'review' ? [...docs.keys()] : []),

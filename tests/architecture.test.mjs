@@ -40,7 +40,7 @@ const OUTPUT_WRITER = 'lib/cli/output.mjs';
 
 // Units of spec §4.2; `name` is lib/name.json.
 const UNITS = new Set(['cli', 'state', 'config', 'profile', 'engine', 'router', 'verify', 'loop', 'sched', 'lanes', 'decisions', 'receipts',
-  'providers', 'gen', 'method', 'hooks', 'guard', 'ui', 'git', 'fsx', 'proc', 'import1x', 'mirror', 'text', 'secrets', 'runs', 'findings']);
+  'providers', 'gen', 'method', 'hooks', 'guard', 'ui', 'git', 'fsx', 'proc', 'import1x', 'mirror', 'text', 'secrets', 'runs', 'findings', 'lessons']);
 // §4.3: hooks import directly only these units (and Node built-ins), and never reach the HOOK_NEVER units at all.
 // config (brief I2.4): the read side of the capability flags, over lib/state, for the pass-through of a hook whose
 // capability is off.
@@ -54,7 +54,7 @@ const SPAWN_OWNER = { git: 'git', gh: 'mirror', codex: 'providers', gemini: 'pro
 // Units that may call lib/proc with a computed program (provider argv comes from configuration).
 const DYNAMIC_SPAWN_UNITS = new Set(['providers']);
 // GC2: files that may name global config files, to read them only (they must contain no write call).
-const GLOBAL_CONFIG_READERS = new Set(['lib/cli/doctor.mjs']);
+const GLOBAL_CONFIG_READERS = new Set(['lib/cli/doctor.mjs', 'lib/import1x/checklist.mjs']);
 const GLOBAL_CONFIG = /claude\.md|settings(\.local)?\.json/i;
 const SPAWN_NAMES = '(?:spawn|spawnSync|execFile|execFileSync|exec|execSync|fork|run)';
 const WRITE_CALL = /(?<![\w$])(?:writeFile|writeFileSync|appendFile|appendFileSync|createWriteStream|copyFile|copyFileSync|cp|cpSync|rename|renameSync|rm|rmSync|rmdir|rmdirSync|unlink|unlinkSync|truncate|truncateSync|ftruncate|ftruncateSync|symlink|symlinkSync|link|linkSync|mkdir|mkdirSync|writeAtomic|createExclusive)\s*\(/;

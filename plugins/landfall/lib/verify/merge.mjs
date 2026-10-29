@@ -96,7 +96,12 @@ export function mergeTask({ cwd, env, names, id, branch, version = null, at = ne
     if (target.rel !== null && changesGates(profileOf(target.text), store.read('profile', null) ?? emptyProfile())) {
       const known = new Set(gitIn(where, env, ['ls-tree', '-r', '--name-only', tip, '--', `${target.rel}/decisions`]).stdout.split('\n').map((p) => p.slice(p.lastIndexOf('/') + 1)));
       const fresh = readRecords(where.dir).records.some((r) => r.doc.status === 'active' && r.doc.kind === 'gate-change' && !known.has(r.name));
-      if (!fresh) return refused('gate-change-required', `${ref} changes the target's gates or drops one of its risk paths`, 'record the change as a gate-change decision in the branch, then merge again');
+      if (!fresh) {
+        const held = gitIn(where, env, ['ls-tree', '-r', '--name-only', ref, '--', `${target.rel}/state.json`]).stdout.trim() !== '';
+        return refused('gate-change-required', `${ref} changes the target's gates or drops one of its risk paths`, held
+          ? 'record the change as a gate-change decision in the branch, then merge again'
+          : 'the branch has no committed state; commit it on the target and merge the target into the branch');
+      }
     }
     out = evaluate({ where, names, env, id, mode: 'merge', at, anchor: tip, merged: gitIn(where, env, ['rev-parse', '-q', '--verify', 'MERGE_HEAD']).stdout.trim() || null, version });
     const verified = { result: out.doc.result, verify: out.doc, output: out.output };

@@ -21,8 +21,9 @@ export const PATTERNS = Object.freeze({
   handle: /^[A-Z]{2,4}$/,
   taskId: /^T-[A-Z]{2,4}-[1-9]\d{0,5}$/,
   findingId: /^B-[A-Z]{2,4}-[1-9]\d{0,5}$/,
+  lessonId: /^L-[A-Z]{2,4}-[1-9]\d{0,5}$/,
   decisionId: /^D-[A-Z]{2,4}-[1-9]\d{0,5}$/,
-  id: /^[TDB]-[A-Z]{2,4}-[1-9]\d{0,5}$/,
+  id: /^[TDBL]-[A-Z]{2,4}-[1-9]\d{0,5}$/,
   lane: /^[a-z0-9][a-z0-9._-]{0,39}$/,
   kebab: /^[a-z0-9]+(?:-[a-z0-9]+)*$/,
   actor: /^[A-Za-z0-9][A-Za-z0-9._:@-]*$/,
@@ -151,12 +152,34 @@ export const KINDS = Object.freeze({
       reason: str(500, { null: true }),
     },
   }),
+  // Evidence-gated lesson (T-MG-29): a cue (the situation), one lesson naming a component, the evidence that supports
+  // it and the verdicts of the changes made for it. A new lesson starts in shadow; admission is code (lib/lessons).
+  lesson: defineKind('lesson', 1, {
+    dir: 'lessons',
+    keyPattern: PATTERNS.lessonId,
+    file: (id) => `lessons/${id}.json`,
+    match: /^lessons\/(L-[A-Z]{2,4}-[1-9]\d{0,5})\.json$/,
+    key: 'id',
+    fields: {
+      id: token(PATTERNS.lessonId),
+      cue: str(200, { min: 1 }),
+      lesson: str(300, { min: 1 }),
+      component: enumOf(['route', 'gate', 'rule', 'skill', 'hook', 'brief']),
+      evidence: { t: 'arr', max: 20, of: str(80, { min: 1 }) },
+      verdicts: { t: 'arr', max: 20, of: { t: 'obj', f: { change: str(200, { min: 1 }), verdict: enumOf(['helped', 'hurt', 'no-effect', 'confounded']) } } },
+      status: enumOf(['shadow', 'active', 'retired']),
+      at: time,
+      by: token(PATTERNS.handle),
+      retiredWhy: str(300, { min: 1 }),
+    },
+    opt: ['retiredWhy'],
+  }),
   // SD-9: a retired ID keeps a tombstone, so its number is never allocated again.
   tombstone: defineKind('tombstone', 1, {
     dir: 'tombstones',
     keyPattern: PATTERNS.id,
     file: (id) => `tombstones/${id}.json`,
-    match: /^tombstones\/([TDB]-[A-Z]{2,4}-[1-9]\d{0,5})\.json$/,
+    match: /^tombstones\/([TDBL]-[A-Z]{2,4}-[1-9]\d{0,5})\.json$/,
     key: 'id',
     fields: {
       id: token(PATTERNS.id),
@@ -168,9 +191,9 @@ export const KINDS = Object.freeze({
   // Review round 1, item 2: the per-handle high-water mark of an ID series (machine-local, under local/).
   counter: defineKind('counter', 1, {
     dir: 'local/ids',
-    keyPattern: /^[TDB]-[A-Z]{2,4}$/,
+    keyPattern: /^[TDBL]-[A-Z]{2,4}$/,
     file: (k) => `local/ids/${k}.json`,
-    match: /^local\/ids\/([TDB]-[A-Z]{2,4})\.json$/,
+    match: /^local\/ids\/([TDBL]-[A-Z]{2,4})\.json$/,
     fields: { high: { t: 'int', min: 0, max: LIMITS.idNumber } },
   }),
 });

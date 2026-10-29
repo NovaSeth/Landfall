@@ -1,0 +1,13 @@
+{
+  "name": "notes-api",
+  "version": "0.1.0",
+  "description": "A small JSON notes service, built end to end with the Landfall plugin for Claude Code",
+  "type": "module",
+  "private": true,
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "start": "node src/server.mjs",
+    "test": "node --test --test-concurrency=1 test/*.test.mjs"
+  },
+  "license": "MIT"
+}

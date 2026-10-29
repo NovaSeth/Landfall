@@ -19,6 +19,7 @@ import { isAbsolute, join } from 'node:path';
 import { modeOf, readConfig, rollout } from '../config/index.mjs';
 import { evaluate } from '../guard/index.mjs';
 import { realPath } from '../guard/protect.mjs';
+import { heartbeatAgent } from '../sched/index.mjs';
 import { open, stateDirName } from '../state/index.mjs';
 import { externalBash, isExternalAgent } from './external-bash.mjs';
 import { loadNames, stateOf } from './loop-state.mjs';
@@ -81,7 +82,30 @@ function autoAllowMode(opts, env, where, names) {
   try { return modeOf(AUTO_ALLOW, readConfig(where, { names, env })); } catch { return rollout(AUTO_ALLOW).default; }
 }
 
+const AGENT_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+// After the decision: refresh the heartbeat of the agent lease bound to input.agent_id (lib/sched, at most once a
+// minute). Only a string agent_id of the ID pattern is matched, so an event without one never refreshes an unbound
+// lease (T-MG-96 F4). It runs only while BEAT_MIN_LEFT_MS of the guard's deadline remains, with the lock wait capped
+// so BEAT_MARGIN_MS stays for the rest, and an error or a timeout is ignored: it never changes the decision nor pushes
+// it past its budget (GC8, T-MG-96 F5).
+export const BEAT_MIN_LEFT_MS = 150;
+const BEAT_MARGIN_MS = 100;
+const BEAT_LOCK_MS = 100;
+function beat(input, env, deadline = Infinity) {
+  const agentId = input?.agent_id;
+  if (typeof agentId !== 'string' || !AGENT_ID.test(agentId)) return;
+  const left = deadline - performance.now();
+  if (!(left >= BEAT_MIN_LEFT_MS)) return;
+  try { heartbeatAgent(agentId, { names: loadNames(), env, lockTimeoutMs: Math.floor(Math.min(BEAT_LOCK_MS, left - BEAT_MARGIN_MS)) }); } catch { /* never changes the decision */ }
+}
+
 export function guardBash(input, opts = {}) {
+  const r = guardDecision(input, opts);
+  beat(input, opts.env ?? process.env, opts.deadline ?? Infinity);
+  return r;
+}
+
+function guardDecision(input, opts = {}) {
   const command = input.tool_input?.command;
   if (typeof command !== 'string' || !command) return { stdout: '' };
   const env = opts.env ?? process.env;

@@ -70,7 +70,8 @@ function parseRow(row, rest, bin) {
       if (f.value) {
         const v = eq > 0 ? t.slice(eq + 1) : rest[++i];
         if (v === undefined) throw new Usage('missing-value', `${name} needs a value <${f.value}>`, usage);
-        flags[flagKey(f.flag)] = v;
+        // A `repeat` flag collects every occurrence into an array.
+        flags[flagKey(f.flag)] = f.repeat ? [...(flags[flagKey(f.flag)] ?? []), v] : v;
       } else {
         if (eq > 0) throw new Usage('unexpected-value', `${name} takes no value`, usage);
         flags[flagKey(f.flag)] = true;

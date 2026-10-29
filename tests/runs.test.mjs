@@ -98,7 +98,7 @@ async function project(t, { envExtra = {} } = {}) {
 }
 const startRun = (p, task, role, provider) => p.cli(['exec', '--task', task, '--role', role, '--provider', provider]);
 const reviewBrief = (p, task, round = 1) => readFileSync(join(p.state, 'tasks', task, `review-r${round}-brief.md`), 'utf8');
-const externalSection = (provider, task) => `## External run (overrides the Output section above)\nYou run as ${provider}:reviewer in a read-only sandbox: write no file. Your final message is the review JSON object alone, with "reviewer": {"kind": "external", "id": "${provider}:reviewer"}, per the schema the Output section names. The orchestrator records it from the run's out file with \`${names.bin} review record ${task} --from <out file>\`.\n`;
+const externalSection = (provider, task) => `## External run (overrides the Output section above)\nYou run as ${provider}:reviewer in a read-only sandbox: write no file. Your final message is the review JSON object alone, with "reviewer": {"kind": "external", "id": "${provider}:reviewer"}, per the schema the Output section names. The orchestrator records it from the run's out file with \`${names.bin} review record ${task} --kind external --run <run ID>\`.\n`;
 
 test('a fake-provider run: starting → running → done with tokens and lastLine; the out file exists; the record per §8.5', async (t) => {
   const p = await project(t);
@@ -112,7 +112,8 @@ test('a fake-provider run: starting → running → done with tokens and lastLin
   assert.ok(seen.has('running'), `statuses seen: ${[...seen].join(' → ')}`);
   const rec = p.record(id);
   assert.deepEqual(Object.keys(rec), ['schema', 'runId', 'task', 'role', 'provider', 'adapterVersion', 'model', 'sandbox', 'cwd', 'pid', 'pidStart', 'pidMethod', 'lease',
-    'status', 'queuedAt', 'startedAt', 'endedAt', 'elapsedMs', 'capS', 'tokens', 'tokensReason', 'costMicroUsd', 'lastLine', 'unknownEvents', 'outFile', 'exit', 'error']);
+    'status', 'queuedAt', 'startedAt', 'endedAt', 'elapsedMs', 'capS', 'tokens', 'tokensReason', 'costMicroUsd', 'lastLine', 'unknownEvents', 'outFile', 'exit', 'error', 'bin', 'outDirId', 'briefSha256']);
+  assert.equal(rec.bin, process.execPath, 'the program is the absolute path exec resolved (B-2)');
   assert.equal(rec.status, 'done');
   assert.equal(rec.exit, 0);
   assert.equal(rec.sandbox, 'read-only', 'a reviewer runs read-only');
@@ -206,8 +207,9 @@ async function tampered(t, change) {
   const base = p.record((await (async () => { const id = (await startRun(p, 'T-TU-1', 'reviewer', 'fakeok')).e.data.runId; await p.ended(id); return { id }; })()).id);
   const outDir = mkdtempSync(join(tmpdir(), `${names.bin}-run-`));
   writeFileSync(join(outDir, 'brief.md'), readFileSync(`${base.outFile}.prompt`), { mode: 0o600 });
+  const st = statSync(outDir, { bigint: true }); // bound as exec binds it (SF-AB-10), so only `change` is tampered
   const runId = 'fakeok-T-TU-2-reviewer-1';
-  const rec = { ...base, runId, task: 'T-TU-2', status: 'starting', pid: null, endedAt: null, error: null, outFile: join(outDir, 'out.json'), ...change(p, outDir) };
+  const rec = { ...base, runId, task: 'T-TU-2', status: 'starting', pid: null, endedAt: null, error: null, outFile: join(outDir, 'out.json'), outDirId: `${st.dev}:${st.ino}`, ...change(p, outDir) };
   writeFileSync(join(p.runsDir, `${runId}.json`), `${JSON.stringify(rec)}\n`);
   const r = await p.cli(['run-supervise', runId]);
   return { p, r, rec: p.record(runId), outFile: rec.outFile };
@@ -297,6 +299,23 @@ test('a queued reviewer keeps the review brief pinned at exec after the stored b
   const rec = await p.ended(second);
   assert.equal(rec.status, 'done');
   assert.equal(readFileSync(`${rec.outFile}.prompt`, 'utf8'), `${before}\n${externalSection('fakeok', 'T-TU-2')}`);
+});
+
+test('F3 (T-MG-96): a reviewer brief replaced in a queued run is run-tampered after the wait, and the provider does not start', async (t) => {
+  const p = await project(t);
+  sched.calibrate({ names, env: p.env, max: { external: 1 } });
+  const first = (await p.ok(['exec', '--task', 'T-TU-1', '--role', 'reviewer', '--provider', 'fakegate'])).e.data.runId;
+  await p.until('the first run to run', () => p.record(first).status === 'running');
+  const second = (await p.ok(['exec', '--task', 'T-TU-2', '--role', 'reviewer', '--provider', 'fakeok'])).e.data.runId;
+  await p.until('the second run to queue', () => p.record(second).status === 'queued');
+  const { outFile } = p.record(second);
+  writeFileSync(join(dirname(outFile), 'brief.md'), 'replaced instructions\n', { mode: 0o600 });
+  writeFileSync(`${p.record(first).outFile}.go`, '');
+  assert.equal((await p.ended(first)).status, 'done');
+  const rec = await p.ended(second);
+  assert.equal(rec.status, 'failed');
+  assert.equal(rec.error, 'run-tampered');
+  assert.equal(existsSync(`${outFile}.args`), false, 'no provider was started');
 });
 
 for (const kind of ['symlink', 'missing', 'directory']) {

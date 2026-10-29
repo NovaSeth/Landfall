@@ -19,6 +19,7 @@
 import { join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { KINDS, PATTERNS, StateError, open, resolve } from '../state/index.mjs';
+import { RESAMPLES, cellStats, suggestExecutors } from './executors.mjs';
 import { RECEIPT } from './kind.mjs';
 import { PRICES, priceOf, requestMicroUsd } from './prices.mjs';
 import { RUN_ID, readRuns } from './runs.mjs';
@@ -250,4 +251,44 @@ export function totalsSince(day, by, { cwd, env, names }) {
     .sort((a, b) => b.costMicroUsd - a.costMicroUsd || a.key.localeCompare(b.key, 'en'));
   const total = { tokens: list.reduce((sum, g) => add(sum, g.tokens), zero()), costMicroUsd: list.reduce((sum, g) => sum + g.costMicroUsd, 0) };
   return { where, since: day, by, groups: list, total, receipts: receipts.length, runs: extra.length, partial: problems.length > 0, problems };
+}
+
+// The records behind the executor suggestion (SD-42), one per task with a saved receipt, a dispatch and a verify: its
+// class (as saved), the executor of its last dispatch, whether its first verify passed, its cost and when the receipt
+// ended. A file that cannot be read is left out (a lower bound). Reads only; [] outside a tracked repository.
+// `dispatch: false` (lessons promotion) keeps a task without a dispatch and leaves the executor out.
+function readRecords({ cwd, env, names }, { dispatch }) {
+  let where;
+  try { where = resolve({ cwd, env, names }); } catch (err) {
+    if (err instanceof StateError && err.exit === 'ENV') return []; // outside git: no receipts
+    throw err;
+  }
+  if (!where.active) return [];
+  const store = open(where.dir, { names, kinds: STORE_KINDS });
+  const out = [];
+  for (const id of store.list(RECEIPT.name)) {
+    try {
+      const receipt = store.read(RECEIPT.name, id);
+      const task = store.read('task', id);
+      if (!receipt?.class || !task) continue;
+      const lastDispatch = task.events.filter((e) => e.event === 'dispatched').pop();
+      const verify = task.events.find((e) => e.event === 'verify');
+      if (!verify || (dispatch && !lastDispatch?.data?.executor)) continue;
+      const row = { task: id, class: receipt.class, firstPass: verify.data?.result === 'pass', costMicroUsd: receipt.costMicroUsd ?? 0, endedAt: receipt.endedAt ?? null };
+      out.push(dispatch ? { ...row, executor: lastDispatch.data.executor } : row);
+    } catch (err) {
+      if (!(err instanceof StateError) || err.exit !== 'FAIL') throw err;
+    }
+  }
+  return out;
+}
+
+export const executorRecords = (ctx) => readRecords(ctx, { dispatch: true });
+// Tasks with a saved receipt and a verify, whatever their executor: { task, class, firstPass, costMicroUsd, endedAt }.
+export const outcomeRecords = (ctx) => readRecords(ctx, { dispatch: false });
+
+// The suggestion data of `route --executor` and the brief: { seed, resamples, results } for one class.
+export function executorData(cls, ctx) {
+  const cells = cellStats(executorRecords(ctx), { seed: 1 }).filter((c) => c.class === cls);
+  return { seed: 1, resamples: RESAMPLES, results: suggestExecutors(cells, cls) };
 }

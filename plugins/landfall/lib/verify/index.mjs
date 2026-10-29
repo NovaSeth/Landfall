@@ -8,7 +8,7 @@ export { REPORTERS, parseReport } from './reporters.mjs';
 export { blankComments, scanRepo, scanSource } from './scan.mjs';
 export { normalizeMessage, testId } from './inventory.mjs';
 export { baselineSha, compareInventory, excusable, fingerprint, referenceOf, splitFailures } from './baseline.mjs';
-export { reportHasEvidence, reviewState } from './artifacts.mjs';
+export { reportHasEvidence, reviewProblem, reviewState } from './artifacts.mjs';
 export { runGate, tailLines } from './gates.mjs';
 export { evaluate, gatesSha, verifyTask } from './run.mjs';
 export { markDone } from './done.mjs';

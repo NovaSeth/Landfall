@@ -3,7 +3,7 @@
 // (WALL_CEILING_MS) that still catches a hang. The hook runs as `node --import <reporter> ...`: the reporter
 // writes the CPU time to the file named by HOOK_CPU_OUT and leaves stdout and stderr alone. The spawn stays in
 // the test file, whose module-level isolateProcessEnv() covers it (tests/isolation-guard.test.mjs).
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -41,4 +41,40 @@ export function measured(run) {
 export function assertFast(assert, r, what) {
   assert.ok(r.cpuMs < HOOK_CPU_LIMIT_MS, `${what}: ${r.cpuMs} ms of CPU`);
   assert.ok(r.ms < WALL_CEILING_MS, `${what}: ${r.ms} ms`);
+}
+
+// For tests that spawn a hook asynchronously with a fourth stdio pipe: a preload (`--require`) that writes the
+// process's own process.cpuUsage() as JSON to fd 3 when it exits, and the reader for what it wrote.
+export function fd3Preload(prefix = 'cpu-') {
+  const file = join(mkdtempSync(join(tmpdir(), prefix)), 'cpu.cjs');
+  writeFileSync(file, "process.on('exit', () => { const u = process.cpuUsage(); require('node:fs').writeSync(3, JSON.stringify(u)); });\n");
+  return file;
+}
+
+// The CPU time in ms from what the preload wrote; NaN when nothing parseable arrived.
+export function fd3CpuMs(text) {
+  try { const u = JSON.parse(text); return (u.user + u.system) / 1000; } catch { return Number.NaN; }
+}
+
+// For in-process perf cases: runs fn once and returns its CPU time (process.cpuUsage() delta, user + system, in
+// ms) and its wall time. A case judges the CPU time; wall time only guards a hang (CALL_WALL_GUARD_MS).
+export const CALL_WALL_GUARD_MS = 2000;
+export function cpuTimed(fn) {
+  const c0 = process.cpuUsage();
+  const w0 = performance.now();
+  fn();
+  const c = process.cpuUsage(c0);
+  return { cpuMs: (c.user + c.system) / 1000, wallMs: performance.now() - w0 };
+}
+
+// The p95 (sorted, index ceil(0.95 n) - 1) of the CPU times of n calls of fn; fails when a call hung.
+export function cpuP95(assert, fn, n) {
+  const xs = [];
+  for (let i = 0; i < n; i++) {
+    const r = cpuTimed(fn);
+    assert.ok(r.wallMs < CALL_WALL_GUARD_MS, `a call hung: ${r.wallMs.toFixed(0)} ms wall`);
+    xs.push(r.cpuMs);
+  }
+  xs.sort((a, b) => a - b);
+  return xs[Math.ceil(xs.length * 0.95) - 1];
 }

@@ -507,7 +507,7 @@ test('review record, baseline show and baseline pin are command rows; show is re
   const row = (n) => COMMANDS.find((c) => c.name === n);
   for (const n of ['review record', 'baseline pin']) assert.equal(row(n)?.mutating, true, `${n}: changes files`);
   assert.ok(row('baseline show') && !row('baseline show').mutating, 'baseline show: read-only');
-  assert.deepEqual(row('review record').flags.map((f) => f.flag), ['--from']);
+  assert.deepEqual(row('review record').flags.map((f) => f.flag), ['--from', '--kind', '--run']);
   assert.deepEqual(row('baseline pin').flags.map((f) => f.flag), ['--decision']);
   assert.ok(row('decide').flags.some((f) => f.flag === '--allows-test-removal'));
   const r = repo(t);

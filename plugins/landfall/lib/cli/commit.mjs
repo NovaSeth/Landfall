@@ -16,7 +16,7 @@ const MESSAGE_MAX = 200;
 const SUMMARY_MAX = 120;
 
 // The state directory relative to the repository ('/' separators), or null when it lies outside.
-function insideRepo(where) {
+export function insideRepo(where) {
   const rel = relative(where.repo, where.dir);
   return rel && !rel.startsWith('..') && !isAbsolute(rel) ? rel.split(sep).join('/') : null;
 }
@@ -47,7 +47,7 @@ export function summarize(paths) {
 }
 
 // The changed paths under `rel` as git sees them (tracked changes and untracked files; ignored ones, local/, excluded).
-function changed(where, env, rel) {
+export function changed(where, env, rel) {
   const r = git(['status', '--porcelain', '-z', '--untracked-files=all', '--', rel], { cwd: where.repo, env });
   if (r.error) throw new StateError('git-failed', 'ENV', `git status could not run (${r.error})`, { hint: 'install git and put it on PATH' });
   if (r.status !== 0) throw new StateError('git-failed', 'ENV', `git status failed in ${where.repo}`, { hint: 'check that the repository is readable' });

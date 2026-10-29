@@ -1,0 +1,33 @@
+{
+  "schema": 1,
+  "task": "T-MG-2",
+  "class": "standard",
+  "tier": null,
+  "startedAt": null,
+  "endedAt": null,
+  "wallMs": null,
+  "tokens": {
+    "input": 0,
+    "output": 0,
+    "cacheRead": 0,
+    "cacheWrite": 0
+  },
+  "costMicroUsd": 0,
+  "byAgent": [],
+  "external": [],
+  "rounds": 0,
+  "gates": null,
+  "defectsBeforeMerge": null,
+  "processOverhead": {
+    "wrapperTokens": {
+      "input": 0,
+      "output": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0
+    },
+    "hookInjectedChars": null
+  },
+  "priceTable": "2026-10-15",
+  "source": "transcripts@2.1.312",
+  "partial": false
+}

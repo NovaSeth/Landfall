@@ -655,3 +655,24 @@ test('review-close refuses an unknown latest-review ID or omitted blocking findi
     assert.deepEqual(r.store.entries('local/ids').map((name) => [name, r.store.readText(`local/ids/${name}`)]), before);
   }
 });
+
+test('T-MG-85: lib/decisions has no import cycle between its modules', () => {
+  const dir = join(pluginDir, 'lib', 'decisions');
+  const edges = new Map();
+  for (const f of readdirSync(dir).filter((x) => x.endsWith('.mjs'))) {
+    const src = readFileSync(join(dir, f), 'utf8');
+    edges.set(f, [...src.matchAll(/\bfrom\s+'\.\/([\w-]+\.mjs)'/g)].map((m) => m[1]));
+  }
+  const visiting = [];
+  const done = new Set();
+  const walk = (f) => {
+    if (done.has(f)) return;
+    const at = visiting.indexOf(f);
+    assert.equal(at, -1, `import cycle: ${[...visiting.slice(at), f].join(' -> ')}`);
+    visiting.push(f);
+    for (const g of edges.get(f) ?? []) walk(g);
+    visiting.pop();
+    done.add(f);
+  };
+  for (const f of edges.keys()) walk(f);
+});

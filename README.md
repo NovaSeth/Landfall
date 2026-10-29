@@ -81,6 +81,14 @@ Claude  $ landfall profile set deployedToUsers true --source said \
 - **Tokens spent where they count.** Roles are routed to model tiers: the orchestrating session plans, dispatches and merges but never implements; the implementer and the reviewer run on Sonnet, the external wrapper on Haiku, the designer on Opus. Method rules load by ID on demand (always-on context about 550 tokens), trivial work calls nothing, and `landfall receipt` shows tokens and cost per task, loop, class or executor, with a dollar cap on unattended loops.
 - **Zero footprint until you say yes.** Installed once per user; a project gets one `.landfall/` directory only when real work starts there and you agree.
 
+## What's new in 2.5.0
+
+- External implementers. `landfall exec --role implementer` runs Codex, Gemini or a declared provider in the task's worktree, and the run shows in the dashboard like a review (ORC-26). External runs are hardened: a minimal environment, the provider binary by absolute path, output redacted and bounded, and records bound to what exec started. An external review is recorded only from its run.
+- Lessons. `landfall lessons add|find|promote` keep evidence-gated lessons. A lesson becomes active only when receipts show its effect, and briefs list the ones that match.
+- Executor suggestion. `landfall route --executor` suggests an executor from your receipts once the data separates.
+- Context headroom warnings (shadow), an opt-in mirror of tasks in Claude Code's task list with a completion gate, a one-way GitHub issue mirror (`landfall mirror github`), and `landfall import-1x` for 1.x ledgers.
+- An example project in [examples/notes-api](examples/notes-api), built end to end with Landfall, its state committed.
+
 ## What's new in 2.4.1
 
 - Security audit fixes. The Bash guard scans in linear time, blocks globbed git subcommands and split state paths, and treats repository text as data. The secrets scanner knows more formats, matches long lines in linear time, streams large files and fails closed past 64 MiB. `gen apply` never writes into `.git`, refuses `${{` in CI gate commands, and `--commit <sha>` pins CI to a commit. `verify` redacts with project patterns, signs its gate cache with a machine key and reads `--from` files safely. Agent-instruction files (CLAUDE.md, AGENTS.md, SKILL.md, `.claude/**`, prompts) are risk paths, and the external wrapper agent may run only `landfall exec|wait|runs|rule|method`.

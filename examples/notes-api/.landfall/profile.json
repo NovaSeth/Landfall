@@ -1,0 +1,55 @@
+{
+  "schema": 2,
+  "facts": {
+    "stack": {
+      "value": [
+        "node"
+      ],
+      "source": "observed",
+      "evidence": "package.json",
+      "confidence": 0.9,
+      "at": "2026-10-29T19:08:42.451Z"
+    },
+    "ci": {
+      "value": "none",
+      "source": "observed",
+      "evidence": "no CI configuration among 4 files",
+      "confidence": 0.9,
+      "at": "2026-10-29T19:08:42.451Z"
+    },
+    "otherHarnesses": {
+      "value": [],
+      "source": "observed",
+      "evidence": "none found",
+      "confidence": 0.9,
+      "at": "2026-10-29T19:08:42.451Z"
+    }
+  },
+  "gates": [
+    {
+      "name": "test",
+      "cmd": "NODE_OPTIONS=\"$NODE_OPTIONS --test-reporter=tap\" npm run test",
+      "timeoutS": 1800,
+      "kind": "test"
+    }
+  ],
+  "riskPaths": [
+    "**/auth/**",
+    "**/payment*/**",
+    "**/migrations/**",
+    "**/security/**",
+    ".github/workflows/**",
+    "**/*.sql",
+    ".claude/**",
+    "**/CLAUDE.md",
+    "**/AGENTS.md",
+    "**/GEMINI.md",
+    "**/SKILL.md",
+    "**/agents/*.md",
+    "**/prompts/**"
+  ],
+  "lastScan": {
+    "head": "8250b80c74538577dcbd27824e04e1e167292d25",
+    "at": "2026-10-29T19:08:42.451Z"
+  }
+}

@@ -21,7 +21,7 @@ import { admissionReasons, rateLimitReasons } from './admission.mjs';
 import { ensureCalibration } from './calibration.mjs';
 import { dataDirOf, entries, locked, readDoc, toText } from './files.mjs';
 import { DEFAULTS, FIFO_KINDS, KIND_NAMES, LEASE, MAX_SLOTS, TASK, TICKET, blockOf, portsOf } from './kinds.mjs';
-import { SYSTEM, groupMembers, identify, identityIn, judge, readings, recordOf } from './machine.mjs';
+import { MAX_MEMBERS, SYSTEM, groupCheck, groupMembers, identify, identityIn, judge, memberIdentities, readings, recordOf } from './machine.mjs';
 
 const sha = (s) => createHash('sha256').update(s).digest('hex');
 const iso = (ms) => new Date(ms).toISOString();
@@ -89,11 +89,15 @@ function leaseStatus(l, ids, table, now) {
   if (holder === 'same') return 'live';
   if (holder === 'unknown') return expired ? 'stale' : 'live';
   if (!child) return 'stale';
-  const members = groupMembers(child, table);
-  if (members === null) return expired ? 'stale' : 'live';
-  l.orphan = members.length > 0;
+  const group = groupCheck(childOf(l.doc), table);
+  if (group === null) return expired ? 'stale' : 'live';
+  l.orphan = group.members.length > 0;
+  if (group.skip) l.reaperSkip = group.skip;
   return 'stale';
 }
+
+// The recorded child with the member identities recorded at attach (SF-AB-9), as groupCheck reads it.
+const childOf = (doc) => (doc.child ? { ...doc.child, members: doc.members ?? [] } : null);
 
 // Every lease and ticket with its status: live · stale (gone holder or TTL) · invalid · newer (never touched).
 function scan(dir, now, system) {
@@ -147,7 +151,7 @@ function endGroup(child, system) {
 
 function reap(dir, state, system) {
   for (const l of state.leases.filter((x) => x.status === 'stale' || x.status === 'invalid')) {
-    if (l.orphan) endGroup(l.doc.child, system);
+    if (l.orphan) endGroup(childOf(l.doc), system);
     removeTree(l.file);
   }
   for (const t of state.tickets.filter((x) => x.status === 'stale' || x.status === 'invalid')) removeTree(t.file);
@@ -276,8 +280,8 @@ async function withdraw(kind, opts, pollMs) {
 // Attempts until a lease is granted or timeoutMs passes (then the ticket, whose deadline is that moment, is withdrawn
 // and the last reasons end with wait-timeout). onWait(result) is called after each refused attempt.
 export async function acquireWait(kind, opts = {}) {
-  const { timeoutMs = 590e3, pollMs = 1000, onWait } = opts;
-  const until = Date.now() + timeoutMs;
+  const { timeoutMs = 590e3, pollMs = 1000, onWait, now = Date.now, sleep: nap = wait } = opts; // now, sleep: the clock and the wait, injected by tests
+  const until = now() + timeoutMs;
   try {
     for (;;) {
       let r;
@@ -288,12 +292,12 @@ export async function acquireWait(kind, opts = {}) {
         r = { ok: false, reasons: [{ code: 'busy', message: err.message }], position: null, seq: null };
       }
       if (r.ok) return r;
-      if (Date.now() >= until) {
+      if (now() >= until) {
         if (FIFO_KINDS.includes(kind)) await withdraw(kind, opts, pollMs);
         return { ...r, reasons: [...r.reasons, { code: 'wait-timeout', message: `no ${kind} slot within ${Math.ceil(timeoutMs / 1000)} s` }] };
       }
       onWait?.(r);
-      await wait(Math.min(pollMs, until - Date.now()));
+      await nap(Math.max(0, Math.min(pollMs, until - now()))); // never negative: the clock may pass `until` after the check
     }
   } catch (err) {
     if (FIFO_KINDS.includes(kind) && err?.code !== 'already-queued') await withdraw(kind, opts, pollMs);
@@ -321,27 +325,72 @@ function update(opts, kinds, match, change) {
 }
 
 // Releases the lease if the file still holds it (same id); true when removed.
-export const release = (lease, opts = {}) => update(opts, [lease.kind], (d) => d.id === lease.id && d.slot === lease.slot, () => null);
+export function release(lease, opts = {}) {
+  for (const [pid, a] of attached) if (a.lease.id === lease.id) attached.delete(pid);
+  return update(opts, [lease.kind], (d) => d.id === lease.id && d.slot === lease.slot, () => null);
+}
 
-// Records the child process the holder runs under the lease, with its identity, for the orphan reaper.
+// Records the child process the holder runs under the lease, with its identity and the identities of its group's
+// members (SF-AB-9), from one reading of the process table, for the orphan reaper.
 export function attachChild(lease, pid, opts = {}) {
   if (!Number.isInteger(pid) || pid <= 0) throw usage('invalid-value', `pid ${pid}: expected a positive integer`);
-  const child = recordOf(identify([pid], opts.system ?? SYSTEM).get(pid));
-  return update(opts, [lease.kind], (d) => d.id === lease.id, (d) => ({ ...d, child }));
+  const system = opts.system ?? SYSTEM;
+  const table = system.table();
+  const id = identityIn(table, pid, system.alive);
+  const child = recordOf(id);
+  const members = id.state === 'running' ? memberIdentities(child, table) : [];
+  const ok = update(opts, [lease.kind], (d) => d.id === lease.id, (d) => ({ ...d, child, members }));
+  if (ok) attached.set(pid, { lease, opts });
+  return ok;
+}
+
+// Children recorded by attachChild in this process: pid → { lease, opts }, so supervise refreshes their lease
+// (T-MG-88) without its callers passing the lease. supervise forgets its child when it returns; release forgets too.
+const attached = new Map();
+export const forgetAttached = (pid) => { attached.delete(pid); };
+
+// While the recorded child still runs (same pid, start and method), merges the identities of its group's members that
+// are not recorded yet (the reaper's rule, memberIdentities) into the lease, at most MAX_MEMBERS, recorded ones first
+// (T-MG-88: attach usually sees only the leader). Writes only when the set grew; true when written. The scheduler lock
+// is waited for at most 250 ms, so a busy lock delays a refresh instead of the supervised run.
+export function refreshMembers(lease, pid, opts = {}) {
+  const system = opts.system ?? SYSTEM;
+  const table = system.table();
+  const id = identityIn(table, pid, system.alive);
+  if (id.state !== 'running') return false;
+  let wrote = false;
+  update({ ...opts, lockTimeoutMs: Math.min(opts.lockTimeoutMs ?? 250, 250) }, [lease.kind], (d) => d.id === lease.id && d.child?.pid === pid, (d) => {
+    if (judge(d.child, id) !== 'same') return undefined;
+    const recorded = Array.isArray(d.members) ? d.members : [];
+    const known = new Set(recorded.map((m) => `${m.pid}:${m.start}`));
+    const fresh = memberIdentities(d.child, table).filter((m) => !known.has(`${m.pid}:${m.start}`));
+    const members = [...recorded, ...fresh].slice(0, MAX_MEMBERS);
+    if (members.length === recorded.length) return undefined;
+    wrote = true;
+    return { ...d, members };
+  });
+  return wrote;
+}
+
+// The refresh of a child recorded by attachChild in this process; false when none is.
+export function refreshAttached(pid) {
+  const a = attached.get(pid);
+  return a ? refreshMembers(a.lease, pid, a.opts) : false;
 }
 
 // Agent leases (spec §7.8 admission points): PostToolUse binds the agentId to the lease keyed by tool_use_id;
 // hooks carrying that agent_id refresh its heartbeat (at most once a minute); SubagentStop releases it.
 export const bindAgent = ({ key, agentId }, opts = {}) => update(opts, ['agent'], (d) => d.owner.key === key, (d) => ({ ...d, owner: { ...d.owner, agentId } }));
-export const heartbeatAgent = (agentId, opts = {}) => update(opts, ['agent'], (d) => d.owner.agentId === agentId,
+const isAgentId = (id) => typeof id === 'string' && id !== '';
+export const heartbeatAgent = (agentId, opts = {}) => update(opts, ['agent'], (d) => isAgentId(agentId) && d.owner.agentId === agentId,
   (d) => (Date.now() - Date.parse(d.heartbeatAt) < (opts.minIntervalMs ?? 60e3) ? undefined : { ...d, heartbeatAt: iso(Date.now()) }));
-export const releaseAgent = (agentId, opts = {}) => update(opts, ['agent'], (d) => d.owner.agentId === agentId, () => null);
+export const releaseAgent = (agentId, opts = {}) => update(opts, ['agent'], (d) => isAgentId(agentId) && d.owner.agentId === agentId, () => null);
 
 // Read-only view for `slots`: { leases, queues, used, queued }. Nothing is reaped or written.
 export function snapshot(opts = {}) {
   const state = scan(dataDirOf(opts), Date.now(), opts.system ?? SYSTEM);
   const leases = state.leases.map((l) => (l.doc && !l.newer && !l.invalid
-    ? { ...l.doc, schema: undefined, status: l.status, orphan: Boolean(l.orphan) }
+    ? { ...l.doc, schema: undefined, status: l.status, orphan: Boolean(l.orphan), ...(l.reaperSkip ? { reaperSkip: l.reaperSkip } : {}) }
     : { kind: l.kind, slot: l.slot, status: l.status }));
   const queues = Object.fromEntries(FIFO_KINDS.map((kind) => {
     const live = queueOf(state, kind);

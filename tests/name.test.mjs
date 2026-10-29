@@ -190,7 +190,9 @@ test('occurrence counter: the literal in any case, never inside another word', (
   assert.equal(occurrences('macazzq zzq ZZQ_X zzq-y xzzq zzqx "zzq/claim/"', 'zzq'), 4);
 });
 
-const USER_DOCS = /^(README|CHANGELOG|CLAUDE)\.md$|^docs\/(known-limitations|getting-started|benchmark|evaluation)\.md$/;
+// The example project (D-MG-21) is user documentation built with the CLI: its state dir and briefs name it on purpose,
+// and it is rebuilt for each major release, a rename included.
+const USER_DOCS = /^(README|CHANGELOG|CLAUDE)\.md$|^docs\/(known-limitations|getting-started|benchmark|evaluation)\.md$|^examples\//;
 
 test('the codename literal appears only in name.json and generated files (SD-30)', () => {
   const { pluginRel, nameRel, names } = locate(root);

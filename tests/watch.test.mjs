@@ -38,14 +38,14 @@ test('ORC-24 resolves with rule, in the method after ORC-23, within the rule cap
   assert.match(r.stdout, /past budget a status request \(ORC-9\), idle or hung the cause and a stop \(ORC-10\), too slow smaller slices or batches \(ORC-11\)/);
   const text = readFileSync(join(pluginDir, 'method', 'orchestration.md'), 'utf8');
   assert.ok(text.indexOf('**ORC-23.**') < text.indexOf('**ORC-24.**'));
-  assert.ok(text.indexOf('**ORC-24.**') < text.indexOf('**ORC-25.**') && !text.includes('**ORC-26.**')); // T-MG-80: ORC-25 follows the watchdog rule
+  assert.ok(text.indexOf('**ORC-24.**') < text.indexOf('**ORC-25.**') && text.indexOf('**ORC-25.**') < text.indexOf('**ORC-26.**') && !text.includes('**ORC-27.**')); // T-MG-80: ORC-25 follows the watchdog rule; T-MG-64: ORC-26 follows it
 });
 
 test('the dispatch and loop skills name ORC-24', () => {
   const d = readFileSync(join(pluginDir, 'templates', 'skills', 'dispatch.md'), 'utf8');
   const l = readFileSync(join(pluginDir, 'templates', 'skills', 'loop.md'), 'utf8');
   assert.match(d.split('\n').find((x) => x.startsWith('Rules:')), /ORC-24/);
-  assert.ok(d.includes('While 2+ agents or a gate run in the background, schedule a check every ~10 min (Claude Code: a recurring cron prompt; elsewhere the loop\'s tick) and unblock what it finds (ORC-24).'));
+  assert.match(d, /^\d+\. [^\n]*every ~10 min[^\n]*\(ORC-24\)/m); // the step was shortened to fit the skill cap (intended)
   assert.match(l, /ORC-24/);
 });
 

@@ -1,0 +1,28 @@
+{
+  "schema": 1,
+  "verdict": "needs-fixes",
+  "reviewer": {
+    "kind": "external",
+    "id": "codex:reviewer"
+  },
+  "findings": [
+    {
+      "id": "F1",
+      "severity": "blocking",
+      "path": "src/app.mjs",
+      "line": 93,
+      "rule": "OWA-10",
+      "text": "Acceptance 3 fails: unexpected TypeError/URIError messages leak. Reproduction: invoke GET /notes with store.list throwing new TypeError('/secret/path'), then URIError; both return 400 {\"error\":\"/secret/path\"} and log zero times. Restrict client-facing errors to explicit, trusted validation failures; unexpected exceptions must return exactly 500 {\"error\":\"internal error\"} and log once. Add regression cases for both classes."
+    },
+    {
+      "id": "F2",
+      "severity": "blocking",
+      "path": "src/app.mjs",
+      "line": 49,
+      "rule": "OWA-10",
+      "text": "Acceptance 1 fails: removing data listeners leaves the request flowing. Reproduction: feed an in-memory http.Server/Duplex nine 4096-byte HTTP chunks and count req.emit('data') bytes: 36864 consumed, including 16384 after overflow, before the 413 finishes. Adding req.pause() in memory reduces consumption to 20480 (through the first overflowing chunk). Pause on overflow before removing the listener, retain the 413/close sequence, and add a regression test."
+    }
+  ],
+  "run": "codex-T-MG-3-reviewer-1",
+  "sha256": "1de5e5c2256ec5d5e3e8118ff0c49c4e6a6e43612679ba9359bd1766352c389b"
+}

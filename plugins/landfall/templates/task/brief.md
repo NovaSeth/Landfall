@@ -33,9 +33,9 @@ Consumes: <interfaces, files and fields this task reads, each with its owner>. P
 <typecheck>
 <lint>
 <tests with a worker limit>
-<secrets scan>; echo "exit $?"
+{{bin}} secrets
 ```
-One commit per step; no push. A full suite or build runs through the heavy queue: `{{bin}} heavy` with the command after `--`.
+Exit 0 prints `secrets: clean`. One commit per step; no push. A full suite or build runs through the heavy queue: `{{bin}} heavy` with the command after `--`.
 
 ## Assignments (only when several agents share one worktree)
 <agent → its disjoint file list>. Agents run no git; the orchestrator commits. Shared vocabulary: <the names, headings and contract terms that must agree between the agents, as a table>.
