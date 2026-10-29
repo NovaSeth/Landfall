@@ -119,6 +119,21 @@ function stateChanges(where, env) {
   return out.sort();
 }
 
+// Tasks merged outside landfall (T-MG-80): done, a recorded branch, no `merged` event, and the branch tip is an ancestor of
+// the target. The target is what `task merge` merges into: HEAD of the main checkout (the first worktree), asked there and
+// never in a task worktree, where its own branch is always an ancestor of HEAD. At most OUTSIDE_MAX candidates per call.
+export const OUTSIDE_MAX = 50;
+export function outsideMerges({ where, env, tasks }) {
+  const candidates = tasks.filter((t) => t.status === 'done' && t.branch && !(t.events ?? []).some((e) => e.event === 'merged'))
+    .sort((a, b) => a.id.localeCompare(b.id, 'en', { numeric: true })).slice(0, OUTSIDE_MAX);
+  if (candidates.length === 0) return [];
+  const list = git(['worktree', 'list', '--porcelain'], { cwd: where.repo, env });
+  const main = list.status === 0 ? /^worktree (.+)$/m.exec(list.stdout)?.[1] : null;
+  if (!main) return [];
+  return candidates.filter((t) => !t.branch.startsWith('-')
+    && git(['merge-base', '--is-ancestor', `refs/heads/${t.branch}`, 'HEAD'], { cwd: main, env }).status === 0).map((t) => t.id);
+}
+
 // Step 1 of the tick, measured in the repository.
 function gitProbe(where, env, names) {
   const text = (r) => (r.status === 0 ? r.stdout : `error ${r.error ?? r.status}`);
@@ -134,6 +149,7 @@ function gitProbe(where, env, names) {
     },
     cost: (startedAt) => costSince(startedAt, { env, names, where }),
     dirty: () => stateChanges(where, env),
+    outside: (tasks) => outsideMerges({ where, env, tasks }),
   };
 }
 
@@ -172,6 +188,7 @@ export function tickStore(store, { where, names, now, plan = null, probe }) {
     const table = nextSteps({
       tasks: snap.tasks, runs: snap.runs, handles: snap.team.map((d) => d.handle), me, plan, lanesOn: snap.lanesOn,
       caps: loop.caps, now, bin: names.bin, budgets: readBudgets(where.dir, snap.tasks), problem: snap.problem, dirty: probe.dirty,
+      outside: snap.problem ? [] : probe.outside?.(snap.tasks) ?? [],
     });
     const d = decide(loop, {
       now, fingerprint: fingerprint(heads, snap.files, snap.runs), costMicroUsd: cost?.costMicroUsd ?? null, unmeasurable: cost?.unmeasurable === true,

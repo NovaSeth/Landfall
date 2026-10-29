@@ -127,7 +127,7 @@ function taskRow(t, { now, bin, lanesOn, caps, budget = DEFAULT_BUDGET_MIN }) {
   }
 }
 
-export function nextSteps({ tasks = [], runs = [], handles = [], me = null, plan = null, lanesOn = false, caps, now, bin, budgets = {}, problem = null, dirty = () => [] }) {
+export function nextSteps({ tasks = [], runs = [], handles = [], me = null, plan = null, lanesOn = false, caps, now, bin, budgets = {}, problem = null, dirty = () => [], outside = [] }) {
   const steps = [];
   const info = [];
   const multi = handles.length > 1;
@@ -173,6 +173,11 @@ export function nextSteps({ tasks = [], runs = [], handles = [], me = null, plan
           : `${t.id} is ${t.status}, so record it as a task named after the run: \`${bin} task new "${r.runId}: <what follows>"\` (cancel that task with the reason when nothing follows)`;
         steps.push(action(r.runId, `run ${r.status}${r.exit === null || r.exit === undefined ? '' : `, exit ${r.exit}`} for ${t.id}`, `collect its result: check the exit code and the result count, ${record}`, ['FLW-6']));
       }
+    }
+    // done tasks whose branch was merged by hand: the merge is not in the state (T-MG-80)
+    for (const id of outside) {
+      const t = byId.get(id);
+      if (t && mine(t)) steps.push(action(id, 'merged outside landfall', `${bin} task merge --adopt ${id}`, []));
     }
     if (plan) {
       const next = plan.entries.find((e) => !tasks.some((t) => belongs(t, e.ref)));
