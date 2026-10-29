@@ -576,3 +576,45 @@ test('npx channel (SD-21): the packed CLI runs `decisions check` in a repository
   const passing = npx(['decisions', 'check', '--ci']);
   assert.equal(passing.status, 0, out(passing));
 });
+
+// T-MG-78: review-close also preserves the remaining findings as typed backlog records.
+async function reviewedTask(f) {
+  const { openStore, reviewKey } = await lib('verify/kinds.mjs');
+  const made = await f.cli(['task', 'new', 'Reviewed task', '--yes', '--json']);
+  assert.equal(made.code, 0, out(made));
+  const task = made.json.data.id;
+  const store = openStore(f.dir, names);
+  const findings = ['F1', 'N1'].map((id, i) => ({ id, severity: i ? 'minor' : 'blocking', path: 'src/a.mjs', line: 56, rule: 'COD-2', text: `${id}: preserve the whole finding` }));
+  for (const round of [1, 2]) store.write('review', reviewKey(task, round), { verdict: 'needs-fixes', reviewer: { kind: 'external', id: 'reviewer' }, findings });
+  const close = (remaining) => f.cli(['decide', '--kind', 'review-close', '--task', task, '--remaining', remaining, '--title', 'Close review at cap', '--why', 'Fix the remaining findings later', '--cost', 'Known issues remain tracked', '--yes', '--json']);
+  return { task, store, findings, close };
+}
+
+test('review-close files blocking and minor findings from the latest round idempotently', async (t) => {
+  const f = fixture(t);
+  const r = await reviewedTask(f);
+  const first = await r.close('F1,N1');
+  assert.equal(first.code, 0, out(first));
+  assert.deepEqual(first.json.data.filed, ['B-AB-1', 'B-AB-2']);
+  const filed = r.store.list('finding').map((id) => r.store.read('finding', id));
+  assert.deepEqual(filed.map((x) => [x.task, x.round, x.finding, x.severity, x.text]), r.findings.map((x) => [r.task, 2, x.id, x.severity, x.text]));
+  const again = await r.close('F1,N1');
+  assert.equal(again.code, 0, out(again));
+  assert.deepEqual(again.json.data.filed, []);
+  assert.deepEqual(r.store.list('finding').map((id) => r.store.read('finding', id)), filed);
+  const printed = await f.cli(['decide', '--kind', 'review-close', '--task', r.task, '--remaining', 'F1,N1', '--title', 'Close again', '--why', 'Keep tracked', '--cost', 'low', '--yes']);
+  assert.match(printed.stdout, /filed:/);
+});
+
+test('review-close refuses an unknown latest-review ID or omitted blocking finding before writing anything', async (t) => {
+  for (const remaining of ['F1,UNKNOWN', 'N1']) {
+    const f = fixture(t);
+    const r = await reviewedTask(f);
+    const before = r.store.entries('local/ids').map((name) => [name, r.store.readText(`local/ids/${name}`)]);
+    const refused = await r.close(remaining);
+    assert.equal(refused.code, 2, out(refused));
+    assert.deepEqual(r.store.entries('decisions'), []);
+    assert.deepEqual(r.store.entries('findings'), []);
+    assert.deepEqual(r.store.entries('local/ids').map((name) => [name, r.store.readText(`local/ids/${name}`)]), before);
+  }
+});
