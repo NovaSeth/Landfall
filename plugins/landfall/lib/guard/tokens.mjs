@@ -208,12 +208,11 @@ function endSub(s, i, open, d) {
 }
 // The raw text with every $(…) and `…` removed with its body, read with the shell's quoting (single quotes keep a
 // substitution as text, quoted and escaped parentheses do not end one: F1; a quote after an escaped $ or after $$ is no
-// $'…': R2F1); a top-level comment is dropped to its newline and a heredoc body is data (AR-1). uncertain when an end
-// cannot be found with certainty, or when an unclosed construct has a newline after its opening (fail closed: AR-1);
-// one unclosed on the last line drops the rest (bash refuses the text; the other variants keep it).
+// $'…': R2F1). No comment or heredoc parsing (AR2): every character outside a substitution is kept. An unclosed $( or
+// backtick is kept as text and the scan goes on; uncertain when an end cannot be found with certainty, or when a newline
+// follows an unclosed opening (fail closed).
 export function subsDropped(s) {
-  let out = ''; let dq = false; const docs = [];
-  const unclosed = (k, j) => ({ text: out, uncertain: k === -2 || s.indexOf('\n', j) >= 0 });
+  let out = ''; let dq = false; let uncertain = false; const lastNl = s.lastIndexOf('\n');
   for (let j = 0; j < s.length;) {
     const c = s[j];
     if (c === '\\') { out += s.slice(j, j + 2); j += 2; continue; }
@@ -226,46 +225,14 @@ export function subsDropped(s) {
     if (c === '"') { dq = !dq; out += c; j++; continue; }
     if (c === '`' || (c === '$' && s[j + 1] === '(')) {
       const k = c === '`' ? endTick(s, j + 1) : endSub(s, j + 2, '(', 1);
-      if (k < 0) return unclosed(k, j);
-      j = k; continue;
-    }
-    if (!dq && c === '#' && (j === 0 || WORD_START.test(s[j - 1]))) { const k = s.indexOf('\n', j); if (k < 0) break; j = k; continue; }
-    if (!dq && c === '<' && s[j + 1] === '<' && s[j + 2] !== '<' && s[j - 1] !== '<') {
-      let k = j + 2; const strip = s[k] === '-'; if (strip) k++;
-      while (s[k] === ' ' || s[k] === '\t') k++;
-      const w0 = k; while (k < s.length && !/[\s;&|()<>]/.test(s[k])) k++;
-      const word = s.slice(w0, k);
-      if (word) docs.push({ delim: word.replace(/['"\\]/g, ''), strip, quoted: /['"\\]/.test(word) });
-      out += s.slice(j, k); j = k; continue;
-    }
-    if (!dq && c === '\n' && docs.length) {
-      out += c; j++;
-      for (const d of docs.splice(0)) {
-        while (j < s.length) {
-          let e = s.indexOf('\n', j); if (e < 0) e = s.length;
-          const line = s.slice(j, e);
-          if ((d.strip ? line.replace(/^\t+/, '') : line) === d.delim) { out += s.slice(j, e + 1); j = e + 1; break; }
-          if (d.quoted) out += s.slice(j, e + 1);
-          else {
-            for (let i = j; i < e;) {
-              if (s[i] === '\\') { out += s.slice(i, i + 2); i += 2; continue; }
-              if (s[i] === '`' || (s[i] === '$' && s[i + 1] === '(')) {
-                const k = s[i] === '`' ? endTick(s, i + 1) : endSub(s, i + 2, '(', 1);
-                if (k < 0 || k > e) return { text: out, uncertain: true };
-                i = k; continue;
-              }
-              out += s[i++];
-            }
-            if (e < s.length) out += '\n';
-          }
-          j = e + 1;
-        }
-      }
-      continue;
+      if (k >= 0) { j = k; continue; }
+      if (k === -2 || lastNl > j) uncertain = true;
+      const n = c === '`' ? 1 : 2;
+      out += s.slice(j, j + n); j += n; continue;
     }
     out += c; j++;
   }
-  return { text: out, uncertain: false };
+  return { text: out, uncertain };
 }
 // ${X…} expansions in one pass (F2), as /\$\{[#!]?\w*(?:\[[^\]]*\])?(?::?[-=+?#%/^,]+(?![-=+?#%/^,])([^}]*))?\}/g
 // replaced with '$1' would give: ${X:-default} → default, ${X} → nothing; the next ] and } come from a table.

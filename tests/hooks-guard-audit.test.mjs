@@ -261,3 +261,12 @@ test('AR2: an unclosed $( or backtick is kept as text and the scan goes on; a ne
     assert.equal(subsDropped(`echo ${open} x\ny`).uncertain, true);
   }
 });
+
+test('AR2: many unclosed openings keep the substitution-free variant linear (64 KiB under 1000 ms)', async () => {
+  const { subsDropped } = await lib('guard/tokens.mjs');
+  for (const u of ['$(', '$(( ', "$( '", '$( "', '"$(', '$({', '$(${ ']) {
+    const s = u.repeat(Math.ceil(65536 / u.length)).slice(0, 65536);
+    const ms = timed(() => subsDropped(s));
+    assert.ok(ms < 1000, `${JSON.stringify(u)}: ${Math.round(ms)} ms`);
+  }
+});
