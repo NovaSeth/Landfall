@@ -1,12 +1,14 @@
 // Reading decision records (spec §4.2, §7.10): every `decisions/*.md` of a state directory, parsed and checked, and
 // the scope index `local/decisions-index.json` for the edit hook. Reads go straight to the files (only writes are
-// reserved to lib/state); like the store, a record that is a symbolic link is refused, never followed.
+// reserved to lib/state); like the store, a record that is a symbolic link is refused, never followed, and the state
+// directory itself passes the store's path checks first (lib/state checkedPath: a symlinked state directory is
+// state-invalid for reads as for writes). The index under local/ is used only when local/ is this machine's.
 // Index (SD-22): { files: {<name>: {mtime (ns), size}}, decisions: [summary] } of the valid records. It is rebuilt when
 // the set of record files or any file's mtime or size differs; the rebuild is written through lib/state under the
 // store lock, best effort (a held lock or a newer index only skips the write: the fresh summaries are still used).
 import { lstatSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { LIMITS, PATTERNS, defineKind } from '../state/index.mjs';
+import { LIMITS, PATTERNS, checkedPath, defineKind } from '../state/index.mjs';
 import { FILE_NAME, STATUSES, clip, firstClause, firstSentence, flat, hiddenErrors, parseRecord, recordErrors, sections } from './record.mjs';
 
 export const WHY_MAX = 120; // characters of the first sentence of Why kept for a context line
@@ -19,6 +21,7 @@ const missing = (err) => err.code === 'ENOENT' || err.code === 'ENOTDIR';
 // invalid: [{ name, id (the frontmatter id, when there is one), errors }], names: Set of IDs that have a record file
 // (valid or not) }.
 export function readRecords(dir) {
+  checkedPath(dir, '');
   const folder = join(dir, 'decisions');
   const records = [];
   const invalid = [];
@@ -81,6 +84,7 @@ export const STORE_KINDS = Object.freeze({ [INDEX.name]: INDEX });
 
 // mtime (ns) and size of every record file name.
 function fingerprint(dir) {
+  checkedPath(dir, '');
   const folder = join(dir, 'decisions');
   const files = {};
   let entries = [];
@@ -111,6 +115,8 @@ export function scopeIndex(store, dir) {
     seen.add(r.id);
     decisions.push(summarize(r));
   }
+  // A foreign local/ is never claimed from here (the hooks only read it): its index is neither read nor replaced.
+  if (store.localStatus() === 'foreign') return decisions;
   try { store.write(INDEX.name, null, { files, decisions }); } catch { /* best effort: the summaries are current anyway */ }
   return decisions;
 }

@@ -22,13 +22,17 @@
 // a checked directory for a link in between. Locks never write through links, and that process could write the
 // store directly anyway; this window is not closed.
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
+import { hostname } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
-import { appendLine, createExclusive, makeDirs, removeEmptyDirs, sweepTemps, unlockStale as fsxUnlockStale, withLock, writeAtomic } from '../fsx/index.mjs';
+import { appendLine, createExclusive, isAlive, makeDirs, moveTree, removeEmptyDirs, sweepTemps, unlockStale as fsxUnlockStale, withLock, writeAtomic } from '../fsx/index.mjs';
+import { git } from '../git/index.mjs';
 import { checkWrite, invalidState, parseDoc, requireArg } from './document.mjs';
 import { StateError, newerSchema } from './errors.mjs';
 import { KINDS, LOGS } from './kinds.mjs';
+import { ensureMachineId, readMachineId } from './machine.mjs';
 import { MIGRATIONS } from './migrations/index.mjs';
 import { format, validate } from './schema.mjs';
+import { machineDataDir, resolvedDataDir } from './resolve.mjs';
 import { upgradeDoc } from './upgrade.mjs';
 
 // The most bytes of one appended line (PIPE_BUF on Linux): one write() of this size is never split.
@@ -42,11 +46,33 @@ function pauseUntilSignalled(dir) {
 const natural = (a, b) => a.localeCompare(b, 'en', { numeric: true });
 const missing = (err) => err.code === 'ENOENT' || err.code === 'ENOTDIR';
 
-export function open(dir, { names, kinds = KINDS, migrations = MIGRATIONS, lockTimeoutMs = 10000 } = {}) {
+export function open(dir, { names, kinds = KINDS, migrations = MIGRATIONS, lockTimeoutMs = 10000, dataDir } = {}) {
   requireArg(names, 'names', 'open');
   if (typeof dir !== 'string' || !isAbsolute(dir)) throw new TypeError(`state.open: the state directory must be an absolute path, got ${dir}`);
-  return new Store(dir, { names, kinds, migrations, lockTimeoutMs });
+  return new Store(dir, { names, kinds, migrations, lockTimeoutMs, dataDir });
 }
+
+// The absolute path of `rel` in the state directory `dir` after the store's checks (no symbolic link, no case alias
+// from dir inclusive), for the units that read the state directory's files themselves (lib/decisions).
+export function checkedPath(dir, rel) {
+  if (typeof dir !== 'string' || !isAbsolute(dir)) throw new TypeError(`state.checkedPath: the state directory must be an absolute path, got ${dir}`);
+  return new Store(dir, { names: {}, kinds: KINDS, migrations: MIGRATIONS, lockTimeoutMs: 0, dataDir: null }).abs(rel);
+}
+
+// local/ ownership (T-MG-77): local/.machine names the machine that owns local/. Whether git tracks anything under a
+// state directory's local/ is asked at most once per process (only while the marker is missing).
+export const MARKER = 'local/.machine';
+const trackedLocal = new Map();
+function tracksLocal(dir) {
+  if (trackedLocal.has(dir)) return trackedLocal.get(dir);
+  const r = git(['ls-files', '-z', '--', 'local'], { cwd: dir, env: { ...process.env, LC_ALL: 'C' }, timeoutMs: 5000 });
+  const tracked = !r.error && r.status === 0 && r.stdout.length > 0;
+  trackedLocal.set(dir, tracked);
+  return tracked;
+}
+const isLocal = (rel) => rel === 'local' || rel.startsWith('local/');
+// <UTC yyyymmddThhmmss>
+const stampOf = (d) => d.toISOString().replace(/[-:]/g, '').slice(0, 15);
 
 // The lib/fsx lock errors as state errors (other errors unchanged).
 export function lockFailure(err, names) {
@@ -87,8 +113,12 @@ export const unsafe = (path, why) => new StateError('state-invalid', 'FAIL', `${
 
 // Public: active, read, list, write, create, update, append. The other methods are internal to lib/state.
 export class Store {
-  constructor(dir, { names, kinds, migrations, lockTimeoutMs }) {
+  constructor(dir, { names, kinds, migrations, lockTimeoutMs, dataDir }) {
     this.dir = dir;
+    this.dataDir = dataDir;
+    this.localState = undefined;
+    this.movedAside = null;
+    this.wrote = false; // a file was written in the current lock section (markLocal)
     this.names = names;
     this.kinds = kinds;
     this.migrations = migrations;
@@ -150,7 +180,80 @@ export class Store {
     }
   }
 
+  // ---- local/ ownership (T-MG-77) ----
+
+  // The machine data directory: open({ dataDir }), else the one resolve() last found for this state directory in this
+  // process (the command's environment), else the one of this process's environment; null: unknown.
+  machineDir() {
+    if (this.dataDir === undefined) this.dataDir = resolvedDataDir(this.dir) ?? machineDataDir(this.names, process.env);
+    return this.dataDir;
+  }
+
+  // 'absent' (no local/) · 'mine' (this machine's marker; also when no machine data directory is known, or it holds
+  // no id yet and git tracks nothing under local/, so no owner can be told) · 'adopt' (no marker and nothing under local/ tracked by git: an existing user's local/, marked at
+  // the next write) · 'foreign' (another machine's marker, or no marker and git tracks something under local/).
+  localStatus() {
+    if (this.localState === undefined) this.localState = this.ownerOfLocal();
+    return this.localState;
+  }
+
+  ownerOfLocal() {
+    const dataDir = this.machineDir();
+    if (!dataDir) return 'mine';
+    let local;
+    try { local = this.abs('local'); } catch { return 'mine'; } // the reader's own path check reports it
+    if (!lstatSync(local, { throwIfNoEntry: false })?.isDirectory()) return 'absent';
+    let marker = null;
+    try { marker = readFileSync(join(local, '.machine'), 'utf8').trim(); } catch (err) { if (!missing(err)) throw err; }
+    if (marker === null) return tracksLocal(this.dir) ? 'foreign' : 'adopt';
+    const id = readMachineId(dataDir, this.names);
+    if (id) return marker === id ? 'mine' : 'foreign';
+    // This machine data directory holds no id yet (another CLAUDE_CONFIG_DIR, an unwritable one): it cannot tell a
+    // marker of this machine from another's, so only git can (a tracked local/ is foreign); the marker is kept.
+    return tracksLocal(this.dir) ? 'foreign' : 'mine';
+  }
+
+  // Before a write: a foreign local/ is moved aside to local.foreign-<stamp>/ (one rename; the store lock lives inside
+  // local/, so the rename comes first: it is atomic and one process wins, a loser finds local/ gone or fresh and
+  // re-checks). The ownership is checked again right before the rename.
+  claimLocal() {
+    this.localState = undefined;
+    if (this.localStatus() !== 'foreign') return;
+    const from = this.abs('local');
+    // A lock inside it whose owner runs on this host: a live writer (another machine data directory), never moved.
+    let owner = null;
+    try { owner = JSON.parse(readFileSync(join(from, 'lock', 'owner.json'), 'utf8')); } catch { /* none or unreadable */ }
+    if (owner && owner.host === hostname() && Number.isInteger(owner.pid) && isAlive(owner.pid)) {
+      throw new StateError('locked', 'ENV', `${from} is foreign but its lock is held by the running process ${owner.pid}`, { hint: `wait for the other ${this.names.bin} command to finish` });
+    }
+    const stamp = stampOf(new Date());
+    let to = join(this.dir, `local.foreign-${stamp}`);
+    for (let n = 2; lstatSync(to, { throwIfNoEntry: false }); n++) to = join(this.dir, `local.foreign-${stamp}-${n}`);
+    try {
+      moveTree(from, to);
+      this.movedAside = to;
+    } catch (err) {
+      if (!missing(err)) throw err;
+    }
+    trackedLocal.set(this.dir, false); // what git tracks under local/ was moved aside with it
+    this.localState = undefined;
+  }
+
+  // After a write succeeded (under the lock; a section that wrote nothing marks nothing): local/ carries this machine's marker. Best effort: an unwritable machine
+  // data directory leaves local/ unmarked (adopted again next time).
+  markLocal() {
+    const dataDir = this.machineDir();
+    if (!dataDir || !this.active) return; // deactivate removed the state: nothing to mark
+    try {
+      if (this.readText(MARKER) !== null && this.localStatus() === 'mine') return;
+      const id = ensureMachineId(dataDir, this.names);
+      writeAtomic(this.abs(MARKER), `${id}\n`);
+      this.localState = 'mine';
+    } catch { /* best effort */ }
+  }
+
   readText(rel) {
+    if (isLocal(rel) && this.localStatus() === 'foreign') return null;
     try {
       return readFileSync(this.abs(rel), 'utf8');
     } catch (err) {
@@ -161,6 +264,7 @@ export class Store {
 
   // Directory entries of `rel` ([] when absent); a symbolic link among them is refused.
   entries(rel) {
+    if (isLocal(rel) && this.localStatus() === 'foreign') return [];
     let names;
     try {
       names = readdirSync(this.abs(rel));
@@ -213,8 +317,14 @@ export class Store {
 
   // Runs fn while holding the store lock (not re-entrant).
   locked(fn) {
+    this.claimLocal();
     try {
-      return withLock(this.abs('local/lock'), fn, { timeoutMs: this.lockTimeoutMs });
+      return withLock(this.abs('local/lock'), () => {
+        this.wrote = false;
+        const out = fn();
+        if (this.wrote) this.markLocal();
+        return out;
+      }, { timeoutMs: this.lockTimeoutMs });
     } catch (err) {
       throw lockFailure(err, this.names);
     }
@@ -223,6 +333,7 @@ export class Store {
   // Housekeeping (temporary files of dead writers in the directory) only after the write succeeded, so a
   // failed or refused operation has no effect.
   writeText(rel, text) {
+    this.wrote = true;
     const file = this.abs(rel);
     mkdirSync(dirname(file), { recursive: true });
     writeAtomic(this.abs(rel), text);
@@ -236,6 +347,7 @@ export class Store {
     let created = false;
     try {
       created = createExclusive(this.abs(rel), text);
+      if (created) this.wrote = true;
       if (created) sweepTemps(dirname(file));
       return created;
     } catch (err) {
@@ -355,6 +467,7 @@ export class Store {
     const bytes = Buffer.from(line);
     if (bytes.length > APPEND_MAX) throw new StateError('limit-exceeded', 'USAGE', `${this.abs(rel)}: a log line is ${bytes.length} bytes, the limit is ${APPEND_MAX}`, { hint: 'nothing was logged' });
     const file = this.abs(rel);
+    this.wrote = true;
     const pause = process.env[`${this.names.envPrefix}TEST_APPEND_PAUSE`];
     try {
       appendLine(file, bytes, { before: pause ? () => pauseUntilSignalled(pause) : undefined });

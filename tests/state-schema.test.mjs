@@ -51,7 +51,7 @@ const set = (obj, path, value) => {
 
 test('the kinds of the state store and of machine data: versions, paths and keys round-trip', () => {
   assert.deepEqual(Object.keys(KINDS).sort(), ['config', 'counter', 'state', 'task', 'team', 'tombstone']);
-  assert.deepEqual(Object.keys(MACHINE_KINDS), ['projects', 'machineConfig']);
+  assert.deepEqual(Object.keys(MACHINE_KINDS), ['projects', 'machine', 'machineConfig']); // T-MG-77 (intended): the machine id
   for (const [name, kind] of [...Object.entries(KINDS), ...Object.entries(MACHINE_KINDS)]) {
     assert.ok(Number.isInteger(kind.version) && kind.version >= 1, `${name}: integer version`);
     assert.ok(kind.readUpTo >= kind.version, `${name}: reads at least its own version`);

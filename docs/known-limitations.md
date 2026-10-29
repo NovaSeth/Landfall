@@ -23,6 +23,7 @@
 - Bash guard: a push without an explicit `<src>:<dst>` refspec is blocked when an earlier command on the same line may change the branch (for example `npm test && git push origin feat/x`); push in a separate command.
 - Bash guard: the CLI run from a checkout by its path (`plugins/landfall/bin/landfall commit`) is a script with a guarded argument unless the session's environment names that launcher in `LANDFALL_LAUNCHERS` (set it in the shell before starting Claude Code); the installed plugin's own launcher and `landfall` on PATH need nothing.
 - Loop: an agent that runs `landfall deactivate` and then `landfall init` starts a new loop with default caps.
+- State: a `local/` shipped in a repository (tracked by git, or marked by another machine) is ignored by the store's readers and moved aside to `local.foreign-<time>/` at the first state write; the hooks' own loop reader and the run listings of `status` and `receipts` still read it until that write.
 - State: lock liveness uses the local process id; a reused pid can keep a dead lock looking alive until `landfall state unlock --stale`.
 - State: after a crash right after a multi-file write commits, the next write completes it; a decision file saved in an editor during that recovery can be overwritten, and recovery does not check log schema versions written by a newer plugin version.
 - Generated files: after a crash in the middle of `landfall gen apply`, a line you removed meanwhile can come back without a side file; deleting a recorded side file accepts its proposal.
