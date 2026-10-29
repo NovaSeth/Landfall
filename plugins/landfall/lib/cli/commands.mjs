@@ -1,10 +1,10 @@
-// Command table (spec §8.1, §8.2, REV-54): the single source of commands, arguments, flags and exit codes.
+// Command table (spec §8.1, §8.2, COD-5): the single source of commands, arguments, flags and exit codes.
 // main.mjs parses argv by it; help.mjs renders `--help` from it and scripts/gen-docs.mjs renders docs/cli.md.
 // A command is one row; `load` imports its implementation on demand, so hook calls start fast.
 //
 // Row: name (words separated by one space) · summary (≤ 120 chars) · details (extra help lines) ·
 // args [{ name, required, variadic, summary }] · flags [{ flag, alias, value, summary }] · exits (EXIT names) ·
-// mutating (changes files: needs a terminal or --yes, REV-58; for a command whose forms differ, a function of the
+// mutating (changes files: needs a terminal or --yes, COD-9; for a command whose forms differ, a function of the
 // parsed flags, true for a form that changes files: consent (main.mjs) and help (help.mjs) both read it through
 // mutates()) · hidden (not in --help; docs list it as internal) ·
 // failOpen (hook entry: an error ends with exit 0 and no output, GC8, except a block-if-guarded hook: exit 2) ·
@@ -649,7 +649,8 @@ const ROWS = [
     name: 'task merge',
     summary: 'Merge a task branch with --no-ff --no-commit, run the outcome gates on the merged tree, commit only on pass.',
     details: [
-      'A conflict or a failing gate aborts the merge (exit 1) and leaves the branch as it was; the tree must be clean.',
+      'A conflict or a failing gate aborts the merge (exit 1) and leaves the branch as it was.',
+      'The code tree must be clean (state writes may be pending).',
       'The outcome gates: profile gates, test baseline, report evidence, state files (no route or review). A merge is',
       'recorded on the task (a merged event and mergedAt). --adopt records tasks merged by hand after one gate run on HEAD:',
       'each task whose branch tip is an ancestor of HEAD; the others are reported. A failing gate records nothing.',

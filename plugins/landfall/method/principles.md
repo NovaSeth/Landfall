@@ -21,7 +21,7 @@
 
 ### Roles
 **PRI-5.** [always] While orchestrating, MUST NOT write feature code; exceptions: project foundation and mechanical rewiring verified by assertions (a scripted text change with counted replacements too).
-**PRI-6.** [always] The author never reviews; every fix round ends with a scoped re-review, which a self-check MUST NOT replace for data, writes, authorization or concurrency; an editorial round (text, names) may be self-checked.
+**PRI-6.** [always] The author never reviews; every fix round ends with a scoped re-review, which a self-check MUST NOT replace for data, writes, authorization or concurrency; the rounds the orchestrator may self-check are those of REV-20.
 **PRI-7.** Shared parts (contract, data world, design tokens, UI kit, platform code, package manifest, lockfile, lint and compiler configuration) change only through a shared task: the orchestrator dispatches it, the designer does it (an implementer for a mechanical change), and a lane task changes only its own directory.
 
 ### Decisions and lessons

@@ -3,7 +3,7 @@
 //   route --probe --paths <p,…> --loc <n> [--flags <f,…>]    classify only: no task, nothing written, works in an
 //                                                            untracked repository and outside git (spec §7.2)
 //   route <task> --override <class> --by user --quote <text> the user's override (a decision when it lowers)
-// Context comes from the target (REV-58): the repository of the current directory, its git user.email (the
+// Context comes from the target (COD-9): the repository of the current directory, its git user.email (the
 // caller's handle in the store's team registry), never process state. Paths are repository-relative and
 // comma-separated; an absolute path inside the repository (the worktree of the current directory, lib/state resolve) is
 // made relative.

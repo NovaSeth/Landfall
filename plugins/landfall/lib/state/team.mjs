@@ -5,7 +5,7 @@
 // A-Z (MGA…, MGOA…, MA…). Letters are folded to ASCII; no letters in the name → the email's local part.
 // Registration (under the store lock) returns the handle already held by this email hash, or creates the first
 // free candidate, so concurrent and repeated registrations of one email give one handle.
-// gitIdentity reads user.name and user.email from the target repository (REV-58).
+// gitIdentity reads user.name and user.email from the target repository (COD-9).
 import { createHash } from 'node:crypto';
 import { git } from '../git/index.mjs';
 import { join } from 'node:path';

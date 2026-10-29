@@ -34,7 +34,8 @@ test('ORC-24 resolves with rule, in the method after ORC-23, within the rule cap
   const r = spawnSync(process.execPath, [join(pluginDir, 'bin', names.bin), 'rule', 'ORC-24'], { encoding: 'utf8', timeout: 30000 });
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /^ORC-24\. Be proactive and keep the work flowing: while agents, external runs or gates work in the background/);
-  assert.match(r.stdout, /an executor past its budget gets a status request \(ORC-9\)/);
+  // T-MG-83 (intended change): ORC-24 keeps the cadence and points to the older rules for the reactions
+  assert.match(r.stdout, /past budget a status request \(ORC-9\), idle or hung the cause and a stop \(ORC-10\), too slow smaller slices or batches \(ORC-11\)/);
   const text = readFileSync(join(pluginDir, 'method', 'orchestration.md'), 'utf8');
   assert.ok(text.indexOf('**ORC-23.**') < text.indexOf('**ORC-24.**'));
   assert.ok(text.indexOf('**ORC-24.**') < text.indexOf('**ORC-25.**') && !text.includes('**ORC-26.**')); // T-MG-80: ORC-25 follows the watchdog rule

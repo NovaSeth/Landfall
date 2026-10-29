@@ -1,5 +1,5 @@
 // Commands of the state unit (spec §7.2, §8.2): each calls lib/state with the target directory and env of the
-// invocation (REV-58) and turns its result into data and text. State errors become results in main.mjs.
+// invocation (COD-9) and turns its result into data and text. State errors become results in main.mjs.
 //   `<bin> state unlock --stale` (findings-r3): the only way a lock left by a process that is gone is removed;
 //   writes never take one over. It handles the store lock of the repository at the current directory and the
 //   machine data lock, after a crash, while no command runs (findings S3): each is removed only when its owner

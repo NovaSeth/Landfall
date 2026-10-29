@@ -40,6 +40,8 @@ A security audit of 2.4.0 covered 8 areas with the plugin's own security reviewe
   - `task merge <ids…>` and `task merge --ready` run one gate on the integrated tree, bisect a failure, leave a conflicting task out, and fast-forward only the exact commit that passed.
   - Every merge is recorded on the task (task schema 2). `status`, `tick` and `doctor` report hand merges, and `task merge --adopt` records them.
   - The guard blocks a plain merge of a task branch.
+  - `task merge` needs only a clean code tree; state writes may be pending, and its record is one for `landfall commit`.
+- **Method and docs:** the tick, the skills and REV-11 merge only through `task merge`. The external agent passes `--yes` and runs reviews only (external implementations follow in a later release). The help cites current rule IDs.
 - **Orchestrator watchdog (ORC-24):** the orchestrator checks agents, gates and load on a schedule and unblocks what is slow. `status` and `tick` flag a long heavy-queue wait and high load.
 - **Dashboard:** TASKS shows the open tasks as `▶ working` or `⏸ waiting`, and AGENTS lists only the agents and runs at work.
 - **Logo:** a mark for the README and a social preview image.

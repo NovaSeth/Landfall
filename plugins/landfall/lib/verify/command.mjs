@@ -1,6 +1,6 @@
 // Commands of the verify unit (spec §8.1, §8.2), loaded by their rows in lib/cli/commands.mjs: `verify <id> [--ci]`,
 // `task done <id>`, `task merge <id> [--branch <b>]` (several IDs or --ready: a batch, batch.mjs), `review record <id> --from <file>`, `baseline show`,
-// `baseline pin --decision <D>`. Context comes from io (cwd, env), never from process state (REV-58). A typed error
+// `baseline pin --decision <D>`. Context comes from io (cwd, env), never from process state (COD-9). A typed error
 // of lib/state, lib/router or lib/profile becomes its exit code with message and hint.
 // Exit: verify and task merge by result (pass 0 · error 8 · any other 1); task done 0 when done; review record 0
 // when recorded, 2 with one error per failing field; baseline show 1 when the sha256 does not match the content.

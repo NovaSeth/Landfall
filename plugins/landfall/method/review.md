@@ -12,9 +12,9 @@
 ## Core
 
 ### Review
-**REV-1.** A review has a fixed shape without preamble (`templates/review.md`): compliance per acceptance point with `file:line`, strengths, findings Critical / Important / Minor, shared-part needs, verification scope (taken from the report vs run yourself), context (files read, rule IDs), verdict.
+**REV-1.** A review has a fixed shape without preamble (`templates/task/review.md`; the recorded form is the JSON of `templates/review.schema.json`): compliance per acceptance point with `file:line`, strengths, findings Critical / Important / Minor, shared-part needs, verification scope (taken from the report vs run yourself), context (files read, rule IDs), verdict.
 **REV-17.** Record the review with the CLI `review record`, which accepts only the typed result `{verdict: approved | needs-fixes, findings: […]}`; the Markdown text is a rendering and closes nothing.
-**REV-2.** Severity: Critical = data loss or corruption, a security hole, an outage; Important = a functional defect or a violation of a rule or a Global Constraint; Minor = everything else.
+**REV-2.** Severity: Critical = data loss or corruption, a security hole, an outage; Important = a functional defect or a violation of a rule or a Global Constraint; Minor = everything else. A recorded review writes Critical and Important as `blocking`, Minor as `minor`.
 **REV-3.** The reviewer MUST reproduce every Critical and Important finding (a short test or script with its output).
 **REV-4.** The reviewer rejects a dirty tree or a Global Constraint violation and cites rules by ID, not by their text.
 **REV-21.** Every review brief carries the project's review focus (the profile fact `reviewFocus`) and the risk paths the diff touches; a new function that reads protected data (masks, keys, tenants) gets its own point in the review.
@@ -33,7 +33,7 @@
 
 ### Task gate
 **REV-10.** Before review: gate commands green (typecheck, lint, tests), the secrets scan run without a pipe with its exit code checked, branch E2E when the brief requires it, a clean tree and one commit per step.
-**REV-11.** Before merge the orchestrator itself merges `origin/main` into the task branch and re-runs verify, because a report from an older base guarantees nothing; merge with a squashed pull request whose title follows the commit style; without a remote, merge locally with `git merge --no-ff` and a decision.
+**REV-11.** Before merge the orchestrator itself merges `origin/main` into the task branch and re-runs verify, because a report from an older base guarantees nothing; then it runs `task done` and merges with `task merge` (ORC-25), which runs the gates again on the merged tree.
 
 ### Area gate
 **REV-12.** Open the area gate when every task of the area is in `main`: cross-review of the area diff by another provider's model (fallback: a fresh reviewer with a different prompt), each remark verified in code before acceptance; full E2E on a fresh build with behavior and data assertions; one fix round after it, closed by a scoped re-review.

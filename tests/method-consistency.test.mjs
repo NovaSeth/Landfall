@@ -3,12 +3,12 @@
 // rule IDs, one severity scale, one known-limitations entry per topic).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const plugin = join(root, 'plugins', 'landfall');
+const plugin = join(root, 'plugins', readdirSync(join(root, 'plugins')).find((d) => existsSync(join(root, 'plugins', d, 'lib', 'name.json'))));
 const read = (...p) => readFileSync(join(...p), 'utf8');
 const rule = (topic, id) => {
   const line = read(plugin, 'method', `${topic}.md`).split('\n').find((l) => l.startsWith(`**${id}.**`));
@@ -42,7 +42,7 @@ test('the dispatch skill: verify failure goes back before any fix-round record, 
   assert.doesNotMatch(step(d, 8), /\| --ready/, step(d, 8));
   assert.match(step(d, 8), /task merge <ids…> --yes/);
   assert.match(step(d, 8), /task merge --ready --yes/);
-  assert.match(step(d, 6), /task set <id> dispatched --executor <reviewer>/, step(d, 6));
+  assert.match(step(d, 6), /record as in 3 \(`--executor <reviewer>`\)/, step(d, 6));
   assert.match(step(d, 7), /--remaining <open finding IDs>/, step(d, 7));
 });
 
@@ -79,7 +79,7 @@ test('known limitations: no stale task merge bullet, one bullet per topic, the l
   assert.equal(bullets(k).filter((l) => l.startsWith('- Bash guard')).length, 1);
   assert.doesNotMatch(bullets(k).find((l) => l.startsWith('- Dashboard')) ?? '', /qa/);
   assert.match(k, /^- No `qa` pack or agent/m);
-  assert.match(read(plugin, 'lib', 'cli', 'commands.mjs'), /the code tree must be clean \(state writes may be pending\)/);
+  assert.match(read(plugin, 'lib', 'cli', 'commands.mjs'), /The code tree must be clean \(state writes may be pending\)/);
 });
 
 test('getting started: findings close names the task that fixed them', () => {

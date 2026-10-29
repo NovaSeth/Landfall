@@ -1,4 +1,4 @@
-// Activation lifecycle (spec §7.2, SD-6, SD-7, SD-36, SC2, REV-58). A repository is unknown, declined or active
+// Activation lifecycle (spec §7.2, SD-6, SD-7, SD-36, SC2, COD-9). A repository is unknown, declined or active
 // (active: its state directory holds state.json).
 //   activationStep: the rule the work skill follows. Trivial work never activates; a declined repository stays
 //     vanilla for every class; an active one continues; otherwise a task of class standard or above activates.

@@ -1,4 +1,4 @@
-// `gen apply` (spec §7.14, §7.14a, SD-35, REV-57, GC9, findings-r1): the decision for each target and its execution.
+// `gen apply` (spec §7.14, §7.14a, SD-35, COD-8, GC9, findings-r1): the decision for each target and its execution.
 // Provenance comes only from records; equal content never proves who wrote a file. For each item
 // { target, path, theirs } (theirs = the newly rendered version; for a block target, the block):
 //   target absent                               → create it; base = theirs                       (create)

@@ -16,7 +16,7 @@ With `--json` every command prints exactly one line on stdout and nothing on std
 - Partial data: `ok: false` with `data` holding what was computed and `data.partial: true`.
 - Without `--json`: text on stdout, errors with their hints on stderr.
 - Output carries no escape sequence, control, bidi or invisible character from data: text drops them and keeps the printable rest; the envelope writes them as `\u` escapes, so `JSON.parse` gives the data back exactly.
-- A command that changes files refuses without a terminal unless `--yes` is given: exit 7 REFUSED (REV-58). Consent is per form: a command section names each flag whose form differs.
+- A command that changes files refuses without a terminal unless `--yes` is given: exit 7 REFUSED (COD-9). Consent is per form: a command section names each flag whose form differs.
 - A command exits only with the codes its section lists, plus 2 USAGE (arguments) and 70 INTERNAL (bug); any other code is reported as 70.
 
 ## Exit codes
@@ -1292,7 +1292,8 @@ Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
 usage: landfall task merge [<id…>] [--branch <branch>] [--ready] [--adopt] [--yes] [--json]
 
 Merge a task branch with --no-ff --no-commit, run the outcome gates on the merged tree, commit only on pass.
-A conflict or a failing gate aborts the merge (exit 1) and leaves the branch as it was; the tree must be clean.
+A conflict or a failing gate aborts the merge (exit 1) and leaves the branch as it was.
+The code tree must be clean (state writes may be pending).
 The outcome gates: profile gates, test baseline, report evidence, state files (no route or review). A merge is
 recorded on the task (a merged event and mergedAt). --adopt records tasks merged by hand after one gate run on HEAD:
 each task whose branch tip is an ancestor of HEAD; the others are reported. A failing gate records nothing.

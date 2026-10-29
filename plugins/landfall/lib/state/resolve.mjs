@@ -1,4 +1,4 @@
-// State directory resolution (spec §5.3, §7.2, §7.6, §7.12, SD-7, SD-36, REV-58). Two roots, both real paths:
+// State directory resolution (spec §5.3, §7.2, §7.6, §7.12, SD-7, SD-36, COD-9). Two roots, both real paths:
 //   worktree  the git top level of the target directory: where the code is (gates, HEAD, diffs, file scans).
 //   repo      the project: the main checkout. In a linked worktree (its git directory is not git's common directory)
 //             that is the parent of the common directory when the common directory is named .git; otherwise (the main

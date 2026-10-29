@@ -33,7 +33,7 @@ A repository's gate commands run only once this machine trusts them. In a termin
 
 ### The findings backlog
 
-Review findings still open when a review closes at the round cap are kept. `landfall findings list` shows them, `landfall findings show <id>` reads one, and `landfall findings take <id>` turns it into a task; that task's `task done` closes the finding. `findings close` and `findings drop` end one without a task.
+Review findings still open when a review closes at the round cap are kept. `landfall findings list` shows them, `landfall findings show <id>` reads one, and `landfall findings take <id>` turns it into a task; that task's `task done` closes the finding. `findings close <ids…> --task <id>` records that an existing task fixed them; `findings drop` drops one with a reason (a decision).
 
 ## 4. Useful commands
 

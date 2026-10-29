@@ -273,5 +273,6 @@ test('work: trivial requests are classed from the request (no command first); wo
 
 test('dispatch step 8 merges ready tasks as one batch (ORC-25)', () => {
   const step = read(skillFile('dispatch')).split('\n').find((l) => l.startsWith('8. '));
-  assert.ok(step && step.includes('task merge <ids…> | --ready'), step);
+  // T-MG-83 (intended change): two command forms, no `|` that reads as a shell pipe
+  assert.ok(step && step.includes('task merge <ids…> --yes') && step.includes('task merge --ready --yes') && !step.includes('| --ready'), step);
 });

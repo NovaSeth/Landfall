@@ -40,7 +40,7 @@ export function checkWrite(kind, doc, { where, key }) {
   if (kind.key && doc[kind.key] !== key) throw new StateError('invalid-value', 'USAGE', `${where}: ${kind.key} ${JSON.stringify(doc[kind.key])} does not match the key ${JSON.stringify(key)}`);
 }
 
-// Programming errors: the caller must pass its context explicitly (REV-58), never fall back to process state.
+// Programming errors: the caller must pass its context explicitly (COD-9), never fall back to process state.
 export function requireArg(value, what, fn) {
-  if (!value || typeof value !== 'object') throw new TypeError(`state.${fn}: pass ${what} explicitly (context comes from the target, REV-58)`);
+  if (!value || typeof value !== 'object') throw new TypeError(`state.${fn}: pass ${what} explicitly (context comes from the target, COD-9)`);
 }
