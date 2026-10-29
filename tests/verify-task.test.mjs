@@ -456,19 +456,24 @@ test('verify, task done and task merge are command rows that change files; help 
 
 // ---- review r1 (findings-r1.md) ----
 
-// Runs `task done` with `inject` executed when it starts its task update: the boundary between anything checked
-// before the store lock and the write (Codex's injection point).
+// Runs `task done` with `inject` executed just before it takes the store lock: the boundary between anything checked
+// before the store lock and the write (Codex's injection point). Task done decides inside one store.batch (T-MG-78:
+// the task and its findings close together), so the boundary is the start of that batch; without a batch it is the
+// start of the task update. The injection writes through another store, so it must run before the lock is held.
 async function doneAcross(r, inject) {
-  const original = Store.prototype.update;
+  const { update, batch } = Store.prototype;
   let fired = false;
-  Store.prototype.update = function update(name, ...rest) {
-    if (!fired && name === 'task') { fired = true; inject(); }
-    return original.call(this, name, ...rest);
+  const fire = () => { if (!fired) { fired = true; inject(); } };
+  Store.prototype.batch = function batched(fn) { fire(); return batch.call(this, fn); };
+  Store.prototype.update = function updated(name, ...rest) {
+    if (name === 'task') fire();
+    return update.call(this, name, ...rest);
   };
   try {
     return await done(r);
   } finally {
-    Store.prototype.update = original;
+    Store.prototype.update = update;
+    Store.prototype.batch = batch;
   }
 }
 
