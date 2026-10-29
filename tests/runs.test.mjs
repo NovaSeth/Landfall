@@ -8,7 +8,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -88,6 +88,8 @@ async function project(t, { envExtra = {} } = {}) {
   for (const id of ['T-TU-1', 'T-TU-2']) {
     await p.ok(['route', id, '--paths', 'src/a.js', '--loc', '10']);
     await p.ok(['brief', id, '--write']);
+    await p.ok(['task', 'set', id, 'started', '--branch', 'main', '--base', git(repo, env, ['rev-parse', 'HEAD'])]);
+    await p.ok(['review', 'brief', id, '--write']);
   }
   for (const mode of ['ok', 'gate', 'stubborn']) {
     await p.ok(['providers', 'add', `fake${mode}`, '--argv', `${process.execPath} ${FAKE} ${mode} {out} {sandbox} {cwd}`, '--sandbox-map', 'reviewer=read-only,implementer=workspace-write']);
@@ -95,6 +97,8 @@ async function project(t, { envExtra = {} } = {}) {
   return p;
 }
 const startRun = (p, task, role, provider) => p.cli(['exec', '--task', task, '--role', role, '--provider', provider]);
+const reviewBrief = (p, task, round = 1) => readFileSync(join(p.state, 'tasks', task, `review-r${round}-brief.md`), 'utf8');
+const externalSection = (provider, task) => `## External run (overrides the Output section above)\nYou run as ${provider}:reviewer in a read-only sandbox: write no file. Your final message is the review JSON object alone, with "reviewer": {"kind": "external", "id": "${provider}:reviewer"}, per the schema the Output section names. The orchestrator records it from the run's out file with \`${names.bin} review record ${task} --from <out file>\`.\n`;
 
 test('a fake-provider run: starting → running → done with tokens and lastLine; the out file exists; the record per §8.5', async (t) => {
   const p = await project(t);
@@ -123,7 +127,16 @@ test('a fake-provider run: starting → running → done with tokens and lastLin
   assert.equal(statSync(dirname(rec.outFile)).mode & 0o777, 0o700, 'the out dir is private');
   // The brief went to the provider on stdin, and the lease env with it.
   const prompt = readFileSync(`${rec.outFile}.prompt`, 'utf8');
-  assert.ok(prompt.includes(readFileSync(join(p.state, 'tasks', 'T-TU-1', 'brief.md'), 'utf8')), 'the brief is the prompt');
+  const review = reviewBrief(p, 'T-TU-1');
+  assert.ok(prompt.startsWith(review), 'the saved review brief starts the prompt');
+  assert.ok(prompt.endsWith(externalSection('fakeok', 'T-TU-1')), 'the external output instruction ends the prompt');
+  const taskBrief = readFileSync(join(p.state, 'tasks', 'T-TU-1', 'brief.md'), 'utf8');
+  const taskOnlyLine = taskBrief.split('\n').find((line) => line.trim() && !review.includes(line));
+  assert.ok(taskOnlyLine, 'the task brief has a distinctive line absent from the review brief');
+  assert.ok(!prompt.includes(taskOnlyLine), `task-only line must not be fed: ${taskOnlyLine}`);
+  const pinned = join(dirname(rec.outFile), 'brief.md');
+  assert.equal(readFileSync(pinned, 'utf8'), prompt);
+  assert.equal(statSync(pinned).mode & 0o777, 0o600, 'the pinned brief is private');
   const args = JSON.parse(readFileSync(`${rec.outFile}.args`, 'utf8'));
   assert.equal(args.sandbox, 'read-only');
   assert.equal(args.env[`${names.envPrefix}SLOT`], 'external-1');
@@ -178,7 +191,7 @@ test('exec refuses an unknown task, a task without a brief and a live run of the
   await codes(['--task', 'T-TU-1', '--role', 'boss', '--provider', 'fakeok'], 2, 'invalid-value');
   await codes(['--task', 'T-TU-1', '--role', 'reviewer', '--provider', 'nosuch'], 2, 'provider-unknown');
   await p.ok(['task', 'new', 'No brief']);
-  await codes(['--task', 'T-TU-3', '--role', 'reviewer', '--provider', 'fakeok'], 1, 'brief-missing');
+  await codes(['--task', 'T-TU-3', '--role', 'reviewer', '--provider', 'fakeok'], 1, 'review-brief-missing');
   const live = (await startRun(p, 'T-TU-1', 'reviewer', 'fakegate')).e.data.runId;
   await p.until('the live run to run', () => p.record(live).status === 'running');
   await codes(['--task', 'T-TU-1', '--role', 'reviewer', '--provider', 'fakeok'], 1, 'run-live');
@@ -192,8 +205,9 @@ async function tampered(t, change) {
   const p = await project(t);
   const base = p.record((await (async () => { const id = (await startRun(p, 'T-TU-1', 'reviewer', 'fakeok')).e.data.runId; await p.ended(id); return { id }; })()).id);
   const outDir = mkdtempSync(join(tmpdir(), `${names.bin}-run-`));
+  writeFileSync(join(outDir, 'brief.md'), readFileSync(`${base.outFile}.prompt`), { mode: 0o600 });
   const runId = 'fakeok-T-TU-2-reviewer-1';
-  const rec = { ...base, runId, task: 'T-TU-2', status: 'starting', pid: null, endedAt: null, error: null, outFile: join(outDir, 'out.json'), ...change(p) };
+  const rec = { ...base, runId, task: 'T-TU-2', status: 'starting', pid: null, endedAt: null, error: null, outFile: join(outDir, 'out.json'), ...change(p, outDir) };
   writeFileSync(join(p.runsDir, `${runId}.json`), `${JSON.stringify(rec)}\n`);
   const r = await p.cli(['run-supervise', runId]);
   return { p, r, rec: p.record(runId), outFile: rec.outFile };
@@ -218,4 +232,100 @@ test('run-supervise: an out file outside the run temp directory ends failed run-
   assert.equal(rec.status, 'failed', show(r));
   assert.equal(rec.error, 'run-tampered');
   assert.equal(readFileSync(join(rec.cwd, 'a.txt'), 'utf8'), 'a\n');
+});
+
+test('reviewer prompt starts with the latest review brief and ends with the external JSON instruction', async (t) => {
+  const p = await project(t);
+  await p.ok(['review', 'brief', 'T-TU-1', '--round', '2', '--write']);
+  const review = reviewBrief(p, 'T-TU-1', 2);
+  const taskBrief = readFileSync(join(p.state, 'tasks', 'T-TU-1', 'brief.md'), 'utf8');
+  const taskOnlyLine = taskBrief.split('\n').find((line) => line.trim() && !review.includes(line));
+  assert.ok(taskOnlyLine);
+  const r = await p.ok(['exec', '--task', 'T-TU-1', '--role', 'reviewer', '--provider', 'fakeok']);
+  const rec = await p.ended(r.e.data.runId);
+  assert.equal(rec.status, 'done');
+  const prompt = readFileSync(`${rec.outFile}.prompt`, 'utf8');
+  assert.ok(prompt.startsWith(review), 'the latest review brief starts the prompt');
+  assert.ok(prompt.endsWith(externalSection('fakeok', 'T-TU-1')));
+  assert.ok(!prompt.includes(taskOnlyLine), `task-only line must not be fed: ${taskOnlyLine}`);
+  assert.equal(readFileSync(join(dirname(rec.outFile), 'brief.md'), 'utf8'), prompt);
+  assert.equal(statSync(join(dirname(rec.outFile), 'brief.md')).mode & 0o777, 0o600);
+});
+
+test('reviewer exec selects an explicit review round or the highest stored round and validates --round', async (t) => {
+  const p = await project(t);
+  await p.ok(['review', 'brief', 'T-TU-1', '--round', '2', '--write']);
+  for (const [flags, round] of [[['--round', '1'], 1], [[], 2]]) {
+    const r = await p.ok(['exec', '--task', 'T-TU-1', '--role', 'reviewer', '--provider', 'fakeok', ...flags]);
+    const rec = await p.ended(r.e.data.runId);
+    assert.equal(rec.status, 'done');
+    assert.equal(readFileSync(`${rec.outFile}.prompt`, 'utf8'), `${reviewBrief(p, 'T-TU-1', round)}\n${externalSection('fakeok', 'T-TU-1')}`);
+  }
+  for (const round of ['0', '-1', '1000', '1.5', 'abc']) {
+    const r = await p.cli(['exec', '--task', 'T-TU-1', '--role', 'reviewer', '--provider', 'fakeok', '--round', round]);
+    assert.equal(r.code, 2, show(r));
+    assert.equal(r.e.errors[0].code, 'invalid-value');
+  }
+  const missing = await p.cli(['exec', '--task', 'T-TU-1', '--role', 'reviewer', '--provider', 'fakeok', '--round', '3']);
+  assert.equal(missing.code, 1, show(missing));
+  assert.equal(missing.e.errors[0].code, 'review-brief-missing');
+});
+
+test('a task brief alone does not satisfy reviewer exec', async (t) => {
+  const p = await project(t);
+  await p.ok(['task', 'new', 'Task brief only']);
+  await p.ok(['route', 'T-TU-3', '--paths', 'src/a.js', '--loc', '10']);
+  await p.ok(['brief', 'T-TU-3', '--write']);
+  const r = await startRun(p, 'T-TU-3', 'reviewer', 'fakeok');
+  assert.equal(r.code, 1, show(r));
+  assert.equal(r.e.errors[0].code, 'review-brief-missing');
+  assert.equal(r.e.errors[0].hint, `${names.bin} review brief T-TU-3 --write`);
+});
+
+test('a queued reviewer keeps the review brief pinned at exec after the stored brief is rewritten', async (t) => {
+  const p = await project(t);
+  sched.calibrate({ names, env: p.env, max: { external: 1 } });
+  const first = (await p.ok(['exec', '--task', 'T-TU-1', '--role', 'reviewer', '--provider', 'fakegate'])).e.data.runId;
+  await p.until('the first run to run', () => p.record(first).status === 'running');
+  const before = reviewBrief(p, 'T-TU-2');
+  const second = (await p.ok(['exec', '--task', 'T-TU-2', '--role', 'reviewer', '--provider', 'fakeok'])).e.data.runId;
+  await p.until('the second run to queue', () => p.record(second).status === 'queued');
+  await p.ok(['review', 'brief', 'T-TU-2', '--write', '--force', '--security']);
+  assert.notEqual(reviewBrief(p, 'T-TU-2'), before, 'the stored review brief really changed');
+  writeFileSync(`${p.record(first).outFile}.go`, '');
+  assert.equal((await p.ended(first)).status, 'done');
+  const rec = await p.ended(second);
+  assert.equal(rec.status, 'done');
+  assert.equal(readFileSync(`${rec.outFile}.prompt`, 'utf8'), `${before}\n${externalSection('fakeok', 'T-TU-2')}`);
+});
+
+for (const kind of ['symlink', 'missing', 'directory']) {
+  test(`run-supervise refuses a ${kind} pinned brief as run-tampered`, async (t) => {
+    const { r, rec, outFile } = await tampered(t, (p, outDir) => {
+      const file = join(outDir, 'brief.md');
+      unlinkSync(file);
+      if (kind === 'symlink') symlinkSync(join(p.repo, 'a.txt'), file);
+      if (kind === 'directory') mkdirSync(file);
+      return {};
+    });
+    assert.equal(r.code, 1, show(r));
+    assert.equal(rec.status, 'failed');
+    assert.equal(rec.error, 'run-tampered');
+    assert.equal(existsSync(`${outFile}.args`), false, 'no provider was started');
+  });
+}
+
+test('reviewer exec passes the review schema to the Codex adapter argv', async (t) => {
+  const p = await project(t);
+  const binDir = join(p.base, 'bin');
+  mkdirSync(binDir);
+  writeFileSync(join(binDir, 'codex'), `#!${process.execPath}\nprocess.argv.splice(2, 0, 'codex');\nimport(${JSON.stringify(pathToFileURL(FAKE).href)});\n`, { mode: 0o700 });
+  p.env.PATH = `${binDir}:${p.env.PATH}`;
+  const r = await p.ok(['exec', '--task', 'T-TU-1', '--role', 'reviewer', '--provider', 'codex']);
+  const rec = await p.ended(r.e.data.runId);
+  assert.equal(rec.status, 'done');
+  const args = JSON.parse(readFileSync(`${rec.outFile}.args`, 'utf8'));
+  assert.equal(args.schemaFile, join(pluginDir, 'templates', 'review.schema.json'));
+  assert.equal(args.sandbox, 'read-only');
+  assert.ok(readFileSync(`${rec.outFile}.prompt`, 'utf8').endsWith(externalSection('codex', 'T-TU-1')));
 });
