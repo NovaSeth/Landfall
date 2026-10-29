@@ -58,6 +58,8 @@ async function active(t) {
   const created = await r.run(['task', 'new', 'Cart checkout']);
   assert.equal(created.code, 0, show(created));
   assert.equal(created.out.data.id, 'T-TU-1');
+  // task start refuses while the in-repo state is uncommitted (T-MG-95): the first run commits it
+  assert.equal((await r.run(['commit'])).code, 0);
   return r;
 }
 

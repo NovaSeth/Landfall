@@ -13,6 +13,8 @@
 //   verify-stale         the code changed since the verified commit
 // Done is an event { at, by, event: done, data: { head } } and status done. A done task stays done (exit 0,
 // nothing written); a cancelled one is closed (exit 1).
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import { authorHandle } from '../decisions/index.mjs';
 import { closeFindings, findingsForTask } from '../findings/index.mjs';
 import { emptyProfile } from '../profile/index.mjs';
@@ -44,10 +46,19 @@ function closingConditions({ store, task, id, where, env, names }) {
   return v;
 }
 
+// Run in the main checkout, the task's code is in the worktree `task start` recorded, not at the checkout's HEAD.
+function taskWhere(where, store, id) {
+  if (where.worktree !== where.repo) return where;
+  const recorded = [...(store.read('task', id)?.events ?? [])].reverse().find((e) => e.event === 'started')?.data?.worktree;
+  if (typeof recorded !== 'string' || !existsSync(join(recorded, '.git'))) return where;
+  return { ...where, worktree: recorded };
+}
+
 export function markDone({ cwd, env, names, id, at = new Date().toISOString() }) {
-  const where = activeWhere({ cwd, env, names });
+  const main = activeWhere({ cwd, env, names });
   KINDS.task.path(id);
-  const store = storeOf(where, names);
+  const store = storeOf(main, names);
+  const where = taskWhere(main, store, id);
   const handle = authorHandle({ store, where, names, env });
   let changed = false;
   let head = null;
