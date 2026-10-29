@@ -102,7 +102,7 @@ test('the pane says, from general to detail, the project, the tasks with their s
   expect((await ui.find({ type: 'Text', text: /^petla/ }))?.text).toBe('petla · L0 (shadow) · loop done after 7 ticks')
   expect((await ui.find({ type: 'Text', text: /open · / }))?.text).toBe('2 open · 1 active · 0 planned · 1 new · 1 done')
   // the task being worked on first (an agent and a run name it), with its round, class and stage; the waiting one next; the closed one not at all
-  expect((await ui.find({ type: 'Text', text: /T-TU-1 r1/ }))?.text).toBe('▶ T-TU-1 r1 crit  working · review r2 approved')
+  expect((await ui.find({ type: 'Text', text: /T-TU-1 r1/ }))?.text).toBe('▶ T-TU-1 r1 crit Login  working · review r2 approved')
   expect(await ui.find({ type: 'Text', text: /T-TU-2/ })).toBeUndefined() // an unrouted new task is folded into the backlog line (T-MG-85)
   expect((await ui.find({ type: 'Text', text: /in backlog/ }))?.text).toBe('⏸ 1 in backlog (landfall task list)')
   expect(await ui.find({ type: 'Text', text: /T-TU-3/ })).toBeUndefined()
@@ -129,7 +129,7 @@ test('a spawned agent is a row with the task, round and output file of its promp
   await w.clock.advance(1_000)
   // the engine's list does not carry the new agent yet: a fresh spawn stays a running row
   let ui = await $.ui.mount(PANE)
-  expect((await ui.find({ type: 'Text', text: /T-TU-9/ }))?.text).toBe('● reviewer     T-TU-9   r2  00:00  running  → T-TU-9-review-r2.json')
+  expect((await ui.find({ type: 'Text', text: /T-TU-9/ }))?.text).toBe('● reviewer     T-TU-9   r2  00:01  running  → T-TU-9-review-r2.json')
   await ui.unmount()
   // listed by the engine while it runs; its turn end closes the row even before the list drops it
   w.agents.push({ id: 'a2', description: 'Re-review T-TU-9', type: 'landfall:reviewer', status: 'running' })
@@ -171,8 +171,8 @@ test('a task with status new and a live agent naming it counts as working, liste
   await $.session.start(SESSION)
   await w.clock.settle()
   const ui = await $.ui.mount(PANE)
-  expect((await ui.find({ type: 'Text', text: /T-TU-2/ }))?.text).toBe('▶ T-TU-2 -  working · new, not routed')
-  expect((await ui.find({ type: 'Text', text: /T-TU-4/ }))?.text).toBe('⏸ T-TU-4 std  waiting · planned')
+  expect((await ui.find({ type: 'Text', text: /T-TU-2/ }))?.text).toBe('▶ T-TU-2 - Docs  working · new, not routed')
+  expect((await ui.find({ type: 'Text', text: /T-TU-4/ }))?.text).toBe('■ T-TU-4 std Later  waiting · planned')
   await ui.unmount()
 })
 
@@ -195,7 +195,7 @@ test('a spawned agent takes its task from the description even when its prompt n
   await $.agent.spawn({ description: 'T-MG-59 slice A: method rules', prompt: 'Compare T-MG-1, T-MG-2 and T-MG-56.', subagentType: 'landfall:reviewer' })
   await w.clock.advance(1_000)
   const ui = await $.ui.mount(PANE)
-  expect((await ui.find({ type: 'Text', text: /^● reviewer/ }))?.text).toMatch(/^● reviewer\s+T-MG-59\s+00:00\s+running$/)
+  expect((await ui.find({ type: 'Text', text: /^● reviewer/ }))?.text).toMatch(/^● reviewer\s+T-MG-59\s+00:01\s+running$/)
   await ui.unmount()
 })
 
@@ -208,7 +208,7 @@ test('a spawned audit agent has no task when only its prompt names multiple dist
   await $.agent.spawn({ description: 'Audit stale task records', prompt: 'Audit T-MG-1, T-MG-2 and T-MG-56.', subagentType: 'landfall:reviewer' })
   await w.clock.advance(1_000)
   const ui = await $.ui.mount(PANE)
-  expect((await ui.find({ type: 'Text', text: /^● reviewer/ }))?.text).toMatch(/^● reviewer\s+-\s+00:00\s+running$/)
+  expect((await ui.find({ type: 'Text', text: /^● reviewer/ }))?.text).toMatch(/^● reviewer\s+-\s+00:01\s+running$/)
   await ui.unmount()
 })
 
@@ -221,7 +221,7 @@ test('a spawned agent takes the sole distinct task from its prompt even when it 
   await $.agent.spawn({ description: 'Review', prompt: 'Review T-MG-7 and report the result for T-MG-7.', subagentType: 'landfall:reviewer' })
   await w.clock.advance(1_000)
   const ui = await $.ui.mount(PANE)
-  expect((await ui.find({ type: 'Text', text: /^● reviewer/ }))?.text).toMatch(/^● reviewer\s+T-MG-7\s+00:00\s+running$/)
+  expect((await ui.find({ type: 'Text', text: /^● reviewer/ }))?.text).toMatch(/^● reviewer\s+T-MG-7\s+00:01\s+running$/)
   await ui.unmount()
 })
 
@@ -329,7 +329,7 @@ test('a CLI that does not answer leaves the last rows standing with the error on
   await w.clock.advance(15_000)
   const ui = await $.ui.mount(PANE)
   expect((await ui.find({ type: 'Text', text: /did not answer/ }))?.text).toBe('! landfall status did not answer: the rows are from the last answer')
-  expect((await ui.find({ type: 'Text', text: /T-TU-1 r1/ }))?.text).toBe('▶ T-TU-1 r1 crit  working · review r2 approved')
+  expect((await ui.find({ type: 'Text', text: /T-TU-1 r1/ }))?.text).toBe('▶ T-TU-1 r1 crit Login  working · review r2 approved')
   await ui.unmount()
   w.cli.fails = false
   await w.clock.advance(15_000)
@@ -355,7 +355,7 @@ test('unrouted new tasks fold into one backlog line; routed, blocked and held ta
   await $.session.start(SESSION)
   await w.clock.settle()
   const ui = await $.ui.mount(PANE)
-  expect((await ui.find({ type: 'Text', text: /T-TU-30/ }))?.text).toBe('⏸ T-TU-30 std  waiting · planned')
+  expect((await ui.find({ type: 'Text', text: /T-TU-30/ }))?.text).toBe('■ T-TU-30 std t30  waiting · planned')
   expect(await ui.find({ type: 'Text', text: /T-TU-31/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /T-TU-1[0-8]/ })).toBeUndefined()
   expect((await ui.find({ type: 'Text', text: /in backlog/ }))?.text).toBe('⏸ 9 in backlog (landfall task list)')
@@ -370,5 +370,245 @@ test('with no unrouted new task there is no backlog line', async ($, on) => {
   await w.clock.settle()
   const ui = await $.ui.mount(PANE)
   expect(await ui.find({ type: 'Text', text: /in backlog/ })).toBeUndefined()
+  await ui.unmount()
+})
+
+// ---- T-MG-103: description, progress bar, state icon, live clocks, time-limit colours ---------------------------------
+
+const FUTURE = '2099-01-01T00:00:00.000Z'
+const NOW = Date.parse('2026-10-22T10:05:00.000Z')
+const withTask = (o: object, extra: object[] = []) => {
+  const tasks = [{ id: 'T-TU-7', kind: 'task', title: 'Pane rows', status: 'planned', class: 'standard', owner: 'TU', lane: null, round: 0, ...o }, ...extra]
+  const steps = tasks.map((t: any) => ({ task: t.id, state: 'planned', step: '', rules: [], kind: 'info' }))
+  return { ...STATUS, data: { ...STATUS.data, tasks, steps, leases: [] } }
+}
+const quiet = { ...RUNS, data: { runs: [] } }
+const channels = (hex: string | undefined) => [1, 3, 5].map(i => parseInt((hex ?? '#000000').slice(i, i + 2), 16))
+
+test('a working task shows a play icon whose style alternates between two refreshes', async ($, on) => {
+  const w = world(on)
+  await $.session.start(SESSION)
+  await w.clock.settle()
+  const styleOf = async () => {
+    const ui = await $.ui.mount(PANE)
+    const t = await ui.find({ type: 'Text', text: /T-TU-1 r1/ })
+    await ui.unmount()
+    return { text: t?.text, color: t?.props?.color }
+  }
+  const a = await styleOf()
+  await w.clock.advance(1_000)
+  const b = await styleOf()
+  expect(a.text).toMatch(/^▶ /)
+  expect(b.text).toMatch(/^▶ /)
+  expect(a.color).not.toBe(b.color)
+})
+
+test('an untouched task shows a stop icon and is dim; a touched idle one shows a pause', async ($, on) => {
+  const other = { id: 'T-TU-8', kind: 'task', title: 'Seen', status: 'planned', class: 'standard', owner: 'TU', lane: null, round: 0, lastEventAt: FUTURE }
+  const w = world(on, { status: withTask({}, [other]), runs: quiet })
+  w.agents.length = 0
+  await $.session.start(SESSION)
+  await w.clock.settle()
+  const ui = await $.ui.mount(PANE)
+  const stopped = await ui.find({ type: 'Text', text: /T-TU-7/ })
+  expect(stopped?.text).toMatch(/^■ T-TU-7 std Pane rows/)
+  expect(stopped?.props?.dimColor).toBe(true)
+  const paused = await ui.find({ type: 'Text', text: /T-TU-8/ })
+  expect(paused?.text).toMatch(/^⏸ T-TU-8 std Seen/)
+  expect(paused?.props?.dimColor).not.toBe(true)
+  await ui.unmount()
+})
+
+test('the bar is half full at half of the expected time and shows the spent and expected minutes and the finish', async ($, on) => {
+  const startedAt = new Date(NOW - 22.5 * 60_000).toISOString()
+  const w = world(on, { status: withTask({ startedAt, expectedMs: 45 * 60_000, expectedFrom: 'history', lastEventAt: FUTURE }), runs: quiet })
+  w.agents.length = 0
+  await $.session.start(SESSION)
+  await w.clock.settle()
+  const ui = await $.ui.mount(PANE)
+  const text = (await ui.find({ type: 'Text', text: /T-TU-7/ }))?.text ?? ''
+  expect(text).toContain('[■■■■■□□□□□] 22m/45m')
+  expect(text).toMatch(/ ~\d\d:\d\d/)
+  await ui.unmount()
+})
+
+test('a task past its expected time shows how long it is over', async ($, on) => {
+  const startedAt = new Date(NOW - 65 * 60_000).toISOString()
+  const w = world(on, { status: withTask({ startedAt, expectedMs: 30 * 60_000, expectedFrom: 'default', lastEventAt: FUTURE }), runs: quiet })
+  w.agents.length = 0
+  await $.session.start(SESSION)
+  await w.clock.settle()
+  const ui = await $.ui.mount(PANE)
+  const text = (await ui.find({ type: 'Text', text: /T-TU-7/ }))?.text ?? ''
+  expect(text).toContain('[■■■■■■■■■■] 1h05m/30m')
+  expect(text).toContain('+35m over')
+  await ui.unmount()
+})
+
+test('a narrow pane shortens the title with an ellipsis and keeps the row on one line', async ($, on) => {
+  const title = 'A very long description that cannot fit into a narrow pane'
+  const w = world(on, { status: withTask({ title }), runs: quiet })
+  w.agents.length = 0
+  await $.session.start(SESSION)
+  await w.clock.settle()
+  const ui = await $.ui.mount({ ...PANE, props: { ...PANE.props, bodyColumns: 40 } })
+  const text = (await ui.find({ type: 'Text', text: /T-TU-7/ }))?.text ?? ''
+  expect(text).toContain('…')
+  expect([...text].length).toBeLessThanOrEqual(40)
+  await ui.unmount()
+})
+
+test('a task without the new fields still renders', async ($, on) => {
+  const w = world(on, { status: withTask({}), runs: quiet })
+  w.agents.length = 0
+  await $.session.start(SESSION)
+  await w.clock.settle()
+  const ui = await $.ui.mount(PANE)
+  const text = (await ui.find({ type: 'Text', text: /T-TU-7/ }))?.text ?? ''
+  expect(text).toBe('■ T-TU-7 std Pane rows  waiting · planned')
+  expect(text).not.toContain('[')
+  await ui.unmount()
+})
+
+test('two renders one second apart of the same snapshot show clocks one second apart', async ($, on) => {
+  const startedAt = new Date(NOW - 10 * 60_000 + 500).toISOString()
+  const w = world(on, { status: withTask({ startedAt, expectedMs: 20 * 60_000, lastEventAt: FUTURE }) })
+  w.agents.length = 0
+  await $.session.start(SESSION)
+  await w.clock.settle()
+  const first = await $.ui.mount(PANE)
+  const run1 = (await first.find({ type: 'Text', text: /codex reviewer/ }))?.text ?? ''
+  const bar1 = (await first.find({ type: 'Text', text: /T-TU-7/ }))?.text ?? ''
+  await first.unmount()
+  await w.clock.advance(1_000)
+  const second = await $.ui.mount(PANE)
+  const run2 = (await second.find({ type: 'Text', text: /codex reviewer/ }))?.text ?? ''
+  const bar2 = (await second.find({ type: 'Text', text: /T-TU-7/ }))?.text ?? ''
+  await second.unmount()
+  expect(run1).toContain('05:00')
+  expect(run2).toContain('05:01')
+  expect(bar1).toContain('9m/20m')
+  expect(bar2).toContain('10m/20m')
+})
+
+const agentColorAfter = async ($: any, on: any, ms: number) => {
+  const w = world(on, { runs: quiet })
+  await $.session.start(SESSION)
+  await w.clock.settle()
+  await w.clock.advance(ms)
+  const ui = await $.ui.mount(PANE)
+  const color = (await ui.find({ type: 'Text', text: /● reviewer/ }))?.props?.color as string | undefined
+  await ui.unmount()
+  return color
+}
+
+test('a working agent is blue at 10 % of its 15 minute time box', async ($, on) => {
+  const [r, , b] = channels(await agentColorAfter($, on, 90_000))
+  expect(b).toBeGreaterThan(r)
+})
+
+test('a working agent turns orange-ish at 85 % of its time box', async ($, on) => {
+  const [r, , b] = channels(await agentColorAfter($, on, 765_000))
+  expect(r).toBeGreaterThan(b)
+})
+
+test('a working agent is red past its time box', async ($, on) => {
+  const [r, g, b] = channels(await agentColorAfter($, on, 990_000))
+  expect(r).toBeGreaterThan(200)
+  expect(g).toBeLessThan(100)
+  expect(b).toBeLessThan(100)
+})
+
+const runColor = async ($: any, on: any, capS: number) => {
+  const w = world(on, { runs: { ...RUNS, data: { runs: [{ ...RUNS.data.runs[0], elapsedMs: 300_000, capS }] } } })
+  await $.session.start(SESSION)
+  await w.clock.settle()
+  const ui = await $.ui.mount(PANE)
+  const color = (await ui.find({ type: 'Text', text: /codex reviewer/ }))?.props?.color as string | undefined
+  await ui.unmount()
+  return color
+}
+
+// 5 minutes of a 6 minute cap is 83 %: orange-ish; of a 1 hour cap it is 8 %: blue (the 15 minute agent box would say blue for both)
+test('an external run with a short capS turns orange-ish by its own cap', async ($, on) => {
+  const [r, , b] = channels(await runColor($, on, 360))
+  expect(r).toBeGreaterThan(b)
+})
+
+test('an external run with a long capS stays blue', async ($, on) => {
+  const [r, , b] = channels(await runColor($, on, 3600))
+  expect(b).toBeGreaterThan(r)
+})
+
+// ---- T-MG-103 fix round 1 -------------------------------------------------------------------------------------------
+
+test('a long title is shortened before the bar and the clock are dropped', async ($, on) => {
+  const startedAt = new Date(NOW - 22.5 * 60_000).toISOString()
+  const title = 'A long description of the work that runs on and on without any sign of stopping, '.repeat(2).slice(0, 100)
+  const w = world(on, { status: withTask({ title, startedAt, expectedMs: 45 * 60_000, lastEventAt: FUTURE }), runs: quiet })
+  w.agents.length = 0
+  await $.session.start(SESSION)
+  await w.clock.settle()
+  const ui = await $.ui.mount(PANE)
+  const text = (await ui.find({ type: 'Text', text: /T-TU-7/ }))?.text ?? ''
+  expect(text).toContain('[■■■■■□□□□□] 22m/45m')
+  expect(text.endsWith('…')).toBe(true)
+  expect([...text].length).toBeLessThanOrEqual(96)
+  await ui.unmount()
+})
+
+test('an active status without a live agent or run is a pause, not a play', async ($, on) => {
+  const w = world(on, { status: withTask({ status: 'implemented', lastEventAt: FUTURE }), runs: quiet })
+  w.agents.length = 0
+  await $.session.start(SESSION)
+  await w.clock.settle()
+  const ui = await $.ui.mount(PANE)
+  const text = (await ui.find({ type: 'Text', text: /T-TU-7/ }))?.text ?? ''
+  expect(text).toMatch(/^⏸ T-TU-7/)
+  await ui.unmount()
+})
+
+test('a run that stopped before this session began does not touch its task', async ($, on) => {
+  const old = { ...RUNS.data.runs[1], task: 'T-TU-7', endedAt: '2020-01-02T00:00:00.000Z' }
+  const w = world(on, { status: withTask({ lastEventAt: '2020-01-01T00:00:00.000Z' }), runs: { ...RUNS, data: { runs: [old] } } })
+  w.agents.length = 0
+  await $.session.start(SESSION)
+  await w.clock.settle()
+  const ui = await $.ui.mount(PANE)
+  const t = await ui.find({ type: 'Text', text: /T-TU-7/ })
+  expect(t?.text).toMatch(/^■ T-TU-7/)
+  expect(t?.props?.dimColor).toBe(true)
+  await ui.unmount()
+})
+
+test('a task a run touched this session stays touched after newer runs push that run off the bounded list (review r2 F3)', async ($, on) => {
+  const touching = { ...RUNS.data.runs[1], runId: 'r-touch', task: 'T-TU-7', endedAt: '2099-01-01T00:00:00.000Z' }
+  const runs = { ...RUNS, data: { runs: [touching] as unknown[] } }
+  const w = world(on, { status: withTask({ lastEventAt: '2020-01-01T00:00:00.000Z' }), runs })
+  w.agents.length = 0
+  await $.session.start(SESSION)
+  await w.clock.settle()
+  runs.data.runs = Array.from({ length: 30 }, (_, k) => ({ ...RUNS.data.runs[1], runId: `r-new-${k}`, task: 'T-TU-9' }))
+  await w.clock.advance(60_000)
+  await w.clock.settle()
+  const ui = await $.ui.mount(PANE)
+  const t = await ui.find({ type: 'Text', text: /T-TU-7/ })
+  expect(t?.text).toMatch(/^⏸ T-TU-7/)
+  await ui.unmount()
+})
+
+test('a live run clock never moves backwards after a failed refresh', async ($, on) => {
+  const w = world(on, { runs: { ...RUNS, data: { runs: [{ ...RUNS.data.runs[0], elapsedMs: 300_000 }] } } })
+  w.agents.length = 0
+  await $.session.start(SESSION)
+  await w.clock.settle()
+  w.cli.fails = true
+  await w.clock.advance(15_000)
+  let ui = await $.ui.mount(PANE)
+  expect((await ui.find({ type: 'Text', text: /codex reviewer/ }))?.text).toContain('05:15')
+  await ui.unmount()
+  await w.clock.advance(15_000)
+  ui = await $.ui.mount(PANE)
+  expect((await ui.find({ type: 'Text', text: /codex reviewer/ }))?.text).toContain('05:30')
   await ui.unmount()
 })

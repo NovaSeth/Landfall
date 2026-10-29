@@ -5,7 +5,7 @@
   </picture>
 </p>
 
-# Landfall (2.5.0)
+# Landfall (2.5.1)
 
 Landfall is a Claude Code plugin that turns one session into a small engineering team and accepts its work only when code has checked the outcome. The session sizes the task, writes a brief and hands the work to a fresh implementer in its own worktree (a Claude agent, or an external CLI such as Codex, which can also review). Every run gets a row in the agent panel. Each role runs on the cheapest model that can do it, the result is reviewed, and the task closes only after `landfall verify` has re-run the project's gates on the code. A trivial change skips all of this. Every task leaves a receipt of what it cost. Landfall was formerly called `caw`.
 
@@ -88,6 +88,12 @@ Claude  Noted. I've opened a task for the export.
 - **Dashboard.** In a wide fullscreen terminal, `/landfall:dashboard` opens the `Landfall` pane beside the transcript. From the overview down to the detail, it shows the project and its loop, how many tasks are open and at which stage, the agents at work (Claude subagents and external runs) with role, task, round, elapsed time and where each result landed, the slots in use and the next step. A narrower terminal gets one line in the status bar. The pane reads the plugin's own `status --json`, never the model's context.
 - **Model tiers and cost.** The implementer and the reviewer run on Sonnet, the external wrapper on Haiku and the designer on Opus; the orchestrating session plans, dispatches and merges but never implements. Method rules load by ID on demand, so the always-on context is about 550 tokens, and trivial work calls nothing. `landfall receipt` shows tokens and cost per task, loop, class or executor, and unattended loops have a dollar cap.
 - **Footprint.** Landfall is installed once per user. A project gets one `.landfall/` directory only when real work starts there and you agree.
+
+## What's new in 2.5.1
+
+- Dashboard task rows show a short description, a progress bar of the time spent against the expected time with the expected finish, and an icon: a pulsing ▶ while an agent works on the task, ⏸ when nobody does, and a grey ■ when nobody has picked it up this session.
+- Clocks in the pane count live every second. A working agent's row turns from blue to orange as it nears its time limit and red past it.
+- `landfall status --json` gives each task `startedAt`, `lastEventAt` and `expectedMs`.
 
 ## What's new in 2.5.0
 

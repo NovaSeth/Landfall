@@ -1,5 +1,24 @@
 # Changelog
 
+## 2.5.1
+
+- **Dashboard task rows:**
+  - Each open task shows a short description after its ID.
+  - A started task shows a progress bar of the time spent against the expected time, with the expected finish or the time over.
+  - Icons show who is on it: a gently pulsing ▶ while an agent or run works on the task, ⏸ when nobody works on it now, and a grey ■ when nobody has picked it up this session.
+- **Dashboard clocks and colours:**
+  - Every clock in the pane counts live, redrawn each second.
+  - A working agent's row is blue, turns orange as it nears its time limit (from 60 %), and is red past it. The limit is a run's cap, or 15 minutes for a Claude agent.
+- **`status --json`:** each task gives `startedAt`, `lastEventAt` and `expectedMs`. The expected time is the median of the done tasks of the same class when there are three or more, else a class default; `expectedFrom` says which.
+- **CI:**
+  - The budget judge test passes its limit explicitly, so CI's `PERF_P95_MS` no longer fails it.
+  - The heavy-lease tests match the lease entry itself, not a temp path that happens to contain its name.
+  - The example test runs on Node 18.
+- **Docs:**
+  - A new geometric logo, and the version beside the README title.
+  - The demo is a conversation, and README and docs are rewritten short and plain.
+  - The README describes the OWASP security review and the evidence-gated learning, and compares them with other tools.
+
 ## 2.5.0
 
 The backlog is closed: every open task of the plan is built, and the part of the 2.4.0 security audit that 2.4.1 missed (external runs) is fixed. Each change has a test that failed first.
