@@ -19,7 +19,7 @@
 - External executors: `landfall exec --role implementer` is refused in this release (reviewer runs only, read-only sandbox in the task worktree); the implementer role with its own worktree follows.
 - Rename detection reads JS and TS sources only; a Python, Go or Rust test that changes its title is still a removal and needs a decision. Titles built at run time, tests declared in loops and template literals with nested braces are not read.
 - Profile scan: `llm` is read from dependency manifests by a section-aware reader, not a TOML parser; a malformed pyproject.toml may still yield the fact, and multi-line inline tables or arrays inside inline tables are not read. Override with `landfall profile set llm true|false`.
-- Scheduler admission hooks run in shadow mode: a would-be denial is logged to `local/shadow.jsonl`, agent spawns are not refused yet.
+- Scheduler admission is available in on mode (a full agent table denies a spawn and names `landfall slots`). The default stays shadow, where a would-be denial is logged to `local/shadow.jsonl` and spawns are not refused, until the 50-spawn false-deny check.
 - Run records are command-owned and the supervisor derives sandbox and cwd from the role; a deliberate rewrite of a record between that check and the spawn is not defended (R90).
 - Bash guard: a seat belt, not a security boundary.
   - `mv <dir> …` and `rsync --delete` are not modelled as removals; a state path hidden in `--pathspec-from-file`, created through a link on the same line, or built only from variables is not detected. With the shell's working directory inside the state directory, every non-read command is blocked.
