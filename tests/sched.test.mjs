@@ -774,7 +774,7 @@ test('admitAgent: only the implementer is admitted; shadow allows a busy machine
   writeState({ admission: 'on' });
   const denied = sched.admitAgent(input(2), { names, env: s.env, readings: busy });
   assert.equal(denied.action, 'deny');
-  assert.match(denied.message, new RegExp(`^machine busy: load 30\\.0 ≥ 17\\.0; run \`${names.bin} tick\` later$`));
+  assert.match(denied.message, new RegExp(`^machine busy: load 30\\.0 ≥ 17\\.0; run \`${names.bin} slots\` to see them$`));
   writeState({ admission: 'off' });
   assert.equal(sched.admitAgent(input(3), { names, env: s.env, readings: busy }).action, 'pass');
   rmSync(join(repo, names.stateDir), { recursive: true });
