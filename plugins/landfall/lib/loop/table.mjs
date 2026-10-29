@@ -174,8 +174,9 @@ const roleOf = (r) => r.role ?? /-(reviewer|implementer)-\d+$/.exec(r.runId ?? '
 const capOf = (r) => (Number.isInteger(r.capS) && r.capS >= 1 ? r.capS : CAP_S[roleOf(r)] ?? Math.max(...Object.values(CAP_S)));
 function isLive(r, now, alive) {
   if (!LIVE.has(r.status)) return false;
-  const since = Date.parse(r.startedAt ?? r.queuedAt ?? '');
-  if (Number.isFinite(since) && now - since >= (capOf(r) + LIVE_GRACE_S) * 1000) return false;
+  const since = [r.startedAt, r.queuedAt].map((x) => Date.parse(x ?? '')).find(Number.isFinite);
+  if (since === undefined) return false; // no valid start or queue time: no deadline, so unusable metadata, not a live run
+  if (now - since >= (capOf(r) + LIVE_GRACE_S) * 1000) return false;
   return alive(r);
 }
 
