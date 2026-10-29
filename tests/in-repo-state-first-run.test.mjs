@@ -48,7 +48,7 @@ async function fresh(t) {
   return r;
 }
 
-test('task start refuses with exit 7 while the in-repo state is uncommitted, and works after commit', async (t) => {
+test('task start refuses with exit 7 while the in-repo state was never committed, and works after one commit', async (t) => {
   const r = await fresh(t);
   const res = await r.run(['task', 'start', 'T-TU-1']);
   assert.equal(res.code, 7, show(res));
@@ -57,4 +57,14 @@ test('task start refuses with exit 7 while the in-repo state is uncommitted, and
   assert.equal(existsSync(join(r.base, 'repo-wt')), false);
   assert.equal((await r.run(['commit'])).code, 0);
   assert.equal((await r.run(['task', 'start', 'T-TU-1'])).code, 0);
+});
+
+test('after one state commit, two task starts in a row succeed without another commit', async (t) => {
+  const r = await fresh(t);
+  assert.equal((await r.run(['task', 'new', 'Second'])).code, 0);
+  assert.equal((await r.run(['commit'])).code, 0);
+  const one = await r.run(['task', 'start', 'T-TU-1']);
+  assert.equal(one.code, 0, show(one));
+  const two = await r.run(['task', 'start', 'T-TU-2']);
+  assert.equal(two.code, 0, show(two));
 });

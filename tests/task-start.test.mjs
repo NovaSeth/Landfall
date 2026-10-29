@@ -104,7 +104,6 @@ test('the brief carries the base and the branch after task start', async (t) => 
 test('a second start is refused: worktree-exists, then branch-exists; the task is unchanged', async (t) => {
   const r = await active(t);
   assert.equal((await r.run(['task', 'start', 'T-TU-1'])).code, 0);
-  assert.equal((await r.run(['commit'])).code, 0); // the start recorded state; a second start needs it committed
   const before = r.raw('T-TU-1');
   const again = await r.run(['task', 'start', 'T-TU-1']);
   assert.equal(again.code, 1, show(again));
