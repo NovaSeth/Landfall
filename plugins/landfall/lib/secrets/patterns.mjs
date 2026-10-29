@@ -10,7 +10,7 @@
 // Key and env files are findings by name alone.
 // Project patterns: <state directory>/secrets-patterns.txt, one per line, the syntax of guard-extra.txt (a JS regular
 // expression with POSIX classes in brackets; lib/guard/extra.mjs); `#` starts a comment at the start of a line or
-// after a space. A pattern that does not compile or has a nested quantifier makes the scan invalid: refused, never
+// after a space. A pattern that does not compile or has unsafe quantifiers makes the scan invalid: refused, never
 // skipped (the scan would be weaker than the project asked for). Its error names the line and a reason, never the
 // pattern's text: a project pattern can be a literal secret.
 import { extraRegExp, nestedQuantifier } from '../guard/extra.mjs';
@@ -24,7 +24,7 @@ import { extraRegExp, nestedQuantifier } from '../guard/extra.mjs';
 export const WINDOW_SIZE = 4096;
 export const MAX_PATTERN_SPAN = 2048;
 export const WINDOW_OVERLAP = MAX_PATTERN_SPAN;
-export const PROJECT_LINE_MAX = 64 * 1024;
+export const PROJECT_LINE_MAX = 4096;
 const VALUE_LIMIT = 1024;
 const SPACE = ' \\t\\n\\v\\f\\r';
 const S = `[${SPACE}]`;
@@ -40,6 +40,7 @@ const quotedValue = (m) => {
   return value.indexOf(':/') < 0 && /[!@#%^&]/.test(value) && /:[^/"' \t\n\v\f\r$<>{}*]/.test(value);
 };
 const passwordValue = (m) => !['password', 'pass'].includes(m[1].toLowerCase());
+const npmValue = (m) => !/^x+$/i.test(m[2]);
 
 // [id, source, keyword-only, optional predicate]. No overlapping unbounded repeats.
 const BUILT_IN = [
@@ -53,7 +54,7 @@ const BUILT_IN = [
   ['private-key', '-----BEGIN (?:[A-Z]{1,64} )?PRIVATE KEY-----'],
   ['private-key', '-----BEGIN PGP PRIVATE KEY BLOCK-----'],
   ['npm-token', 'npm_[A-Za-z0-9]{36}'],
-  ['npm-token', `_(?:authToken|auth|password)=${S}{0,64}["']?[A-Za-z0-9_/+=-]{1,1024}`],
+  ['npm-token', `(?:(^${S}{0,64}_(?:auth|password))|//[A-Za-z0-9][A-Za-z0-9.:-]{0,254}/[^${SPACE}:"']{0,256}:_(?:authToken|auth|password))${S}{0,64}=${S}{0,64}["']?([A-Za-z0-9_/+=-]{8,1024})`, false, npmValue],
   ['aws-secret-key', `aws_secret_access_key${S}{0,64}=${S}{0,64}["']?[A-Za-z0-9/+=]{40}`, true],
   ['stripe-key', '[sr]k_live_[A-Za-z0-9]{24,1024}'],
   ['gitlab-token', 'glpat-[A-Za-z0-9_-]{20,1024}'],
@@ -114,9 +115,55 @@ export function projectPatterns(text) {
     let re;
     try { re = extraRegExp(line); } catch (err) { errors.push({ line: k + 1, message: reasonOf(err) }); return; }
     if (nestedQuantifier(re.source)) { errors.push({ line: k + 1, message: 'a nested quantifier such as (a+)+ can take exponential time' }); return; }
+    if (overlappingWildcards(re.source)) { errors.push({ line: k + 1, message: 'two adjacent unbounded wildcards can match the same text and take polynomial time' }); return; }
     patterns.push(Object.freeze({ id: `project:${k + 1}`, re }));
   });
   return { patterns, errors };
+}
+
+// Check repeated character atoms in sequence, including across intervening text.
+// Project input is latin1, so overlap is exactly a shared byte. Alternatives keep
+// separate histories, then merge at their closing group. This is conservative:
+// delimiters do not prove that overlapping repetitions are safe.
+function overlappingWildcards(source) {
+  let seen = new Set();
+  const groups = [];
+  for (let i = 0; i < source.length; i++) {
+    const start = i;
+    const c = source[i];
+    if (c === '(') {
+      groups.push({ before: new Set(seen), branches: new Set() });
+      if (source[i + 1] === '?') {
+        i += source[i + 2] === '<' && !'=!'.includes(source[i + 3]) ? source.indexOf('>', i) - i : 2;
+      }
+      continue;
+    }
+    if (c === '|') {
+      const group = groups[groups.length - 1];
+      if (group) for (const byte of seen) group.branches.add(byte);
+      seen = new Set(group?.before);
+      continue;
+    }
+    if (c === ')') {
+      const group = groups.pop();
+      if (group) for (const byte of group.branches) seen.add(byte);
+      continue;
+    }
+    if (c === '\\') { i++; if (!'dDsSwW'.includes(source[i])) continue; }
+    else if (c === '[') {
+      for (i++; i < source.length && source[i] !== ']'; i++) if (source[i] === '\\') i++;
+    } else if (c !== '.') continue;
+    if (!/^(?:[*+]|\{\d+,\})/.test(source.slice(i + 1))) continue;
+    const atom = new RegExp(`^(?:${source.slice(start, i + 1)})$`);
+    const bytes = [];
+    for (let byte = 0; byte < 256; byte++) {
+      if (!atom.test(String.fromCharCode(byte))) continue;
+      if (seen.has(byte)) return true;
+      bytes.push(byte);
+    }
+    for (const byte of bytes) seen.add(byte);
+  }
+  return false;
 }
 
 // Why a pattern does not compile, without its text: the engine's reason for a syntax error ("Invalid regular expression:
@@ -184,6 +231,7 @@ export function matchLine(line, extra = [], { before = '', after = '' } = {}) {
       p.re.lastIndex = 0;
       let m;
       while ((m = p.re.exec(window))) {
+        if (p.accept === npmValue && m[1] !== undefined && (offset !== 0 || before)) continue;
         if (p.id === 'openai-key' && m.index === 0 && m[1] === '' && /[A-Za-z0-9]/.test(offset ? line[offset - 1] : before)) continue;
         if (p.re.source.endsWith('(?=#|$)') && window[m.index + m[0].length] !== '#'
           && (offset + window.length < line.length || after)) continue;

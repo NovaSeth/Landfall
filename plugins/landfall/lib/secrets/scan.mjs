@@ -16,8 +16,9 @@
 // by lib/git is capped at 16 MB, and a range can hold far more (the first push of a large history). git refuses
 // --output for a combined diff, so the merges of a range are read from a captured `git log --merges --cc`: it holds
 // only what no parent had (the resolution of a conflict), and beyond the cap the scan is invalid. Every failure (git
-// missing or failing, a file or the pattern file unreadable, a pattern refused, a path that is not UTF-8) throws a
-// StateError with exit ENV: the result is invalid, never clean.
+// missing or failing, a file or the pattern file unreadable, a path that is not UTF-8) throws a
+// StateError with exit ENV. Refused patterns are returned as errors while valid patterns and built-ins still run;
+// either result is invalid, never clean.
 import { closeSync, lstatSync, mkdtempSync, openSync, readFileSync, readSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, relative, resolve as resolvePath } from 'node:path';
@@ -185,7 +186,7 @@ function readBytes(abs, shown, st, tooLarge = () => {}) {
   } finally { if (fd !== undefined) closeSync(fd); }
 }
 // Disk files are read in 1 MiB chunks, including long lines. Retain only the
-// project prefix (64 KiB), two JWT windows and marker context between chunks.
+// project prefix (4 KiB), two JWT windows and marker context between chunks.
 function scanFile(ctx, abs, path, st, { marker }) {
   let s = st;
   if (!s) {
@@ -355,7 +356,7 @@ function readPatterns(where) {
   const refuse = (why) => invalid('patterns-unreadable', `cannot read the project patterns ${shown}: ${why}`, `fix ${shown} (one pattern per line) or remove it, then scan again`);
   let st;
   try { st = lstatSync(file); } catch (err) {
-    if (err.code === 'ENOENT' || err.code === 'ENOTDIR') return [];
+    if (err.code === 'ENOENT' || err.code === 'ENOTDIR') return { patterns: [], errors: [] };
     throw refuse(err.code ?? err.message);
   }
   if (!st.isFile()) throw refuse(st.isSymbolicLink() ? 'a symbolic link' : 'not a regular file');
@@ -365,8 +366,7 @@ function readPatterns(where) {
   if (buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf) buf = buf.subarray(3); // a UTF-8 BOM
   if (buf.includes(0) || !isUtf8(buf)) throw refuse('not UTF-8 text (save it as UTF-8)');
   const { patterns, errors } = projectPatterns(buf.toString('latin1'));
-  if (errors.length) throw invalid('bad-pattern', `${shown}:${errors[0].line}: ${errors[0].message}`, 'fix that pattern (a JS regular expression with POSIX classes, as in guard-extra.txt) or remove the line');
-  return patterns;
+  return { patterns, errors: errors.map((error) => invalid('bad-pattern', `${shown}:${error.line}: ${error.message}`, 'fix that pattern (a JS regular expression with POSIX classes, as in guard-extra.txt) or remove the line')) };
 }
 
 function scanTree(ctx) {
@@ -469,7 +469,7 @@ export function scanSecrets({ cwd, env, names, mode = 'tree', revs = [], artifac
     if (err instanceof StateError || typeof err?.code !== 'string') throw err;
     throw invalid('state-unreadable', `cannot resolve the repository state (${err.code})`, 'check the machine data directory of the plugin');
   }
-  const extra = readPatterns(where);
+  const { patterns: extra, errors } = readPatterns(where);
   let tmp;
   try { tmp = mkdtempSync(join(tmpdir(), 'secrets-')); } catch (err) {
     throw invalid('temp-unavailable', `cannot create a temporary directory (${err.code ?? err.message})`, 'check TMPDIR');
@@ -491,5 +491,5 @@ export function scanSecrets({ cwd, env, names, mode = 'tree', revs = [], artifac
     rmSync(tmp, { recursive: true, force: true });
   }
   const findings = [...found.values()].sort(byPlace); // stable: one place in several commits keeps git log's order
-  return { mode, findings, incomplete: ctx.incomplete, exempted: ctx.exempted.size, skippedCount: skipped.size, skipped: [...skipped.values()].sort(byPlace), scanned: { files: ctx.files, lines: ctx.lines } };
+  return { mode, findings, errors, incomplete: ctx.incomplete, exempted: ctx.exempted.size, skippedCount: skipped.size, skipped: [...skipped.values()].sort(byPlace), scanned: { files: ctx.files, lines: ctx.lines } };
 }

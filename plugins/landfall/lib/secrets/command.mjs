@@ -35,19 +35,19 @@ export function secrets({ flags, names, io, blobMax, fileMax }) {
       errors: [err, { code: 'scan-invalid', message: `the ${names.bin} secrets scan of ${scope(mode, flags)} could not run: its result is invalid, not clean`, hint: 'fix the error above, then scan again; never read this exit as clean' }],
     };
   }
-  const { findings, skipped, skippedCount, scanned, exempted, incomplete } = result;
+  const { findings, skipped, skippedCount, scanned, exempted, incomplete, errors: patternErrors } = result;
   const out = { ...data, findings, skipped, skippedCount, scanned, exempted, incomplete };
   const exemptions = exempted ? `secrets: ${exempted} synthetic lines exempted (test/fixture paths)\n` : '';
   // Never silent: every file not scanned is listed, whatever the exit.
   const notScanned = skipped.map((x) => `not scanned (${x.reason}): ${x.commit ? `${x.commit}:` : ''}${x.path}\n`).join('');
-  if (!findings.length && !incomplete) return { data: out, text: `${notScanned}${exemptions}secrets: clean (${scope(mode, flags)}${skipped.length ? `; ${skipped.length} not scanned, listed above` : ''})\n` };
+  if (!findings.length && !incomplete && !patternErrors.length) return { data: out, text: `${notScanned}${exemptions}secrets: clean (${scope(mode, flags)}${skipped.length ? `; ${skipped.length} not scanned, listed above` : ''})\n` };
   const lines = findings.map((f) => (f.type === 'key-file' ? `${f.where}: key-file\n` : `${f.where}: ${f.type} ${f.masked}\n`));
   const n = findings.length;
   return {
-    code: EXIT.FAIL,
+    code: patternErrors.length ? EXIT.ENV : EXIT.FAIL,
     data: out,
     text: `${notScanned}${exemptions}${lines.join('')}`,
-    errors: [...(incomplete ? [{ code: 'scan-incomplete', message: `secrets scan incomplete: ${skipped.length} file(s) over the disk read cap (listed above)`, hint: 'reduce or split the listed files, then scan again' }] : []), ...(n ? [{
+    errors: [...patternErrors, ...(incomplete ? [{ code: 'scan-incomplete', message: `secrets scan incomplete: ${skipped.length} file(s) over the disk read cap (listed above)`, hint: 'reduce or split the listed files, then scan again' }] : []), ...(n ? [{
       code: 'secrets-found',
       message: `${n} finding${n === 1 ? '' : 's'} in ${scope(mode, flags)} (values masked; open each place locally)`,
       hint: 'remove each value, rotate a real secret (SEC-7); a key or env file belongs in .gitignore; mark a synthetic test value with SYNTH on its line (SEC-11)',
