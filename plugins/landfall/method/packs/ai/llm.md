@@ -11,7 +11,7 @@
 ## Pack: ai
 
 ### Input and context
-**LLM-1.** LLM01 Prompt Injection: every text a model reads (user input, documents, web pages, tool results, files) may carry instructions; the defence is what the model cannot do, not the prompt: no secret in its context, tools per LLM-6, untrusted content separated and labeled, and a direct and indirect injection test for each new input source.
+**LLM-1.** LLM01 Prompt Injection: every text a model reads (user input, retrieved documents, web pages, tool results, files) may carry instructions; the defence is what the model cannot do, not the prompt: no secret in its context, tools per LLM-6, untrusted content separated and labeled, and a test of direct and indirect injection for each new input source.
 **LLM-2.** LLM02 Sensitive Information Disclosure: a model's context holds only data the current user may see, filtered by tenant and permission before retrieval, not after generation; training, fine-tuning and prompt logs exclude secrets and personal data without consent, and output passes the same redaction as logs (security pack, SCD-9).
 **LLM-7.** LLM07 System Prompt Leakage: a system prompt holds no secret, credential, internal URL or authorization rule; code outside the model enforces access, so a leaked prompt grants nothing.
 

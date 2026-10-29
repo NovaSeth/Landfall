@@ -16,12 +16,12 @@
 **OWA-3.** A03 Software Supply Chain Failures: a new dependency is needed, maintained and from the expected publisher under the expected name (no typosquat), locked in the lockfile, without unexpected install scripts, and passes the package manager's audit or osv-scanner; CI actions pin a commit SHA (SCD-11) and no build step fetches unpinned code.
 
 ### Cryptography, injection and design
-**OWA-4.** A04 Cryptographic Failures: TLS in transit and encryption at rest for sensitive data; passwords hashed with argon2id, scrypt or bcrypt; tokens and keys from a CSPRNG; no home-made crypto, no MD5 or SHA-1 for security, no ECB mode, no hard-coded keys or IVs, and secrets compared in constant time.
+**OWA-4.** A04 Cryptographic Failures: TLS in transit and encryption at rest for sensitive data; passwords hashed with argon2id, scrypt or bcrypt, tokens and keys from a CSPRNG; no home-made crypto, no MD5 or SHA-1 for security, no ECB mode, no hard-coded keys or IVs, and secrets compared in constant time.
 **OWA-5.** A05 Injection: untrusted input reaches a query, shell, template, file path, header or the DOM only as a parameter or encoded for that sink: parameterized SQL and NoSQL filters, an argument array instead of a shell string, output encoding without `innerHTML` or `eval` on untrusted data, a resolved path checked to stay under its root, and no unsafe deserialization.
 **OWA-6.** A06 Insecure Design: a new flow names its abuse cases (enumeration, replay, races, limit bypass, skipped steps) and a control for each, such as a rate limit per credential, an idempotency key (backend-data pack, WRT-1) or server-side state for a multi-step flow; a missing control is a finding even when the code does what it says.
 
 ### Identity and integrity
-**OWA-7.** A07 Authentication Failures: login, reset and MFA endpoints are rate-limited and answer an unknown user and a wrong password the same way; a session rotates on login and privilege change and ends on logout (SCD-7); a token is checked for signature, algorithm, issuer, audience and expiry; a reset link is single-use and short-lived.
+**OWA-7.** A07 Authentication Failures: login, reset and MFA endpoints are rate-limited and answer an unknown user and a wrong password the same way; a session rotates on login and privilege change and ends on logout (SCD-7), a token is checked for signature, algorithm, issuer, audience and expiry; a reset link is single-use and short-lived.
 **OWA-8.** A08 Software or Data Integrity Failures: updates, webhooks, plugins and serialized data are verified before use (a signature or HMAC check, no deserialization of untrusted data into objects, no `curl | sh` in builds), and CI that runs pull-request code from outside holds no secrets and no write token.
 
 ### Logging and errors

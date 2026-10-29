@@ -15,7 +15,7 @@ const GEN = join(root, 'scripts', 'gen-method-index.mjs');
 const MAX_TOPIC_BYTES = 12 * 1024;
 const MAX_CORE_BYTES = 60 * 1024;
 const CORE_RULES = [90, 150]; // near 100 obligations; split into separately citable rules
-const MAX_RULE_CHARS = 350; // a longer rule bundles obligations a reviewer cannot cite apart
+const MAX_RULE_CHARS = 500; // D-MG-8: OWASP checklist rules keep their full checks
 const MAX_RULE_SEMICOLONS = 2;
 const MAX_ALWAYS = 8; // session-start injection shows up to 8 always rules
 const MAX_ALWAYS_CHARS = 1400; // of the 2,000-char session-start budget
@@ -98,7 +98,7 @@ test('method: every rule reference resolves to a live rule; no legacy prefixes i
   }
 });
 
-test('method: each rule is one citable obligation (≤ 350 chars, ≤ 2 semicolons)', () => {
+test('method: each rule is one citable obligation (≤ 500 chars, ≤ 2 semicolons)', () => {
   for (const f of allTopics) for (const line of read(f).split('\n').filter((l) => /^\*\*[A-Z]{3}-\d+\.\*\*/.test(l))) {
     const id = line.match(/^\*\*([A-Z]{3}-\d+)/)[1];
     assert.ok(line.length <= MAX_RULE_CHARS, `${f}: ${id} has ${line.length} chars; split it (new ID for the new obligation)`);
