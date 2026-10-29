@@ -1160,6 +1160,7 @@ const ROWS = [
       { flag: '--role', value: 'role', summary: 'required: reviewer or implementer' },
       { flag: '--provider', value: 'id', summary: 'a declared or built-in provider instead of the selection' },
       { flag: '--round', value: 'k', summary: 'review brief round, 1 to 999 (default: highest stored round)' },
+      { flag: '--brief', value: 'file', summary: 'implementer: this brief file instead of the task brief' },
     ],
     exits: ['OK', 'FAIL', 'USAGE', 'REFUSED', 'ENV'],
     mutating: true,

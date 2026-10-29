@@ -400,10 +400,10 @@ Read-only.
 Exit codes: 0 OK · 1 FAIL · 8 ENV
 ```
 
-### `landfall exec [--task <id>] [--role <role>] [--provider <id>] [--round <k>] [--yes] [--json]`
+### `landfall exec [--task <id>] [--role <role>] [--provider <id>] [--round <k>] [--brief <file>] [--yes] [--json]`
 
 ```text
-usage: landfall exec [--task <id>] [--role <role>] [--provider <id>] [--round <k>] [--yes] [--json]
+usage: landfall exec [--task <id>] [--role <role>] [--provider <id>] [--round <k>] [--brief <file>] [--yes] [--json]
 
 Start an external reviewer with a pinned review brief: latest round or --round; save with review brief <id> --write.
 The provider is selected like the dispatch does (found, logged in, declared for the role; --provider names one). The
@@ -420,6 +420,7 @@ Options:
   --role <role>    required: reviewer or implementer
   --provider <id>  a declared or built-in provider instead of the selection
   --round <k>      review brief round, 1 to 999 (default: highest stored round)
+  --brief <file>   implementer: this brief file instead of the task brief
 
 Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
 Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
