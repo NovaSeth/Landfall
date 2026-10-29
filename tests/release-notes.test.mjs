@@ -21,3 +21,25 @@ test('the package version has its CHANGELOG section, below at most an Unreleased
 test('docs/known-limitations.md names the package version in its title', () => {
   assert.equal(read('docs/known-limitations.md').split('\n')[0], `# Known limitations (${version})`);
 });
+
+test('the README heading shows the package version, and its What\'s new names it', () => {
+  const readme = read('README.md');
+  const heading = readme.split('\n').find((l) => /^# /.test(l));
+  assert.match(heading, new RegExp(`<sup>${version.replace(/\./g, '\\.')}</sup>`), `the first heading shows ${version}: ${heading}`);
+  assert.ok(readme.includes(`## What's new in ${version}`), `a What's new section for ${version}`);
+});
+
+// The README tells what the plugin does today: security review by the OWASP lists (2.4.0) and evidence-gated learning
+// (2.4.1, 2.5.0) are in What it does, and the comparison has a row for each.
+test('the README describes the security review and the evidence-gated learning, and compares them', () => {
+  const readme = read('README.md');
+  const does = readme.slice(readme.indexOf('## What it does'), readme.indexOf('## What\'s new'));
+  for (const list of ['OWASP Top 10:2025', 'OWASP Top 10 for LLM Applications', 'OWASP Top 10 for Agentic Applications']) assert.ok(does.includes(list), `What it does names ${list}`);
+  assert.match(does, /findings/);
+  assert.match(does, /lessons/);
+  const table = readme.slice(readme.indexOf('## How it compares'), readme.indexOf('## Measured'));
+  for (const row of ['Security review by the OWASP lists', 'Review by another model provider', 'Secrets scan', 'Open review findings kept', 'Lessons admitted on evidence', 'Example project with its process state']) {
+    assert.ok(table.split('\n').some((l) => l.startsWith(`| ${row}`)), `the comparison has the row "${row}"`);
+  }
+  assert.doesNotMatch(table, /will run under the pre-registered rules/, 'the benchmark is postponed (D-MG-26)');
+});
