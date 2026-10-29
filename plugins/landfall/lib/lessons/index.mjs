@@ -46,3 +46,64 @@ export function admit(input, exists) {
   if (verdicts.length > 0 && verdicts.every((v) => v.verdict === 'confounded')) add('verdicts', 'a lesson cannot rest only on confounded verdicts');
   return problems;
 }
+
+// ---- retrieval by cue (T-MG-94) ----
+export const FIND_MAX = 5;
+export const BRIEF_MAX = Object.freeze({ lessons: 3, chars: 300 });
+const wordsOf = (text) => new Set(String(text).toLowerCase().match(/\p{L}{3,}/gu) ?? []);
+
+// Active lessons whose cue shares a word (3 or more letters, any case) with `text`, best match first (most shared words,
+// then ID order), at most `max`.
+export function findLessons(lessons, text, max = FIND_MAX) {
+  const query = wordsOf(text);
+  return lessons
+    .filter((l) => l.status === 'active')
+    .map((l) => ({ l, n: [...wordsOf(l.cue)].filter((w) => query.has(w)).length }))
+    .filter((x) => x.n > 0)
+    .sort((a, b) => b.n - a.n || (a.l.id < b.l.id ? -1 : a.l.id > b.l.id ? 1 : 0))
+    .slice(0, max)
+    .map((x) => x.l);
+}
+
+// The text after `Lessons: ` in a brief: "L-…: <lesson>" items, at most 3 and 300 characters in all.
+export function lessonsLine(matches) {
+  const parts = [];
+  let used = 0;
+  for (const l of matches.slice(0, BRIEF_MAX.lessons)) {
+    const item = `${l.id}: ${l.lesson}`;
+    const cost = [...item].length + (parts.length ? 3 : 0);
+    if (used + cost > BRIEF_MAX.chars) {
+      const room = BRIEF_MAX.chars - used - (parts.length ? 3 : 0);
+      if (room > 12) parts.push(`${[...item].slice(0, room - 1).join('')}…`);
+      break;
+    }
+    parts.push(item);
+    used += cost;
+  }
+  return parts.join(' | ');
+}
+
+// ---- promotion from receipts (T-MG-94) ----
+export const PROMOTE_MIN = 20;
+
+// Outcomes: [{ class, firstPass, endedAt }] from receipts; `at` is the lesson's time. A shadow lesson is confirmed when,
+// in the class of its evidence, at least PROMOTE_MIN receipts lie on each side of `at` and the 90 % bootstrap intervals of
+// the first-pass rate separate in the direction of the verdict (helped: the rate rose; hurt: it fell).
+export function confirmLesson(lesson, outcomes, cls, intervalOf) {
+  const kinds = new Set(lesson.verdicts.map((v) => v.verdict).filter((v) => v === 'helped' || v === 'hurt'));
+  if (kinds.size !== 1) return { ok: false, reason: 'the lesson needs a helped or a hurt verdict, not both and not neither', class: cls };
+  const direction = [...kinds][0];
+  if (!cls) return { ok: false, reason: 'no class found in the evidence', class: null, direction };
+  const at = Date.parse(lesson.at);
+  const mine = outcomes.filter((o) => o.class === cls && o.endedAt && Number.isFinite(Date.parse(o.endedAt)));
+  const side = (rows) => {
+    const passes = rows.map((o) => (o.firstPass ? 1 : 0));
+    return { tasks: rows.length, rate: rows.length ? passes.reduce((a, b) => a + b, 0) / rows.length : null, ...(rows.length ? intervalOf(passes, 1) : { lo: null, hi: null }) };
+  };
+  const before = side(mine.filter((o) => Date.parse(o.endedAt) <= at));
+  const after = side(mine.filter((o) => Date.parse(o.endedAt) > at));
+  const base = { class: cls, direction, before, after };
+  if (before.tasks < PROMOTE_MIN || after.tasks < PROMOTE_MIN) return { ...base, ok: false, reason: `fewer than ${PROMOTE_MIN} receipts` };
+  const separated = direction === 'helped' ? after.lo > before.hi : after.hi < before.lo;
+  return separated ? { ...base, ok: true, reason: null } : { ...base, ok: false, reason: 'intervals overlap' };
+}

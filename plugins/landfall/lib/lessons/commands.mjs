@@ -2,7 +2,9 @@
 import { authorHandle } from '../decisions/write.mjs';
 import { EXIT } from '../cli/commands.mjs';
 import { KINDS, StateError, allocateId, open, resolve } from '../state/index.mjs';
-import { STATUSES, VERDICTS, admit, evidenceExists, readLessons } from './index.mjs';
+import { intervalOf } from '../receipts/executors.mjs';
+import { outcomeRecords } from '../receipts/index.mjs';
+import { STATUSES, VERDICTS, admit, confirmLesson, evidenceExists, findLessons, readLessons } from './index.mjs';
 
 const usage = (message) => new StateError('invalid-value', 'USAGE', message);
 const idsOf = (value) => String(value ?? '').split(',').map((s) => s.trim()).filter(Boolean);
@@ -69,4 +71,37 @@ export function retire(ctx) {
     return s.write('lesson', cur.id, { ...cur, status: 'retired', retiredWhy: why });
   });
   return { data: { lesson: store.read('lesson', ctx.args.id) }, text: `${ctx.args.id}  retired\n` };
+}
+
+export function find(ctx) {
+  const { where, store } = context(ctx);
+  const query = (ctx.args.words ?? []).join(' ');
+  const lessons = where.active ? findLessons(readLessons(store), query) : [];
+  return { data: { lessons }, text: lessons.length ? `${lessons.map(line).join('\n')}\n` : 'no matching lessons\n' };
+}
+
+const rate = (x) => (x === null ? 'n/a' : x.toFixed(2));
+const sideText = (name, s) => `${name} ${s.tasks} tasks, first pass ${rate(s.rate)} (90% ${rate(s.lo)}-${rate(s.hi)})`;
+
+export function promote(ctx) {
+  const { names, io } = ctx;
+  const { store } = context(ctx, true);
+  const lesson = select(store, ctx.args.id);
+  if (lesson.status !== 'shadow') throw usage(`${lesson.id} is ${lesson.status}: only a shadow lesson is promoted`);
+  const classes = lesson.evidence.map((e) => store.read('task', e.split('#')[0])?.class).filter(Boolean);
+  const result = confirmLesson(lesson, outcomeRecords({ cwd: io.cwd, env: io.env, names }), classes[0] ?? null, intervalOf);
+  const evidence = { class: result.class, direction: result.direction ?? null, before: result.before ?? null, after: result.after ?? null };
+  if (!result.ok) {
+    const numbers = result.before ? `; class ${result.class}: ${sideText('before', result.before)}; ${sideText('after', result.after)}` : '';
+    return {
+      code: EXIT.REFUSED, data: { lesson, evidence, reason: result.reason },
+      errors: [{ code: 'lesson-unconfirmed', message: `${lesson.id} stays in shadow: ${result.reason}${numbers}`, hint: 'a lesson is promoted only when later receipts confirm it; no lesson is forced' }],
+    };
+  }
+  store.batch((s) => {
+    const cur = select(s, lesson.id);
+    if (cur.status !== 'shadow') throw usage(`${cur.id} is ${cur.status}: only a shadow lesson is promoted`);
+    return s.write('lesson', cur.id, { ...cur, status: 'active' });
+  });
+  return { data: { lesson: store.read('lesson', lesson.id), evidence }, text: `${lesson.id}  active  (${sideText('before', result.before)}; ${sideText('after', result.after)})\n` };
 }

@@ -76,7 +76,9 @@ Commands:
   lane renew           Renew your lane for 7 more days; at most once a day (a claim made less than 24 h ago is kept as it is).
   lane takeover        Take over another developer's lane once its claim expired more than 24 h ago; the new claim records it.
   lessons add          Admit a lesson into shadow: a cue, one lesson naming a component, and evidence that exists in the state.
+  lessons find         List active lessons whose cue shares a word of 3 or more letters with the given words, best match first, at most 5.
   lessons list         List lessons; retired ones only with --status retired.
+  lessons promote      Turn a shadow lesson active when later receipts confirm it; otherwise refuse with the numbers (exit 7).
   lessons retire       Retire a lesson with a reason; the record and its number stay.
   lessons show         Print one lesson with its evidence and verdicts.
   loop start           Start a loop with caps (defaults: wallMin=480,ticks=200,usd=25,rounds=2); a running loop is never replaced.
@@ -790,6 +792,20 @@ Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
 Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
 ```
 
+### `landfall lessons find [<words…>] [--json]`
+
+```text
+usage: landfall lessons find [<words…>] [--json]
+
+List active lessons whose cue shares a word of 3 or more letters with the given words, best match first, at most 5.
+
+Arguments:
+  words  the words to match against the cues (case-insensitive)
+
+Read-only.
+Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
+```
+
 ### `landfall lessons list [--status <status>] [--json]`
 
 ```text
@@ -801,6 +817,21 @@ Options:
   --status <status>  shadow, active or retired (default: shadow and active)
 
 Read-only.
+Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
+```
+
+### `landfall lessons promote <id> [--yes] [--json]`
+
+```text
+usage: landfall lessons promote <id> [--yes] [--json]
+
+Turn a shadow lesson active when later receipts confirm it; otherwise refuse with the numbers (exit 7).
+Needs at least 20 receipts after and 20 before the lesson in the class of its evidence, and 90 % first-pass intervals that separate in the direction of its verdict (helped: up, hurt: down). No lesson is ever forced.
+
+Arguments:
+  id  the L-<handle>-<number> lesson ID
+
+Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
 Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
 ```
 
