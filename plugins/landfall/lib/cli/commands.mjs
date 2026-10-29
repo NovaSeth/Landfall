@@ -1160,7 +1160,7 @@ const ROWS = [
   },
   {
     name: 'exec',
-    summary: 'Start an external reviewer with a pinned review brief: latest round or --round; save with review brief <id> --write.',
+    summary: 'Start an external reviewer (pinned review brief, latest round or --round) or implementer (task worktree, task brief or --brief).',
     details: [
       'The provider is selected like the dispatch does (found, logged in, declared for the role; --provider names one). The',
       'record starts as {status: starting}; the supervisor (run-supervise) takes the external lease (queued while none is',
@@ -1168,8 +1168,10 @@ const ROWS = [
       '<PREFIX>EXTERNAL_TIMEOUT), feeds the saved brief on stdin and keeps the record current at most once a second:',
       'running, elapsedMs, tokens, lastLine; at the end exit, outFile, tokens and the status done, failed or timeout. On the',
       'cap the whole group gets SIGTERM, a grace, then SIGKILL; the lease is released only after the group is gone.',
-      'A reviewer runs read-only in the repository checkout; the out file lives in a private temp directory (0700). Exit 1:',
-      'no such task, no saved brief (brief <id> --write), a live run of the task and role. Implementer runs: not yet (exit 2).',
+      'A reviewer runs read-only in the repository checkout; the out file lives in a private temp directory (0700). An',
+      'implementer runs in the task worktree under the implementer sandbox, fed the task brief or --brief <file>, with the',
+      'brief sha pinned; it is refused without a worktree, without a mapping, or with an unsafe brief. Exit 1: no such task,',
+      'no saved brief (brief <id> --write), a live run of the task and role.',
     ],
     args: [],
     flags: [
@@ -1177,6 +1179,7 @@ const ROWS = [
       { flag: '--role', value: 'role', summary: 'required: reviewer or implementer' },
       { flag: '--provider', value: 'id', summary: 'a declared or built-in provider instead of the selection' },
       { flag: '--round', value: 'k', summary: 'review brief round, 1 to 999 (default: highest stored round)' },
+      { flag: '--brief', value: 'file', summary: 'implementer: this brief file instead of the task brief' },
     ],
     exits: ['OK', 'FAIL', 'USAGE', 'REFUSED', 'ENV'],
     mutating: true,

@@ -7,6 +7,7 @@
 //   fail      one line, an error line on stderr, exit 3
 //   slow      a line every 200 ms until it is ended (SIGTERM ends it)
 //   gate      waits for the file <out>.go (polled every 50 ms, at most 60 s), then as ok
+//   implement writes implemented.txt in its working directory (an implementer run), then as ok
 //   stubborn  ignores SIGTERM, starts a grandchild in its process group that ignores SIGTERM too (pids in <out>.pids),
 //             and prints a line every 200 ms: only SIGKILL of the group ends them
 // Every wait sleeps (timers); nothing here spins the CPU.
@@ -37,10 +38,13 @@ process.stdin.on('data', (c) => chunks.push(c));
 process.stdin.on('end', () => {
   writeFileSync(`${out}.prompt`, Buffer.concat(chunks));
   const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => /_(?:SLOT|PORT_BASE|PORT_MAX|DB_NAME)$/.test(k)));
-  writeFileSync(`${out}.args`, `${JSON.stringify({ mode, sandbox, cwd, schemaFile, pid: process.pid, env })}\n`);
+  writeFileSync(`${out}.args`, `${JSON.stringify({ mode, sandbox, cwd, processCwd: process.cwd(), schemaFile, pid: process.pid, env })}\n`);
   say(`fake provider ${mode}: sandbox ${sandbox}`);
   if (mode === 'ok') {
     setTimeout(() => finish(['reading the brief', 'checking the diff', 'done: approved']), 300);
+  } else if (mode === 'implement') {
+    writeFileSync('implemented.txt', 'written by the fake implementer\n');
+    setTimeout(() => finish(['editing the worktree', 'done: implemented']), 100);
   } else if (mode === 'fail') {
     process.stderr.write('boom: the fake provider failed\n');
     setTimeout(() => process.exit(3), 50);

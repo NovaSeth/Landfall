@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **External implementers:** `exec --role implementer [--brief <file>]` runs another provider in the task's worktree (recorded by `task start`) under its write sandbox, fed the task brief or the given file, and the run shows in the dashboard's AGENTS like a review. ORC-26: another provider runs only through `exec`, never by hand.
+
 ## 2.4.1
 
 A security audit of 2.4.0 covered 8 areas with the plugin's own security reviewer, plus a Codex cross-check: 41 findings. All are fixed here, each with a test that failed first, and each change had a cross-provider review. Findings still open after the review cap go to a backlog, not away.
