@@ -508,7 +508,14 @@ test('F2: the marker is a separate word: SYNTHESIS_API_KEY or SYNTHETIC lines ar
   noLeak(r, val, ghToken);
   commit(d, 'config.sh', `SYNTHESIS_API_KEY="${val}abcd" # SYNTH\nconst t = "${ghToken}"; // SYNTH-fixture\nconst u = "${ghToken}"; /* check-secrets: synthetic */\n`);
   r = await scan(d);
+  assert.equal(r.status, 1, show(r));
+  assert.deepEqual(where(r), ['config.sh:1', 'config.sh:2', 'config.sh:3']);
+  commit(d, 'tests/config.sh', readFileSync(join(d, 'config.sh')));
+  rmSync(join(d, 'config.sh'));
+  git(d, 'add', '-A');
+  r = await scan(d);
   assert.equal(r.status, 0, show(r));
+  assert.equal(r.env.data.exempted, 3);
 });
 
 test('F3: --range lists key and env files a merge adds in its resolution (added against every parent)', async (t) => {
@@ -621,4 +628,100 @@ test('F6: a file re-saved from UTF-16 to UTF-8 while a secret is added: its new 
   r = await scan(d, '--range', 'HEAD~1..HEAD');
   assert.deepEqual([r.status, where(r)], [1, [`${sha}:win/notes.txt:3`]], show(r));
   noLeak(r, ghToken);
+});
+
+// Audit regressions (T-MG-72). Values are synthetic and assembled only in this test fixture.
+const secretPatterns = await lib('secrets/patterns.mjs');
+const { redact: redactGate } = await lib('verify/redact.mjs');
+for (const operation of ['matchLine', 'redact']) {
+  for (const shape of ['uppercase', 'assignments']) {
+    test(`D1: ${operation} handles 1 MiB of ${shape} within 2000 ms`, () => {
+      const module = pathToFileURL(join(pluginDir, 'lib', operation === 'redact' ? 'verify/redact.mjs' : 'secrets/patterns.mjs')).href;
+      const script = `import { ${operation} as run } from ${JSON.stringify(module)};
+        const unit = ${JSON.stringify(shape === 'uppercase' ? 'TOKEN' : 'api_key="aaaaa')};
+        const text = unit.repeat(Math.ceil(1048576 / unit.length)).slice(0, 1048576);
+        run(text);`;
+      const r = spawnSync(process.execPath, ['--input-type=module', '-e', script], { timeout: 2000, encoding: 'utf8' });
+      assert.equal(r.error?.code ?? r.status, 0, `${operation}/${shape}: ${r.error?.code ?? r.stderr}`);
+    });
+  }
+}
+
+test('D1: every window is bounded and overlapping; edge secrets are found and fully redacted', () => {
+  const windows = [];
+  secretPatterns.matchLine('.'.repeat(14000), [{ id: 'probe', re: { exec: (s) => { windows.push(s); return null; } } }]);
+  assert.ok(windows.length > 1);
+  assert.ok(windows.every((s) => s.length <= 4096));
+  assert.ok(secretPatterns.WINDOW_OVERLAP >= secretPatterns.MAX_PATTERN_SPAN);
+  for (const offset of [4090, 4095, 6140, 8190]) {
+    const line = '.'.repeat(offset) + ghToken + '.'.repeat(5000);
+    assert.equal(secretPatterns.matchLine(line)?.id, 'github-token');
+    assert.ok(!redactGate(line).includes(ghToken.slice(4)), 'the whole secret is redacted');
+  }
+});
+
+const auditFormats = [
+  ['PGP', 'private-key', '-----BEGIN PGP PRIVATE KEY BLOCK-----', '-----BEGIN PGP PUBLIC KEY BLOCK-----'], // SYNTH
+  ['npm', 'npm-token', 'npm_' + 'a1B2'.repeat(9), 'npm_<placeholder>'], // SYNTH
+  ['npmrc', 'npm-token', '//registry.npmjs.org/:_authToken=' + 'a1B2'.repeat(9), '//registry.npmjs.org/:_authToken=${NPM_TOKEN}'], // SYNTH
+  ['AWS ini', 'aws-secret-key', 'aws_secret_access_key = ' + 'a1B/'.repeat(10), 'aws_secret_access_key = <placeholder>'], // SYNTH
+  ['Stripe secret', 'stripe-key', 'sk_live_' + 'a1B2'.repeat(6), 'sk_live_<placeholder>'], // SYNTH
+  ['Stripe restricted', 'stripe-key', 'rk_live_' + 'a1B2'.repeat(6), 'rk_live_<placeholder>'], // SYNTH
+  ['GitLab', 'gitlab-token', 'glpat-' + 'a1_-'.repeat(5), 'glpat-<placeholder>'], // SYNTH
+  ['URL password', 'url-password', 'postgres://user:' + 'a1B2'.repeat(4) + '@db.example.com/app', 'postgres://user:password@db.example.com/app'], // SYNTH
+];
+for (const [name, id, positive, negative] of auditFormats) {
+  test(`D3: ${name} is detected and its placeholder is clean`, () => {
+    assert.equal(secretPatterns.matchLine(positive)?.id, id);
+    assert.equal(secretPatterns.matchLine(negative), null);
+    assert.ok(!redactGate(positive).includes(positive), 'redaction uses the same patterns');
+  });
+}
+test('D3: URL password placeholders and missing passwords are clean', () => {
+  for (const password of ['password', 'pass', '***', '<secret>', '${SECRET}', 'ab', '']) {
+    assert.equal(secretPatterns.matchLine(`postgres://user:${password}@host/db`), null);
+  }
+  assert.equal(secretPatterns.matchLine('postgres://user@host/db'), null);
+});
+for (const name of ['id_rsa', 'id_dsa', 'id_ecdsa', 'id_ed25519', '.npmrc']) {
+  test(`D3: ${name} is a key file; its template/public counterpart is clean`, () => {
+    assert.equal(secretPatterns.isKeyFile(`config/${name}`), true);
+    assert.equal(secretPatterns.isKeyFile(`config/${name}.example`), false);
+    assert.equal(secretPatterns.isKeyFile(`config/${name}.pub`), false);
+  });
+}
+
+test('D8: tree and artifact skip a 3 MiB file, report its path/count and still scan small files', async (t) => {
+  const d = repo(t);
+  put(d, 'large.txt', `${ghToken}\n` + '.'.repeat(3 * 1024 * 1024));
+  put(d, 'small.txt', ghToken);
+  for (const args of [[], ['--artifact', 'large.txt']]) {
+    const r = await scan(d, ...args);
+    assert.equal(r.env.data.skipped.length, 1);
+    assert.equal(r.env.data.skipped[0].path, 'large.txt');
+    assert.equal(r.env.data.skipped[0].reason, 'over 2 MiB');
+    assert.match(r.stdout, /not scanned \(over 2 MiB\): large.txt/);
+    assert.deepEqual(where(r), args.length ? [] : ['small.txt:1']);
+    assert.equal(r.env.data.scanned.files, args.length ? 0 : 1);
+  }
+});
+
+test('D9: only test/fixture paths exempt marked lines, counted in tree, staged and range output', async (t) => {
+  const d = repo(t);
+  commit(d, 'README.md', 'clean\n');
+  const fixtures = ['test/a.js', 'tests/fixtures/a.js', '__tests__/a.js', 'fixtures/a.js', 'testdata/a.js', 'spec/a.js', 'src/a.test.js', 'src/a.spec.ts'];
+  const production = ['src/a.js', 'src/contest/a.js', 'specimen/a.js', 'src/a.tests.js'];
+  for (const file of [...fixtures, ...production]) put(d, file, `${ghToken} // SYNTH\n`);
+  git(d, 'add', '-A');
+  for (const args of [[], ['--staged']]) {
+    const r = await scan(d, ...args);
+    assert.deepEqual(where(r), production.map((p) => `${p}:1`).sort());
+    assert.equal(r.env.data.exempted, fixtures.length);
+    assert.match(r.stdout, /8 synthetic lines exempted/);
+  }
+  git(d, 'commit', '-qm', 'marked values');
+  const r = await scan(d, '--range', 'HEAD~1..HEAD');
+  assert.equal(r.env.data.findings.length, production.length);
+  assert.equal(r.env.data.exempted, fixtures.length);
+  assert.match(r.stdout, /8 synthetic lines exempted/);
 });

@@ -46,7 +46,7 @@ const ALLOWED = new Map([
   ['utf-16 | (tree)', 'F1: a BOM-marked UTF-16 text file holds NULs, so 1.x skipped it as binary (git grep -I); the successor decodes it and finds the token'],
   ['utf-16 | --staged', 'F1: git diff shows only "Binary files differ" for UTF-16; the successor reads the staged blob and scans the lines HEAD does not hold'],
   ['utf-16 | --range HEAD~1..HEAD', 'F1: the same for a commit of the range, against its parent'],
-  ['marker-word | (tree)', 'F2: 1.x exempted a line holding SYNTH inside a word (SYNTHESIS_API_KEY="…"); the marker is now a separate word (SEC-11)'],
+  ['marker-word | (tree)', 'F2: 1.x exempted a line holding SYNTH inside a word (SYNTHESIS_API_KEY="…"); the marker must now be a separate word on a test/fixture path (SEC-11, D9)'],
   ['merge-key-file | --range base..HEAD', 'F3: 1.x listed no merge diffs, so a key or env file added in a merge resolution passed; the successor lists what a merge adds against every parent'],
 ]);
 
@@ -395,7 +395,7 @@ test('stricter corpus: UTF-16 text, the marker as a separate word, key files a m
   check = differ(t, 'marker-word');
   d = repo(t);
   commit(d, 'config.sh', `SYNTHESIS_API_KEY="${val}abcd"\nconst t = "${ghToken}"; // SYNTH\n`);
-  assert.deepEqual((await check(d)).now.hits, ['config.sh:1']);
+  assert.deepEqual((await check(d)).now.hits, ['config.sh:1', 'config.sh:2']);
   record(check);
 
   check = differ(t, 'merge-key-file');
