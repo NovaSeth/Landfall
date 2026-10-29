@@ -42,12 +42,14 @@ export const projectRedactions = (where) => readProjectPatterns(where).extra;
 const bytesOf = (s) => Buffer.from(s, 'utf8').toString('latin1');
 const textOf = (b) => Buffer.from(b, 'latin1').toString('utf8');
 
-// The [start, end) spans of every match of every pattern in `line` (latin1), overlapping ones merged (merge).
-// A line is redacted when the scanner (matchLine) marks it or a project span is found. Built-in patterns run over the
-// whole line. A built-in match of 1024 bytes or more has reached a bounded probe
-// (VALUE_LIMIT): its span runs on to the end of the value (a closing quote, whitespace or the end of the line), so no
-// suffix beyond the probe shows. Project patterns run in WINDOW-byte windows that overlap by OVERLAP bytes, so a
-// match anywhere in the line is found at a linear cost; a match found in any window is masked.
+// A line of at most WINDOW bytes is redacted span by span. Built-in and project patterns run over the whole line; a
+// built-in match of PROBE bytes or more has reached a bounded probe (VALUE_LIMIT): its span runs on to the end of the
+// value (a closing quote, whitespace or the end of the line), so no suffix beyond the probe shows. When the scanner
+// (matchLine) still marks the line with every span blanked out, a sensitive region has no span: the line is masked
+// whole. A longer line is only DETECTED, never cut first: the scanner's own windowed, linear matchLine for the built-in
+// patterns and the project patterns over WINDOW-byte windows overlapping by OVERLAP bytes (a match cut by a window
+// edge still counts). Any hit masks the whole line as one marker; a line with no hit is kept as it is. No span logic
+// runs on a long line, so no window edge or cut shows a byte of a secret.
 const PROBE = 1024;
 const WINDOW = 4096;
 const OVERLAP = 2048;
@@ -55,29 +57,16 @@ const VALUE_END = /["' \t\n\v\f\r]/;
 const valueEnd = (line, e) => { while (e < line.length && !VALUE_END.test(line[e])) e++; return e; };
 const globalOf = (re) => new RegExp(re.source, `${re.flags.replace(/[gy]/g, '')}g`);
 
-function collect(found, line, re, text, offset, bounded) {
-  for (let m = re.exec(text); m; m = re.exec(text)) {
-    if (m[0] === '') { re.lastIndex += 1; continue; }
-    const s = offset + m.index;
-    const e = s + m[0].length;
-    found.push([s, bounded && m[0].length >= PROBE ? valueEnd(line, e) : e]);
-  }
-}
-
-function builtInSpans(line) {
+function spans(line, extra) {
   const found = [];
-  for (const p of PATTERNS) collect(found, line, globalOf(p.re), line, 0, true);
-  return found;
-}
-
-function projectSpans(line, extra) {
-  const found = [];
-  for (const p of extra) {
-    const re = globalOf(p.re);
-    for (let offset = 0; offset < line.length; offset += WINDOW - OVERLAP) {
-      re.lastIndex = 0;
-      collect(found, line, re, line.slice(offset, offset + WINDOW), offset, false);
-      if (offset + WINDOW >= line.length) break;
+  for (const [list, bounded] of [[PATTERNS, true], [extra, false]]) {
+    for (const p of list) {
+      const re = globalOf(p.re);
+      for (let m = re.exec(line); m; m = re.exec(line)) {
+        if (m[0] === '') { re.lastIndex += 1; continue; }
+        const e = m.index + m[0].length;
+        found.push([m.index, bounded && m[0].length >= PROBE ? valueEnd(line, e) : e]);
+      }
     }
   }
   return found;
@@ -95,33 +84,42 @@ function merge(found) {
   return merged;
 }
 
-// A line longer than LINE_MAX bytes keeps its first LINE_MAX bytes (redacted as any line); the rest is masked whole.
-const LINE_MAX = 1024 * 1024;
+function projectHit(line, extra) {
+  for (const p of extra) {
+    const re = new RegExp(p.re.source, p.re.flags.replace(/[gy]/g, ''));
+    for (let offset = 0; offset < line.length; offset += WINDOW - OVERLAP) {
+      if (re.test(line.slice(offset, offset + WINDOW))) return true;
+      if (offset + WINDOW >= line.length) break;
+    }
+  }
+  return false;
+}
+
 const hidden = (n) => `${'*'.repeat(8)} (${n} chars)`;
+const whole = (bytes) => `[redacted: ${textOf(bytes).length} chars, secret detected]`;
+
+function redactLine(line, extra) {
+  const bytes = bytesOf(line);
+  if (bytes.length > WINDOW) return matchLine(bytes) || projectHit(bytes, extra) ? whole(bytes) : line;
+  const found = merge(spans(bytes, extra));
+  if (!found.length && !matchLine(bytes, extra)) return line;
+  let out = '';
+  let blank = '';
+  let at = 0;
+  for (const [s, e, joined] of found) {
+    const hit = textOf(bytes.slice(s, e));
+    // A merged span (overlapping matches) is masked completely: no prefix of one match shows inside another's.
+    out += `${textOf(bytes.slice(at, s))}${joined ? hidden(hit.length) : mask(hit)}`;
+    blank += `${bytes.slice(at, s)} `;
+    at = e;
+  }
+  // A sensitive region no span covers (a probe the span regexes cannot see): the whole line is masked.
+  if (matchLine(blank + bytes.slice(at), extra)) return whole(bytes);
+  return out + textOf(bytes.slice(at));
+}
 
 export function redact(text, extra = []) {
-  return String(text).split('\n').map((line) => {
-    let bytes = bytesOf(line);
-    let tail = '';
-    if (bytes.length > LINE_MAX) {
-      tail = hidden(textOf(bytes.slice(LINE_MAX)).length);
-      bytes = bytes.slice(0, LINE_MAX);
-    }
-    const project = projectSpans(bytes, extra);
-    if (!project.length && !matchLine(bytes, extra)) return textOf(bytes) + tail;
-    const found = merge([...builtInSpans(bytes), ...project]);
-    // The scanner marks the line but no span was found (a probe the span regexes cannot see): mask the whole line.
-    if (!found.length) return hidden(textOf(bytes).length) + tail;
-    let out = '';
-    let at = 0;
-    for (const [s, e, joined] of found) {
-      const hit = textOf(bytes.slice(s, e));
-      // A merged span (overlapping matches) is masked completely: no prefix of one match shows inside another's.
-      out += `${textOf(bytes.slice(at, s))}${joined ? hidden(hit.length) : mask(hit)}`;
-      at = e;
-    }
-    return out + textOf(bytes.slice(at)) + tail;
-  }).join('\n');
+  return String(text).split('\n').map((line) => redactLine(line, extra)).join('\n');
 }
 
 // A gate run with its output redacted: what the inventory, the gate cache, the log and the CLI output all see.
