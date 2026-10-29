@@ -31,7 +31,16 @@ import { KINDS, LOGS } from './kinds.mjs';
 import { MARKER, forgetShipped, localForeign, machineId } from './machine.mjs';
 import { MIGRATIONS } from './migrations/index.mjs';
 import { format, validate } from './schema.mjs';
+import { machineDataDir, resolvedDataDir } from './resolve.mjs';
+import { adoptAtMark, gatesOfText, gatesShaOf, overridesShaOf, recordTrust, repoKey, thresholdsOfText } from './trust.mjs';
 import { upgradeDoc } from './upgrade.mjs';
+
+// T-MG-77: a gate set or threshold overrides this machine writes through the store are trusted here (lib/state/trust.mjs),
+// only when the write changes them (a fact set beside shipped gates trusts nothing).
+const TRUSTED_FILES = {
+  'profile.json': (t) => { const g = gatesOfText(t); return g.length ? ['gates', gatesShaOf(g)] : null; },
+  'config.json': (t) => { const th = thresholdsOfText(t); return Object.keys(th).length ? ['overrides', overridesShaOf(th)] : null; },
+};
 
 // The most bytes of one appended line (PIPE_BUF on Linux): one write() of this size is never split.
 const APPEND_MAX = 4096;
@@ -229,9 +238,30 @@ export class Store {
     if (!this.active) return; // deactivate removed the state: nothing to mark
     try {
       if (this.readText(MARKER) !== null && this.localStatus() === 'mine') return;
+      const adopting = this.localStatus() === 'adopt';
       writeAtomic(this.abs(MARKER), `${machineId()}\n`);
       this.localState = 'mine';
+      // An existing user's local/ (from before the marker): its gates and overrides are trusted now (T-MG-77 adoption).
+      if (adopting) adoptAtMark({ dir: this.dir, dataDir: this.dataDir(), names: this.names, env: process.env });
     } catch { /* best effort */ }
+  }
+
+  // The machine data directory of this store's commands (resolve's, else the process environment's), or null.
+  dataDir() {
+    const known = resolvedDataDir(this.dir);
+    if (known) return known;
+    try { return this.names?.plugin ? machineDataDir(this.names, process.env) : null; } catch { return null; }
+  }
+
+  // After a write of `rel` from `before` to `after` (texts): a changed gate set or overrides are trusted. Best effort.
+  trustWritten(rel, before, after) {
+    const of = TRUSTED_FILES[rel];
+    if (!of) return;
+    const next = of(after);
+    if (!next || of(before)?.[1] === next[1]) return;
+    try {
+      recordTrust({ dataDir: this.dataDir(), names: this.names, key: repoKey(this.dir), [next[0]]: next[1] });
+    } catch { /* best effort: `trust` records it at a terminal */ }
   }
 
   readText(rel) {
@@ -408,7 +438,10 @@ export class Store {
     checkWrite(kind, next, { where: join(this.dir, rel), key });
     return this.locked(() => {
       this.checks(kind, rel);
-      this.writeText(rel, format(kind.spec, next));
+      const before = TRUSTED_FILES[rel] ? this.readText(rel) : null;
+      const text = format(kind.spec, next);
+      this.writeText(rel, text);
+      this.trustWritten(rel, before, text);
       return next;
     });
   }
@@ -441,7 +474,9 @@ export class Store {
       if (out === undefined) return cur;
       const next = this.stamp(kind, out);
       checkWrite(kind, next, { where: this.abs(rel), key });
-      this.writeText(rel, format(kind.spec, next));
+      const written = format(kind.spec, next);
+      this.writeText(rel, written);
+      this.trustWritten(rel, text, written);
       return next;
     });
   }

@@ -167,6 +167,21 @@ export const MACHINE_KINDS = Object.freeze({
     fields: { flags: flagsMap, executors },
     opt: ['flags', 'executors'],
   }),
+  // T-MG-77: the gate sets and threshold overrides this machine trusts, per repository (lib/state/trust.mjs).
+  trust: defineKind('trust', 1, {
+    dir: '',
+    file: () => 'trust.json',
+    match: /^trust\.json$/,
+    fields: {
+      repos: {
+        t: 'map', max: LIMITS.projects, key: str(32, { re: /^[0-9a-f]{32}$/ }),
+        v: {
+          t: 'obj', opt: ['adoptedAt'],
+          f: { gates: { t: 'arr', max: 50, of: str(64, { re: PATTERNS.sha256 }) }, overrides: { t: 'arr', max: 50, of: str(64, { re: PATTERNS.sha256 }) }, adoptedAt: time },
+        },
+      },
+    },
+  }),
 });
 
 // Append-only logs of the store (spec §5.2): one JSON object per line, each at most entryBytes (store.append).

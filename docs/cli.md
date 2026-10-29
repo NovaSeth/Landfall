@@ -105,6 +105,7 @@ Commands:
   task start           Create the task's worktree and branch from a base commit and record them (started); the brief carries both.
   tick                 One loop tick: the next steps from the task state; exit ACTION (0), WAIT (3), DONE (4), STALLED (5) or BUDGET (6).
   tier                 Evaluate the project tier (L0-L3) from git history and the state; a change is logged (shadow) or recorded (on).
+  trust                Show the gate commands and threshold overrides this machine does not trust yet; trust them after a y at a terminal.
   verify               Re-run the profile gates, compare the test inventory with the baseline and record verify.json for a task.
   wait                 Wait for an external run: exit 3 while it runs, exit 0 with a short summary once it ended.
 
@@ -1330,6 +1331,20 @@ Options:
 
 Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
 Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
+```
+
+### `landfall trust [--json]`
+
+```text
+usage: landfall trust [--json]
+
+Show the gate commands and threshold overrides this machine does not trust yet; trust them after a y at a terminal.
+Gate commands run (verify, baseline pin, task merge) and threshold overrides count (route) only once this machine
+set or trusted them: a cloned repository can ship both. Commands of this machine that write them trust them.
+Asks "[y/N]" at a terminal; without one, or with --yes, it is refused (exit 7). --json lists and writes nothing.
+
+Read-only.
+Exit codes: 0 OK · 1 FAIL · 7 REFUSED · 8 ENV
 ```
 
 ### `landfall verify <id> [--ci] [--no-cache] [--yes] [--json]`
