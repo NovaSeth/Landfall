@@ -377,7 +377,9 @@ test('task merge: merges with --no-commit, runs the outcome gates, commits only 
   assert.equal(res.env.data.merged, true);
   const parents = r.git('rev-list', '--parents', '-n', '1', 'HEAD').split(' ');
   assert.deepEqual(parents.slice(1), [before, r.git('rev-parse', 'feat/x')], 'a merge commit of main and the branch');
-  assert.equal(r.git('status', '--porcelain'), '');
+  // T-MG-80 (intended change): the code is clean; the merge record is an uncommitted state write, like task done's.
+  assert.equal(r.git('status', '--porcelain', '--', '.', `:(exclude)${names.stateDir}`), '');
+  assert.deepEqual(r.git('status', '--porcelain').split('\n').map((l) => l.replace(/^\s*\S+\s+/, '')), [`${names.stateDir}/tasks/${r.id}/task.json`]);
   assert.equal(res.env.data.result, 'pass');
 });
 
@@ -440,7 +442,7 @@ test('verify, task done and task merge are command rows that change files; help 
     assert.deepEqual(row(name).args.map((a) => [a.name, Boolean(a.required)]), [['id', true]], name);
   }
   assert.deepEqual(row('verify').flags.map((f) => f.flag), ['--ci', '--no-cache']);
-  assert.deepEqual(row('task merge').flags.map((f) => f.flag), ['--branch']);
+  assert.deepEqual(row('task merge').flags.map((f) => f.flag), ['--branch', '--adopt']);
   assert.deepEqual(row('verify').exits, ['OK', 'FAIL', 'USAGE', 'REFUSED', 'ENV']);
   const r = repo(t);
   const help = await cli(['--help'], { ...r, json: false });

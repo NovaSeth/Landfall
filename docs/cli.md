@@ -1177,22 +1177,25 @@ Read-only.
 Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
 ```
 
-### `landfall task merge <id> [--branch <branch>] [--yes] [--json]`
+### `landfall task merge <id…> [--branch <branch>] [--adopt] [--yes] [--json]`
 
 ```text
-usage: landfall task merge <id> [--branch <branch>] [--yes] [--json]
+usage: landfall task merge <id…> [--branch <branch>] [--adopt] [--yes] [--json]
 
 Merge a task branch with --no-ff --no-commit, run the outcome gates on the merged tree, commit only on pass.
 A conflict or a failing gate aborts the merge (exit 1) and leaves the branch as it was; the tree must be clean.
-The outcome gates: profile gates, test baseline, report evidence, state files (no route or review). Writes no state.
+The outcome gates: profile gates, test baseline, report evidence, state files (no route or review). A merge is
+recorded on the task (a merged event and mergedAt). --adopt records tasks merged by hand after one gate run on HEAD:
+each task whose branch tip is an ancestor of HEAD; the others are reported. A failing gate records nothing.
 Any change to the gates needs a new gate-change decision. The commit runs your hooks; a hook that changes the
 tree undoes the commit (the merge stays staged).
 
 Arguments:
-  id  task ID such as T-AB-1
+  id  task ID such as T-AB-1 (several with --adopt)
 
 Options:
   --branch <branch>  the branch or commit to merge (default: the task's branch)
+  --adopt            record tasks already merged by hand into HEAD, after one gate run on HEAD
 
 Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
 Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV

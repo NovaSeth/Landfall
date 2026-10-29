@@ -32,7 +32,7 @@ function configPair(v, where) {
 // A ref argument naming a task branch: task/T-…, also refs/heads/ or a remote in front. Words after "--" are paths.
 const TASK_REF = /^(refs\/(heads|remotes\/[^/]+)\/|[^/\s-][^/\s]*\/)?task\/T-[A-Za-z0-9]/;
 const namesTaskBranch = (args) => args.slice(0, args.includes('--') ? args.indexOf('--') : args.length).some((a) => TASK_REF.test(a));
-const MERGE_TASK = 'ORC-12: blocked a plain `git merge` of a task branch into the target. Instead merge task branches with '
+const MERGE_TASK = 'ORC-25: blocked a plain `git merge` of a task branch into the target. Instead merge task branches with '
   + '`landfall task merge <ids…>` (one gate for the batch, recorded in the state).';
 
 // Subcommands with a transport: an ext::<command> address runs the command.

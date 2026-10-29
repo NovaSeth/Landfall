@@ -22,7 +22,8 @@
 import { authorHandle, readRecords } from '../decisions/index.mjs';
 import { emptyProfile, riskGlobsOf } from '../profile/index.mjs';
 import { KINDS, StateError } from '../state/index.mjs';
-import { activeWhere, evaluate, gatesSha, gitIn, stateAt, storeOf } from './run.mjs';
+import { recordMerged } from '../state/tasks.mjs';
+import { activeWhere, codeState, evaluate, gatesSha, gitIn, stateAt, storeOf } from './run.mjs';
 
 const usage = (code, message, hint = '') => new StateError(code, 'USAGE', message, { hint });
 const fail = (code, message, hint = '') => new StateError(code, 'FAIL', message, { hint });
@@ -30,10 +31,10 @@ const firstLine = (r) => (r.stderr || r.stdout).trim().split('\n')[0] ?? '';
 
 // Whether `merged` changes the gate set of `target` in any way, or drops one of its risk globs (the scanned risk paths
 // and the said riskGlobs alike: lib/profile riskGlobsOf).
-const changesGates = (target, merged) => gatesSha(target.gates) !== gatesSha(merged.gates) || riskGlobsOf(target).some((p) => !riskGlobsOf(merged).includes(p));
+export const changesGates = (target, merged) => gatesSha(target.gates) !== gatesSha(merged.gates) || riskGlobsOf(target).some((p) => !riskGlobsOf(merged).includes(p));
 
 // The gates, risk paths and facts of a committed profile text (empty when there is none or it cannot be read).
-function profileOf(text) {
+export function profileOf(text) {
   try {
     const doc = text === null ? null : JSON.parse(text);
     return { gates: Array.isArray(doc?.gates) ? doc.gates : [], riskPaths: Array.isArray(doc?.riskPaths) ? doc.riskPaths : [], facts: doc?.facts && typeof doc.facts === 'object' ? doc.facts : {} };
@@ -54,7 +55,10 @@ export function mergeTask({ cwd, env, names, id, branch, version = null, at = ne
   const handle = authorHandle({ store, where, names, env });
   const merging = () => gitIn(where, env, ['rev-parse', '-q', '--verify', 'MERGE_HEAD']).status === 0;
   if (merging()) throw fail('merge-in-progress', 'a merge is already in progress', 'finish it or run git merge --abort first');
-  if (gitIn(where, env, ['status', '--porcelain', '--untracked-files=all']).stdout.trim() !== '') {
+  // The code must be clean; the state directory may hold uncommitted state writes (a merge record, a task done), which
+  // the merge leaves as they are (T-MG-80: a recorded merge must not block the next one).
+  const { scope } = codeState(where, env);
+  if (gitIn(where, env, ['status', '--porcelain', '--untracked-files=all', ...scope]).stdout.trim() !== '') {
     throw fail('dirty-tree', 'the working tree has changes; the gates must run on the merged tree only', 'commit or remove them first');
   }
   const head = () => gitIn(where, env, ['rev-parse', 'HEAD']).stdout.trim();
@@ -62,7 +66,7 @@ export function mergeTask({ cwd, env, names, id, branch, version = null, at = ne
   // Undo the merge: tracked files the gates changed are restored from the index first, so the abort can proceed.
   const undo = ({ conflicted = false } = {}) => {
     if (!merging()) return;
-    if (!conflicted) gitIn(where, env, ['checkout', '-q', '--', '.']);
+    if (!conflicted) gitIn(where, env, ['checkout', '-q', ...scope]);
     gitIn(where, env, ['merge', '--abort']);
   };
   const base = { task: id, branch: ref, merged: false, upToDate: false, commit: null, conflicts: [], result: null, verify: null, output: [] };
@@ -86,7 +90,7 @@ export function mergeTask({ cwd, env, names, id, branch, version = null, at = ne
     if (task === null) return refused('task-unknown', `no task ${id} on the merged tree`, `'${names.bin} task list' lists the tasks`);
     if (task.owner !== handle) return refused('not-owner', `${id} belongs to ${task.owner}; only its owner merges it`, `ask ${task.owner}`);
     if (task.status === 'cancelled') return refused('task-closed', `${id} is cancelled: a cancelled task is not merged`, `'${names.bin} task new' starts a new task`);
-    const unchanged = () => gitIn(where, env, ['diff', '--quiet']).status === 0 && gitIn(where, env, ['ls-files', '--others', '--exclude-standard']).stdout.trim() === '';
+    const unchanged = () => gitIn(where, env, ['diff', '--quiet', ...scope]).status === 0 && gitIn(where, env, ['ls-files', '--others', '--exclude-standard', ...scope]).stdout.trim() === '';
     if (!unchanged()) return refused('merge-tree-changed', 'the merge left unstaged or untracked changes', 'merge by hand to see what changed them');
     tree = gitIn(where, env, ['write-tree']).stdout.trim();
     const target = stateAt(where, env, tip, 'profile.json');
@@ -121,5 +125,47 @@ export function mergeTask({ cwd, env, names, id, branch, version = null, at = ne
     if (gitIn(where, env, ['rev-parse', `${commit}^`]).stdout.trim() === tip) gitIn(where, env, ['reset', '-q', '--soft', 'HEAD^']);
     return { ...base, result: out.doc.result, verify: out.doc, output: out.output, reasons: [{ code: 'hook-modified-tree', message: 'a commit hook changed the merged tree after the gates ran; the commit was undone and the merge is left staged', hint: 'review the staged changes, clear them (git restore --staged --worktree .), then run task merge again' }], exit: 'FAIL' };
   }
-  return { ...base, merged: true, commit, result: 'pass', verify: out.doc, output: out.output, reasons: [], exit: 'OK' };
+  const record = recordMerged({ cwd, env, names, at, entries: [{ id, data: { commit, target: targetOf(where, env), batch: null, adopted: false, verify: tree } }] })[0];
+  return { ...base, merged: true, commit, result: 'pass', verify: out.doc, output: out.output, event: record.event, reasons: [], exit: 'OK' };
+}
+
+// The name of the checked-out branch (the target), or HEAD when it is detached.
+export const targetOf = (where, env) => gitIn(where, env, ['symbolic-ref', '-q', '--short', 'HEAD']).stdout.trim() || 'HEAD';
+
+// `task merge --adopt <ids…>` (T-MG-80): tasks merged by hand are recorded after one gate run on the target HEAD
+// (evaluate in merge mode, anchored at HEAD, under the heavy lease like every gate run). On pass each task whose recorded
+// branch tip is an ancestor of HEAD gets a `merged` event with adopted: true; the others are reported (not-ancestor,
+// no-branch, unknown-branch, not-owner, task-unknown) and not recorded. On a failing gate nothing is recorded.
+export function adoptMerged({ cwd, env, names, ids, version = null, at = new Date().toISOString() }) {
+  const where = activeWhere({ cwd, env, names });
+  for (const id of ids) KINDS.task.path(id);
+  if (ids.length === 0) throw usage('missing-argument', 'task merge --adopt needs the IDs of the tasks merged by hand', `${names.bin} task merge --adopt <id…>`);
+  const store = storeOf(where, names);
+  const handle = authorHandle({ store, where, names, env });
+  const { scope } = codeState(where, env);
+  if (gitIn(where, env, ['rev-parse', '-q', '--verify', 'MERGE_HEAD']).status === 0) throw fail('merge-in-progress', 'a merge is in progress', 'finish it or run git merge --abort first');
+  if (gitIn(where, env, ['status', '--porcelain', '--untracked-files=all', ...scope]).stdout.trim() !== '') {
+    throw fail('dirty-tree', 'the working tree has changes; the gates must run on the target HEAD only', 'commit or remove them first');
+  }
+  const tip = gitIn(where, env, ['rev-parse', 'HEAD']).stdout.trim();
+  const target = targetOf(where, env);
+  const tasks = ids.map((id) => {
+    const task = store.read('task', id);
+    if (task === null) return { task: id, adopted: false, why: 'task-unknown' };
+    if (task.owner !== handle) return { task: id, adopted: false, why: 'not-owner' };
+    if (!task.branch) return { task: id, adopted: false, why: 'no-branch' };
+    const sha = gitIn(where, env, ['rev-parse', '--verify', '-q', `${task.branch}^{commit}`]).stdout.trim();
+    if (!sha) return { task: id, adopted: false, branch: task.branch, why: 'unknown-branch' };
+    const ancestor = gitIn(where, env, ['merge-base', '--is-ancestor', sha, tip]).status === 0;
+    return { task: id, adopted: false, branch: task.branch, tip: sha, why: ancestor ? null : 'not-ancestor' };
+  });
+  const out = evaluate({ where, names, env, id: tasks.find((t) => t.why === null)?.task ?? ids[0], mode: 'merge', at, anchor: tip, merged: tip, version });
+  const verified = { target, commit: tip, result: out.doc.result, verify: out.doc, output: out.output };
+  if (out.doc.result !== 'pass') return { ...verified, tasks, reasons: out.reasons, exit: out.doc.result === 'error' ? 'ENV' : 'FAIL' };
+  const tree = gitIn(where, env, ['rev-parse', `${tip}^{tree}`]).stdout.trim();
+  const ok = tasks.filter((t) => t.why === null);
+  if (ok.length) recordMerged({ cwd, env, names, at, entries: ok.map((t) => ({ id: t.task, data: { commit: tip, target, batch: null, adopted: true, verify: tree } })) });
+  for (const t of ok) t.adopted = true;
+  const reasons = tasks.filter((t) => t.why !== null).map((t) => ({ code: t.why, message: `${t.task} was not adopted: ${t.why === 'not-ancestor' ? `its branch ${t.branch} is not merged into ${target}` : t.why}`, hint: t.why === 'not-ancestor' ? `${names.bin} task merge ${t.task}` : '' }));
+  return { ...verified, tasks, reasons, exit: reasons.length ? 'FAIL' : 'OK' };
 }

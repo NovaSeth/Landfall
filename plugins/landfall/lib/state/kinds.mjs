@@ -99,7 +99,9 @@ export const KINDS = Object.freeze({
       addedAt: time,
     },
   }),
-  task: defineKind('task', 1, {
+  // Task schema 2 (T-MG-80): the optional mergedAt (the time of the task's `merged` event, written by task merge) joins
+  // the task; migration 004 is a no-op upgrade, so an older plugin refuses a schema-2 task as newer (GC9).
+  task: defineKind('task', 2, {
     dir: 'tasks',
     keyPattern: PATTERNS.taskId,
     file: (id) => `tasks/${id}/task.json`,
@@ -118,7 +120,9 @@ export const KINDS = Object.freeze({
       events: { t: 'arr', max: LIMITS.events, of: { t: 'obj', f: { at: time, by: str(LIMITS.actor, { re: PATTERNS.actor }), event: str(LIMITS.event, { re: PATTERNS.kebab }), data: { t: 'data', maxBytes: LIMITS.eventData } } } },
       base: token(PATTERNS.sha, { max: 64, null: true }),
       branch: str(LIMITS.branch, { re: PATTERNS.branch, null: true }),
+      mergedAt: time,
     },
+    opt: ['mergedAt'],
   }),
   // SD-9: a retired ID keeps a tombstone, so its number is never allocated again.
   tombstone: defineKind('tombstone', 1, {

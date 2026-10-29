@@ -11,7 +11,7 @@ import { RouteError } from '../router/index.mjs';
 import { StateError } from '../state/index.mjs';
 import { forTerminal } from '../text/clean.mjs';
 import { markDone } from './done.mjs';
-import { mergeTask } from './merge.mjs';
+import { adoptMerged, mergeTask } from './merge.mjs';
 import { pinBaseline, showBaseline } from './pin.mjs';
 import { recordReview } from './review.mjs';
 import { verifyTask } from './run.mjs';
@@ -65,7 +65,18 @@ export const taskDone = typed(({ args, names, io }) => {
 });
 
 export const taskMerge = typed(({ args, flags, names, version, io }) => {
-  const r = mergeTask({ cwd: io.cwd, env: io.env, names, id: args.id, branch: flags.branch, version: version ?? null });
+  const ids = [].concat(args.id);
+  if (flags.adopt) {
+    if (flags.branch !== undefined) return { code: EXIT.USAGE, errors: [{ code: 'unexpected-flag', message: '--branch does not apply to --adopt', hint: `${names.bin} task merge --adopt <id…>` }] };
+    const a = adoptMerged({ cwd: io.cwd, env: io.env, names, ids, version: version ?? null });
+    const { exit, reasons, ...data } = a;
+    const lines = a.result === 'pass'
+      ? [`gates pass on ${a.target} at ${a.commit.slice(0, 12)}`, ...a.tasks.map((t) => `${t.task}  ${t.adopted ? 'adopted' : `not adopted: ${t.why}`}`)]
+      : [`gates ${a.result} on ${a.target} at ${a.commit.slice(0, 12)}: nothing recorded`, ...renderVerify(a.verify).slice(1)];
+    return { code: EXIT[exit], data, errors: reasons, text: `${forTerminal(lines.join('\n'))}\n` };
+  }
+  if (ids.length > 1) return { code: EXIT.USAGE, errors: [{ code: 'unexpected-argument', message: 'task merge takes one ID (several only with --adopt)', hint: `${names.bin} task merge <id>` }] };
+  const r = mergeTask({ cwd: io.cwd, env: io.env, names, id: ids[0], branch: flags.branch, version: version ?? null });
   const { exit, reasons, ...data } = r;
   let lines;
   if (r.merged) lines = [`merged ${r.branch} for ${r.task} as ${r.commit.slice(0, 12)}`, ...renderVerify(r.verify).slice(1)];
