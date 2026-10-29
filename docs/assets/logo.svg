@@ -1,11 +1,10 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-labelledby="t">
   <title id="t">logo</title>
-  <!-- The ridge of the land is a check mark: a safe arrival, verified. -->
-  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M48 312 H116" stroke="#0B2540" stroke-width="32"/>
-    <path d="M88 388 q42 -26 84 0 t84 0 t84 0 t84 0" stroke="#0B2540" stroke-width="28"/>
-    <path d="M172 448 q42 -26 84 0 t84 0" stroke="#0B2540" stroke-width="28"/>
-    <path d="M116 232 L208 316 L396 128" stroke="#E8B04B" stroke-width="44"/>
+  <!-- A quarter circle (centre 336,152, radius 208) meets the horizon y = 360 tangentially:
+       it lands at exactly one point, marked by the dot. The mark is centred on 256,256. -->
+  <g fill="none" stroke="#0F172A" stroke-width="28" stroke-linecap="round">
+    <path d="M128 152 A208 208 0 0 0 336 360"/>
+    <path d="M88 360 H424"/>
   </g>
-  <path d="M245 328 L408 165 Q420 153 430 168 Q472 214 484 310 Q486 328 468 328 Z" fill="#0B2540"/>
+  <circle cx="336" cy="360" r="28" fill="#F59E0B"/>
 </svg>
