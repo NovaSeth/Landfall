@@ -1,16 +1,16 @@
-// The external wrapper agent's Bash hook (audit G2, AGT-2, AGT-3): PreToolUse Bash in the agent's own frontmatter →
-// `external-bash`. The agent only starts and waits for a provider run, so one simple command of the plugin's own CLI
-// passes (exec, wait, runs list, runs show, rule, method, with flags) and everything else is denied with exit 2 and a
-// reason that names the agent's job. Malformed hook input is allowed (GC8). It is not in hooks/hooks.json: it runs only
-// for this agent.
+// The external wrapper agent's Bash policy (audit G2, AGT-2, AGT-3). Plugin subagents ignore frontmatter hooks, so the
+// plugin-level Bash guard (hook guard-bash) applies it to a call whose agent_type is `external` or `<plugin>:external`: one
+// simple command of the plugin's own CLI (exec, wait, runs list, runs show, rule, method, with flags) passes to the
+// guard as before; anything else is denied with exit 2 and a reason that names the agent's job. Other agents and calls
+// without agent_type are not affected. Malformed hook input is allowed (GC8).
 import { test } from 'node:test';
+import { tmpdir } from 'node:os';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { MALFORMED, hook, launch, lib, names, pluginDir } from './helpers/hook-fixture.mjs';
+import { MALFORMED, hook, launch, names } from './helpers/hook-fixture.mjs';
 
 const BIN = names.bin;
-const bash = (command, extra = {}) => hook('external-bash', { session_id: 's', hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command }, ...extra });
+const AGENT = `${names.plugin}:external`;
+const bash = (command, extra = { agent_type: AGENT }) => hook('guard-bash', { session_id: 's', hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command }, cwd: tmpdir(), ...extra });
 
 const ALLOWED = [
   `${BIN} exec --task T-1 --role reviewer --json`,
@@ -61,18 +61,28 @@ test('external-bash: everything else is denied with exit 2 and a reason that nam
   }
 });
 
-test('external-bash: other tools and malformed input are allowed (GC8)', () => {
-  assert.equal(bash('cat x', { tool_name: 'Read' }).decision, 'allow');
-  for (const m of MALFORMED) assert.equal(hook('external-bash', m).decision, 'allow', JSON.stringify(m));
-  assert.equal(hook('external-bash', { tool_name: 'Bash', tool_input: { command: 7 } }).decision, 'allow');
+test('external agent: a bare agent_type external is held to the same policy', () => {
+  assert.equal(bash(`${BIN} wait run-1 --json`, { agent_type: 'external' }).decision, 'allow');
+  assert.equal(bash('cat ~/.ssh/id_rsa', { agent_type: 'external' }).decision, 'deny');
 });
 
-test('external-bash: through the launcher, and registered as an agent hook, not a plugin-wide one', async () => {
-  assert.equal(launch('external-bash', { tool_name: 'Bash', tool_input: { command: 'cat x' } }).decision, 'deny');
-  assert.equal(launch('external-bash', { tool_name: 'Bash', tool_input: { command: `${BIN} wait r --json` } }).decision, 'allow');
-  const { HOOKS, AGENT_HOOKS } = await lib('hooks/registry.mjs');
-  assert.ok(AGENT_HOOKS.some((h) => h.name === 'external-bash' && h.event === 'PreToolUse' && h.matcher === 'Bash'));
-  assert.ok(!HOOKS.some((h) => h.name === 'external-bash'), 'not in the plugin-wide hooks');
-  const json = readFileSync(join(pluginDir, 'hooks', 'hooks.json'), 'utf8');
-  assert.ok(!json.includes('external-bash'), 'hooks.json does not hold it: it would guard every Bash call');
+test('other agents and calls without agent_type are not held to it', () => {
+  assert.equal(bash('cat README.md', {}).decision, 'allow');
+  assert.equal(bash('cat README.md', { agent_type: `${names.plugin}:implementer` }).decision, 'allow');
+  assert.equal(bash('cat README.md', { agent_type: 7 }).decision, 'allow');
+  assert.equal(bash('cat README.md', { agent_type: `other:external` }).decision, 'allow');
+});
+
+test('malformed input is allowed (GC8)', () => {
+  for (const m of MALFORMED) assert.equal(hook('guard-bash', m).decision, 'allow', JSON.stringify(m));
+  assert.equal(bash(7).decision, 'allow');
+});
+
+test('through the launcher with stdin JSON', () => {
+  const input = (command, agent_type) => ({ session_id: 's', hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command }, cwd: tmpdir(), ...(agent_type ? { agent_type } : {}) });
+  assert.equal(launch('guard-bash', input(`${BIN} exec --task T-1 --role reviewer --json`, AGENT)).decision, 'allow');
+  assert.equal(launch('guard-bash', input('cat ~/.ssh/id_rsa', AGENT)).decision, 'deny');
+  assert.equal(launch('guard-bash', input(`${BIN} secrets`, AGENT)).decision, 'deny');
+  assert.equal(launch('guard-bash', input('cat README.md')).decision, 'allow');
+  assert.equal(launch('external-bash', { tool_name: 'Bash', tool_input: { command: 'cat x' } }).decision, 'allow', 'no separate hook command any more');
 });

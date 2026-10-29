@@ -43,7 +43,7 @@ const AGENT_BODY_CHARS = 2600;
 const SKILL_KEYS = { model: ['name', 'description'], user: ['name', 'description', 'disable-model-invocation'] };
 const AGENT_KEYS = ['name', 'description', 'model', 'effort'];
 // The wrapper that runs one external provider call in the background (agent panel row).
-const EXTERNAL_KEYS = [...AGENT_KEYS, 'background', 'tools', 'maxTurns', 'hooks'];
+const EXTERNAL_KEYS = [...AGENT_KEYS, 'background', 'tools', 'maxTurns'];
 const MODELS = ['sonnet', 'opus', 'haiku', 'inherit'];
 const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 // Persuasion prose (NO 5): pressure phrases and shouting instead of triggers and rules. Shouting is matched
@@ -61,12 +61,8 @@ function parseDoc(text, file) {
   assert.ok(end > 0, `${file}: frontmatter closes`);
   const meta = {};
   const comments = [];
-  let block = null; // the nested block of a key with no inline value (hooks:): its indented lines, kept as written
   for (const line of text.slice(4, end).split('\n')) {
-    if (block && /^\s/.test(line)) { meta[block] += `${line}\n`; continue; }
-    block = null;
     if (line.startsWith('# ')) { comments.push(line); continue; }
-    if (line === 'hooks:') { assert.ok(!('hooks' in meta), `${file}: hooks twice`); block = 'hooks'; meta.hooks = ''; continue; }
     const m = line.match(/^([a-zA-Z][a-zA-Z-]*): (.+)$/);
     assert.ok(m, `${file}: frontmatter line "${line}"`);
     assert.ok(!(m[1] in meta), `${file}: ${m[1]} twice`);
@@ -139,18 +135,10 @@ test('agent frontmatter: name = file, description within 70 tok, model and effor
   assert.equal(parseDoc(read(agentFile('designer')), 'designer').meta.model, 'opus', 'designer: strongest model');
   const ext = parseDoc(read(agentFile('external')), 'external').meta;
   assert.deepEqual([ext.model, ext.effort, ext.background, ext.tools, ext.maxTurns], ['haiku', 'low', true, 'Bash, Read', '40'], 'external: cheap background wrapper');
-  // G2: Bash is limited to the run commands by a PreToolUse hook in the agent's own frontmatter, in the form and with the
-  // timeout of hooks/hooks.json.
-  const wire = JSON.parse(read('hooks/hooks.json')).hooks.PreToolUse[0].hooks[0];
-  assert.equal(ext.hooks, [
-    '  PreToolUse:',
-    '    - matcher: Bash',
-    '      hooks:',
-    '        - type: command',
-    `          command: "node ${wire.args[0]} hook external-bash"`,
-    `          timeout: ${wire.timeout}`,
-    '',
-  ].join('\n'), 'external: the Bash hook');
+  // G2: plugin subagents ignore frontmatter hooks (Claude Code docs), so no agent file carries one; the Bash policy of the
+  // external agent is enforced by the plugin-level guard (tests/hooks-external-bash.test.mjs). Intended behaviour change:
+  // this replaces the round-0 assertion that external.md held a hooks: block.
+  for (const name of AGENTS) assert.doesNotMatch(read(agentFile(name)).split('\n---\n')[0], /^hooks:/m, `${name}: no hooks in plugin agent frontmatter`);
 });
 
 test('bodies: short, no persuasion prose, no process references, English only', () => {
