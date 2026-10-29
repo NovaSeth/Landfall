@@ -958,6 +958,24 @@ const ROWS = [
     load: () => import('../config/commands.mjs').then((m) => m.flagsSet),
   },
   {
+    name: 'mirror github',
+    summary: 'Mirror tasks to GitHub issues, one way: opt-in, prints its target repository, writes only with --yes or a terminal.',
+    details: [
+      'Runs gh auth status first (exit 8 when it fails). One issue per task titled "<task ID> <title>", marked',
+      '<!-- landfall:<task ID> -->, labelled landfall, class:<class>, status:<status>; a done or cancelled task is closed.',
+      'Existing issues are found by the marker and edited only when they differ: a rerun without changes writes nothing.',
+      'Issues are never read back into the state. --dry-run prints the plan and writes nothing.',
+    ],
+    args: [],
+    flags: [
+      { flag: '--repo', value: 'owner/name', summary: 'target repository (default: the gh default repository of this directory)' },
+      { flag: '--dry-run', summary: 'print the target and the plan, make no write' },
+    ],
+    exits: ['OK', 'FAIL', 'USAGE', 'REFUSED', 'ENV'],
+    mutating: (flags) => !flags.dryRun,
+    load: () => import('../mirror/commands.mjs').then((m) => m.github),
+  },
+  {
     name: 'trust',
     summary: 'Show the gate commands and threshold overrides this machine does not trust yet; trust them after a y at a terminal.',
     details: [

@@ -120,7 +120,7 @@ test('a title change edits the existing issue by number; nothing is created', as
   r.store.write('task', 'T-MG-1', { ...r.store.read('task', 'T-MG-1'), title: 'renamed task' });
   const res = await cli(r, ['mirror', 'github', '--repo', 'acme/widgets', '--yes']);
   assert.equal(res.code, 0, res.stderr);
-  const w = writes(r);
+  const w = writes(r).filter((c) => c.args[0] === 'issue');
   assert.equal(w.length, 1);
   assert.deepEqual(w[0].args.slice(0, 3), ['issue', 'edit', '100']);
   assert.ok(w[0].args.includes('T-MG-1 renamed task'));
@@ -141,7 +141,7 @@ test('a title with $(...) and backticks reaches gh byte for byte, as one argv it
   const r = setup(t, [['T-MG-3', 'x $(touch pwned) `id` "q" ; rm', 'new', 'trivial', null]]);
   const res = await cli(r, ['mirror', 'github', '--repo', 'acme/widgets', '--yes']);
   assert.equal(res.code, 0, res.stderr);
-  const create = calls(r).find((c) => c.args[1] === 'create');
+  const create = calls(r).find((c) => c.args[0] === 'issue' && c.args[1] === 'create');
   assert.ok(create.args.includes('T-MG-3 x $(touch pwned) `id` "q" ; rm'));
   assert.ok(create.stdin.length > 0);
   assert.equal(existsSync(join(r.dir, 'pwned')), false);

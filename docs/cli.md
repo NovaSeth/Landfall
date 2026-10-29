@@ -79,6 +79,7 @@ Commands:
   loop stop            End the running loop: exit DONE, so no wakeup is scheduled again; an ended loop is left as it is.
   method               Print one pack or one section of the method by name, or the names of every pack and section.
   migrate              Run the forward migrations on every state file of this repository; --dry-run lists the steps and writes nothing.
+  mirror github        Mirror tasks to GitHub issues, one way: opt-in, prints its target repository, writes only with --yes or a terminal.
   profile gates apply  Replace the profile gates with the candidates the scan detects; only with an active gate-change decision.
   profile gates set    Add a profile gate or replace the one of that name; only with an active gate-change decision.
   profile observe      Scan the repository (manifests, files, CI, harnesses) and merge what it shows into the project profile.
@@ -810,6 +811,25 @@ Exit 7: a file with a newer schema (update the plugin), before any byte is writt
 
 Options:
   --dry-run  list the steps (file, kind, schema from → to, migration IDs); write nothing
+
+Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED. Read-only with --dry-run: no consent needed.
+Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
+```
+
+### `landfall mirror github [--repo <owner/name>] [--dry-run] [--yes] [--json]`
+
+```text
+usage: landfall mirror github [--repo <owner/name>] [--dry-run] [--yes] [--json]
+
+Mirror tasks to GitHub issues, one way: opt-in, prints its target repository, writes only with --yes or a terminal.
+Runs gh auth status first (exit 8 when it fails). One issue per task titled "<task ID> <title>", marked
+<!-- landfall:<task ID> -->, labelled landfall, class:<class>, status:<status>; a done or cancelled task is closed.
+Existing issues are found by the marker and edited only when they differ: a rerun without changes writes nothing.
+Issues are never read back into the state. --dry-run prints the plan and writes nothing.
+
+Options:
+  --repo <owner/name>  target repository (default: the gh default repository of this directory)
+  --dry-run            print the target and the plan, make no write
 
 Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED. Read-only with --dry-run: no consent needed.
 Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
