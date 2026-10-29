@@ -205,3 +205,36 @@ test('F3: the glob matcher is bounded on the long-prefix family and fails closed
     assert.equal(globRe(p)(s), want, `${p} ~ ${s}`);
   }
 });
+
+// ---------- fix round 2 (review r2, auto-review) ----------
+test('R2F1: a quote after an escaped $ is a plain single quote, not ANSI-C quoting', () => {
+  const tail = `${S.slice(5)}/tas$(:)ks/T-1/veri$(:)fy.json`;
+  for (const body of [": \\$'\\' '('", ": $$'\\' '('"]) {
+    const cmd = `cp /tmp/f ${S.slice(0, 5)}$(${body})${tail}`;
+    assert.ok(prescan(cmd, [S]).size > 0, `no hit: ${cmd}`);
+    assert.ok(denied(cmd), `allowed: ${cmd}`);
+  }
+  const top = `cp /tmp/f \\$'\\' ${S.slice(0, 5)}$(:)${tail}`;
+  assert.ok(prescan(top, [S]).size > 0, `no hit: ${top}`);
+});
+
+test('R2F2: an opening that reaches a long operator run is linear (n=16000 under 200 ms)', () => {
+  for (const n of [4000, 16000]) {
+    const cmd = `echo '${'${['.repeat(n)}]${'-'.repeat(n)}'${TAIL}`;
+    let ms = timed(() => prescan(cmd));
+    assert.ok(ms < 200, `prescan n=${n}: ${Math.round(ms)} ms`);
+    ms = timed(() => { try { evaluate(cmd, { ...opts, deadline: performance.now() + 150 }); } catch { /* a verdict only */ } });
+    assert.ok(ms < 400, `evaluate n=${n}: ${Math.round(ms)} ms`);
+  }
+});
+
+test('AR-1: a comment or a heredoc body does not hide the rest of the command from the substitution-free variant', () => {
+  const split = `cp /tmp/f ${S.slice(0, 5)}$(:)${S.slice(5)}/tasks/T-1/verify.json`;
+  for (const cmd of [`# note $(\n${split}`, `# note \`\n${split}`, `cat <<'E'\n$(\nE\n${split}`, `cat <<E\n#$(\nE\n${split}`,
+    `echo $(: \n${split}`, `# note $(\ncp /tmp/f ${S}/tasks/T-1/verify.json`]) {
+    assert.ok(prescan(cmd, [S]).size > 0, `no hit: ${JSON.stringify(cmd)}`);
+    assert.ok(denied(cmd), `allowed: ${JSON.stringify(cmd)}`);
+  }
+  // a # inside a word or quotes is no comment; an unclosed construct at the end of one line still passes (GC8)
+  for (const cmd of ['echo a#b', 'echo "#"', 'echo $(unclosed', 'echo $(: "', 'cat <<EOF\nno end']) assert.equal(prescan(cmd).size, 0, cmd);
+});
