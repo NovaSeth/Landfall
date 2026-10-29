@@ -7,7 +7,7 @@ import { basename, dirname, isAbsolute, join, resolve as resolvePath } from 'nod
 import { KINDS, open, resolve, setTask } from '../state/index.mjs';
 import { git } from '../git/index.mjs';
 import { EXIT } from './commands.mjs';
-import { changed, insideRepo } from './commit.mjs';
+import { insideRepo } from './commit.mjs';
 
 const SLUG = /^[a-z0-9][a-z0-9.-]{0,39}$/;
 const refuse = (code, message, hint) => ({ code: EXIT.FAIL, errors: [{ code, message, ...(hint ? { hint } : {}) }] });
@@ -24,10 +24,10 @@ export function taskStart({ args, flags, names, io }) {
   if (!task) return usage('task-unknown', `no task ${id}`, `'${names.bin} task list' lists the tasks`);
   if (task.status === 'done' || task.status === 'cancelled') return refuse('task-closed', `${id} is ${task.status}: a closed task starts no work`);
 
-  // A state directory inside the repository with uncommitted files: the new branch would start without it (first run).
+  // A state directory inside the repository that was never committed: the new branch would start without any state (first run).
   const rel = insideRepo(where);
-  if (rel !== null && changed(where, io.env, rel).length > 0) {
-    return { code: EXIT.REFUSED, errors: [{ code: 'state-uncommitted', message: `the state under ${rel} has uncommitted files, so the task branch would start without it`, hint: `commit the state first: ${names.bin} commit --yes` }] };
+  if (rel !== null && git(['ls-tree', '-r', '--name-only', 'HEAD', '--', `${rel}/state.json`], { cwd: where.worktree, env: io.env }).stdout.trim() === '') {
+    return { code: EXIT.REFUSED, errors: [{ code: 'state-uncommitted', message: `the state under ${rel} was never committed, so the task branch would start without it`, hint: `commit the state first: ${names.bin} commit --yes` }] };
   }
 
   let slug = flags.slug;
