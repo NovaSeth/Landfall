@@ -459,3 +459,11 @@ test('SF-AB-1: a task directory that is a symlink is refused', async (t) => {
   assert.notEqual(r.code, 0, show(r));
   assert.deepEqual(p.records(), [], 'no run was recorded');
 });
+
+test('T-MG-96: a line that is a bare JSON string literal is sanitized like an object: the escaped quotes hide no secret', () => {
+  const secret = ['SYNTH', 'pass', 'word', '0123456789abcdef'].join('-');
+  const raw = JSON.stringify(`password="${secret}"`);
+  assert.ok(raw.includes('\\"'), 'the literal escapes its quotes');
+  const line = exec.eventLine(raw, 4096);
+  assert.ok(!line.includes(secret), line);
+});

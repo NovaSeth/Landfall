@@ -150,3 +150,19 @@ test('F5: with a 450 ms evaluation and the normal 500 ms budget, a busy heartbea
   assert.equal(v.code, 0, `${v.decision}: ${v.stderr}`);
   assert.equal(v.decision, 'allow');
 });
+
+test('T-MG-96: heartbeatAgent and releaseAgent match only a non-empty string agentId; null and undefined touch an unbound lease nowhere', (t) => {
+  const f = repo(t);
+  flagOn(f);
+  assert.equal(admit(f, 1).decision, 'allow');
+  age(f);
+  const opts = { names, env: f.env, minIntervalMs: 0 };
+  sched.heartbeatAgent(null, opts);
+  sched.heartbeatAgent(undefined, opts);
+  sched.heartbeatAgent('', opts);
+  sched.releaseAgent(undefined, opts);
+  sched.releaseAgent(null, opts);
+  sched.releaseAgent('', opts);
+  assert.equal(leases(f).length, 1, 'the unbound lease is still held');
+  assert.equal(beat(f), OLD, 'and its heartbeat is untouched');
+});
