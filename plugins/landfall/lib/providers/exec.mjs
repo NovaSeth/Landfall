@@ -5,13 +5,14 @@
 // process group under the wall cap (SIGTERM, grace, SIGKILL), feeds the brief on stdin, streams stdout through
 // adapter.parse into the record (at most once a second) and the log, writes the outcome, and releases the lease only
 // after the group is gone. A reviewer runs read-only in the repository checkout; the out file lives in a private temp
-// directory (0700). Implementer runs (a worktree from the task base) are not in this slice: exit 2.
+// directory (0700). The program is the absolute path exec resolved on the absolute PATH entries and recorded as `bin`;
+// the provider's PATH keeps only absolute entries (B-2). Implementer runs (a worktree from the task base) are not in this slice: exit 2.
 // Exit (exec) 0 · 1 no such task, no brief, a live run of the task and role · 2 bad role or provider · 7 inactive
 // repository, newer schema · 8 provider missing or logged out.
 import { tolerateClosedStreams } from '../cli/output.mjs';
 import { closeSync, constants, fstatSync, lstatSync, mkdtempSync, openSync, readFileSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, dirname, join } from 'node:path';
+import { basename, delimiter, dirname, isAbsolute, join } from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 import { EXIT } from '../cli/commands.mjs';
 import { createExclusive } from '../fsx/index.mjs';
@@ -22,12 +23,31 @@ import { KINDS, TASK_TEXTS, resolve, taskTextFile } from '../state/index.mjs';
 import { adapters, chooseProvider, detectProviders } from './index.mjs';
 import { projectRedactions, redact } from '../verify/redact.mjs';
 import { LAST_LINE, ROLES } from './kind.mjs';
-import { cleanLine } from './probe.mjs';
+import { parseSandboxMap } from './generic.mjs';
+import { cleanLine, which } from './probe.mjs';
 
 const GRACE_MS = 2000;
 const FLUSH_MS = 1000;
 const WAIT_MS = 3600e3;
 const fail = (code, message, hint) => ({ code: EXIT.FAIL, errors: [{ code, message, hint }] });
+
+// The provider's PATH: only absolute entries, so neither an empty entry nor "." can find a program in the repository.
+export const childPath = (path) => String(path ?? '').split(delimiter).filter((d) => isAbsolute(d)).join(delimiter);
+
+// The absolute path of the adapter's program on the absolute entries of PATH (probe which), or null (B-2).
+const programOf = (adapter, env) => {
+  const name = adapter?.bins?.[0];
+  const path = typeof name === 'string' ? which(name, env) : null;
+  return path && isAbsolute(path) ? path : null;
+};
+
+// A record's model: null, or one value the generic adapter's sandbox-map check accepts (no bypass or full-access
+// word, 1-40 of [A-Za-z0-9._:=/-]) that does not start with "-" (B-3).
+const modelOk = (model) => {
+  if (model === null) return true;
+  if (typeof model !== 'string' || model.startsWith('-')) return false;
+  try { return parseSandboxMap(`reviewer=${model}`).reviewer === model; } catch { return false; }
+};
 
 function where(io, names) {
   const w = resolve({ cwd: io.cwd, env: io.env, names });
@@ -58,6 +78,8 @@ export function exec({ flags, names, io, pluginRoot }) {
   if (live) return fail('run-live', `${live.runId} is ${live.status} for ${id} as ${role}`, 'wait for it to end');
   const row = chooseProvider({ role, rows: detectProviders({ names, env: io.env }).rows, explicit: flags.provider });
   const adapter = adapters({ names, env: io.env }).find((a) => a.id === row.id);
+  const program = programOf(adapter, io.env);
+  if (!program) return { code: EXIT.ENV, errors: [{ code: 'provider-missing', message: `${row.id}: ${String(adapter?.bins?.[0] ?? '?').slice(0, 80)} is not an executable file in an absolute PATH directory`, hint: 'install it in a directory on PATH (an absolute entry), or pick another provider' }] };
   const capS = capFor(role, io.env, names.envPrefix);
   const outDir = mkdtempSync(join(tmpdir(), `${bin}-run-`)); // 0700
   const input = `${brief}\n## External run (overrides the Output section above)\nYou run as ${row.id}:reviewer in a read-only sandbox: write no file. Your final message is the review JSON object alone, with "reviewer": {"kind": "external", "id": "${row.id}:reviewer"}, per the schema the Output section names. The orchestrator records it from the run's out file with \`${bin} review record ${id} --from <out file>\`.\n`;
@@ -67,7 +89,7 @@ export function exec({ flags, names, io, pluginRoot }) {
   const record = {
     runId, task: id, role, provider: row.id, adapterVersion: row.version ?? null, model: null, sandbox: adapter.sandboxes[role], cwd: w.repo,
     pid: null, pidStart: null, pidMethod: null, lease: null, status: 'starting', queuedAt: new Date().toISOString(), startedAt: null, endedAt: null,
-    elapsedMs: 0, capS, tokens: null, tokensReason: null, costMicroUsd: null, lastLine: null, unknownEvents: 0, outFile: join(outDir, 'out.json'), exit: null, error: null,
+    elapsedMs: 0, capS, tokens: null, tokensReason: null, costMicroUsd: null, lastLine: null, unknownEvents: 0, outFile: join(outDir, 'out.json'), exit: null, error: null, bin: program,
   };
   store.create('run', runId, record);
   store.create('runLog', runId, { runId, lines: [] });
@@ -156,9 +178,12 @@ export async function runSupervise({ args, names, io, pluginRoot }) {
   const cwd = rec.role === 'reviewer' ? w.repo : undefined;
   const tampered = () => {
     patch0(store, runId, { status: 'failed', endedAt: new Date().toISOString(), error: 'run-tampered' });
-    return fail('run-tampered', `${runId}: the run record or pinned brief does not match its role, the repository or its temp directory`, 'start the run again with exec');
+    return fail('run-tampered', `${runId}: the run record or pinned brief does not match its role, the repository, its temp directory or the provider program, or its model is not a plain value`, 'start the run again with exec');
   };
-  if (!adapter || !sandbox || !cwd || rec.sandbox !== sandbox || rec.cwd !== cwd || !ownOutFile(rec.outFile) || pinnedBrief(rec.outFile) === null) return tampered();
+  // The program is the recorded absolute path, still what PATH resolves the adapter's program to; a record without it
+  // (2.4.1) is refused too (B-2). The model is null or a plain value (B-3).
+  const binOk = () => typeof rec.bin === 'string' && programOf(adapter, io.env) === rec.bin;
+  if (!adapter || !sandbox || !cwd || rec.sandbox !== sandbox || rec.cwd !== cwd || !binOk() || !modelOk(rec.model) || !ownOutFile(rec.outFile) || pinnedBrief(rec.outFile) === null) return tampered();
   // The project's redaction patterns, read once as verify reads them; a file that cannot be read fails closed: no
   // provider starts, so no output is stored unredacted.
   let extra;
@@ -177,14 +202,15 @@ export async function runSupervise({ args, names, io, pluginRoot }) {
     patch((cur) => ({ ...cur, status: 'failed', endedAt: new Date().toISOString(), error: clip(got.reasons.map((x) => x.message).join('; '), 300) }));
     return fail('wait-timeout', `no external slot within ${WAIT_MS / 1000} s`, 'retry later');
   }
-  const brief = ownOutFile(rec.outFile) ? pinnedBrief(rec.outFile) : null;
-  if (brief === null) {
+  // Checked again after the wait; the adapter's argv must start with its program, which runs by the recorded path.
+  const brief = ownOutFile(rec.outFile) && binOk() ? pinnedBrief(rec.outFile) : null;
+  const argv = brief === null ? [] : adapter.argv({ sandbox, cwd, outFile: rec.outFile, schemaFile: rec.role === 'reviewer' ? join(pluginRoot, 'templates', 'review.schema.json') : undefined, model: rec.model ?? undefined });
+  if (brief === null || argv[0] !== adapter.bins[0]) {
     release(got.lease, opts);
     return tampered();
   }
-  const argv = adapter.argv({ sandbox, cwd, outFile: rec.outFile, schemaFile: rec.role === 'reviewer' ? join(pluginRoot, 'templates', 'review.schema.json') : undefined, model: rec.model ?? undefined });
   const began = Date.now();
-  const child = start(argv[0], argv.slice(1), { unit: 'providers', cwd, env: { ...io.env, ...got.env }, detached: true, stdin: 'pipe' });
+  const child = start(rec.bin, argv.slice(1), { unit: 'providers', cwd, env: { ...io.env, ...got.env, PATH: childPath(io.env.PATH) }, detached: true, stdin: 'pipe' });
   child.stdin.on('error', () => {});
   child.stdin.end(brief);
   let live = { tokens: null, lastLine: null, unknownEvents: 0, lines: [] };

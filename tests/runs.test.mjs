@@ -112,7 +112,8 @@ test('a fake-provider run: starting → running → done with tokens and lastLin
   assert.ok(seen.has('running'), `statuses seen: ${[...seen].join(' → ')}`);
   const rec = p.record(id);
   assert.deepEqual(Object.keys(rec), ['schema', 'runId', 'task', 'role', 'provider', 'adapterVersion', 'model', 'sandbox', 'cwd', 'pid', 'pidStart', 'pidMethod', 'lease',
-    'status', 'queuedAt', 'startedAt', 'endedAt', 'elapsedMs', 'capS', 'tokens', 'tokensReason', 'costMicroUsd', 'lastLine', 'unknownEvents', 'outFile', 'exit', 'error']);
+    'status', 'queuedAt', 'startedAt', 'endedAt', 'elapsedMs', 'capS', 'tokens', 'tokensReason', 'costMicroUsd', 'lastLine', 'unknownEvents', 'outFile', 'exit', 'error', 'bin']);
+  assert.equal(rec.bin, process.execPath, 'the program is the absolute path exec resolved (B-2)');
   assert.equal(rec.status, 'done');
   assert.equal(rec.exit, 0);
   assert.equal(rec.sandbox, 'read-only', 'a reviewer runs read-only');
