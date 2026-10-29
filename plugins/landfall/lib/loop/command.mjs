@@ -54,7 +54,7 @@ function render(r, rules, names, now, carried) {
   if (ended) out.push(`The loop ended (${r.result}${r.repeated ? `, recorded ${r.loop.exitAt}` : ''}): ${r.reason}.`);
   const head = ended ? '| left open | state | next step | rules |' : '| task | state | next step | rules |';
   if (r.steps.length) out.push(table(r.steps, head));
-  const sections = [['blocked', 'Blocked (informational):'], ['others', 'Others (informational):'], ['plan', 'Next in the plan (informational):'], ['watch', 'Watch (informational, ORC-26):']];
+  const sections = [['blocked', 'Blocked (informational):'], ['others', 'Others (informational):'], ['plan', 'Next in the plan (informational):'], ['watch', 'Watch (informational, ORC-24):']];
   for (const [kind, title] of sections) {
     const rows = r.info.filter((i) => i.kind === kind);
     if (rows.length) out.push('', title, table(rows, '| task | state | next step | rules |'));

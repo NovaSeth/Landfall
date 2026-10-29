@@ -1,4 +1,4 @@
-// ORC-26 orchestrator watchdog (T-MG-81): the rule, the skills that cite it, and the watch rows of status and tick
+// ORC-24 orchestrator watchdog (T-MG-81): the rule, the skills that cite it, and the watch rows of status and tick
 // (a heavy-queue entry waiting over 10 minutes; load at or over the calibrated max). Readings are injected (io.readings),
 // the heavy ticket is planted with an old `at`: no real load.
 import { test } from 'node:test';
@@ -30,31 +30,31 @@ const BUSY = Object.freeze({ ...CALM, load1: 14.2 });
 const iso = (msAgo) => new Date(Date.now() - msAgo).toISOString();
 const git = (cwd, env, args) => { const r = spawnSync('git', args, { cwd, env, encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); };
 
-test('ORC-26 resolves with rule, in the method after ORC-23, within the rule caps', () => {
-  const r = spawnSync(process.execPath, [join(pluginDir, 'bin', names.bin), 'rule', 'ORC-26'], { encoding: 'utf8', timeout: 30000 });
+test('ORC-24 resolves with rule, in the method after ORC-23, within the rule caps', () => {
+  const r = spawnSync(process.execPath, [join(pluginDir, 'bin', names.bin), 'rule', 'ORC-24'], { encoding: 'utf8', timeout: 30000 });
   assert.equal(r.status, 0, r.stderr);
-  assert.match(r.stdout, /^ORC-26\. Be proactive and keep the work flowing: while agents, external runs or gates work in the background/);
+  assert.match(r.stdout, /^ORC-24\. Be proactive and keep the work flowing: while agents, external runs or gates work in the background/);
   assert.match(r.stdout, /an executor past its budget gets a status request \(ORC-9\)/);
   const text = readFileSync(join(pluginDir, 'method', 'orchestration.md'), 'utf8');
-  assert.ok(text.indexOf('**ORC-23.**') < text.indexOf('**ORC-26.**'));
-  assert.ok(!text.includes('**ORC-24.**') && !text.includes('**ORC-25.**'));
+  assert.ok(text.indexOf('**ORC-23.**') < text.indexOf('**ORC-24.**'));
+  assert.ok(!text.includes('**ORC-25.**') && !text.includes('**ORC-26.**'));
 });
 
-test('the dispatch and loop skills name ORC-26', () => {
+test('the dispatch and loop skills name ORC-24', () => {
   const d = readFileSync(join(pluginDir, 'templates', 'skills', 'dispatch.md'), 'utf8');
   const l = readFileSync(join(pluginDir, 'templates', 'skills', 'loop.md'), 'utf8');
-  assert.match(d.split('\n').find((x) => x.startsWith('Rules:')), /ORC-26/);
-  assert.ok(d.includes('While 2+ agents or a gate run in the background, schedule a check every ~10 min (Claude Code: a recurring cron prompt; elsewhere the loop\'s tick) and unblock what it finds (ORC-26).'));
-  assert.match(l, /ORC-26/);
+  assert.match(d.split('\n').find((x) => x.startsWith('Rules:')), /ORC-24/);
+  assert.ok(d.includes('While 2+ agents or a gate run in the background, schedule a check every ~10 min (Claude Code: a recurring cron prompt; elsewhere the loop\'s tick) and unblock what it finds (ORC-24).'));
+  assert.match(l, /ORC-24/);
 });
 
 test('watchRows: a heavy ticket queued 12 minutes ago, load over the max, a calm state', () => {
   const now = Date.now();
   const queue = [{ status: 'live', at: iso(12 * 60e3) }, { status: 'live', at: iso(2 * 60e3) }];
   const heavy = table.watchRows({ queue, readings: CALM, loadMax: '8.0', now });
-  assert.deepEqual(heavy, [{ code: 'heavy-queue', message: 'heavy queue: 2 waiting, oldest 12 min → hold new dispatches until the gate is through (ORC-26)' }]);
+  assert.deepEqual(heavy, [{ code: 'heavy-queue', message: 'heavy queue: 2 waiting, oldest 12 min → hold new dispatches until the gate is through (ORC-24)' }]);
   const load = table.watchRows({ queue: [], readings: BUSY, loadMax: '8.0', now });
-  assert.deepEqual(load, [{ code: 'load', message: 'load 14.2 ≥ 8.0 → start no new agents until it falls (ORC-26)' }]);
+  assert.deepEqual(load, [{ code: 'load', message: 'load 14.2 ≥ 8.0 → start no new agents until it falls (ORC-24)' }]);
   assert.deepEqual(table.watchRows({ queue: [{ status: 'live', at: iso(9 * 60e3) }, { status: 'stale', at: iso(60 * 60e3) }], readings: CALM, loadMax: '8.0', now }), []);
   assert.deepEqual(table.watchRows({ queue: [], readings: BUSY, loadMax: 'off', now }), []);
 });
@@ -95,12 +95,12 @@ test('status and tick: the heavy row, the load row, and no row when calm; tick k
   await calm.run(['init', '--yes']);
   const quiet = await calm.run(['status'], true);
   assert.deepEqual(quiet.out.data.watch, []);
-  assert.doesNotMatch((await calm.run(['status'])).out, /ORC-26/);
+  assert.doesNotMatch((await calm.run(['status'])).out, /ORC-24/);
   const tickCalm = await calm.run(['tick']);
 
   await plantHeavy(calm, 12);
   const s = await calm.run(['status'], true);
-  assert.deepEqual(s.out.data.watch, [{ code: 'heavy-queue', message: 'heavy queue: 1 waiting, oldest 12 min → hold new dispatches until the gate is through (ORC-26)' }]);
+  assert.deepEqual(s.out.data.watch, [{ code: 'heavy-queue', message: 'heavy queue: 1 waiting, oldest 12 min → hold new dispatches until the gate is through (ORC-24)' }]);
   assert.match((await calm.run(['status'])).out, /^heavy queue: 1 waiting, oldest 12 min → hold new dispatches/m);
   const tick = await calm.run(['tick']);
   assert.equal(tick.code, tickCalm.code, 'exit code unchanged');
@@ -111,8 +111,8 @@ test('status and tick: the heavy row, the load row, and no row when calm; tick k
   sched.calibrate({ names, env: busy.env, readings: CALM, loadMax: '8.0' });
   const b = await busy.run(['status'], true);
   assert.deepEqual(b.out.data.watch.map((x) => x.code), ['load']);
-  assert.match(b.out.data.watch[0].message, /^load 14\.2 ≥ 8\.0 → start no new agents until it falls \(ORC-26\)$/);
+  assert.match(b.out.data.watch[0].message, /^load 14\.2 ≥ 8\.0 → start no new agents until it falls \(ORC-24\)$/);
   const bt = await busy.run(['tick']);
   assert.match(bt.out, /load 14\.2 ≥ 8\.0/);
-  assert.ok(![...bt.out.matchAll(/ORC-26/g)].length === false);
+  assert.ok(![...bt.out.matchAll(/ORC-24/g)].length === false);
 });

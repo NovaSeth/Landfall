@@ -5,7 +5,7 @@
 // step table (lib/loop nextSteps: the same rows `tick` acts on) · the loop record when one exists · the scheduler
 // leases taken for this repository (lease project = its path; a task ID alone could be another repository's). At
 // most 25 lines: the task rows are cut first and counted. --json: data { repo, state, tier, tasks, steps, loop,
-// leases, watch } with every open task and step; watch: the ORC-26 rows (a heavy-queue wait over 10 min, load over the max).
+// leases, watch } with every open task and step; watch: the ORC-24 rows (a heavy-queue wait over 10 min, load over the max).
 // Writes nothing. Exit 0 · 1 a state file is invalid · 7 a newer state schema · 8 not a git repository, git missing.
 import { join } from 'node:path';
 import { TIER_NAMES, evaluate } from '../engine/index.mjs';
@@ -75,7 +75,7 @@ export function status({ names, io }) {
   const t = where.active ? tasksOf(where, names, env) : { all: [], open: [], rows: [], loop: null };
   const leases = where.dataDir ? snapshot({ names, env }).leases.filter((l) => l.project === where.worktree) : []; // leases name their checkout (lib/sched)
 
-  const watch = where.dataDir ? readWatch({ names, env, readings: io.readings ?? null }) : []; // ORC-26
+  const watch = where.dataDir ? readWatch({ names, env, readings: io.readings ?? null }) : []; // ORC-24
   const head = [where.repo, `State: ${state.text}`, `Tier: ${tier.text}`, ...watch.map((w) => w.message)];
   const tail = [];
   if (t.loop) tail.push(...describe(t.loop, Date.now()).trimEnd().split('\n').map((x, i) => (i === 0 ? `Loop: ${x}` : `      ${x}`)));
