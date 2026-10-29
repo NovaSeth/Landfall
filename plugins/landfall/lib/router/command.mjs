@@ -15,8 +15,7 @@ import { isAbsolute, relative } from 'node:path';
 import { EXIT } from '../cli/commands.mjs';
 import { openStore, riskGlobsOf } from '../profile/index.mjs';
 import { StateError, emailHash, gitIdentity, open, resolve } from '../state/index.mjs';
-import { cellStats, suggestExecutors } from '../receipts/executors.mjs';
-import { executorRecords } from '../receipts/index.mjs';
+import { executorData as suggestionFor } from '../receipts/index.mjs';
 import { reviewShown } from '../verify/artifacts.mjs';
 import { classify } from './classify.mjs';
 import { RouteError, usage } from './errors.mjs';
@@ -113,10 +112,7 @@ const HEADLINE = {
 };
 
 const fixed = (x) => x.toFixed(2);
-function executorData(cls, { io, names }) {
-  const cells = cellStats(executorRecords({ cwd: io.cwd, env: io.env, names }), { seed: 1 }).filter((c) => c.class === cls);
-  return { seed: 1, resamples: 1000, results: suggestExecutors(cells, cls) };
-}
+const executorData = (cls, { io, names }) => suggestionFor(cls, { cwd: io.cwd, env: io.env, names });
 
 function executorLines(ex) {
   return ex.results.map((r) => {

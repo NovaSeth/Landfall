@@ -61,3 +61,10 @@ test('another class does not mix in; a role without cells says fewer than 20 rec
   assert.equal(of(res, 'implementer').executor, null);
   assert.equal(of(res, 'reviewer').reason, 'fewer than 20 receipts');
 });
+
+test('the bootstrap interval is exported for reuse (lessons promotion)', async () => {
+  const { intervalOf } = await import('../plugins/landfall/lib/receipts/executors.mjs');
+  const a = intervalOf([1, 1, 1, 0], 1, 1000);
+  assert.deepEqual(a, intervalOf([1, 1, 1, 0], 1, 1000));
+  assert.ok(a.lo <= 0.75 && 0.75 <= a.hi);
+});

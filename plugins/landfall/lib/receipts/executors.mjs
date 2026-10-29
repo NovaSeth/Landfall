@@ -28,7 +28,8 @@ function prng(seed) {
   };
 }
 
-function interval(passes, seed, resamples) {
+// The 90 % percentile bootstrap interval of the first-pass rate of `passes` (0/1 each); lessons promotion reuses it.
+export function intervalOf(passes, seed = 1, resamples = RESAMPLES) {
   const n = passes.length;
   const rand = prng(seed);
   const rates = [];
@@ -56,7 +57,7 @@ export function cellStats(records, { seed = 1, resamples = RESAMPLES } = {}) {
       const passes = rows.map((r) => (r.firstPass ? 1 : 0));
       const rate = passes.reduce((s, x) => s + x, 0) / rows.length;
       const cost = rows.reduce((s, r) => s + (r.costMicroUsd ?? 0), 0) / rows.length;
-      return { class: cls, executor, role: roleOf(executor), tasks: rows.length, firstPass: { rate, ...interval(passes, seed, resamples) }, costPerTaskMicroUsd: Math.round(cost), resamples, seed };
+      return { class: cls, executor, role: roleOf(executor), tasks: rows.length, firstPass: { rate, ...intervalOf(passes, seed, resamples) }, costPerTaskMicroUsd: Math.round(cost), resamples, seed };
     });
 }
 

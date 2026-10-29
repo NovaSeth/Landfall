@@ -17,6 +17,8 @@ import { join } from 'node:path';
 import { findingsForTask, sourceLine } from '../findings/index.mjs';
 import { briefRules } from '../method/index.mjs';
 import { openStore, reviewFocusOf } from '../profile/index.mjs';
+import { findLessons, lessonsLine, readLessons } from '../lessons/index.mjs';
+import { executorData } from '../receipts/index.mjs';
 import { leaseEnv, snapshot } from '../sched/index.mjs';
 import { KINDS, open, resolve, writeTaskText } from '../state/index.mjs';
 import { FENCE_MARKER, dataLine, fenceLine } from '../text/data.mjs';
@@ -42,7 +44,7 @@ export const seal = (text, bin) => `${text}${marker(bin, sha256(text))}`;
 
 // The brief text. task: the task document; gates: the gate commands; lease: the lease env ({ name: value }) or null;
 // focus: the profile's review focus (what every review of the project checks), one line after the review line.
-export function renderBrief({ template, task, role, gates, lease, review = null, focus = [], findings = [], names }) {
+export function renderBrief({ template, task, role, gates, lease, review = null, focus = [], findings = [], lessons = '', evidence = '', names }) {
   const last = task.classHistory[task.classHistory.length - 1];
   const reason = last ? last.reason.replace(new RegExp(`^${escape(task.class)}: `), '') : null;
   const fills = {
@@ -67,6 +69,9 @@ export function renderBrief({ template, task, role, gates, lease, review = null,
     filled.add(m);
     return fills[m];
   }).split('\n');
+  // after the Executor line, below the review and the focus: lessons that match the title and the executor numbers
+  const extra = [...(lessons ? [`Lessons: ${lessons}`] : []), ...(evidence ? [`Executor evidence: ${evidence}`] : [])];
+  if (extra.length) lines.splice(lines.findIndex((l) => l.startsWith('Executor: ')) + 1, 0, ...extra);
   if (lease) lines.splice(lines.findIndex((l) => l.startsWith(WORKTREE)) + 1, 0, `Lease env (the scheduler's slot for this task): ${Object.entries(lease).map(([k, v]) => `${k}=${v}`).join(' ')}`);
   if (review) lines.splice(lines.findIndex((l) => l.startsWith('Executor: ')) + 1, 0, `Review: ${review.text}`);
   // the review focus is profile text the repository ships: quoted data in a text fence (SEC-14, audit 2.4.0 F1-4)
@@ -82,6 +87,15 @@ export function renderBrief({ template, task, role, gates, lease, review = null,
   }
   if (!text.endsWith('\n')) text += '\n';
   return `${text}${marker(names.bin, sha256(text))}`;
+}
+
+// The cell numbers behind a suggested executor of the role (route --executor); '' while there is no suggestion.
+const fixed2 = (x) => x.toFixed(2);
+function evidenceLine(data, role) {
+  const r = data.results.find((x) => x.role === role);
+  const c = r?.executor ? r.cells.find((x) => x.executor === r.executor) : null;
+  if (!c) return '';
+  return `${c.executor}, first pass ${fixed2(c.firstPass.rate)} (90% ${fixed2(c.firstPass.lo)}-${fixed2(c.firstPass.hi)}), ${c.tasks} tasks, ${c.costPerTaskMicroUsd} micro-USD per task`;
 }
 
 export function brief({ args, flags, names, io, pluginRoot }) {
@@ -108,7 +122,10 @@ export function brief({ args, flags, names, io, pluginRoot }) {
   const template = readFileSync(join(pluginRoot, 'templates', 'task', 'brief.md'), 'utf8');
   const review = reviewShown(open(where.dir, { names }), task.class, { names, env: io.env });
   const findings = findingsForTask(open(where.dir, { names }), id);
-  const text = renderBrief({ template, task, role, gates, lease, review, focus, findings, names });
+  const store = open(where.dir, { names });
+  const lessons = lessonsLine(findLessons(readLessons(store), task.title, 3));
+  const evidence = evidenceLine(executorData(task.class, { cwd: io.cwd, env: io.env, names }), role);
+  const text = renderBrief({ template, task, role, gates, lease, review, focus, findings, lessons, evidence, names });
   const data = { task: id, role, class: task.class, kind: task.kind, title: task.title, rules: briefRules({ cls: task.class, role }), gates, lease, review, focus, text, written: null, file: null };
   if (!flags.write) return { data, text };
   const w = writeTaskText({ cwd: io.cwd, env: io.env, names, id, name: 'brief', text, replace: (cur) => Boolean(flags.force) || unedited(cur) });
