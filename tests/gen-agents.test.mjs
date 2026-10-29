@@ -32,7 +32,7 @@ const gen = await lib('gen/index.mjs');
 const { extract } = await lib('gen/block.mjs');
 const { COMMANDS } = await lib('cli/commands.mjs');
 const { openMethod } = await lib('method/index.mjs');
-const { citationPattern } = await lib('decisions/record.mjs');
+const { citationPattern } = await lib('decisions/index.mjs');
 const profileUnit = await lib('profile/index.mjs');
 const { version: PLUGIN_VERSION } = JSON.parse(readFileSync(join(pluginDir, '.claude-plugin', 'plugin.json'), 'utf8'));
 

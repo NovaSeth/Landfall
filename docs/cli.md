@@ -55,7 +55,7 @@ Commands:
   decisions supersede  Record a decision replacing an active one; the old record gets status superseded and supersededBy.
   decline              Opt out of tracking this repository; remembered in machine data by its real path, never in the repository.
   doctor               Health report: Claude Code floor, plugin and hooks, release, state, profile, flags, context cost, permissions.
-  exec                 Start an external reviewer (pinned review brief, latest round or --round) or implementer (task worktree, task brief or --brief).
+  exec                 Start an external reviewer (pinned review brief, latest round or --round) or implementer (task worktree and brief).
   findings add         File findings from a recorded review round, once per source task, round and finding ID.
   findings close       Mark open or taken backlog findings fixed by an existing task.
   findings drop        Drop open or taken backlog findings with a reason recorded in a decision.
@@ -406,7 +406,7 @@ Exit codes: 0 OK · 1 FAIL · 8 ENV
 ```text
 usage: landfall exec [--task <id>] [--role <role>] [--provider <id>] [--round <k>] [--brief <file>] [--yes] [--json]
 
-Start an external reviewer (pinned review brief, latest round or --round) or implementer (task worktree, task brief or --brief).
+Start an external reviewer (pinned review brief, latest round or --round) or implementer (task worktree and brief).
 The provider is selected like the dispatch does (found, logged in, declared for the role; --provider names one). The
 record starts as {status: starting}; the supervisor (run-supervise) takes the external lease (queued while none is
 free), runs the provider in its own process group under the wall cap (reviewer 900 s, implementer 2700 s, or the env

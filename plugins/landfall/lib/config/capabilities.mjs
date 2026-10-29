@@ -7,6 +7,10 @@
 // Protective capabilities (`protection`: their modes from the least to the most protective) guard the user's machine
 // against the session: the repository's config.json arrives with a clone, so it may keep or raise their protection but
 // never lower it below the default; only the user's machine override lowers one (`flags set --local`).
+
+import { readFileSync } from 'node:fs';
+const NAMES = JSON.parse(readFileSync(new URL('../name.json', import.meta.url), 'utf8'));
+
 export const MODES = Object.freeze(['off', 'shadow', 'on']);
 
 export const ROLLOUT = Object.freeze([
@@ -17,7 +21,7 @@ export const ROLLOUT = Object.freeze([
   { name: 'edit-retrieval', default: 'on', modes: ['off', 'on'], protection: ['off', 'on'], on: 'decisions are shown before a file is edited', off: 'no decisions are shown at edit time' },
   { name: 'headroom', default: 'shadow', modes: MODES, on: 'context headroom warnings are injected', shadow: 'warnings it would inject are logged', off: 'no headroom warnings' },
   { name: 'executor-ui', default: 'off', modes: ['off', 'on'], on: 'external executors show as agent panel rows', off: 'no agent panel rows for external executors' },
-  { name: 'task-mirror', default: 'off', modes: ['off', 'on'], on: "Landfall tasks are mirrored in the native task list and a native completion needs Landfall's done", off: 'no native task mirror' },
+  { name: 'task-mirror', default: 'off', modes: ['off', 'on'], on: `${NAMES.displayName} tasks are mirrored in the native task list and a native completion needs ${NAMES.displayName}'s done`, off: 'no native task mirror' },
 ].map((c) => Object.freeze(c)));
 
 export const rollout = (name) => ROLLOUT.find((c) => c.name === name) ?? null;
