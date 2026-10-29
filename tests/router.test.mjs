@@ -804,7 +804,7 @@ test('route row: listed in help, changes files, and its --flags help names exact
   assert.deepEqual([row.mutating({}), row.mutating({ probe: true })], [true, false], 'every form but --probe changes files');
   assert.deepEqual(row.exits, ['OK', 'FAIL', 'USAGE', 'REFUSED', 'ENV']);
   assert.deepEqual(row.args.map((a) => [a.name, Boolean(a.required)]), [['task', false]]);
-  assert.deepEqual(row.flags.map((f) => f.flag), ['--paths', '--loc', '--flags', '--probe', '--override', '--by', '--quote']);
+  assert.deepEqual(row.flags.map((f) => f.flag), ['--paths', '--loc', '--flags', '--probe', '--executor', '--override', '--by', '--quote']);
   const listed = /: (.+)$/.exec(row.flags.find((f) => f.flag === '--flags').summary)[1].split(', ');
   assert.deepEqual(listed, [...router.FLAGS]);
   assert.deepEqual(/: (.+)$/.exec(row.flags.find((f) => f.flag === '--override').summary)[1].split(', '), [...router.CLASSES]);
