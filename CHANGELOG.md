@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- **Dashboard:** AGENTS lists the running agents and runs; one that ended stays for a minute, then folds into one line (`✓ 5 ended (1 failed)`). `runs list --json` carries `endedAt`.
+- **Dashboard:** TASKS lists the open tasks, those being worked on first (`▶ working`), then those paused or waiting (`⏸ waiting`); AGENTS lists only the agents and runs at work. `runs list --json` carries `endedAt`.
 
 ## 2.4.0
 

@@ -23,8 +23,6 @@ const DEBOUNCE_MS = 700
 const RUN_TIMEOUT_MS = 8_000
 const KEEP_AGENTS = 30
 const LIST_GRACE_MS = 30_000
-// an agent or run that ended stays a row this long, then it folds into the count line
-const LINGER_MS = 60_000
 const TASK_ID = /\bT-[A-Z]{2,4}-\d+\b/
 // the round of a brief or an answer, the most specific spelling first (review r1 F5: prose says "round" too)
 const ROUNDS = [/\breview-r(\d+)\b/i, /--round[ =](\d+)\b/, /\bfix round (\d+)\b/i, /\bround (\d+)\b/i]
@@ -284,26 +282,29 @@ export function linesOf(snap: Snapshot, width: number, rows: number): Line[] {
   const agentRoom = Math.max(1, room - taskRoom)
 
   out.push({ text: 'TASKS', style: 'section' })
-  const shownTasks = snap.tasks.slice(0, snap.tasks.length > taskRoom ? taskRoom - 1 : taskRoom)
+  // working: an active status, or a live agent or run names the task; every other open task waits
+  const named = new Set<string>()
+  for (const a of snap.agents) if (RUNNING.has(a.status) && a.task) named.add(a.task)
+  for (const r of snap.runs) if (r.live && r.task) named.add(r.task)
+  const working = (t: TaskRow) => ACTIVE.has(t.status) || named.has(t.id)
+  const ordered = [...snap.tasks.filter(working), ...snap.tasks.filter(t => !working(t))]
+  const shownTasks = ordered.slice(0, ordered.length > taskRoom ? taskRoom - 1 : taskRoom)
   for (const t of shownTasks) {
-    const glyph = t.kind === 'action' ? '▸' : t.kind === 'blocked' ? '✗' : '·'
-    out.push({ text: `${glyph} ${t.id}${t.round ? ` r${t.round}` : ''} ${t.cls ? CLASS_TAG[t.cls] ?? t.cls : '-'}  ${t.state}`, style: t.kind === 'blocked' ? 'bad' : 'row' })
+    const w = working(t)
+    const blocked = t.kind === 'blocked'
+    const stage = blocked ? `blocked · ${t.state.replace(/^blocked:\s*/, '')}` : `${w ? 'working' : 'waiting'} · ${t.state}`
+    out.push({ text: `${w ? '▶' : '⏸'} ${t.id}${t.round ? ` r${t.round}` : ''} ${t.cls ? CLASS_TAG[t.cls] ?? t.cls : '-'}  ${stage}`, style: blocked ? 'bad' : w ? 'row' : 'dim' })
   }
   if (snap.tasks.length > shownTasks.length) out.push({ text: `  … ${snap.tasks.length - shownTasks.length} more ({{bin}} task list)`, style: 'dim' })
   if (snap.tasks.length === 0) out.push({ text: '  no open tasks ({{bin}} task new)', style: 'dim' })
 
   out.push({ text: 'AGENTS', style: 'section' })
-  const all = [...snap.agents.map(r => agentLine(r, snap.at)), ...snap.runs.map(r => runLine(r, snap.at))].sort((a, b) => Number(b.live) - Number(a.live) || b.since - a.since)
-  // the live rows and the ones that ended a moment ago; the rest fold into one count line that keeps its place
-  const shown = all.filter(a => a.live || (a.endedAt !== null && snap.at - a.endedAt <= LINGER_MS))
-  const folded = all.filter(a => !shown.includes(a))
-  const failed = folded.filter(a => a.failed).length
-  const rowRoom = Math.max(0, agentRoom - (folded.length > 0 ? 1 : 0))
-  const shownAgents = shown.slice(0, shown.length > rowRoom ? Math.max(0, rowRoom - 1) : rowRoom)
+  // only the agents and runs at work
+  const shown = [...snap.agents.map(r => agentLine(r, snap.at)), ...snap.runs.map(r => runLine(r, snap.at))].filter(a => a.live).sort((a, b) => b.since - a.since)
+  const shownAgents = shown.slice(0, shown.length > agentRoom ? Math.max(0, agentRoom - 1) : agentRoom)
   for (const a of shownAgents) out.push(a.line)
   if (shown.length > shownAgents.length) out.push({ text: `  … ${shown.length - shownAgents.length} more`, style: 'dim' })
-  if (folded.length > 0) out.push({ text: `  ✓ ${folded.length} ended${failed > 0 ? ` (${failed} failed)` : ''}`, style: 'dim' })
-  if (all.length === 0) out.push({ text: '  none yet', style: 'dim' })
+  if (shown.length === 0) out.push({ text: '  none active', style: 'dim' })
 
   const slots = Object.entries(snap.slots)
   out.push({ text: `SLOTS ${slots.length ? slots.map(([k, n]) => `${k} ${n}`).join(' · ') : 'none in use'}`, style: 'dim' })
