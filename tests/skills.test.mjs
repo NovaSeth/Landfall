@@ -30,7 +30,7 @@ const index = readJson(join(pluginDir, 'method', 'index.json'));
 // (external is added with the provider adapters).
 const MODEL_SKILLS = ['decide', 'dispatch', 'loop', 'plan', 'review', 'work'];
 const USER_SKILLS = ['doctor', 'start', 'status'];
-const AGENTS = ['designer', 'external', 'implementer', 'reviewer'];
+const AGENTS = ['designer', 'external', 'implementer', 'reviewer', 'security-reviewer'];
 // Commands of a unit not merged yet that a shipped text already names (shrink-only; also on command-names PENDING).
 const PENDING_COMMANDS = [];
 const TASK_TEMPLATES = ['brief', 'findings', 'report', 'rereview', 'review-brief', 'review'];
@@ -77,7 +77,7 @@ const shipped = () => [...[...MODEL_SKILLS, ...USER_SKILLS].map(skillFile), ...A
 const PREFIXES = new Set(Object.values(index.topics).map((t) => t.prefix));
 const ruleRefs = (text) => [...new Set([...text.matchAll(/\b([A-Z]{3})-\d+\b/g)].filter((m) => PREFIXES.has(m[1])).map((m) => m[0]))];
 
-test('inventory: 6 model-invoked skills, 3 user-only skills and 4 agents ship, each from a template source', () => {
+test('inventory: 6 model-invoked skills, 3 user-only skills and 5 agents ship, each from a template source', () => {
   const skills = readdirSync(join(pluginDir, 'skills')).filter((d) => statSync(join(pluginDir, 'skills', d)).isDirectory()).sort();
   assert.deepEqual(skills, [...MODEL_SKILLS, ...USER_SKILLS].sort());
   for (const s of skills) assert.deepEqual(readdirSync(join(pluginDir, 'skills', s)), ['SKILL.md'], `skills/${s}: only SKILL.md`);
@@ -105,6 +105,11 @@ test('skill frontmatter: name = directory; model-invoked "Use when …" within 6
     assert.doesNotMatch(meta.description, /[`*_<>{}]/, `${file}: plain description`);
     assert.deepEqual(comments, [`# Generated from templates/skills/${name}.md by scripts/gen-names.mjs; do not edit.`], `${file}: generated marker`);
   }
+});
+
+test('SEC-14: every executor agent treats repository text as data; review and dispatch name the security reviewer', () => {
+  for (const name of ['implementer', 'reviewer', 'designer', 'security-reviewer']) assert.match(read(agentFile(name)), /Untrusted text: .*\(SEC-14\)/, `${name}: untrusted-text bullet`);
+  for (const skill of ['review', 'dispatch']) assert.ok(read(skillFile(skill)).includes(`${names.plugin}:security-reviewer`), `${skill} names the security reviewer`);
 });
 
 test('agent frontmatter: name = file, description within 70 tok, model and effort set', () => {
