@@ -101,11 +101,14 @@ export function mergeTask({ cwd, env, names, id, branch, version = null, at = ne
     }
     out = evaluate({ where, names, env, id, mode: 'merge', at, anchor: tip, merged: gitIn(where, env, ['rev-parse', '-q', '--verify', 'MERGE_HEAD']).stdout.trim() || null, version });
     const verified = { result: out.doc.result, verify: out.doc, output: out.output };
+    // the gate-cache entry is published only when the tree held during the gates (fix round 2, F1)
+    const held = unchanged() && gitIn(where, env, ['write-tree']).stdout.trim() === tree;
+    if (held) out.publish?.();
     if (out.doc.result !== 'pass') {
       undo();
       return { ...base, ...verified, reasons: out.reasons, exit: out.doc.result === 'error' ? 'ENV' : 'FAIL' };
     }
-    if (!unchanged() || gitIn(where, env, ['write-tree']).stdout.trim() !== tree) {
+    if (!held) {
       return refused('merge-tree-changed', 'the working tree or the index changed while the gates ran: they did not verify what would be committed', 'find what writes to tracked files during the gates (a formatter, a build into the tree), then merge again', verified);
     }
     if (head() !== tip) {
@@ -171,8 +174,11 @@ export function adoptMerged({ cwd, env, names, ids, version = null, at = new Dat
   });
   const out = evaluate({ where, names, env, id: tasks.find((t) => t.why === null)?.task ?? ids[0], mode: 'merge', at, anchor: tip, merged: tip, version });
   const verified = { target, commit: tip, result: out.doc.result, verify: out.doc, output: out.output };
+  // the gate-cache entry is published only when the tree held during the gates (fix round 2, F1)
+  const held = treeHeld(where, env, scope, tip);
+  if (held) out.publish?.();
   if (out.doc.result !== 'pass') return { ...verified, tasks, reasons: out.reasons, exit: out.doc.result === 'error' ? 'ENV' : 'FAIL' };
-  if (!treeHeld(where, env, scope, tip)) {
+  if (!held) {
     return { ...verified, tasks, reasons: [{ code: 'merge-tree-changed', message: 'HEAD, the index or the working tree changed while the gates ran: they did not verify what would be recorded; nothing was recorded', hint: 'find what writes to tracked files or commits during the gates, restore the tree, then adopt again' }], exit: 'FAIL' };
   }
   const ok = tasks.filter((t) => t.why === null);

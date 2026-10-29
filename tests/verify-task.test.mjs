@@ -650,7 +650,16 @@ test('r2 D3: lib/verify never resets hard, writes refs or builds commits by hand
   const dir = join(pluginDir, 'lib', 'verify');
   for (const f of readdirSync(dir)) {
     const text = readFileSync(join(dir, f), 'utf8');
-    assert.doesNotMatch(text, /--hard|update-ref|commit-tree/, f);
+    assert.doesNotMatch(text, /--hard|commit-tree/, f);
+    // T-MG-80 fix round 2 (F5): the one ref write is the batch's compare-and-swap of the target ref, always with the
+    // expected old value; no other file writes a ref
+    const calls = text.match(/'update-ref'[^\n]*/g) ?? [];
+    if (f !== 'batch.mjs') assert.deepEqual(calls, [], f);
+    else {
+      assert.equal(calls.length, 1, f);
+      assert.match(calls[0], /, ref, to, from\]\);$/, 'the update-ref names the new and the expected old value');
+      assert.ok((text.match(/\bswap\(/g) ?? []).length >= 2 && !/\bswap\([^,)]*\)/.test(text), 'each swap passes both values');
+    }
   }
 });
 

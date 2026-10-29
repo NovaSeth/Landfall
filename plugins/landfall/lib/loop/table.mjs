@@ -204,11 +204,10 @@ export function nextSteps({ tasks = [], runs = [], handles = [], me = null, plan
       }
     }
     // done tasks whose branch was merged by hand: the merge is not in the state (T-MG-80)
-    for (const id of outside.slice(0, OUTSIDE_MAX)) {
-      const t = byId.get(id);
-      if (t && mine(t)) steps.push(action(id, 'merged outside landfall', `${bin} task merge --adopt ${id}`, []));
-    }
-    if (outside.length > OUTSIDE_MAX) info.push({ task: '…', state: `… ${outside.length - OUTSIDE_MAX} more merged outside ${bin}`, step: null, rules: ['ORC-25'], kind: 'others' });
+    // (fix round 2, F8: the caller's own are filtered first, so others' merges never push them past the cap)
+    const adoptable = outside.filter((id) => byId.has(id) && mine(byId.get(id)));
+    for (const id of adoptable.slice(0, OUTSIDE_MAX)) steps.push(action(id, 'merged outside landfall', `${bin} task merge --adopt ${id}`, []));
+    if (adoptable.length > OUTSIDE_MAX) info.push({ task: '…', state: `… ${adoptable.length - OUTSIDE_MAX} more merged outside ${bin}`, step: null, rules: ['ORC-25'], kind: 'others' });
     if (plan) {
       const next = plan.entries.find((e) => !tasks.some((t) => belongs(t, e.ref)));
       if (plan.entries.length === 0) steps.push(action('-', `${cell(plan.path)} has no "### Task <id>: <title>" entries`, 'give the plan its task headings, or tick without --plan', ['SPC-11']));

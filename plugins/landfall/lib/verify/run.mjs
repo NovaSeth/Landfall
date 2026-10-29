@@ -306,6 +306,9 @@ function reroute({ store, task, id, write, handle, riskPaths, change, at }) {
 // memo (a batch gate run, T-MG-80 fix round 1): one object shared by the evaluations of the tasks of one integrated tree;
 // the gate runs and the base measurement of the first are reused by the others, so the suite runs once and each task is
 // checked against that inventory with its own report, baseline and class.
+// publish (merge mode, fix round 2 F1): the gate-cache entry of this run is not stored here but returned as a function;
+// the caller calls it only after it confirmed that the tree held during the gates, so a rejected run leaves no entry.
+// Other modes store it at once (null is returned).
 export function evaluate({ where, names, env, id, mode, handle = null, at = now(), anchor = null, merged = null, version = null, cache = true, memo = null }) {
   const started = Date.now();
   const write = mode === 'write';
@@ -333,6 +336,7 @@ export function evaluate({ where, names, env, id, mode, handle = null, at = now(
   let output = [];
   let reused = null;
   let renamed = [];
+  let publish = null;
   const baseOk = mode === 'merge' || commitExists(where, env, task.base);
   if (!baseOk) say('fail', 'base-missing', task.base ? `the base commit ${task.base.slice(0, 12)} of ${id} is not in this repository` : `${id} has no base commit`, `record it: ${names.bin} task set ${id} dispatched --executor <e> --base <sha> (fetch it first in a shallow clone)`);
   const anchorCommit = mode === 'merge' ? anchor : baseOk ? task.base : null;
@@ -368,7 +372,9 @@ export function evaluate({ where, names, env, id, mode, handle = null, at = now(
         const { run: _run, ...collected } = part;
         return collected;
       };
-      storeRuns(store, key, { tree, gatesSha: doc.gatesSha, version, at, runs, report });
+      const entry = () => storeRuns(store, key, { tree, gatesSha: doc.gatesSha, version, at, runs, report });
+      if (mode === 'merge') publish = entry;
+      else entry();
     }
 
     const current = store.read('baseline', null);
@@ -491,7 +497,7 @@ export function evaluate({ where, names, env, id, mode, handle = null, at = now(
     const n = store.list('verifyAttempt').filter((k) => k.startsWith(`${id}-m`)).length + 1;
     store.write('verifyAttempt', `${id}-m${n}`, { task: id, at, gates: output });
   }
-  return { doc, reasons: reasons.map(({ code: c, message, hint }) => ({ code: c, message, hint })), written: write, candidates, output, reused, attempt, renamed };
+  return { doc, reasons: reasons.map(({ code: c, message, hint }) => ({ code: c, message, hint })), written: write, candidates, output, reused, attempt, renamed, publish };
 }
 
 // On pass the baseline is this inventory; written only when its content changed, and only over the baseline this run
