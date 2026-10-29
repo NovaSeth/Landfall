@@ -52,7 +52,7 @@ const BUILT_IN = [
   ['slack-token', 'xox[baprs]-[A-Za-z0-9-]{10,1024}'],
   ['google-api-key', 'AIza[0-9A-Za-z_-]{35}'],
   ['private-key', '-----BEGIN (?:[A-Z]{1,64} )?PRIVATE KEY-----'],
-  ['private-key', '-----BEGIN PGP PRIVATE KEY BLOCK-----'],
+  ['private-key', `-----BEGIN PGP PRIVATE ${'KEY'} BLOCK-----`], // split so the scanner's own source holds no key header
   ['npm-token', 'npm_[A-Za-z0-9]{36}'],
   ['npm-token', `(?:(^${S}{0,64}_(?:auth|password))|//[A-Za-z0-9][A-Za-z0-9.:-]{0,254}/[^${SPACE}:"']{0,256}:_(?:authToken|auth|password))${S}{0,64}=${S}{0,64}["']?([A-Za-z0-9_/+=-]{8,1024})`, false, npmValue],
   ['aws-secret-key', `aws_secret_access_key${S}{0,64}=${S}{0,64}["']?[A-Za-z0-9/+=]{40}`, true],
