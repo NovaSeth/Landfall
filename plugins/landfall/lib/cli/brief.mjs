@@ -14,6 +14,7 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { findingsForTask, sourceLine } from '../findings/index.mjs';
 import { briefRules } from '../method/index.mjs';
 import { openStore, reviewFocusOf } from '../profile/index.mjs';
 import { leaseEnv, snapshot } from '../sched/index.mjs';
@@ -41,7 +42,7 @@ export const seal = (text, bin) => `${text}${marker(bin, sha256(text))}`;
 
 // The brief text. task: the task document; gates: the gate commands; lease: the lease env ({ name: value }) or null;
 // focus: the profile's review focus (what every review of the project checks), one line after the review line.
-export function renderBrief({ template, task, role, gates, lease, review = null, focus = [], names }) {
+export function renderBrief({ template, task, role, gates, lease, review = null, focus = [], findings = [], names }) {
   const last = task.classHistory[task.classHistory.length - 1];
   const reason = last ? last.reason.replace(new RegExp(`^${escape(task.class)}: `), '') : null;
   const fills = {
@@ -74,6 +75,11 @@ export function renderBrief({ template, task, role, gates, lease, review = null,
       FENCE_MARKER, '```text', ...focus.map((f) => fenceLine(`- ${dataLine(f)}`)), '```');
   }
   let text = lines.join('\n');
+  if (findings.length) {
+    const acceptance = findings.map((f, i) => `${i + 1}. ${f.id}: fixed, with a regression test that reproduces it`).join('\n');
+    text = text.replace(/(## Acceptance\n)[\s\S]*?(?=\n## )/, (_, heading) => `${heading}${acceptance}\n`);
+    text += `\n## Findings to fix (taken from the backlog)\n\n${FENCE_MARKER}\n\`\`\`text\n${findings.map((f) => fenceLine(sourceLine(f))).join('\n')}\n\`\`\`\n`;
+  }
   if (!text.endsWith('\n')) text += '\n';
   return `${text}${marker(names.bin, sha256(text))}`;
 }
@@ -101,7 +107,8 @@ export function brief({ args, flags, names, io, pluginRoot }) {
   const lease = held ? leaseEnv(held, names) : null;
   const template = readFileSync(join(pluginRoot, 'templates', 'task', 'brief.md'), 'utf8');
   const review = reviewShown(open(where.dir, { names }), task.class, { names, env: io.env });
-  const text = renderBrief({ template, task, role, gates, lease, review, focus, names });
+  const findings = findingsForTask(open(where.dir, { names }), id);
+  const text = renderBrief({ template, task, role, gates, lease, review, focus, findings, names });
   const data = { task: id, role, class: task.class, kind: task.kind, title: task.title, rules: briefRules({ cls: task.class, role }), gates, lease, review, focus, text, written: null, file: null };
   if (!flags.write) return { data, text };
   const w = writeTaskText({ cwd: io.cwd, env: io.env, names, id, name: 'brief', text, replace: (cur) => Boolean(flags.force) || unedited(cur) });

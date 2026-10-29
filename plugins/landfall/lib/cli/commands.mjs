@@ -53,6 +53,69 @@ const DECISION_FLAGS = [
 ];
 
 const ROWS = [
+  {
+    name: 'findings list',
+    summary: 'List review findings kept in the backlog; defaults to open and taken.',
+    args: [],
+    flags: [
+      { flag: '--status', value: 'status', summary: 'open, taken, fixed, dropped or all (default: open and taken)' },
+      { flag: '--task', value: 'id', summary: 'filter by source task ID' },
+    ],
+    exits: ['OK', 'FAIL', 'USAGE', 'REFUSED', 'ENV'],
+    load: () => import('../findings/commands.mjs').then((m) => m.list),
+  },
+  {
+    name: 'findings show',
+    summary: 'Show a backlog finding, its source review and its lifecycle.',
+    args: [{ name: 'id', required: true, summary: 'the B-<handle>-<number> finding ID' }],
+    flags: [],
+    exits: ['OK', 'FAIL', 'USAGE', 'REFUSED', 'ENV'],
+    load: () => import('../findings/commands.mjs').then((m) => m.show),
+  },
+  {
+    name: 'findings add',
+    summary: 'File findings from a recorded review round, once per source task, round and finding ID.',
+    args: [],
+    flags: [
+      { flag: '--task', value: 'id', summary: 'source task ID (required)' },
+      { flag: '--round', value: 'k', summary: 'recorded review round (required)' },
+      { flag: '--ids', value: 'ids', summary: 'comma-separated review finding IDs (required)' },
+    ],
+    mutating: true,
+    exits: ['OK', 'FAIL', 'USAGE', 'REFUSED', 'ENV'],
+    load: () => import('../findings/commands.mjs').then((m) => m.add),
+  },
+  {
+    name: 'findings take',
+    summary: 'Create one task for selected open backlog findings and mark them taken.',
+    args: [{ name: 'ids', variadic: true, summary: 'backlog finding IDs (or --all)' }],
+    flags: [
+      { flag: '--all', summary: 'take every open finding; cannot be combined with IDs' },
+      { flag: '--title', value: 'text', summary: 'task title, at most 120 characters (default: Backlog: <n> findings (<ids>))' },
+    ],
+    mutating: true,
+    exits: ['OK', 'FAIL', 'USAGE', 'REFUSED', 'ENV'],
+    load: () => import('../findings/commands.mjs').then((m) => m.take),
+  },
+  {
+    name: 'findings close',
+    summary: 'Mark open or taken backlog findings fixed by an existing task.',
+    args: [{ name: 'ids', variadic: true, required: true, summary: 'backlog finding IDs' }],
+    flags: [{ flag: '--task', value: 'id', summary: 'the task that fixed them (required; must match takenBy when taken)' }],
+    mutating: true,
+    exits: ['OK', 'FAIL', 'USAGE', 'REFUSED', 'ENV'],
+    load: () => import('../findings/commands.mjs').then((m) => m.close),
+  },
+  {
+    name: 'findings drop',
+    summary: 'Drop open or taken backlog findings with a reason recorded in a decision.',
+    args: [{ name: 'ids', variadic: true, required: true, summary: 'backlog finding IDs' }],
+    flags: [{ flag: '--reason', value: 'text', summary: 'why they are dropped (required, 10–500 characters)' }],
+    mutating: true,
+    exits: ['OK', 'FAIL', 'USAGE', 'REFUSED', 'ENV'],
+    load: () => import('../findings/commands.mjs').then((m) => m.drop),
+  },
+
   // Views (spec §8.2, §12): lib/ui.
   {
     name: 'status',
@@ -61,7 +124,7 @@ const ROWS = [
       'Also what the CLI prints with no command (--help prints the help). State: active (the state directory, in the',
       'repository or linked), declined or not active. Tier: evaluated now and never recorded (`tier` records a change).',
       'Tasks: each open task with the next step of the loop\'s step table, as `tick` would list it. Then the loop record and',
-      'the scheduler leases of this project. At most 25 lines; --json holds every task and step. Writes nothing.',
+      'the findings backlog counts and scheduler leases of this project. At most 25 lines; --json holds every task and step. Writes nothing.',
     ],
     args: [],
     flags: [],
@@ -937,7 +1000,7 @@ const ROWS = [
       { flag: '--from-verify', value: 'task', summary: 'allow the tests the task\'s latest verify saw removed or newly skipped (a test-removal decision)' },
       { flag: '--from-file', value: 'json', summary: 'read the fields from a JSON file (a regular file of at most 64 KB); flags given here win' },
       { flag: '--task', value: 'id', summary: 'the task whose review step a review-close decision closes; kind review-close by default' },
-      { flag: '--remaining', value: 'ids', summary: 'comma-separated blocking finding IDs of the latest review round left open (review-close)' },
+      { flag: '--remaining', value: 'ids', summary: 'comma-separated blocking and minor finding IDs left open in the latest review; files them in the backlog' },
     ],
     exits: ['OK', 'FAIL', 'USAGE', 'REFUSED', 'ENV'],
     mutating: true,

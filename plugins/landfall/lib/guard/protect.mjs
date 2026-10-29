@@ -27,6 +27,7 @@ const KIND_USE = {
   state: (bin) => `\`${bin} init\`, \`${bin} migrate\` or \`${bin} deactivate\``,
   config: (bin) => `\`${bin} flags set\` or \`${bin} config set\``,
   team: (bin) => `\`${bin} init\` or \`${bin} team add\``,
+  finding: (bin) => `\`${bin} findings add\`, \`${bin} findings take\`, \`${bin} findings close\` or \`${bin} findings drop\``,
   task: (bin, id) => `\`${bin} task set ${id} <state>\``,
   tombstone: (bin, id) => `\`${bin} decisions retire ${id}\``,
   counter: (bin) => `\`${bin} task new\` or \`${bin} decide\``,
@@ -47,7 +48,7 @@ export const OWNED = Object.freeze([
 ]);
 // Text that names a state file wherever the state directory lives (prescan literals, lowercase).
 export const OWNED_NAMES = Object.freeze(['state.json', 'task.json', 'verify.json', 'tests.json', 'loop.json', 'guard-extra.txt', '/tombstones/', '/local/ids/', '/tasks/', '/decisions/',
-  '/baseline/', '/team/', '/gate-cache/', '/runs/']);
+  '/baseline/', '/findings/', '/team/', '/gate-cache/', '/runs/']);
 const WORKTREES = /^local\/worktrees(\/|$)/; // separate checkouts of external executors, not state
 
 export function ownedFile(rel) {

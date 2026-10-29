@@ -5,9 +5,11 @@
 // step table (lib/loop nextSteps: the same rows `tick` acts on) · the loop record when one exists · the scheduler
 // leases taken for this repository (lease project = its path; a task ID alone could be another repository's). At
 // most 25 lines: the task rows are cut first and counted. --json: data { repo, state, tier, tasks, steps, loop,
-// leases, watch } with every open task and step; watch: the ORC-24 rows (a heavy-queue wait over 10 min, load over the max).
+// leases, watch, findings } with every open task and step; watch: the ORC-24 rows (a heavy-queue wait over 10 min, load
+// over the max); findings: the backlog counts { open, taken }.
 // Writes nothing. Exit 0 · 1 a state file is invalid · 7 a newer state schema · 8 not a git repository, git missing.
 import { join } from 'node:path';
+import { findingCounts } from '../findings/index.mjs';
 import { TIER_NAMES, evaluate } from '../engine/index.mjs';
 import { describe } from '../loop/command.mjs';
 import { DEFAULT_CAPS, LOOP, STORE_KINDS, nextSteps, readBudgets } from '../loop/index.mjs';
@@ -76,8 +78,10 @@ export function status({ names, io }) {
   const leases = where.dataDir ? snapshot({ names, env }).leases.filter((l) => l.project === where.worktree) : []; // leases name their checkout (lib/sched)
 
   const watch = where.dataDir ? readWatch({ names, env, readings: io.readings ?? null }) : []; // ORC-24
+  const findings = where.active ? findingCounts(open(where.dir, { names })) : { open: 0, taken: 0 };
   const head = [where.repo, `State: ${state.text}`, `Tier: ${tier.text}`, ...watch.map((w) => w.message)];
   const tail = [];
+  if (findings.open + findings.taken > 0) tail.push(`Findings: ${findings.open} open, ${findings.taken} taken (${names.bin} findings list)`);
   if (t.loop) tail.push(...describe(t.loop, Date.now()).trimEnd().split('\n').map((x, i) => (i === 0 ? `Loop: ${x}` : `      ${x}`)));
   if (leases.length) {
     tail.push(`Leases: ${leases.length}`, ...leases.slice(0, LEASES_SHOWN).map(leaseText));
@@ -103,6 +107,7 @@ export function status({ names, io }) {
       loop: t.loop,
       leases,
       watch,
+      findings,
     },
     text: `${[...head, ...body, ...tail].join('\n')}\n`,
   };

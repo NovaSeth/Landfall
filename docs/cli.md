@@ -56,6 +56,12 @@ Commands:
   decline              Opt out of tracking this repository; remembered in machine data by its real path, never in the repository.
   doctor               Health report: Claude Code floor, plugin and hooks, release, state, profile, flags, context cost, permissions.
   exec                 Start an external reviewer with a pinned review brief: latest round or --round; save with review brief <id> --write.
+  findings add         File findings from a recorded review round, once per source task, round and finding ID.
+  findings close       Mark open or taken backlog findings fixed by an existing task.
+  findings drop        Drop open or taken backlog findings with a reason recorded in a decision.
+  findings list        List review findings kept in the backlog; defaults to open and taken.
+  findings show        Show a backlog finding, its source review and its lifecycle.
+  findings take        Create one task for selected open backlog findings and mark them taken.
   flags set            Set one capability flag of this repository (off, shadow or on, as the flag has them); a flip is recorded as a decision.
   flags show           Show the capability flags: each rollout capability with its mode, its source and what it does, then the team flags.
   gen apply            Write the generated files (CI workflow, pre-push hook, PR template, CODEOWNERS and AGENTS.md blocks); edits survive.
@@ -270,7 +276,7 @@ Options:
   --from-verify <task>         allow the tests the task's latest verify saw removed or newly skipped (a test-removal decision)
   --from-file <json>           read the fields from a JSON file (a regular file of at most 64 KB); flags given here win
   --task <id>                  the task whose review step a review-close decision closes; kind review-close by default
-  --remaining <ids>            comma-separated blocking finding IDs of the latest review round left open (review-close)
+  --remaining <ids>            comma-separated blocking and minor finding IDs left open in the latest review; files them in the backlog
 
 Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
 Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
@@ -412,6 +418,103 @@ Options:
   --role <role>    required: reviewer or implementer
   --provider <id>  a declared or built-in provider instead of the selection
   --round <k>      review brief round, 1 to 999 (default: highest stored round)
+
+Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
+Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
+```
+
+### `landfall findings add [--task <id>] [--round <k>] [--ids <ids>] [--yes] [--json]`
+
+```text
+usage: landfall findings add [--task <id>] [--round <k>] [--ids <ids>] [--yes] [--json]
+
+File findings from a recorded review round, once per source task, round and finding ID.
+
+Options:
+  --task <id>  source task ID (required)
+  --round <k>  recorded review round (required)
+  --ids <ids>  comma-separated review finding IDs (required)
+
+Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
+Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
+```
+
+### `landfall findings close <ids…> [--task <id>] [--yes] [--json]`
+
+```text
+usage: landfall findings close <ids…> [--task <id>] [--yes] [--json]
+
+Mark open or taken backlog findings fixed by an existing task.
+
+Arguments:
+  ids  backlog finding IDs
+
+Options:
+  --task <id>  the task that fixed them (required; must match takenBy when taken)
+
+Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
+Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
+```
+
+### `landfall findings drop <ids…> [--reason <text>] [--yes] [--json]`
+
+```text
+usage: landfall findings drop <ids…> [--reason <text>] [--yes] [--json]
+
+Drop open or taken backlog findings with a reason recorded in a decision.
+
+Arguments:
+  ids  backlog finding IDs
+
+Options:
+  --reason <text>  why they are dropped (required, 10–500 characters)
+
+Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
+Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
+```
+
+### `landfall findings list [--status <status>] [--task <id>] [--json]`
+
+```text
+usage: landfall findings list [--status <status>] [--task <id>] [--json]
+
+List review findings kept in the backlog; defaults to open and taken.
+
+Options:
+  --status <status>  open, taken, fixed, dropped or all (default: open and taken)
+  --task <id>        filter by source task ID
+
+Read-only.
+Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
+```
+
+### `landfall findings show <id> [--json]`
+
+```text
+usage: landfall findings show <id> [--json]
+
+Show a backlog finding, its source review and its lifecycle.
+
+Arguments:
+  id  the B-<handle>-<number> finding ID
+
+Read-only.
+Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
+```
+
+### `landfall findings take [<ids…>] [--all] [--title <text>] [--yes] [--json]`
+
+```text
+usage: landfall findings take [<ids…>] [--all] [--title <text>] [--yes] [--json]
+
+Create one task for selected open backlog findings and mark them taken.
+
+Arguments:
+  ids  backlog finding IDs (or --all)
+
+Options:
+  --all           take every open finding; cannot be combined with IDs
+  --title <text>  task title, at most 120 characters (default: Backlog: <n> findings (<ids>))
 
 Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
 Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
@@ -1148,7 +1251,7 @@ Show this repository: activation, tier, open tasks with their next step, the loo
 Also what the CLI prints with no command (--help prints the help). State: active (the state directory, in the
 repository or linked), declined or not active. Tier: evaluated now and never recorded (`tier` records a change).
 Tasks: each open task with the next step of the loop's step table, as `tick` would list it. Then the loop record and
-the scheduler leases of this project. At most 25 lines; --json holds every task and step. Writes nothing.
+the findings backlog counts and scheduler leases of this project. At most 25 lines; --json holds every task and step. Writes nothing.
 
 Read-only.
 Exit codes: 0 OK · 1 FAIL · 7 REFUSED · 8 ENV

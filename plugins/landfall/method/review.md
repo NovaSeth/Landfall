@@ -19,6 +19,8 @@
 **REV-4.** The reviewer rejects a dirty tree or a Global Constraint violation and cites rules by ID, not by their text.
 **REV-21.** Every review brief carries the project's review focus (the profile fact `reviewFocus`) and the risk paths the diff touches; a new function that reads protected data (masks, keys, tenants) gets its own point in the review.
 
+**REV-22.** A finding still open when the review step closes at the round cap goes into the findings backlog (the review-close decision files it), never dropped silently; `findings take` turns open findings into one task, and its `task done` closes them.
+
 ### Fix rounds
 **REV-5.** A needs-fixes review becomes a findings file a fresh agent can act on without history: binding rules first, a reference implementation, and per Important finding `file:lines`, what, why, the fix pattern and the exact test assertion; Minor findings form one batch item.
 **REV-18.** The executor of a fix round appends a section to its report: problem → fix → RED/GREEN → gate.

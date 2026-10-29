@@ -115,13 +115,18 @@ export function createTask({ cwd, env, names, title, kind = 'task', lane = null,
     const { where, store } = activeStore({ cwd, env, names });
     const by = actor(store, where, env, names);
     for (const id of after) if (store.read('task', id) === null) throw unknownTask(id, where, names);
-    const data = after.length ? { after: [...new Set(after)] } : {};
-    const build = (id) => ({ id, kind, title, lane: lane ?? null, owner: by, class: null, classHistory: [], status: 'new', round: 0, events: [{ at, by, event: 'created', data }], base: null, branch: null });
-    const probe = `T-${by}-1`;
-    checkWrite(KINDS.task, { schema: KINDS.task.version, ...build(probe) }, { where: 'task', key: probe });
-    const id = allocateId(store, { prefix: 'T', handle: by, build });
-    return { id, task: store.read('task', id) };
+    return createTaskInStore({ store, handle: by, title, kind, lane, after, at });
   });
+}
+
+// Shared task-new operation for commands that also change other records under a store batch.
+export function createTaskInStore({ store, handle: by, title, kind = 'task', lane = null, after = [], at = now() }) {
+  const data = after.length ? { after: [...new Set(after)] } : {};
+  const build = (id) => ({ id, kind, title, lane, owner: by, class: null, classHistory: [], status: 'new', round: 0, events: [{ at, by, event: 'created', data }], base: null, branch: null });
+  const probe = `T-${by}-1`;
+  checkWrite(KINDS.task, { schema: KINDS.task.version, ...build(probe) }, { where: 'task', key: probe });
+  const id = allocateId(store, { prefix: 'T', handle: by, build });
+  return { id, task: store.read('task', id) };
 }
 
 // `task set`: { id, task, event }. options: the flags of the state (strings from the CLI, or numbers).
