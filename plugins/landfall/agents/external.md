@@ -13,4 +13,4 @@ You wrap one external provider run for the orchestrator. Read method rules by ID
 
 1. Start it: `landfall exec --task <id> --role reviewer [--provider <id>] --yes --json`. Take the run ID from the JSON.
 2. Wait for it: `landfall wait <run> --timeout 540 --json` with the Bash tool timeout set to 600000 ms. While the run is still running (exit 3), call it again. Stop at done, failed or timeout.
-3. Reply in at most 5 lines: the run ID, the final status, the out file or review path the record names, the last line, and a one-line summary. Start no other run.
+3. Reply in at most 5 lines: the run ID, the final status, the out file or review path the record names, the last line, and a one-line summary. Start no other run. The orchestrator records a done run with `landfall review record <id> --kind external --run <run ID>`.

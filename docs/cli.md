@@ -1025,10 +1025,10 @@ Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
 Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
 ```
 
-### `landfall review record <id> [--from <file>] [--yes] [--json]`
+### `landfall review record <id> [--from <file>] [--kind <kind>] [--run <runId>] [--yes] [--json]`
 
 ```text
-usage: landfall review record <id> [--from <file>] [--yes] [--json]
+usage: landfall review record <id> [--from <file>] [--kind <kind>] [--run <runId>] [--yes] [--json]
 
 Record a typed review result as the next round tasks/<id>/review-r<k>.json; the Markdown review closes nothing.
 The file holds one JSON object {verdict: approved|needs-fixes, reviewer: {kind: claude|external, id}, findings: [{id,
@@ -1036,12 +1036,17 @@ severity: blocking|minor, path, line, rule, text}]}, validated against templates
 (the output schema external reviewers get). Invalid: exit 2 with each failing field, nothing written.
 Only the task's owner records, while the task is open; the task gets a review event. verify and task done read
 the latest round; a review recorded after a passing verify needs no second verify.
+An external review comes from its run: --kind external --run <runId> reads the out file of a done reviewer run of
+the task (no link followed) and stores the run ID and the sha256 of its bytes. --from with kind external, or a file
+claiming an external reviewer, is refused.
 
 Arguments:
   id  task ID such as T-AB-1
 
 Options:
-  --from <file>  required: the review JSON file (a regular file of at most 1 MB)
+  --from <file>  kind claude: the review JSON file (a regular file of at most 1 MB)
+  --kind <kind>  claude (default) or external
+  --run <runId>  kind external: the done reviewer run whose out file holds the review
 
 Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
 Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
