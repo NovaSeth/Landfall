@@ -20,12 +20,12 @@ import { StateError, guarded } from './errors.mjs';
 import { KINDS, LIMITS, PATTERNS } from './kinds.mjs';
 import { readProjects, resolve, updateProject } from './resolve.mjs';
 import { format, validate } from './schema.mjs';
-import { open } from './store.mjs';
+import { ensureIgnored, open } from './store.mjs';
 import { gitIdentity, handleCandidates, registerHandle } from './team.mjs';
 
 const CLASSES = ['trivial', 'standard', 'critical'];
-// The state directory's .gitignore: machine-local state and temporary files of interrupted atomic writes.
-const IGNORED = ['local/', 'local.foreign-*/', '.*.tmp'];
+// The state directory's .gitignore (local/, local.foreign-*/, .*.tmp): store.mjs ensureIgnored, also run before a
+// foreign local/ is moved aside (T-MG-77).
 const now = () => new Date().toISOString();
 const inRepo = (where, names) => join(where.repo, names.stateDir);
 
@@ -45,15 +45,6 @@ function target(where, options, cwd) {
   if (errors.length) throw new StateError(errors[0].code, 'USAGE', errors[0].message);
   if (existsSync(dir) && !statSync(dir).isDirectory()) throw new StateError('invalid-value', 'USAGE', `--state-dir: ${dir} is not a directory`, { hint: 'name a directory; a missing one is created' });
   return dir;
-}
-
-function ensureIgnored(store) {
-  const text = store.readText('.gitignore');
-  if (text === null) return store.createText('.gitignore', `${IGNORED.join('\n')}\n`);
-  const lines = text.split(/\r?\n/);
-  const missing = IGNORED.filter((line) => !lines.includes(line));
-  if (missing.length) store.writeText('.gitignore', `${text}${text === '' || text.endsWith('\n') ? '' : '\n'}${missing.join('\n')}\n`);
-  return missing.length > 0;
 }
 
 // `init`: { repo, dir, linked, activated, handle, registered }. options: { stateDir, handle } (CLI flags).

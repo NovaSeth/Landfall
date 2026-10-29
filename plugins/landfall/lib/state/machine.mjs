@@ -8,8 +8,12 @@
 //     marker itself is not counted (this machine writes the same marker again after a move-aside), and neither is a
 //     tracked path that is deleted or changed (after a move-aside git still lists the shipped paths).
 //   - foreign, 'marked by another machine': the marker local/.machine holds another id.
-//   - not foreign: 'absent' (no local/), 'ours' (this machine's marker), 'unmarked' (adopted: marked at the next write).
-// The git question is asked at most once per process per state dir (forgetShipped after a move-aside).
+//   - foreign, 'a marker that is not a regular file': local/.machine is a link, a directory or another entry.
+//   - foreign and unknown ({ unknown: true }, 'ownership unknown (…)'): git failed or did not answer in time. Not ours:
+//     readers see nothing, writers refuse (nothing is moved on a guess), nothing is adopted. Never cached: the next
+//     call asks git again. Outside any repository (git's own "not a git repository") nothing is tracked.
+//   - not foreign: 'absent' (no local/), 'ours' (this machine's marker), 'unmarked' (marked at the next write).
+// A verified git answer is cached per process per state dir ({ fresh: true } asks again; forgetShipped after a move).
 import { createHash } from 'node:crypto';
 import { lstatSync, readFileSync, realpathSync } from 'node:fs';
 import { homedir, hostname, userInfo } from 'node:os';
@@ -35,12 +39,18 @@ export function machineId() {
   return id;
 }
 
-// Whether a file git tracks under local/ is present unchanged (cached per process).
-function ships(stateDir, env) {
-  if (shipped.has(stateDir)) return shipped.get(stateDir);
+const NOT_A_REPO = /^fatal: not a git repository\b/m;
+
+// Whether a file git tracks under local/ is present unchanged: true, false, or a string (why git gave no answer, not
+// cached). Verified answers are cached per process.
+function ships(stateDir, env, fresh) {
+  if (!fresh && shipped.has(stateDir)) return shipped.get(stateDir);
   const r = git(['ls-files', '-z', '-t', '-c', '-m', '-d', '--', 'local'], { cwd: stateDir, env: { ...env, LC_ALL: 'C' }, timeoutMs: GIT_MS });
+  if (r.error) return `git ${r.error}`;
   let out = false;
-  if (!r.error && r.status === 0) {
+  if (r.status !== 0) {
+    if (r.status !== 128 || !NOT_A_REPO.test(r.stderr)) return `git ${r.signal ?? `exit ${r.status}`}`;
+  } else {
     const cached = new Set();
     const changed = new Set();
     for (const entry of r.stdout.split('\0')) {
@@ -61,19 +71,19 @@ export function forgetShipped(stateDir) {
   shipped.set(stateDir, false);
 }
 
-export function localForeign(stateDir, { env = process.env } = {}) {
+export function localForeign(stateDir, { env = process.env, fresh = false } = {}) {
   const local = join(stateDir, 'local');
   const st = lstatSync(local, { throwIfNoEntry: false });
   if (!st) return { foreign: false, why: 'absent' };
   if (st.isSymbolicLink()) return { foreign: true, why: 'a symbolic link' };
   if (!st.isDirectory()) return { foreign: false, why: 'absent' };
-  if (ships(stateDir, env)) return { foreign: true, why: 'tracked by git' };
+  const tracked = ships(stateDir, env, fresh);
+  if (typeof tracked === 'string') return { foreign: true, unknown: true, why: `ownership unknown (${tracked})` };
+  if (tracked) return { foreign: true, why: 'tracked by git' };
   let marker = null;
-  try {
-    if (lstatSync(join(stateDir, MARKER)).isFile()) marker = readFileSync(join(stateDir, MARKER), 'utf8').trim();
-  } catch (err) {
-    if (err.code !== 'ENOENT' && err.code !== 'ENOTDIR') throw err;
-  }
+  const mst = lstatSync(join(stateDir, MARKER), { throwIfNoEntry: false });
+  if (mst && !mst.isFile()) return { foreign: true, why: 'a marker that is not a regular file' };
+  if (mst) marker = readFileSync(join(stateDir, MARKER), 'utf8').trim();
   if (marker === null) return { foreign: false, why: 'unmarked' };
   return marker === machineId() ? { foreign: false, why: 'ours' } : { foreign: true, why: 'marked by another machine' };
 }

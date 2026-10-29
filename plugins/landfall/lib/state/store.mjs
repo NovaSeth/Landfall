@@ -32,11 +32,12 @@ import { MARKER, forgetShipped, localForeign, machineId } from './machine.mjs';
 import { MIGRATIONS } from './migrations/index.mjs';
 import { format, validate } from './schema.mjs';
 import { machineDataDir, resolvedDataDir } from './resolve.mjs';
-import { adoptAtMark, gatesOfText, gatesShaOf, overridesShaOf, recordTrust, repoKey, thresholdsOfText } from './trust.mjs';
+import { gatesOfText, gatesShaOf, isTrusted, overridesShaOf, recordTrust, repoKey, thresholdsOfText } from './trust.mjs';
 import { upgradeDoc } from './upgrade.mjs';
 
 // T-MG-77: a gate set or threshold overrides this machine writes through the store are trusted here (lib/state/trust.mjs),
-// only when the write changes them (a fact set beside shipped gates trusts nothing).
+// only when the write changes them (a fact set beside shipped gates trusts nothing) and the set it replaces was empty or
+// trusted here (fix round 1, AR-1: changing one gate beside untrusted shipped ones trusts none of them).
 const TRUSTED_FILES = {
   'profile.json': (t) => { const g = gatesOfText(t); return g.length ? ['gates', gatesShaOf(g)] : null; },
   'config.json': (t) => { const th = thresholdsOfText(t); return Object.keys(th).length ? ['overrides', overridesShaOf(th)] : null; },
@@ -44,6 +45,24 @@ const TRUSTED_FILES = {
 
 // The most bytes of one appended line (PIPE_BUF on Linux): one write() of this size is never split.
 const APPEND_MAX = 4096;
+// The state directory's .gitignore: machine-local state, the moved-aside copies of a foreign local/ and temporary files
+// of interrupted atomic writes. ensureIgnored adds the missing lines (init, and every move-aside before the rename).
+const IGNORED = ['local/', 'local.foreign-*/', '.*.tmp'];
+export function ensureIgnored(store) {
+  const text = store.readText('.gitignore');
+  if (text === null) return store.createText('.gitignore', `${IGNORED.join('\n')}\n`);
+  const lines = text.split(/\r?\n/);
+  const missing = IGNORED.filter((line) => !lines.includes(line));
+  if (missing.length) store.writeText('.gitignore', `${text}${text === '' || text.endsWith('\n') ? '' : '\n'}${missing.join('\n')}\n`);
+  return missing.length > 0;
+}
+
+// The lock that serializes moving a foreign local/ aside (fix round 1, F4): outside the directory it moves, so a
+// writer that checked local/ before another one moved it aside and took a fresh store lock cannot move that one too.
+const MOVE_LOCK = '.local-move.lock';
+// Hidden local/ states: what readers see as empty.
+const hidden = (status) => status === 'foreign' || status === 'unknown';
+
 // Test hook: creates <dir>/paused, then waits (at most 10 s) until <dir>/go exists.
 function pauseUntilSignalled(dir) {
   writeAtomic(join(dir, 'paused'), '');
@@ -94,7 +113,9 @@ export function lockFailure(err, names) {
 // unlockStale); { removed, owner }. quietMs: how long the lock must stay unchanged (default 2 s).
 export function unlockStale(store, { quietMs } = {}) {
   try {
-    return fsxUnlockStale(store.abs('local/lock'), { quietMs });
+    const move = fsxUnlockStale(store.abs(MOVE_LOCK), { quietMs });
+    const out = fsxUnlockStale(store.abs('local/lock'), { quietMs });
+    return out.removed || !move.removed ? out : move;
   } catch (err) {
     throw busyFailure(err, store.names);
   }
@@ -126,6 +147,7 @@ export class Store {
     this.foreignLocal = foreignLocal;
     this.skipped = false; // a write a hook left out because local/ is foreign
     this.localState = undefined;
+    this.localWhy = null;
     this.movedAside = null;
     this.wrote = false; // a file was written in the current lock section (markLocal)
     this.names = names;
@@ -192,26 +214,45 @@ export class Store {
   // ---- local/ ownership (T-MG-77) ----
 
   // 'absent' (no local/) · 'mine' (this machine's marker; also when the path check of local/ fails: the reader's own
-  // check reports it) · 'adopt' (no marker and nothing shipped: an existing user's local/, marked at the next write) ·
-  // 'foreign' (shipped: tracked by git, or another machine's marker).
+  // check reports it) · 'unmarked' (no marker and nothing shipped: marked at the next write; adoption of its gates is
+  // trust.mjs's, on machine-side evidence only) · 'foreign' (shipped: tracked by git, another machine's marker, a
+  // marker that is not a file) · 'unknown' (git gave no answer: hidden like foreign, never moved, writes refused).
   localStatus() {
     if (this.localState === undefined) this.localState = this.ownerOfLocal();
     return this.localState;
   }
 
-  ownerOfLocal() {
+  ownerOfLocal(fresh = false) {
     try { this.abs('local'); } catch { return 'mine'; }
-    const { foreign, why } = localForeign(this.dir);
+    const { foreign, unknown, why } = localForeign(this.dir, { fresh });
+    this.localWhy = why;
+    if (unknown) return 'unknown';
     if (foreign) return 'foreign';
-    return { absent: 'absent', ours: 'mine' }[why] ?? 'adopt';
+    return { absent: 'absent', ours: 'mine' }[why] ?? 'unmarked';
+  }
+
+  unknownOwner() {
+    return new StateError('git-failed', 'ENV', `the owner of ${join(this.dir, 'local')} is unknown: ${this.localWhy}; nothing was written`, { hint: 'check that git runs in this directory, then run the command again' });
   }
 
   // Before a write: a foreign local/ is moved aside to local.foreign-<stamp>/ (one rename; the store lock lives inside
-  // local/, so the rename comes first: it is atomic and one process wins, a loser finds local/ gone or fresh and
-  // re-checks). The ownership is checked again right before the rename.
+  // local/, so the rename comes first). Moves are serialized by MOVE_LOCK (outside local/); under it git is asked
+  // again (another process may have moved it aside and started a fresh local/ meanwhile), .gitignore gains its missing
+  // lines, then the rename. The repository gets a trust entry without adoption, so the fresh local/ that replaces a
+  // shipped one is never adopted later (fix round 1, F1). An unknown owner refuses the write: nothing moves on a guess.
   claimLocal() {
     this.localState = undefined;
+    if (this.localStatus() === 'unknown') throw this.unknownOwner();
     if (this.localStatus() !== 'foreign') return;
+    withLock(this.abs(MOVE_LOCK), () => this.moveAside(), { timeoutMs: this.lockTimeoutMs });
+    this.localState = undefined;
+  }
+
+  moveAside() {
+    this.localState = this.ownerOfLocal(true);
+    if (this.localState === 'unknown') throw this.unknownOwner();
+    if (this.localState !== 'foreign') return;
+    ensureIgnored(this);
     const from = this.abs('local');
     // A lock inside it whose owner runs on this host: a live writer (another machine data directory), never moved.
     let owner = null;
@@ -222,6 +263,8 @@ export class Store {
     const stamp = stampOf(new Date());
     let to = join(this.dir, `local.foreign-${stamp}`);
     for (let n = 2; lstatSync(to, { throwIfNoEntry: false }); n++) to = join(this.dir, `local.foreign-${stamp}-${n}`);
+    const pause = process.env[`${this.names.envPrefix}TEST_MOVE_PAUSE`];
+    if (pause) pauseUntilSignalled(pause);
     try {
       moveTree(from, to);
       this.movedAside = to;
@@ -229,20 +272,20 @@ export class Store {
       if (!missing(err)) throw err;
     }
     forgetShipped(this.dir); // what git tracks under local/ was moved aside with it
-    this.localState = undefined;
+    const dataDir = this.dataDir();
+    try {
+      if (dataDir) recordTrust({ dataDir, names: this.names, key: repoKey(this.dir) });
+    } catch { /* best effort: without machine-side evidence nothing is adopted anyway */ }
   }
 
   // After a write succeeded (under the lock; a section that wrote nothing marks nothing): local/ carries this machine's
-  // marker. Best effort: a marker that cannot be written leaves local/ unmarked (adopted again next time).
+  // marker. Marking trusts nothing (fix round 1, F1). Best effort: a marker that cannot be written leaves local/ unmarked.
   markLocal() {
     if (!this.active) return; // deactivate removed the state: nothing to mark
     try {
       if (this.readText(MARKER) !== null && this.localStatus() === 'mine') return;
-      const adopting = this.localStatus() === 'adopt';
       writeAtomic(this.abs(MARKER), `${machineId()}\n`);
       this.localState = 'mine';
-      // An existing user's local/ (from before the marker): its gates and overrides are trusted now (T-MG-77 adoption).
-      if (adopting) adoptAtMark({ dir: this.dir, dataDir: this.dataDir(), names: this.names, env: process.env });
     } catch { /* best effort */ }
   }
 
@@ -253,10 +296,23 @@ export class Store {
     try { return this.names?.plugin ? machineDataDir(this.names, process.env) : null; } catch { return null; }
   }
 
-  // After a write of `rel` from `before` to `after` (texts): a changed gate set or overrides are trusted. Best effort.
-  trustWritten(rel, before, after) {
+  // Before a write of `rel` (fix round 1, AR-1): whether the set it replaces (`before`, a text) is empty or trusted here.
+  trustBase(rel, before) {
     const of = TRUSTED_FILES[rel];
-    if (!of) return;
+    if (!of) return false;
+    const prev = of(before);
+    if (!prev) return true;
+    try {
+      const dataDir = this.dataDir();
+      return Boolean(dataDir) && isTrusted({ dir: this.dir, dataDir, names: this.names, env: process.env, kind: prev[0], sha: prev[1] }).trusted;
+    } catch { return false; }
+  }
+
+  // After a write of `rel` from `before` to `after` (texts) over a trusted or empty set (`base`, trustBase): a
+  // changed gate set or overrides are trusted. Best effort.
+  trustWritten(rel, before, after, base) {
+    const of = TRUSTED_FILES[rel];
+    if (!of || !base) return;
     const next = of(after);
     if (!next || of(before)?.[1] === next[1]) return;
     try {
@@ -265,7 +321,7 @@ export class Store {
   }
 
   readText(rel) {
-    if (isLocal(rel) && this.localStatus() === 'foreign') return null;
+    if (isLocal(rel) && hidden(this.localStatus())) return null;
     try {
       return readFileSync(this.abs(rel), 'utf8');
     } catch (err) {
@@ -276,7 +332,7 @@ export class Store {
 
   // Directory entries of `rel` ([] when absent); a symbolic link among them is refused.
   entries(rel) {
-    if (isLocal(rel) && this.localStatus() === 'foreign') return [];
+    if (isLocal(rel) && hidden(this.localStatus())) return [];
     let names;
     try {
       names = readdirSync(this.abs(rel));
@@ -330,11 +386,11 @@ export class Store {
   // Runs fn while holding the store lock (not re-entrant). A hook's store (foreignLocal 'skip') with a foreign local/
   // runs nothing and writes nothing (not even the lock, which lives in local/): undefined, store.skipped set.
   locked(fn) {
-    if (this.foreignLocal === 'skip') {
-      this.localState = undefined;
-      if (this.localStatus() === 'foreign') { this.skipped = true; return undefined; }
-    } else this.claimLocal();
     try {
+      if (this.foreignLocal === 'skip') {
+        this.localState = undefined;
+        if (hidden(this.localStatus())) { this.skipped = true; return undefined; }
+      } else this.claimLocal();
       return withLock(this.abs('local/lock'), () => {
         this.wrote = false;
         const out = fn();
@@ -439,9 +495,10 @@ export class Store {
     return this.locked(() => {
       this.checks(kind, rel);
       const before = TRUSTED_FILES[rel] ? this.readText(rel) : null;
+      const base = this.trustBase(rel, before);
       const text = format(kind.spec, next);
       this.writeText(rel, text);
-      this.trustWritten(rel, before, text);
+      this.trustWritten(rel, before, text, base);
       return next;
     });
   }
@@ -475,8 +532,9 @@ export class Store {
       const next = this.stamp(kind, out);
       checkWrite(kind, next, { where: this.abs(rel), key });
       const written = format(kind.spec, next);
+      const base = this.trustBase(rel, text);
       this.writeText(rel, written);
-      this.trustWritten(rel, text, written);
+      this.trustWritten(rel, text, written, base);
       return next;
     });
   }

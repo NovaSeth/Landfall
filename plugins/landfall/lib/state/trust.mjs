@@ -9,9 +9,11 @@
 //   overridesSha: sha256 of the canonical JSON (keys sorted) of config.json `thresholds`.
 // Trusted without asking:
 //   - a gate set or overrides written through lib/state on this machine (store.mjs records them when they change);
-//   - adoption, the lossless migration for existing users: a repository without an entry whose local/ predates the
-//     owner marker (localForeign 'unmarked', or local/ marked by this machine's store when it adopted an unmarked one,
-//     which records the adoption at that moment). A fresh clone has no local/ (or a foreign one): nothing is adopted.
+//   - adoption, the lossless migration for existing users, on machine-side evidence only (fix round 1, AR-2): a
+//     repository without an entry whose state dir is linked in this machine's projects.json (`init --state-dir`; the
+//     entry's stateDir has the state dir's real path) and whose local/ is not foreign (an unknown owner, when git gives
+//     no answer, is foreign: nothing is adopted). Nothing in the repository counts: an unmarked local/ alone is not
+//     enough. A repository whose shipped local/ was moved aside has an entry without adoption (store.mjs moveAside).
 // Everything else needs `landfall trust` at a terminal.
 import { createHash } from 'node:crypto';
 import { readFileSync, realpathSync } from 'node:fs';
@@ -22,6 +24,7 @@ import { checkWrite, parseDoc } from './document.mjs';
 import { StateError, guarded } from './errors.mjs';
 import { MACHINE_KINDS } from './kinds.mjs';
 import { localForeign } from './machine.mjs';
+import { readProjects } from './resolve.mjs';
 import { MIGRATIONS } from './migrations/index.mjs';
 import { format } from './schema.mjs';
 import { upgradeDoc } from './upgrade.mjs';
@@ -108,24 +111,26 @@ function currentOf(stateDir) {
   return { gates: gates.length ? gatesShaOf(gates) : null, overrides: Object.keys(thresholds).length ? overridesShaOf(thresholds) : null };
 }
 
-// Adoption at the moment an unmarked local/ becomes this machine's (store.markLocal): best effort.
-export function adoptAtMark({ dir: stateDir, dataDir, names, env, at = new Date().toISOString() }) {
-  if (!dataDir) return;
-  try {
-    const key = repoKey(stateDir, { env });
-    if (readTrust(dataDir, names).repos[key]) return;
-    recordTrust({ dataDir, names, key, ...currentOf(stateDir), adoptedAt: at });
-  } catch { /* best effort: without it the repository asks for `trust` once */ }
+// Machine-side evidence for adoption: a projects.json entry of this machine links a repository to this state dir.
+function linkedHere(stateDir, dataDir, names) {
+  let real;
+  try { real = realpathSync(stateDir); } catch { return false; }
+  let projects;
+  try { projects = readProjects(dataDir, names).projects ?? {}; } catch { return false; }
+  return Object.values(projects).some((entry) => {
+    if (typeof entry?.stateDir !== 'string') return false;
+    try { return realpathSync(entry.stateDir) === real; } catch { return false; }
+  });
 }
 
 // Whether `sha` of `kind` ('gates' | 'overrides') is trusted for the repository of `stateDir`, adopting first when
-// the repository has no entry and its local/ predates the owner marker. { trusted, key, adopted }.
+// the repository has no entry and machine-side evidence says it predates the trust store. { trusted, key, adopted }.
 export function isTrusted({ dir: stateDir, dataDir, names, env = process.env, kind, sha, adopt = true, at = new Date().toISOString() }) {
   if (!dataDir) return { trusted: false, key: null, adopted: false };
   const key = repoKey(stateDir, { env });
   let entry = readTrust(dataDir, names).repos[key];
   let adopted = false;
-  if (!entry && adopt && localForeign(stateDir, { env }).why === 'unmarked') {
+  if (!entry && adopt && linkedHere(stateDir, dataDir, names) && !localForeign(stateDir, { env }).foreign) {
     entry = recordTrust({ dataDir, names, key, ...currentOf(stateDir), adoptedAt: at });
     adopted = true;
   }
