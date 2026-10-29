@@ -13,7 +13,9 @@
 //     repository without an entry whose state dir is linked in this machine's projects.json (`init --state-dir`; the
 //     entry's stateDir has the state dir's real path) and whose local/ is not foreign (an unknown owner, when git gives
 //     no answer, is foreign: nothing is adopted). Nothing in the repository counts: an unmarked local/ alone is not
-//     enough. A repository whose shipped local/ was moved aside has an entry without adoption (store.mjs moveAside).
+//     enough. A repository whose shipped local/ was moved aside has an entry without adoption, written before the
+//     rename (store.mjs moveAside), and so has one linked by `init --state-dir` from this release on (activation.mjs
+//     trustLink, fix round 2, AR-3): adoption covers only links made before this release.
 // Everything else needs `landfall trust` at a terminal.
 import { createHash } from 'node:crypto';
 import { readFileSync, realpathSync } from 'node:fs';
@@ -132,7 +134,7 @@ export function isTrusted({ dir: stateDir, dataDir, names, env = process.env, ki
   let adopted = false;
   if (!entry && adopt && linkedHere(stateDir, dataDir, names) && !localForeign(stateDir, { env }).foreign) {
     entry = recordTrust({ dataDir, names, key, ...currentOf(stateDir), adoptedAt: at });
-    adopted = true;
+    adopted = entry.adoptedAt === at; // false when a concurrent writer's entry (a move-aside, a link) came first
   }
   return { trusted: Boolean(entry?.[kind]?.includes(sha)), key, adopted };
 }

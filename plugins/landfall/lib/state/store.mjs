@@ -46,8 +46,9 @@ const TRUSTED_FILES = {
 // The most bytes of one appended line (PIPE_BUF on Linux): one write() of this size is never split.
 const APPEND_MAX = 4096;
 // The state directory's .gitignore: machine-local state, the moved-aside copies of a foreign local/ and temporary files
-// of interrupted atomic writes. ensureIgnored adds the missing lines (init, and every move-aside before the rename).
-const IGNORED = ['local/', 'local.foreign-*/', '.*.tmp'];
+// of interrupted atomic writes, the move-aside lock. ensureIgnored adds the missing lines (init, and every move-aside
+// before the rename).
+const IGNORED = ['local/', 'local.foreign-*/', '.*.tmp', '.local-move.lock'];
 export function ensureIgnored(store) {
   const text = store.readText('.gitignore');
   if (text === null) return store.createText('.gitignore', `${IGNORED.join('\n')}\n`);
@@ -237,9 +238,12 @@ export class Store {
 
   // Before a write: a foreign local/ is moved aside to local.foreign-<stamp>/ (one rename; the store lock lives inside
   // local/, so the rename comes first). Moves are serialized by MOVE_LOCK (outside local/); under it git is asked
-  // again (another process may have moved it aside and started a fresh local/ meanwhile), .gitignore gains its missing
-  // lines, then the rename. The repository gets a trust entry without adoption, so the fresh local/ that replaces a
-  // shipped one is never adopted later (fix round 1, F1). An unknown owner refuses the write: nothing moves on a guess.
+  // again (another process may have moved it aside and started a fresh local/ meanwhile), the repository gets its trust
+  // entry without adoption, .gitignore its missing lines, then the rename: the fresh local/ that replaces a shipped
+  // one is never adopted, not even by a reader between the rename and the end of the write (fix round 2, F1). A trust
+  // entry that cannot be written aborts the move and the write (trust-write-failed, naming trust.json). Without a
+  // machine data directory there is no projects.json, so nothing can adopt. An unknown owner refuses the write:
+  // nothing moves on a guess.
   claimLocal() {
     this.localState = undefined;
     if (this.localStatus() === 'unknown') throw this.unknownOwner();
@@ -252,8 +256,16 @@ export class Store {
     this.localState = this.ownerOfLocal(true);
     if (this.localState === 'unknown') throw this.unknownOwner();
     if (this.localState !== 'foreign') return;
-    ensureIgnored(this);
     const from = this.abs('local');
+    const dataDir = this.dataDir();
+    if (dataDir) {
+      try {
+        recordTrust({ dataDir, names: this.names, key: repoKey(this.dir) });
+      } catch (err) {
+        throw new StateError('trust-write-failed', 'ENV', `${join(dataDir, 'trust.json')} could not be written (${err.message}); ${from} was not moved aside and nothing was written`, { hint: 'check that file and its directory, then run the command again' });
+      }
+    }
+    ensureIgnored(this);
     // A lock inside it whose owner runs on this host: a live writer (another machine data directory), never moved.
     let owner = null;
     try { owner = JSON.parse(readFileSync(join(from, 'lock', 'owner.json'), 'utf8')); } catch { /* none or unreadable */ }
@@ -272,10 +284,6 @@ export class Store {
       if (!missing(err)) throw err;
     }
     forgetShipped(this.dir); // what git tracks under local/ was moved aside with it
-    const dataDir = this.dataDir();
-    try {
-      if (dataDir) recordTrust({ dataDir, names: this.names, key: repoKey(this.dir) });
-    } catch { /* best effort: without machine-side evidence nothing is adopted anyway */ }
   }
 
   // After a write succeeded (under the lock; a section that wrote nothing marks nothing): local/ carries this machine's

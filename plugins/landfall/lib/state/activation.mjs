@@ -13,7 +13,7 @@
 // Context comes only from the arguments (target directory, env); a refusal writes nothing.
 import { existsSync, statSync } from 'node:fs';
 import { join, relative, resolve as resolvePath } from 'node:path';
-import { removeEmptyDirs, removeTree } from '../fsx/index.mjs';
+import { makeDirs, removeEmptyDirs, removeTree } from '../fsx/index.mjs';
 import { git } from '../git/index.mjs';
 import { checkWrite } from './document.mjs';
 import { StateError, guarded } from './errors.mjs';
@@ -22,10 +22,11 @@ import { readProjects, resolve, updateProject } from './resolve.mjs';
 import { format, validate } from './schema.mjs';
 import { ensureIgnored, open } from './store.mjs';
 import { gitIdentity, handleCandidates, registerHandle } from './team.mjs';
+import { recordTrust, repoKey } from './trust.mjs';
 
 const CLASSES = ['trivial', 'standard', 'critical'];
-// The state directory's .gitignore (local/, local.foreign-*/, .*.tmp): store.mjs ensureIgnored, also run before a
-// foreign local/ is moved aside (T-MG-77).
+// The state directory's .gitignore (local/, local.foreign-*/, .*.tmp, .local-move.lock): store.mjs ensureIgnored, also
+// run before a foreign local/ is moved aside (T-MG-77).
 const now = () => new Date().toISOString();
 const inRepo = (where, names) => join(where.repo, names.stateDir);
 
@@ -47,6 +48,20 @@ function target(where, options, cwd) {
   return dir;
 }
 
+// Before init links `dir` in projects.json (fix round 2, AR-3): the repository gets a trust entry without adoption, so
+// gates or overrides the linked directory ships are never adopted (a link alone was the evidence for adoption, which
+// now covers only links made before this release). The directory is made first, so its key is the one of its real
+// path. A trust entry that cannot be written refuses the link (trust-write-failed, naming trust.json).
+function trustLink(where, dir, names, env) {
+  if (!where.dataDir) return; // updateProject refuses: no-machine-data
+  try {
+    guarded(() => makeDirs(dir));
+    recordTrust({ dataDir: where.dataDir, names, key: repoKey(dir, { env }) });
+  } catch (err) {
+    throw new StateError('trust-write-failed', 'ENV', `${join(where.dataDir, 'trust.json')} could not be written (${err.message}); ${dir} was not linked`, { hint: 'check that file and its directory, then run the command again' });
+  }
+}
+
 // `init`: { repo, dir, linked, activated, handle, registered }. options: { stateDir, handle } (CLI flags).
 export function activate({ cwd, env, names, version, options = {}, at = now() } = {}) {
   return guarded(() => {
@@ -62,7 +77,11 @@ export function activate({ cwd, env, names, version, options = {}, at = now() } 
     const doc = { schema: kind.version, codename: names.codename, createdWith: version, activatedAt: at };
     checkWrite(kind, doc, { where: join(dir, kind.path()) });
     store.assertWritable();
-    if (dir !== where.dir) updateProject({ repo: where.repo, dataDir: where.dataDir, names, patch: { stateDir: dir === inRepo(where, names) ? null : dir } });
+    if (dir !== where.dir) {
+      const link = dir === inRepo(where, names) ? null : dir;
+      if (link) trustLink(where, link, names, env);
+      updateProject({ repo: where.repo, dataDir: where.dataDir, names, patch: { stateDir: link } });
+    }
     const activated = store.locked(() => {
       store.checks(kind, kind.path());
       ensureIgnored(store);
