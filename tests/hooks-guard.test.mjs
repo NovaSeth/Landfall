@@ -1324,7 +1324,11 @@ test('guard does nothing only when git certainly said there is no state: a git t
 test('guard shortcut fails closed (fix round 1): quotes, backslashes, expansions, directory options and file-moving commands always get the full guard', () => {
   const must = ['c""d nested && git push --force origin main', 'c${E}d nested && git push --force origin main', 'c\\d nested && git push --force origin main',
     'git -"C" nested push --force origin main', 'make --directory=nested push', "git -'C' nested status", 'git push origin $B', 'echo `id`',
-    'rm -rf nested', 'mv nested x', 'cp -r nested x', 'ln -s nested x', 'find nested -delete', 'ls | xargs rm', 'git --git-dir nested/.git status', 'cd nested'];
+    'rm -rf nested', 'mv nested x', 'cp -r nested x', 'ln -s nested x', 'find nested -delete', 'ls | xargs rm', 'git --git-dir nested/.git status', 'cd nested',
+    // fix round 2: brace expansion, git -c, every shell metacharacter, a tab or a newline
+    'git {-C,nested} push --force origin main', '{git,-C,nested,push,--force,origin,main}', 'make {-C,nested} push',
+    'git -c core.worktree=nested push --force origin main', 'git -c x push', 'git status;ls', 'git status\tls', 'git status\nls', 'ls *', 'ls [a]',
+    'ls > f', 'a=b git push', 'git status &', '(git push)', 'git push | cat', 'ls ?', 'ls  -l'];
   for (const c of must) assert.equal(mustGuard(c), true, c);
   for (const c of ['git push --force origin main', 'git status', 'ls -la', 'npm test']) assert.equal(mustGuard(c), false, c);
   const parent = mkdtempSync(join(tmpdir(), 'g-parent-')); const nested = join(parent, 'nested');
