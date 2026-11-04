@@ -91,6 +91,29 @@ test('brief appends the profile fastGuards after the gates, under a marker line;
   assert.equal(strip(r.out.replace(`${MARK}\n${FAST.join('\n')}\n`, '')), strip(base.out), 'only the guard lines are added');
 });
 
+test('brief preserves quoted whitespace and the shell result of fastGuards', async (t) => {
+  const p = await project(t);
+  const guards = ["test 'a  b' != 'a b'", "  test 'a   b'  != 'a b'  "];
+  const facts = { fastGuards: { value: guards, source: 'said', evidence: 'said', confidence: 1, at: '2026-11-04T10:00:00.000Z' } };
+  profile.openStore(p.store, names).write('profile', null, { ...profile.emptyProfile(), gates: GATES, facts });
+  const r = await cli(['brief', 'T-TU-1'], p);
+  assert.equal(r.code, 0, show(r));
+  const lines = r.out.split('\n');
+  const rendered = lines.slice(lines.indexOf(MARK) + 1, lines.indexOf(MARK) + 1 + guards.length);
+  for (const guard of guards) assert.equal(spawnSync('/bin/sh', ['-c', guard], { env: p.env }).status, 0, guard);
+  for (const guard of rendered) assert.equal(spawnSync('/bin/sh', ['-c', guard], { env: p.env }).status, 0, guard);
+  assert.deepEqual(rendered, guards, 'command whitespace is preserved exactly');
+});
+
+test('renderBrief replaces only line breaks in fastGuards supplied directly', async () => {
+  const { renderBrief } = await lib('cli/brief.mjs');
+  const task = { id: 'T-TU-1', kind: 'task', title: 'Parser', class: 'trivial', classHistory: [], base: null, branch: null };
+  const fastGuards = ['\n', '\r', '\u2028', '\u2029'].map((br) => `echo  'a\t\tb'${br}# REVIEW_SENTINEL`);
+  const text = renderBrief({ template: TEMPLATE, task, role: 'implementer', gates: [], lease: null, fastGuards, names });
+  const lines = text.split('\n');
+  assert.deepEqual(lines.slice(lines.indexOf(MARK) + 1, lines.indexOf(MARK) + 5), Array(4).fill("echo  'a\t\tb' # REVIEW_SENTINEL"));
+});
+
 test('BRIEF_RULES: every role and class lists live rules of the method; briefRules is the role\'s then the class\'s, once each', () => {
   assert.deepEqual(Object.keys(method.BRIEF_RULES.role).sort(), ['implementer', 'reviewer', 'security-reviewer']);
   assert.deepEqual(Object.keys(method.BRIEF_RULES.class).sort(), ['critical', 'standard', 'trivial']);
