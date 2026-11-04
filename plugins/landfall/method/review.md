@@ -8,6 +8,7 @@
 - §Task gate — gate composition, re-verification and merge.
 - §Area gate — cross-review, full E2E, what blocks, the PO report.
 - §Evidence — regressions, flaky tests.
+- §Code health — the code-health check on the diff, hook-path catches and regular expressions.
 
 ## Core
 
@@ -43,3 +44,7 @@
 ### Evidence
 **REV-15.** Decide a regression by comparing with `main` in the same environment at the same time, not by replaying one step; a failure within a fraction of a second is usually the harness, so read the log before dispatching fixes.
 **REV-16.** Quarantine a flaky test only with a decision that has a deadline and a marker in the code, listed in the gate report; MUST NOT quarantine Review Focus tests.
+
+### Code health
+**REV-59.** Run the code-health check on the diff and reject a new or worse violation of COD-16…25, citing its ID; an improved one is noted, not required.
+**REV-60.** A review of a hook-path change checks COD-23 and COD-25 by reading the catches and the regular expressions it adds.
