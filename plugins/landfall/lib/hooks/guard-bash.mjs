@@ -78,11 +78,11 @@ function stateless(s, cwd) {
 
 // Fails closed, no parsing: the shortcut stays only for plain words (letters, digits and . _ : @ % + , -) separated by single
 // spaces, so no quote, escape, expansion, brace, glob, operator, redirection, tab or newline gets through, and none of a
-// short option that is -C or -c or has more than one letter (-Cdir, -xC), a
-// directory option or variable (-C, -c, --directory, --git-dir, --work-tree, GIT_DIR, GIT_WORK_TREE), cd, pushd, popd, chdir,
-// a parent path, or a command that moves or removes files (rm mv cp ln find xargs): any of them may reach a repository with state.
+// short option that is -C or -c or has more than one letter (-Cdir, -xC), any long option except --version and --help, a
+// directory variable (GIT_DIR, GIT_WORK_TREE), cd, pushd, popd, chdir, a parent path, or a command that moves or removes
+// files (rm mv cp ln find xargs): any of them may reach a repository with state.
 const PLAIN = /^[\w.:@%+,-]+( [\w.:@%+,-]+)*$/;
-const MUST_GUARD = /\b(cd|pushd|popd|chdir|rm|mv|cp|ln|find|xargs)\b|(^|\s)-([Cc]|[A-Za-z0-9]{2,})|--directory|--git-dir|--work-tree|GIT_DIR|GIT_WORK_TREE|\.\./;
+const MUST_GUARD = /\b(cd|pushd|popd|chdir|rm|mv|cp|ln|find|xargs)\b|(^|\s)-([Cc]|[A-Za-z0-9]{2,}|-(?!(version|help)(\s|$)))|GIT_DIR|GIT_WORK_TREE|\.\./;
 export const mustGuard = (command) => !PLAIN.test(command) || MUST_GUARD.test(command);
 
 const decision = (permissionDecision, reason) => ({
