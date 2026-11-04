@@ -58,7 +58,7 @@ function judge(command) {
   const o = JSON.parse(r.stdout).hookSpecificOutput;
   return { deny: o.permissionDecision === 'deny', reason: o.permissionDecisionReason ?? '' };
 }
-const fill = (c) => c.split('<STATE>').join(STATE).split('<REPO>').join(DIR);
+const fill = (c) => c.split('<STATE>').join(STATE).split('<REPO>').join(DIR).split('<STATEDIR>').join(names.stateDir).split('<PLUGIN>').join(names.plugin);
 const corpus = JSON.parse(readFileSync(join(root, 'tests', 'hooks-guard-corpus.json'), 'utf8'));
 
 test('guard corpus: known-bad commands are denied, known-good read-only commands are allowed, known gaps are still blocked', (t) => {
