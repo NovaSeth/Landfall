@@ -1,6 +1,9 @@
 // PreToolUse Bash hook `guard-bash` (spec §7.13, §8.3, SD-29, SD-33, GC8): runs the guard (lib/guard) on
 // tool_input.command. A block is the permission decision JSON with the reason (rule ID first); an allow prints nothing.
-// It also runs in subagents and in bypassPermissions mode, in every repository where the plugin is enabled.
+// It also runs in subagents and in bypassPermissions mode, in every repository where the plugin is enabled, but does
+// nothing where the plugin has no state: when the command's directory resolves with certainty to no state at all (not in a
+// repository, or a repository with no state directory, not linked, no worktree copy, the directory not inside one), the
+// command is allowed at once without being parsed.
 // Input outside the contract (tool_input.command not a non-empty string) → allow. The repository of the command's
 // directory is resolved once per call through lib/state (lib/hooks/loop-state.mjs stateOf, git bounded by the guard's
 // budget): when it is active, its team mode (one registered handle: solo, more: team), its project rules (guard-extra.txt
@@ -14,8 +17,8 @@
 // | 'on'; else userConfig auto_allow_own_commands=false → off, else the auto-allow capability flag of lib/config, read
 // only for an own command, its default shadow when it cannot be read), shadowLog(entry), git (lib/git's git()).
 // The shadow log stays in the plugin data directory until lib/state appends to local/shadow.jsonl (ruling R72, S4).
-import { appendFileSync, lstatSync, readFileSync } from 'node:fs';
-import { isAbsolute, join } from 'node:path';
+import { appendFileSync, existsSync, lstatSync, readFileSync } from 'node:fs';
+import { isAbsolute, join, sep } from 'node:path';
 import { modeOf, readConfig, rollout } from '../config/index.mjs';
 import { evaluate } from '../guard/index.mjs';
 import { realPath } from '../guard/protect.mjs';
@@ -60,6 +63,27 @@ function guardStates(s, names) {
   }
   return s.where?.active ? [{ dir: realPath(s.where.dir), repo: s.where.repo }, ...copy(s.where, {})] : [null];
 }
+
+// True when the resolved state is certainly empty: no repository, or a repository whose state directory does not exist,
+// is not linked, has no worktree copy, and the directory is not inside one. Active, unknown or any trace goes to the guard.
+function stateless(s, cwd) {
+  if (s.none) return s.certain === true;
+  const w = s.where;
+  if (s.unknown || !w || w.active || w.linked) return false;
+  if (existsSync(w.dir) || (w.copy && existsSync(w.copy))) return false;
+  const c = realPath(cwd);
+  const inside = (d) => c === d || c.startsWith(d + sep);
+  return !inside(w.dir) && !(w.copy && inside(w.copy));
+}
+
+// Fails closed, no parsing: the shortcut stays only for plain words (letters, digits and . _ : @ % + , -) separated by single
+// spaces, so no quote, escape, expansion, brace, glob, operator, redirection, tab or newline gets through, and none of a
+// short option that is -C or -c or has more than one letter (-Cdir, -xC), any long option except --version and --help, a
+// directory variable (GIT_DIR, GIT_WORK_TREE), cd, pushd, popd, chdir, a parent path, or a command that moves or removes
+// files (rm mv cp ln find xargs): any of them may reach a repository with state.
+const PLAIN = /^[\w.:@%+,-]+( [\w.:@%+,-]+)*$/;
+const MUST_GUARD = /\b(cd|pushd|popd|chdir|rm|mv|cp|ln|find|xargs)\b|(^|\s)-([Cc]|[A-Za-z0-9]{2,}|-(?!(version|help)(\s|$)))|GIT_DIR|GIT_WORK_TREE|\.\./;
+export const mustGuard = (command) => !PLAIN.test(command) || MUST_GUARD.test(command);
 
 const decision = (permissionDecision, reason) => ({
   stdout: JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision, permissionDecisionReason: reason } }),
@@ -118,6 +142,7 @@ function guardDecision(input, opts = {}) {
   let resolved; // once, and only when a default reader needs it
   const s = () => (resolved ??= stateOf(cwd, env, opts.deadline ?? Infinity));
   const active = () => (s().where?.active ? s().where : null);
+  if (opts.state === undefined && !mustGuard(command) && stateless(s(), cwd)) return { stdout: '' };
   let v;
   for (const state of opts.state !== undefined ? [opts.state] : guardStates(s(), names)) {
     v = evaluate(command, {
