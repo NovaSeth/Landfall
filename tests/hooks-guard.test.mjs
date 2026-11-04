@@ -630,7 +630,7 @@ const MUST_BLOCK = [...PORTED_BLOCK, ...NEW_BLOCK].map(([c, id, ctx]) => [withBi
 const MUST_ALLOW = [...PORTED_ALLOW, ...NEW_ALLOW].map(([c, id, ctx]) => [withBin(c), id, ctx]);
 const DAILY_ROWS = DAILY.map(([c, id, ctx]) => [withBin(c), id, ctx]);
 
-// The guard does nothing where Landfall has no state, so a fixture that expects verdicts holds an active state (no
+// The guard does nothing where the plugin has no state, so a fixture that expects verdicts holds an active state (no
 // registered handle, so the team mode stays unknown unless a test activates handles).
 function markActive(d) {
   const store = state.open(join(d, names.stateDir), { names });
@@ -648,7 +648,7 @@ function gitRepo(branch, { state: withState = true } = {}) {
   return d;
 }
 let stateDirRepo;
-const stateRepo = () => (stateDirRepo ??= gitRepo('main')); // a directory where Landfall has state: the guard works there
+const stateRepo = () => (stateDirRepo ??= gitRepo('main')); // a directory where the plugin has state: the guard works there
 let dirs;
 function contexts() {
   if (dirs) return dirs;
@@ -1281,7 +1281,7 @@ test('launcher catch: a broken plugin copy blocks a guarded Bash command as unve
   }
 });
 
-test('guard does nothing where Landfall has no state: a repository without a state directory allows what an active one blocks', () => {
+test('guard does nothing where the plugin has no state: a repository without a state directory allows what an active one blocks', () => {
   const heredoc = "python3 - <<'E'\nprint(1)\nE";
   const none = gitRepo('main', { state: false }); const active = gitRepo('main'); activate(active, ['AB']);
   for (const c of ['git push --force origin main', 'git push origin $B', heredoc]) {

@@ -1,7 +1,7 @@
 // PreToolUse Bash hook `guard-bash` (spec §7.13, §8.3, SD-29, SD-33, GC8): runs the guard (lib/guard) on
 // tool_input.command. A block is the permission decision JSON with the reason (rule ID first); an allow prints nothing.
 // It also runs in subagents and in bypassPermissions mode, in every repository where the plugin is enabled, but does
-// nothing where Landfall has no state: when the command's directory resolves with certainty to no state at all (not in a
+// nothing where the plugin has no state: when the command's directory resolves with certainty to no state at all (not in a
 // repository, or a repository with no state directory, not linked, no worktree copy, the directory not inside one), the
 // command is allowed at once without being parsed.
 // Input outside the contract (tool_input.command not a non-empty string) → allow. The repository of the command's
