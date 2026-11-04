@@ -565,6 +565,8 @@ async function repo(t, { activate = true } = {}) {
   mkdirSync(dir);
   git(dir, iso.env, ['-c', 'init.defaultBranch=main', 'init', '-q']);
   git(dir, iso.env, ['commit', '-q', '--allow-empty', '-m', 'start']);
+  // the calling shell's billing signals never reach a case (F1); CLAUDE_CONFIG_DIR is the isolated one
+  for (const k of [`${names.envPrefix}BILLING`, 'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_USE_FOUNDRY']) delete iso.env[k];
   const r = { cwd: dir, env: iso.env, store: join(dir, names.stateDir) };
   // as in a Claude Code session: the repository has a transcript directory, so its cost is measurable (zero here)
   r.transcripts = join(iso.env.CLAUDE_CONFIG_DIR, 'projects', realpathSync(dir).replace(/[^A-Za-z0-9]/g, '-'));
@@ -1183,22 +1185,23 @@ test('billing (a) decide: in subscription mode the cost cap and the cost-unmeasu
   assert.match(e.reason, /cost cap reached: \$0\.00 of \$0\.00 \(estimate at API prices\)/);
 });
 
-async function overCap(t, env = {}) {
+// The loop is started with `startEnv` (from a terminal when `tty`); every tick then runs with the plain isolated env plus `tickEnv`.
+async function overCap(t, startEnv = {}, { tty = false, tickEnv = {} } = {}) {
   const p = await repo(t);
-  let r = await p.run(['loop', 'start', '--caps', 'usd=0.01']);
+  let r = await p.run(['loop', 'start', '--caps', 'usd=0.01'], { env: { ...p.env, ...startEnv }, tty });
   assert.equal(r.code, 0, show(r));
   const { startedAt } = r.out.data.loop;
   writeFileSync(join(p.transcripts, 'a.jsonl'), `${line('req_1', startedAt, { input_tokens: 5000, output_tokens: 0 })}\n`); // 20,000 µ$ > $0.01
-  r = await p.run(['tick'], { env: { ...p.env, ...env } });
+  r = await p.run(['tick'], { env: { ...p.env, ...tickEnv } });
   return { p, r };
 }
 
-test('billing (a) CLI: LANDFALL_BILLING=subscription, a loop over the cost cap is not ended; billing is shown in text and data', async (t) => {
-  const { p, r } = await overCap(t, { [BILL]: 'subscription' });
+test('billing (a) CLI: LANDFALL_BILLING=subscription at a terminal start, a loop over the cost cap is not ended; billing is shown in text and data', async (t) => {
+  const { p, r } = await overCap(t, { [BILL]: 'subscription' }, { tty: true });
   assert.ok([0, 3].includes(r.code), show(r));
   assert.ok(r.out.data.loop.costMicroUsd > 10000);
   assert.deepEqual(r.out.data.billing, { mode: 'subscription', source: BILL });
-  const x = await cliText(['tick'], { cwd: p.cwd, env: { ...p.env, [BILL]: 'subscription' } });
+  const x = await cliText(['tick'], { cwd: p.cwd, env: p.env });
   assert.match(x.text, /billing: subscription \(/);
   assert.match(x.text, /at API prices \(estimate, not billed: subscription\)/);
   assert.doesNotMatch(x.text, / of \$0\.01 /, 'no cap shown');
@@ -1209,6 +1212,45 @@ test('billing (b) CLI: ANTHROPIC_API_KEY set (api mode) → BUDGET at the cap as
   assert.equal(r.code, 6, show(r));
   assert.equal(r.out.data.billing.mode, 'api');
   assert.match(r.out.data.reason, /cost cap reached: \$0\.02 of \$0\.01 \(estimate at API prices\)/);
+});
+
+test('billing (e) S1: the override on a tick of a running api-mode loop changes nothing: still api, BUDGET at the cap', async (t) => {
+  const { r } = await overCap(t, { ANTHROPIC_API_KEY: 'x' }, { tickEnv: { [BILL]: 'subscription' } });
+  assert.equal(r.code, 6, show(r));
+  assert.equal(r.out.data.billing.mode, 'api');
+  assert.match(r.out.data.reason, /cost cap reached/);
+});
+
+test('billing (f) S1: the subscription override at loop start counts only from a terminal; api always counts', async (t) => {
+  let p = await repo(t);
+  let r = await p.run(['loop', 'start'], { env: { ...p.env, [BILL]: 'subscription' }, tty: false });
+  assert.equal(r.code, 0, show(r));
+  assert.equal(r.out.data.billing.mode, 'unknown', 'ignored without a terminal; the other steps found nothing');
+  assert.equal(JSON.parse(readFileSync(p.loopFile, 'utf8')).billing.mode, 'unknown', 'stored');
+  p = await repo(t);
+  r = await p.run(['loop', 'start'], { env: { ...p.env, [BILL]: 'subscription', ANTHROPIC_API_KEY: 'x' }, tty: false });
+  assert.equal(r.out.data.billing.mode, 'api', 'the ignored override leaves detection to the API key');
+  p = await repo(t);
+  r = await p.run(['loop', 'start'], { env: { ...p.env, [BILL]: 'subscription' }, tty: true });
+  assert.deepEqual(r.out.data.billing, { mode: 'subscription', source: BILL });
+  r = await p.run(['loop', 'status'], { env: p.env });
+  assert.equal(r.out.data.billing.mode, 'subscription', 'status shows the stored mode, not the environment');
+  p = await repo(t);
+  r = await p.run(['loop', 'start'], { env: { ...p.env, [BILL]: 'api' }, tty: false });
+  assert.equal(r.out.data.billing.mode, 'api');
+});
+
+test('billing (g) S1: a schema-1 loop document without billing still reads, is treated as unknown and ends at the cap', async (t) => {
+  const p = await repo(t);
+  let r = await p.run(['loop', 'start', '--caps', 'usd=0.01'], { env: p.env });
+  const doc = JSON.parse(readFileSync(p.loopFile, 'utf8'));
+  delete doc.billing;
+  doc.schema = 1;
+  writeFileSync(p.loopFile, `${JSON.stringify(doc, null, 2)}\n`);
+  writeFileSync(join(p.transcripts, 'a.jsonl'), `${line('req_1', doc.startedAt, { input_tokens: 5000, output_tokens: 0 })}\n`);
+  r = await p.run(['tick'], { env: { ...p.env, [BILL]: 'subscription' } });
+  assert.equal(r.code, 6, show(r));
+  assert.equal(r.out.data.billing.mode, 'unknown');
 });
 
 test('billing (c) billingMode: the account file, API signals and the override; never throws', async (t) => {
@@ -1232,7 +1274,9 @@ test('billing (c) billingMode: the account file, API signals and the override; n
   assert.equal(mode({ CLAUDE_CODE_USE_VERTEX: 'true' }).mode, 'api');
   assert.equal(mode({ CLAUDE_CODE_USE_FOUNDRY: '0' }).mode, 'subscription', '0 is not a signal');
   assert.equal(mode({ [BILL]: 'api' }).mode, 'api', 'the override beats the file');
-  assert.equal(mode({ [BILL]: 'subscription', ANTHROPIC_API_KEY: 'k' }).mode, 'subscription', 'the override beats the key');
+  assert.equal(mode({ [BILL]: 'subscription', ANTHROPIC_API_KEY: 'k' }).mode, 'api', 'without byUser the subscription override is ignored');
+  const byUser = (env) => billingMode({ env: { CLAUDE_CONFIG_DIR: dir, ...env }, names, home: join(dir, 'nohome'), byUser: true });
+  assert.equal(byUser({ [BILL]: 'subscription', ANTHROPIC_API_KEY: 'k' }).mode, 'subscription', 'a user start: the override beats the key');
   const odd = mode({ [BILL]: 'free' });
   assert.equal(odd.mode, 'unknown');
   assert.match(odd.source, /not recognized/);
@@ -1247,11 +1291,12 @@ test('billing (c) billingMode: the account file, API signals and the override; n
 
 test('billing (d) loop status --json carries billing.mode; start and status text carry the billing line', async (t) => {
   const p = await repo(t);
-  const env = { ...p.env, [BILL]: 'subscription' };
-  let r = await p.run(['loop', 'status'], { env });
+  mkdirSync(p.env.CLAUDE_CONFIG_DIR, { recursive: true });
+  writeFileSync(join(p.env.CLAUDE_CONFIG_DIR, '.claude.json'), JSON.stringify({ oauthAccount: { billingType: 'stripe_subscription' } }));
+  let r = await p.run(['loop', 'status']);
   assert.equal(r.out.data.billing.mode, 'subscription');
-  r = await p.run(['loop', 'start'], { env });
+  r = await p.run(['loop', 'start']);
   assert.equal(r.out.data.billing.mode, 'subscription');
-  const x = await cliText(['loop', 'status'], { cwd: p.cwd, env });
+  const x = await cliText(['loop', 'status'], { cwd: p.cwd, env: p.env });
   assert.match(x.text, /billing: subscription \(/);
 });
