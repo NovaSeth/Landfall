@@ -279,38 +279,39 @@ function inactiveSnapshot(project: string, now: number, error: string | null): S
 // ---- the drawing -------------------------------------------------------------------------------------------------
 
 type Line = { text: string; style: 'head' | 'dim' | 'section' | 'row' | 'live' | 'ok' | 'bad' | 'next'; color?: string }
-type AgentLine = { line: Line; live: boolean; since: number; endedAt: number | null; failed: boolean }
+type AgentLine = { line: Line; task: string | null; live: boolean; since: number; endedAt: number | null; failed: boolean }
 
-function agentLine(r: AgentRecord, now: number): AgentLine {
+// `nested`: the row sits under its task, so the task column is dropped (the round stays)
+function agentLine(r: AgentRecord, now: number, nested = false): AgentLine {
   const at = now
   const running = RUNNING.has(r.status)
   const glyph = running ? '●' : r.status === 'completed' ? '✓' : r.status === 'idle' ? '○' : '✗'
   const parts = [
     `${glyph} ${r.role.padEnd(11)}`,
-    `${(r.task ?? '-').padEnd(8)}${r.round ? ` r${r.round}` : '   '}`,
+    nested ? (r.round ? `r${r.round}` : '').padEnd(2) : `${(r.task ?? '-').padEnd(8)}${r.round ? ` r${r.round}` : '   '}`,
     clock((r.endedAt ?? at) - r.startedAt),
     r.status,
     ...(r.out ? [`→ ${baseName(r.out)}`] : []),
     ...(r.tokens ? [`${(r.tokens / 1000).toFixed(1)}k tok`] : []),
   ]
-  return { line: { text: parts.join('  '), style: running ? 'live' : r.status === 'completed' ? 'ok' : r.status === 'idle' ? 'dim' : 'bad', ...(running ? { color: heatColor(((r.endedAt ?? at) - r.startedAt) / AGENT_LIMIT_MS) } : {}) }, live: running, since: r.startedAt, endedAt: r.endedAt, failed: !running && r.status !== 'completed' && r.status !== 'idle' }
+  return { task: r.task ?? null, line: { text: parts.join('  '), style: running ? 'live' : r.status === 'completed' ? 'ok' : r.status === 'idle' ? 'dim' : 'bad', ...(running ? { color: heatColor(((r.endedAt ?? at) - r.startedAt) / AGENT_LIMIT_MS) } : {}) }, live: running, since: r.startedAt, endedAt: r.endedAt, failed: !running && r.status !== 'completed' && r.status !== 'idle' }
 }
 
 // `taken` is when the snapshot was taken, `now` the time of the render: the elapsed time of a live run grows by the difference.
-function runLine(r: RunView, taken: number, now: number): AgentLine {
+function runLine(r: RunView, taken: number, now: number, nested = false): AgentLine {
   const at = taken
   const elapsed = r.live ? r.elapsedMs + Math.max(0, now - taken) : r.elapsedMs
   const glyph = r.live ? '●' : r.status === 'done' ? '✓' : '✗'
   const parts = [
     `${glyph} ${`${r.provider} ${r.role}`.padEnd(11)}`,
-    `${(r.task ?? '-').padEnd(8)}   `,
+    ...(nested ? [] : [`${(r.task ?? '-').padEnd(8)}   `]),
     clock(elapsed),
     r.status,
     ...(r.out ? [`→ ${baseName(r.out)}`] : []),
     ...(r.tokens ? [`${(r.tokens / 1000).toFixed(1)}k tok`] : []),
     ...(r.error ? [r.error] : r.lastLine ? [r.lastLine] : []),
   ]
-  return { line: { text: parts.join('  '), style: r.live ? 'live' : r.status === 'done' ? 'ok' : 'bad', ...(r.live ? { color: heatColor(elapsed / ((r.capS ?? AGENT_LIMIT_S) * 1000)) } : {}) }, live: r.live, since: at - r.elapsedMs, endedAt: r.endedAt, failed: !r.live && r.status !== 'done' }
+  return { task: r.task ?? null, line: { text: parts.join('  '), style: r.live ? 'live' : r.status === 'done' ? 'ok' : 'bad', ...(r.live ? { color: heatColor(elapsed / ((r.capS ?? AGENT_LIMIT_S) * 1000)) } : {}) }, live: r.live, since: at - r.elapsedMs, endedAt: r.endedAt, failed: !r.live && r.status !== 'done' }
 }
 
 const minutes = (ms: number): string => {
@@ -366,8 +367,6 @@ export function linesOf(snap: Snapshot, width: number, rows: number, now: number
   out.push({ text: `${c.open} open · ${c.active} active · ${c.byStatus.planned ?? 0} planned · ${c.byStatus.new ?? 0} new · ${c.byStatus.done ?? 0} done`, style: 'dim' })
   if (snap.error) out.push({ text: `! ${snap.error}: the rows are from the last answer`, style: 'bad' })
   const room = Math.max(2, rows - 7 - (snap.error ? 1 : 0))
-  const taskRoom = Math.max(1, Math.ceil(room * 0.55))
-  const agentRoom = Math.max(1, room - taskRoom)
 
   out.push({ text: 'TASKS', style: 'section' })
   // working: an active status, or a live agent or run names the task; every other open task waits
@@ -384,8 +383,18 @@ export function linesOf(snap: Snapshot, width: number, rows: number, now: number
   const rowsOf = snap.tasks.filter(t => !backlog(t))
   const folded = snap.tasks.length - rowsOf.length
   const ordered = [...rowsOf.filter(working), ...rowsOf.filter(t => !working(t))]
-  const shownTasks = ordered.slice(0, ordered.length > taskRoom ? taskRoom - 1 : taskRoom)
-  for (const t of shownTasks as TaskView[]) {
+  // rows are placed task by task with their live agents and runs (newest first), one budget for all; a fold line stands for what is left
+  const taken = (snap as SnapView).sampledAt ?? snap.at
+  const live = (nested: boolean) => [...snap.agents.map(r => agentLine(r, now, nested)), ...snap.runs.map(r => runLine(r, taken, now, nested))].filter(a => a.live).sort((a, b) => b.since - a.since)
+  const nestedLive = live(true)
+  const plainLive = live(false)
+  const placed = new Set<string>()
+  let used = 0
+  let nShown = 0
+  for (let i = 0; i < ordered.length; i++) {
+    const left = room - used - (i < ordered.length - 1 ? 1 : 0)
+    if (left < 1) break
+    const t = ordered[i] as TaskView
     const w = working(t)
     const blocked = t.kind === 'blocked'
     const stage = blocked ? `blocked · ${t.state.replace(/^blocked:\s*/, '')}` : `${w ? 'working' : 'waiting'} · ${t.state}`
@@ -393,18 +402,32 @@ export function linesOf(snap: Snapshot, width: number, rows: number, now: number
     const atWork = named.has(t.id)
     const seen = atWork || touched(t)
     out.push({ text: taskText(t, atWork ? '▶' : seen ? '⏸' : '■', stage, now, width), style: blocked ? 'bad' : atWork ? (beat ? 'live' : 'row') : seen ? 'row' : 'dim' })
+    placed.add(t.id)
+    nShown++
+    used++
+    const mine = nestedLive.filter(a => a.task === t.id)
+    const avail = left - 1
+    const fit = mine.length <= avail ? mine.length : Math.max(0, avail - 1)
+    for (const a of mine.slice(0, fit)) out.push({ ...a.line, text: `    ↳ ${a.line.text}` })
+    used += fit
+    if (mine.length > fit && avail >= 1) {
+      out.push({ text: `    ↳ … ${mine.length - fit} more`, style: 'dim' })
+      used++
+    }
   }
-  if (ordered.length > shownTasks.length) out.push({ text: `  … ${ordered.length - shownTasks.length} more ({{bin}} task list)`, style: 'dim' })
+  if (ordered.length > nShown) out.push({ text: `  … ${ordered.length - nShown} more ({{bin}} task list)`, style: 'dim' })
   if (folded > 0) out.push({ text: `⏸ ${folded} in backlog ({{bin}} task list)`, style: 'dim' })
   if (snap.tasks.length === 0) out.push({ text: '  no open tasks ({{bin}} task new)', style: 'dim' })
 
-  out.push({ text: 'AGENTS', style: 'section' })
-  // only the agents and runs at work
-  const shown = [...snap.agents.map(r => agentLine(r, now)), ...snap.runs.map(r => runLine(r, (snap as SnapView).sampledAt ?? snap.at, now))].filter(a => a.live).sort((a, b) => b.since - a.since)
-  const shownAgents = shown.slice(0, shown.length > agentRoom ? Math.max(0, agentRoom - 1) : agentRoom)
-  for (const a of shownAgents) out.push(a.line)
-  if (shown.length > shownAgents.length) out.push({ text: `  … ${shown.length - shownAgents.length} more`, style: 'dim' })
-  if (shown.length === 0) out.push({ text: '  none active', style: 'dim' })
+  // live agents and runs without a shown task keep their task column
+  const loose = plainLive.filter(a => !(a.task && placed.has(a.task)))
+  if (loose.length > 0) {
+    out.push({ text: 'UNASSIGNED', style: 'section' })
+    const avail = Math.max(1, room - used)
+    const fit = loose.length <= avail ? loose.length : Math.max(0, avail - 1)
+    for (const a of loose.slice(0, fit)) out.push({ ...a.line, text: `    ↳ ${a.line.text}` })
+    if (loose.length > fit) out.push({ text: `    ↳ … ${loose.length - fit} more`, style: 'dim' })
+  }
 
   const slots = Object.entries(snap.slots)
   out.push({ text: `SLOTS ${slots.length ? slots.map(([k, n]) => `${k} ${n}`).join(' · ') : 'none in use'}`, style: 'dim' })

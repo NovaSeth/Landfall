@@ -107,9 +107,9 @@ test('the pane says, from general to detail, the project, the tasks with their s
   expect((await ui.find({ type: 'Text', text: /in backlog/ }))?.text).toBe('⏸ 1 in backlog (landfall task list)')
   expect(await ui.find({ type: 'Text', text: /T-TU-3/ })).toBeUndefined()
   // the Claude subagent the engine lists and the external run, each with role, task, time and status
-  expect((await ui.find({ type: 'Text', text: /● reviewer/ }))?.text).toBe('● reviewer     T-TU-1   r2  00:00  running')
-  expect((await ui.find({ type: 'Text', text: /codex reviewer/ }))?.text).toBe('● codex reviewer  T-TU-1       05:00  running  → T-TU-1-r1.json  1.2k tok  reading the diff')
-  // a stopped run is not live: AGENTS lists only the agents and runs at work, with no fold line (intended change)
+  expect((await ui.find({ type: 'Text', text: /● reviewer/ }))?.text).toBe('    ↳ ● reviewer     r2  00:00  running')
+  expect((await ui.find({ type: 'Text', text: /codex reviewer/ }))?.text).toBe('    ↳ ● codex reviewer  05:00  running  → T-TU-1-r1.json  1.2k tok  reading the diff')
+  // a stopped run is not live: the agent rows list only the agents and runs at work, with no fold line (intended change)
   expect(await ui.find({ type: 'Text', text: /codex implementer/ })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: /ended/ })).toBeUndefined()
   expect((await ui.find({ type: 'Text', text: /^SLOTS/ }))?.text).toBe('SLOTS heavy 1')
@@ -129,7 +129,7 @@ test('a spawned agent is a row with the task, round and output file of its promp
   await w.clock.advance(1_000)
   // the engine's list does not carry the new agent yet: a fresh spawn stays a running row
   let ui = await $.ui.mount(PANE)
-  expect((await ui.find({ type: 'Text', text: /T-TU-9/ }))?.text).toBe('● reviewer     T-TU-9   r2  00:01  running  → T-TU-9-review-r2.json')
+  expect((await ui.find({ type: 'Text', text: /T-TU-9/ }))?.text).toBe('    ↳ ● reviewer     T-TU-9   r2  00:01  running  → T-TU-9-review-r2.json')
   await ui.unmount()
   // listed by the engine while it runs; its turn end closes the row even before the list drops it
   w.agents.push({ id: 'a2', description: 'Re-review T-TU-9', type: 'landfall:reviewer', status: 'running' })
@@ -182,7 +182,8 @@ test('with no agent and no run at work the section says none active', async ($, 
   await $.session.start(SESSION)
   await w.clock.settle()
   const ui = await $.ui.mount(PANE)
-  expect((await ui.find({ type: 'Text', text: /none/ }))?.text).toBe('  none active')
+  expect(await ui.find({ type: 'Text', text: /none active/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /AGENTS|UNASSIGNED/ })).toBeUndefined()
   await ui.unmount()
 })
 
@@ -195,7 +196,7 @@ test('a spawned agent takes its task from the description even when its prompt n
   await $.agent.spawn({ description: 'T-MG-59 slice A: method rules', prompt: 'Compare T-MG-1, T-MG-2 and T-MG-56.', subagentType: 'landfall:reviewer' })
   await w.clock.advance(1_000)
   const ui = await $.ui.mount(PANE)
-  expect((await ui.find({ type: 'Text', text: /^● reviewer/ }))?.text).toMatch(/^● reviewer\s+T-MG-59\s+00:01\s+running$/)
+  expect((await ui.find({ type: 'Text', text: /● reviewer/ }))?.text).toMatch(/^ {4}↳ ● reviewer\s+T-MG-59\s+00:01\s+running$/)
   await ui.unmount()
 })
 
@@ -208,7 +209,7 @@ test('a spawned audit agent has no task when only its prompt names multiple dist
   await $.agent.spawn({ description: 'Audit stale task records', prompt: 'Audit T-MG-1, T-MG-2 and T-MG-56.', subagentType: 'landfall:reviewer' })
   await w.clock.advance(1_000)
   const ui = await $.ui.mount(PANE)
-  expect((await ui.find({ type: 'Text', text: /^● reviewer/ }))?.text).toMatch(/^● reviewer\s+-\s+00:01\s+running$/)
+  expect((await ui.find({ type: 'Text', text: /● reviewer/ }))?.text).toMatch(/^ {4}↳ ● reviewer\s+-\s+00:01\s+running$/)
   await ui.unmount()
 })
 
@@ -221,7 +222,7 @@ test('a spawned agent takes the sole distinct task from its prompt even when it 
   await $.agent.spawn({ description: 'Review', prompt: 'Review T-MG-7 and report the result for T-MG-7.', subagentType: 'landfall:reviewer' })
   await w.clock.advance(1_000)
   const ui = await $.ui.mount(PANE)
-  expect((await ui.find({ type: 'Text', text: /^● reviewer/ }))?.text).toMatch(/^● reviewer\s+T-MG-7\s+00:01\s+running$/)
+  expect((await ui.find({ type: 'Text', text: /● reviewer/ }))?.text).toMatch(/^ {4}↳ ● reviewer\s+T-MG-7\s+00:01\s+running$/)
   await ui.unmount()
 })
 
