@@ -343,3 +343,44 @@ process.stdout.write(JSON.stringify({ writerSaid, migrated }));`], { encoding: '
   assert.deepEqual(out.migrated, ['items/i0.json', 'items/i1.json'], 'the migration completed');
   for (const id of ['i0', 'i1']) assert.deepEqual(JSON.parse(readFileSync(join(dir, 'items', `${id}.json`), 'utf8')), { schema: 2, id, n: 1, m: 0 });
 });
+
+// T-MG-116 (plan M1.1, RF2): task 2 → 3 (006, outcome and regressionOf) and finding 1 → 2 (007, regressionOf) are
+// no-op steps: a migrated file differs from its original only in the schema line, and a v1 task goes through 004 and 006.
+test('006-task-outcome and 007-finding-regression: migrate changes only the schema of a v2 task and a v1 finding', (t) => {
+  const steps = MIGRATIONS.filter((m) => m.id === '006-task-outcome' || m.id === '007-finding-regression');
+  assert.deepEqual(steps.map(({ id, kind, from, to }) => ({ id, kind, from, to })), [
+    { id: '006-task-outcome', kind: 'task', from: 2, to: 3 },
+    { id: '007-finding-regression', kind: 'finding', from: 1, to: 2 },
+  ]);
+  assert.deepEqual([KINDS.task.version, KINDS.finding.version], [3, 2]);
+  const dir = scratch(t);
+  untouchable(dir);
+  const files = {
+    'tasks/T-AB-2/task.json': { ...task('T-AB-2'), schema: 2, status: 'cancelled', events: [{ at: AT, by: 'AB', event: 'cancelled', data: { reason: 'delivered in T-AB-1' } }], mergedAt: AT },
+    'tasks/T-AB-3/task.json': { ...task('T-AB-3'), schema: 1, title: 'Old é task' },
+    'findings/B-AB-1.json': {
+      schema: 1, id: 'B-AB-1', status: 'open', task: 'T-AB-1', round: 1, reviewer: { kind: 'external', id: 'codex' }, finding: 'B1',
+      severity: 'blocking', path: 'src/x.mjs', line: 3, rule: 'REV-3', text: 'A lost event.', filedAt: AT, filedBy: 'AB',
+      takenBy: null, closedAt: null, closedBy: null, reason: null,
+    },
+  };
+  for (const [rel, doc] of Object.entries(files)) put(dir, rel, doc);
+  const before = Object.fromEntries(Object.keys(files).map((rel) => [rel, readFileSync(join(dir, rel), 'utf8')]));
+  const untouched = snapshot(dir, { skip: (r) => r in files });
+  const s = state.open(dir, { names });
+  const out = state.migrate(s, { at: new Date(AT) });
+  assert.deepEqual(out.steps.map(({ rel, from, to, ids }) => ({ rel, from, to, ids })).sort((a, b) => a.rel.localeCompare(b.rel)), [
+    { rel: 'findings/B-AB-1.json', from: 1, to: 2, ids: ['007-finding-regression'] },
+    { rel: 'tasks/T-AB-2/task.json', from: 2, to: 3, ids: ['006-task-outcome'] },
+    { rel: 'tasks/T-AB-3/task.json', from: 1, to: 3, ids: ['004-task-merged-at', '006-task-outcome'] },
+  ]);
+  const to = { 'tasks/T-AB-2/task.json': 3, 'tasks/T-AB-3/task.json': 3, 'findings/B-AB-1.json': 2 };
+  for (const rel of Object.keys(files)) {
+    const want = before[rel].replace(/^ {2}"schema": \d+,$/m, `  "schema": ${to[rel]},`);
+    assert.notEqual(want, before[rel], `${rel}: the schema line was found`);
+    assert.equal(readFileSync(join(dir, rel), 'utf8'), want, `${rel}: only the schema changed, byte for byte`);
+    assert.equal(readFileSync(join(dir, out.backup, rel), 'utf8'), before[rel], `${rel}: the original is backed up`);
+  }
+  assert.deepEqual(snapshot(dir, { skip: (r) => r in files || r.startsWith('local/backup') || r === 'local/.machine' }), untouched, 'nothing else changed');
+  assert.deepEqual(state.migrate(state.open(dir, { names })).steps, [], 'a second run writes nothing');
+});
