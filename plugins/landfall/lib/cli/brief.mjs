@@ -16,7 +16,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { findingsForTask, sourceLine } from '../findings/index.mjs';
 import { briefRules } from '../method/index.mjs';
-import { openStore, reviewFocusOf } from '../profile/index.mjs';
+import { fastGuardsOf, openStore, reviewFocusOf } from '../profile/index.mjs';
 import { findLessons, lessonsLine, readLessons } from '../lessons/index.mjs';
 import { executorData } from '../receipts/index.mjs';
 import { leaseEnv, snapshot } from '../sched/index.mjs';
@@ -27,6 +27,7 @@ import { EXIT } from './commands.mjs';
 
 const ROLES = Object.freeze(['implementer', 'reviewer']);
 const GATE_LINES = '<typecheck>\n<lint>\n<tests with a worker limit>\n';
+const FAST_MARK = '# fast guards (profile fastGuards): run them with the task\'s own tests';
 const WORKTREE = 'Worktree: ';
 const sha256 = (s) => createHash('sha256').update(s).digest('hex');
 const marker = (bin, hash) => `<!-- rendered by \`${bin} brief\`; sha256 ${hash}: an edit makes this brief hand-written -->\n`;
@@ -44,7 +45,7 @@ export const seal = (text, bin) => `${text}${marker(bin, sha256(text))}`;
 
 // The brief text. task: the task document; gates: the gate commands; lease: the lease env ({ name: value }) or null;
 // focus: the profile's review focus (what every review of the project checks), one line after the review line.
-export function renderBrief({ template, task, role, gates, lease, review = null, focus = [], findings = [], lessons = '', evidence = '', names }) {
+export function renderBrief({ template, task, role, gates, lease, review = null, focus = [], fastGuards = [], findings = [], lessons = '', evidence = '', names }) {
   const last = task.classHistory[task.classHistory.length - 1];
   const reason = last ? last.reason.replace(new RegExp(`^${escape(task.class)}: `), '') : null;
   const fills = {
@@ -55,7 +56,7 @@ export function renderBrief({ template, task, role, gates, lease, review = null,
     '<rule IDs>': briefRules({ cls: task.class, role }).join(' '),
     ...(task.branch ? { '<branch>': task.branch } : {}),
     ...(task.base ? { '<base SHA>': task.base } : {}),
-    ...(gates.length ? { [GATE_LINES]: gates.map((g) => `${g}\n`).join('') } : {}),
+    ...(gates.length || fastGuards.length ? { [GATE_LINES]: (gates.length ? gates.map((g) => `${g}\n`).join('') : GATE_LINES) + (fastGuards.length ? `${FAST_MARK}\n${fastGuards.map((g) => `${fenceLine(dataLine(g))}\n`).join('')}` : '') } : {}),
     '{{bin}}': names.bin,
   };
   for (const ph of [...Object.keys(fills), `\n${WORKTREE}`]) {
@@ -119,6 +120,7 @@ export function brief({ args, flags, names, io, pluginRoot }) {
   const profile = openStore(where.dir, names).read('profile');
   const gates = (profile?.gates ?? []).map((g) => g.cmd);
   const focus = reviewFocusOf(profile);
+  const fastGuards = fastGuardsOf(profile);
   const held = where.dataDir ? snapshot({ names, env: io.env }).leases.find((l) => l.owner && l.status === 'live' && l.task === id && l.project === where.worktree) : undefined; // a lease names the checkout it was taken in (lib/sched)
   const lease = held ? leaseEnv(held, names) : null;
   const template = readFileSync(join(pluginRoot, 'templates', 'task', 'brief.md'), 'utf8');
@@ -127,7 +129,7 @@ export function brief({ args, flags, names, io, pluginRoot }) {
   const store = open(where.dir, { names });
   const lessons = lessonsLine(findLessons(readLessons(store), task.title, 3));
   const evidence = evidenceLine(executorData(task.class, { cwd: io.cwd, env: io.env, names }), role);
-  const text = renderBrief({ template, task, role, gates, lease, review, focus, findings, lessons, evidence, names });
+  const text = renderBrief({ template, task, role, gates, lease, review, focus, fastGuards, findings, lessons, evidence, names });
   const data = { task: id, role, class: task.class, kind: task.kind, title: task.title, rules: briefRules({ cls: task.class, role }), gates, lease, review, focus, text, written: null, file: null };
   if (!flags.write) return { data, text };
   const w = writeTaskText({ cwd: io.cwd, env: io.env, names, id, name: 'brief', text, replace: (cur) => Boolean(flags.force) || unedited(cur) });
