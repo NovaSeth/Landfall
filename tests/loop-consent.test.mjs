@@ -103,6 +103,7 @@ test('acceptance 1: the human prompt records a consent; loop start without a ter
   let r = await p.run(['loop', 'start']);
   assert.equal(r.code, 0, `the consent starts the loop: ${show(r)}`);
   assert.equal(r.out.data.replaced.exit, 'DONE');
+  assert.equal(r.out.data.consented, true, 'the start says it used the consent');
   assert.ok(p.consent().usedAt, 'consumed');
   assert.equal((await p.run(['loop', 'stop'])).out.data.stopped, true);
   r = await p.run(['loop', 'start']);

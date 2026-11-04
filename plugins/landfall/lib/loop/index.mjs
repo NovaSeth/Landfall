@@ -21,6 +21,7 @@ import { KINDS, StateError, emailHash, open, resolve } from '../state/index.mjs'
 import { billingMode } from './billing.mjs';
 import { readRunRecords, runsStore } from '../runs/index.mjs';
 import { usageLimit } from './limits.mjs';
+import { CONSENT, consentAllows, consumeConsent } from '../hooks/prompt-consent.mjs';
 import { cheapCap, clock, decide, effectiveCaps, newLoop, parseCaps } from './decide.mjs';
 import { CAP_RANGE, CARRIED_PLAN, DEFAULT_CAPS, LOOP, LOOP_ID, STALL, TERMINAL, UNMEASURED, fixedPrompt } from './kind.mjs';
 import { DEFAULT_BUDGET_MIN, budgetOf, readBudgets } from './budget.mjs';
@@ -37,7 +38,7 @@ const iso = (ms) => new Date(ms).toISOString();
 const sha256 = (data) => createHash('sha256').update(data).digest('hex');
 
 const inactive = (where, names) => new StateError('inactive', 'REFUSED', `${where.repo} is not active: the loop runs on the project state`, { hint: `'${names.bin} init' activates it` });
-const userDecision = (message) => new StateError('user-decision', 'REFUSED', message, { hint: 'run it in a terminal: caps never extend automatically' });
+const userDecision = (message, names) => new StateError('user-decision', 'REFUSED', message, { hint: `run it in a terminal, or send \`${names.bin} loop start [--caps k=v,…]\` as your own prompt (one start within 10 min): caps never extend automatically` });
 
 function activeStore({ cwd, env, names }) {
   const where = resolve({ cwd, env, names });
@@ -243,21 +244,37 @@ export function tick({ cwd, env, names, now = Date.now(), plan = null, readings 
 }
 
 // A new loop with `caps` over the defaults. A running loop is never replaced; after an ended one (DONE, `loop stop`
-// included, STALLED or BUDGET), and for a cap above its default, only the user starts one (byUser: a terminal is
-// attached), so caps never extend by themselves (SD-17, GC4).
+// included, STALLED or BUDGET), and for a cap above its default, only the user starts one, so caps never extend by
+// themselves (SD-17, GC4). The user: byUser (a terminal is attached), or a consent the user's own prompt recorded
+// (lib/hooks/prompt-consent.mjs, T-MG-149), consumed here once: same repository, not expired, the caps within the
+// consented ones. A consent is consumed only when the start needs it, after the running-loop check; a refused start
+// leaves it unused. Session: the Bash environment carries no session id, so the consent matches the repository.
 export function startLoop({ cwd, env, names, now = Date.now(), caps = {}, byUser = false }) {
   const raised = Object.keys(caps).filter((k) => caps[k] > DEFAULT_CAPS[k]);
-  if (raised.length && !byUser) throw userDecision(`raising ${raised.join(', ')} above the default is the user's decision`);
-  const { where, store } = activeStore({ cwd, env, names });
+  const where = resolve({ cwd, env, names });
+  const store = where.active ? open(where.dir, { names, kinds: { ...STORE_KINDS, [CONSENT.name]: CONSENT } }) : null;
+  const ask = { repo: where.repo, caps, now };
+  const raiseRefused = () => userDecision(`raising ${raised.join(', ')} above the default is the user's decision`, names);
+  if (raised.length && !byUser && !(store && consentAllows(store.read(CONSENT.name, null), ask).ok)) throw raiseRefused();
+  if (!store) throw inactive(where, names);
+  const running = (cur) => new StateError('loop-running', 'FAIL', `loop ${cur.id} is running (tick ${cur.ticks} of ${cur.caps.ticks})`, { hint: `'${names.bin} loop stop' ends it first` });
+  const ended = (cur) => userDecision(`the last loop ended with ${cur.exit}: a new loop after an ended one is the user's decision`, names);
+  const seen = store.read(LOOP.name, null);
+  if (seen && !seen.exit) throw running(seen);
+  let user = byUser;
+  if (!user && (raised.length || seen)) {
+    user = consumeConsent(store, ask);
+    if (!user) throw raised.length ? raiseRefused() : ended(seen);
+  }
   let replaced = null;
-  const billing = billingMode({ env, names, byUser });
+  const billing = billingMode({ env, names, byUser: user });
   const loop = store.update(LOOP.name, null, (cur) => {
-    if (cur && !cur.exit) throw new StateError('loop-running', 'FAIL', `loop ${cur.id} is running (tick ${cur.ticks} of ${cur.caps.ticks})`, { hint: `'${names.bin} loop stop' ends it first` });
-    if (cur && !byUser) throw userDecision(`the last loop ended with ${cur.exit}: a new loop after an ended one is the user's decision`);
+    if (cur && !cur.exit) throw running(cur);
+    if (cur && !user) throw ended(cur);
     replaced = cur;
-    return newLoop({ now, caps: { ...DEFAULT_CAPS, ...caps }, byUser, billing });
+    return newLoop({ now, caps: { ...DEFAULT_CAPS, ...caps }, byUser: user, billing });
   });
-  return { where, loop, replaced, billing: loop.billing };
+  return { where, loop, replaced, billing: loop.billing, consented: user && !byUser };
 }
 
 // Ends a running loop: exit DONE with the reason "stopped"; no loop or an ended one is left as it is.

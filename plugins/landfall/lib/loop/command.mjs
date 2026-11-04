@@ -105,7 +105,8 @@ export function loopStart({ flags, names, io }) {
   const caps = flags.caps === undefined ? {} : parseCaps(flags.caps);
   const r = startLoop({ cwd: io.cwd, env: io.env, names, caps, byUser: io.stdinIsTTY === true });
   const was = r.replaced ? ` (replaces ${r.replaced.id}, ended ${r.replaced.exit})` : '';
-  return { data: { loop: summary(r.loop), replaced: r.replaced ? summary(r.replaced) : null, billing: r.billing }, text: `started${was}\n${describe(r.loop, Date.now(), r.billing)}` };
+  const by = r.consented ? ' with the consent of the user\'s prompt (used once)' : '';
+  return { data: { loop: summary(r.loop), replaced: r.replaced ? summary(r.replaced) : null, billing: r.billing, consented: r.consented }, text: `started${was}${by}\n${describe(r.loop, Date.now(), r.billing)}` };
 }
 
 export function loopStop({ names, io }) {
