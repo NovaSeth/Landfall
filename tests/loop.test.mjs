@@ -1246,6 +1246,19 @@ test('billing (k) an unrecognized override on a tick of a stored subscription lo
   assert.equal(r.out.data.billing.mode, 'api');
 });
 
+test('billing (l) a control-character override value keeps the source within 100 characters and a ratcheting tick stores it', async (t) => {
+  const { billingMode } = await lib('loop/billing.mjs');
+  const odd = '\u0001'.repeat(40);
+  const m = billingMode({ env: { ANTHROPIC_API_KEY: 'x', [BILL]: odd }, names, home: '/missing', envOnly: true });
+  assert.equal(m.mode, 'api');
+  assert.ok(m.source.length <= 100, `${m.source.length}`);
+  assert.ok(m.source.startsWith('ANTHROPIC_API_KEY'), 'the winner is kept');
+  const { r } = await overCap(t, { [BILL]: 'subscription' }, { tty: true, tickEnv: { ANTHROPIC_API_KEY: 'x', [BILL]: odd } });
+  assert.equal(r.code, 6, show(r));
+  assert.equal(r.out.data.billing.mode, 'api');
+  assert.ok(r.out.data.billing.source.length <= 120);
+});
+
 test('billing (g) S1: a schema-1 loop document without billing still reads, is treated as unknown and ends at the cap', async (t) => {
   const p = await repo(t);
   let r = await p.run(['loop', 'start', '--caps', 'usd=0.01'], { env: p.env });
