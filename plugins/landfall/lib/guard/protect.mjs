@@ -178,29 +178,45 @@ const WRITE_OPS = /^(>|>>|>\||<>|&>|&>>)$/;
 export const writeRedir = (r) => (WRITE_OPS.test(r.op) || (r.op === '>&' && !/^(\d+|-)$/.test(r.target))) && r.target !== '/dev/null';
 const safeRedir = (r) => !writeRedir(r) && r.op !== '<>';
 // Exact read shapes: the program reads the paths it is given and writes none; the option patterns that would write
-// or run a program are excluded.
+// or run a program are excluded. find is one (D-MG-56) but is no MENTION_OK program: its -exec words are code.
 const READ_ONLY = new Map(Object.entries({
   cat: null, head: null, tail: null, wc: null, ls: null, stat: null, file: /^(-[a-zA-Z]*C|--compile)/, grep: null, egrep: null, fgrep: null,
   rg: /^(--pre|--replace|-[a-zA-Z]*r)/, jq: /^(-[a-zA-Z]*i|--in-place)/, diff: null, cmp: null, echo: null, printf: null, test: null, '[': null, '[[': null,
   cd: null, pushd: null, popd: null,
+  // D-MG-56: find without an action that writes a file, deletes or runs a program
+  find: /^-(?:exec|execdir|ok|okdir|delete|fprint|fprint0|fprintf|fls)$/,
 }));
 // Programs for which the state's text inside an argument is data, not a path they write: the exact readers, the network
 // and text tools; sed only when every argument that names the state is a plain substitution (`s<d>…<d>…<d>[flags]`
 // without the w or e flag, also behind -e or --expression=) and no option writes in place: any other sed program (a
 // `w` command, glued or spaced, a script file) may write the file it names (review r1 F1).
-const MENTION_OK = new Set([...READ_ONLY.keys(), 'curl', 'wget', 'sort', 'uniq', 'cut', 'tr', 'sed', 'gsed', 'basename', 'dirname', 'realpath', 'date', 'true', 'false', ':']);
+const MENTION_OK = new Set([...[...READ_ONLY.keys()].filter((k) => k !== 'find'), 'curl', 'wget', 'sort', 'uniq', 'cut', 'tr', 'sed', 'gsed', 'basename', 'dirname', 'realpath', 'date', 'true', 'false', ':']);
 const SED_SUBST = /^(?:-e|--expression=)?s(.)(?:\\.|(?!\1).)*\1(?:\\.|(?!\1).)*\1[gpiImM0-9]*$/s;
 function sedWrites(w, text) {
   if (w.slice(1).some((t) => /^-[a-zA-Z]*i|^--in-place|^-f|^--file=/.test(t))) return true;
   return w.slice(1).some((t) => t.toLowerCase().includes(text) && !SED_SUBST.test(t));
 }
 
+// An unquoted glob in a word that starts with `-` may expand to an option or a find action (-d[e]lete, review r2 F2).
+const globOption = (c) => c.words.some((x) => x.glob && x.text.startsWith('-'));
 function readShape(c, w) {
-  if (c.redirs.some((r) => !safeRedir(r))) return false;
+  if (c.redirs.some((r) => !safeRedir(r)) || globOption(c)) return false;
   const b = base(w[0]);
-  if (!READ_ONLY.has(b)) return false;
+  // find is a read shape only in a line the tokenizer left open (D-MG-56, D-MG-58: no glob, assignment or setter)
+  if (!READ_ONLY.has(b) || (b === 'find' && c.closed !== false)) return false;
   const deny = READ_ONLY.get(b);
   return !deny || !w.slice(1).some((t) => deny.test(t));
+}
+// Brace-list words (tokenizer q '{', T-MG-132) only as the arguments of an exact reader program without an option that
+// writes or runs (its redirections are checked as for any command): never the program, never cd (its directory) or [[
+// (bash does not expand braces inside it), never printf -v (the alternatives would name the variable it sets, review
+// r1 F1). Throws NotPlain otherwise.
+const BRACE_PROGRAM_NO = new Set(['cd', 'pushd', 'popd', '[[']);
+export function braceShape(c, w) {
+  if (!c.words.some((x) => x.q === '{')) return;
+  const b = base(w[0] ?? '');
+  const deny = READ_ONLY.get(b);
+  if (c.words[0].q === '{' || globOption(c) || !READ_ONLY.has(b) || BRACE_PROGRAM_NO.has(b) || (deny && w.slice(1).some((t) => deny.test(t))) || (b === 'printf' && w.some((t) => t.startsWith('-v')))) why('group or { } expansion');
 }
 // Words a path can hide in: the word, the value of name=value / --option=value, a glued short option value (-Xpath).
 const candidates = (t) => [...(t.startsWith('-') ? [] : [t]), ...(t.includes('=') ? [t.slice(t.indexOf('=') + 1)] : []), ...(/^-[A-Za-z][^-=]/.test(t) ? [t.slice(2)] : [])];
@@ -362,12 +378,20 @@ export function removeShape(c, ctx) {
 }
 
 // find … -delete, or -exec / -execdir / -ok rm …, removes from each start path (default `.`), whatever the filters:
-// each start path is a removal target.
+// each start path is a removal target. An option word with an unquoted glob may be -delete (review r2 F2): the same.
 const FIND_GLOBAL = /^-(H|L|P|E|X|s|x|d|O\d*|D)$/;
+// An unquoted glob in option position may expand to an action: a word that starts with -, *, ? or [ (-d[e]lete,
+// [-]delete, ?delete, *, review r3 F2); a fixed-prefix path glob (docs/*) cannot and is read as at the base (review r4
+// F2). -exec … of a
+// program that is no plain reader (a wrapper, a shell, xargs, a glob: D-MG-58) may remove; a guarded word in it is left
+// to the caller, which blocks it as code.
+const EXEC_READERS = new Set(['cat', 'head', 'tail', 'wc', 'ls', 'stat', 'file', 'grep', 'egrep', 'fgrep', 'echo', 'printf', 'test', '[',
+  'basename', 'dirname', 'realpath', 'md5', 'md5sum', 'shasum', 'sha1sum', 'sha256sum', 'diff', 'cmp', 'true', 'false']);
 export function findDeleteShape(c, ctx) {
   const w = c.words.map((x) => x.text);
   const k = w.findIndex((t) => /^-(exec|execdir|ok|okdir)$/.test(t));
-  if (!w.includes('-delete') && !(k > 0 && base(w[k + 1] ?? '') === 'rm')) return null;
+  const runs = k > 0 && !EXEC_READERS.has(base(w[k + 1] ?? '')) && !(ctx.codeTok?.(w.slice(1).join(' ')) ?? true);
+  if (!w.includes('-delete') && !(k > 0 && base(w[k + 1] ?? '') === 'rm') && !runs && !c.words.some((x) => x.glob && /^[-*?[]/.test(x.text))) return null;
   const starts = [];
   for (const word of c.words.slice(1)) {
     if (FIND_GLOBAL.test(word.text)) continue;

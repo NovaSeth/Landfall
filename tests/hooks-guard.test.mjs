@@ -488,11 +488,15 @@ const NEW_BLOCK = [
   ['sort -o @STATE@/tasks/T-AB-1/task.json a', 'FLW-7', 'tracked'], ['sort --output=@STATE@/tasks/T-AB-1/task.json a', 'FLW-7', 'tracked'], ['sort --output @STATE@/tasks/T-AB-1/task.json a', 'FLW-7', 'tracked'], ['uniq a @STATE@/tasks/T-AB-1/task.json', 'FLW-7', 'tracked'],
   ['tree -o @STATE@/tasks/T-AB-1/task.json', 'FLW-7', 'tracked'], ['xxd -r a @STATE@/tasks/T-AB-1/task.json', 'FLW-7', 'tracked'], ["sed -n 'w @STATE@/tasks/T-AB-1/task.json' a", 'FLW-7', 'tracked'], ["sed 's/a/b/w @STATE@/tasks/T-AB-1/task.json' a", 'FLW-7', 'tracked'],
   ["sed -e 'w @STATE@/tasks/T-AB-1/task.json' a", 'FLW-7', 'tracked'], ['sed --in-pl x @STATE@/tasks/T-AB-1/task.json', 'FLW-7', 'tracked'], ['awk \'{print > "@STATE@/tasks/T-AB-1/task.json"}\' a', 'FLW-7', 'tracked'],
-  ['sed -n 1,5p @STATE@/decisions/D-AB-1.md', 'PRI-8', 'tracked'], ['find @STATE@ -name "*.json"', 'FLW-7', 'tracked'], ['cat @STATE@/tasks/T-AB-1/task.json > /tmp/t.json', 'FLW-7', 'tracked'],
+  // find @STATE@ -name "*.json" passes since D-MG-56 (find without a write or exec action is a read shape, NEW_ALLOW); its
+  // -fprint form stays blocked
+  ['sed -n 1,5p @STATE@/decisions/D-AB-1.md', 'PRI-8', 'tracked'], ['find @STATE@ -name "*.json" -fprint @STATE@/x', 'FLW-7', 'tracked'], ['cat @STATE@/tasks/T-AB-1/task.json > /tmp/t.json', 'FLW-7', 'tracked'],
   ['rg --pre sh x @STATE@/tasks/T-AB-1/task.json', 'FLW-7', 'tracked'], ['file -C -m @STATE@/tasks/T-AB-1/task.json', 'FLW-7', 'tracked'], ['git diff --output=@STATE@/tasks/T-AB-1/task.json', 'FLW-7', 'tracked'],
   // I3 / F7: globs, braces and expansions that reach the state directory
   ['cp x @STATEGLOB@/tasks/T-AB-1/task.json', 'FLW-7', 'tracked'], ['rm -f @STATEGLOB@/tasks/*/task.json', 'FLW-7', 'tracked'], ['rm -f @STATECLASS@/tasks/T-AB-1/task.json', 'FLW-7', 'tracked'],
   ['cp x */tasks/T-AB-1/task.json', 'FLW-7', 'tracked'], ['cp x **/task.json', 'FLW-7', 'tracked'], ['echo x > @STATEQ@/tasks/T-AB-1/task.json', 'FLW-7', 'tracked'],
+  // T-MG-132 review r3 F1: a variable setter elsewhere in the line must not hide a state path assembled from a literal variable (D-MG-58 fallback: blocked as no plain form)
+  ['dir=@STATEHEAD@; cp /dev/null "${dir}@STATETAIL@/config.json"; echo read', UNV, 'tracked'], ['dir=@STATEHEAD@; cp /dev/null "${dir}@STATETAIL@/config.json"; read x', UNV, 'tracked'],
   ['cp x @STATEBRACE@/tasks/T-AB-1/task.json', UNV, 'tracked'], ['X=@STATEHEAD@; cp x ${X}@STATETAIL@/tasks/T-AB-1/task.json', 'FLW-7', 'tracked'], ['cp x .$(echo c)aw/tasks/T-AB-1/task.json', UNV, 'tracked'],
   ['cp x .c$(:)aw/tasks/T-AB-1/task.json', UNV, 'tracked'], ['echo x > @STATEBR@/tasks/T-AB-1/task.json', 'FLW-7', 'tracked'], ['echo x > @STATE@/tasks/T-AB-1/task.j*', 'FLW-7', 'tracked'],
   ['mv @STATEGLOB@ /tmp/', 'FLW-7', 'tracked'], ['mv @STATEBRACE@ /tmp/', UNV, 'tracked'],
@@ -506,6 +510,8 @@ const NEW_BLOCK = [
   ['echo x > @STATE@/tasks/T-AB-1/task.json', 'cannot be resolved', 'newer'], ['echo x > @STATE@/tasks/T-AB-1/task.json', 'cannot be resolved', 'nogit'], ['mv @STATEGLOB@ /tmp/', 'cannot be resolved', 'corrupt'],
 ];
 const NEW_ALLOW = [
+  // D-MG-56: find without -exec/-execdir/-ok/-okdir/-delete/-fprint*/-fls is a read shape (flipped from NEW_BLOCK)
+  ['find @STATE@ -name "*.json"', null, 'tracked'],
   // T-MG-149: the word hook elsewhere in the plugin's own command is data
   ['@BIN@ task new "hook up the API"'], ['@BIN@ rule FLW-7 hook'], ['@BIN@ status hook'],
   // T-MG-154: another script with a space in its path, and a path word before hook where the directory is known

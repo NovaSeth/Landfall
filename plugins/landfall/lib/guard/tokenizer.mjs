@@ -1,12 +1,17 @@
 // Tokenizer-light of the Bash guard (spec SD-29, SEC-3): reads a command only as a sequence of PLAIN simple commands —
 // connectors && || ; and newline, pipe | — made of plain words: a bare word, or '…' / "…" without $ and ` (a backslash
 // in "…" gives only the literal character). Any other syntax throws NotPlain with the reason: $, `, ( ), { } (except
-// ref@{n}), <( ) >( ), |&, &, a here-string, a backslash outside quotes, an assignment before the command. A heredoc is
+// ref@{n} and one brace list per word, below), <( ) >( ), |&, &, a here-string, a backslash outside quotes, an assignment
+// before the command. A heredoc is
 // data only: a quoted delimiter or a body without $ ` \. Two fixed forms are kept: `$?` (also as "$?") and the commit
 // message "$(cat <<'EOF' … EOF\n)" as a word of its own.
 // Result: simple commands { words: [{ text, q, glob }], redirs: [{ op, target, glob }], heredoc: body | null, pipeIn, pipeOut,
-// before, after } — before / after: the connector on that side (';', '&&', '||', '|', '\n' or null at either end).
-// q: '' plain · '?' holds $? · 'msg' the message substitution (its body as one word).
+// before, after, closed } — before / after: the connector on that side (';', '&&', '||', '|', '\n' or null at either end).
+// q: '' plain · '?' holds $? · 'msg' the message substitution (its body as one word) · '{' one alternative of a brace list.
+// A brace list (T-MG-132): one unquoted `{a,b,…}` group in a word, two or more non-empty alternatives of letters, digits
+// and . _ / - (no nesting, no `..` range, no $), becomes one word per alternative (prefix + alternative + suffix), as
+// bash expands it; anything else with { } still throws. Its words carry q '{': lib/guard/protect.mjs braceShape lets
+// them through only as the arguments of an exact reader, and a redirection target with one throws.
 import { ENV_EXEC } from './tokens.mjs';
 
 export class NotPlain extends Error {}
@@ -22,7 +27,16 @@ export const why = (w) => { throw new NotPlain(w); };
 // the shell, git or a loader reads (PATH, IFS, HOME, the ENV_EXEC list …: its value changes what runs, not only a
 // word), a name is set or used any other way in the text (printf -v, read, declare, export, for, unset, +=, an array
 // index) or assigned twice, or a reference stands where the command name goes (a command from a variable has no shape).
-// `for NAME in <literal words>; do <body>; done` as the whole text is unrolled the same way.
+// `for NAME in <literal words>; do <body>; done` is unrolled the same way: as the whole text, or as one complete segment
+// of it (T-MG-132: it starts the text or follows ;, a newline or &&, and ;, a newline, && or the end follows its done),
+// when its NAME is no variable the shell or a loader reads, its body sets or names NAME in no other way than $NAME /
+// ${NAME} (a reassignment would change the value the body runs with) and, for a segment, the rest of the line does not
+// read $NAME (its value after the loop) and the body holds no other compound command. A segment is found on the
+// top-level segments, so a text with a backslash, a # or a << (an escape, a comment, a heredoc: they move where bash
+// ends the loop) is never split; at most LOOPS loops are unrolled in one text. A wait loop `until|while <one plain read
+// or test>; do <sleep N | one plain read>; done`, found the same way, is read as `<condition>; <body>`: its programs
+// (WAIT_READ, sleep) change no directory, branch or file, so one pass proves every pass; a redirection or & in either
+// part leaves the loop as written (the shapes still check both commands).
 // (linear, A-1: the value's trailing whitespace is trimmed after the match, not by a lazy `(.*?)\s*$`)
 const ASSIGN_RE = /^\s*([A-Za-z_]\w*)=(.*)$/s;
 const ASSIGN = { exec: (s) => { const m = ASSIGN_RE.exec(s); return m && [m[0], m[1], m[2].trimEnd()]; } };
@@ -105,12 +119,137 @@ function substitute(text, vars) {
   return out;
 }
 
-export function expandLiterals(src) {
-  const loop = FOR.exec(src);
-  if (loop) {
-    const words = loop[2].split(/\s+/).filter(Boolean).map(literal);
-    if (words.length && words.every((w) => w !== null)) return expandLiterals(words.map((w) => substitute(loop[3], new Map([[loop[1], w]]))).join('; '));
+// The body of `loop` ([, name, words, body]) once per literal word with $NAME substituted, or null (no proof of the
+// value: a word that is not a literal, a special NAME, the body naming NAME another way, a result over UNROLL_MAX).
+const UNROLL_MAX = 65536;
+// Before a bare occurrence of a name: not a word character, not `$` (a $NAME reference), not `${` (a ${NAME} reference);
+// the `{` of a brace list does count (review r1 F1: printf -v {dest,…} sets dest).
+const BARE_BEFORE = '(?<![\\w$])(?<!\\$\\{)';
+// A bare use of `name`: as above, or glued to a short option (`printf -vNAME`, `read -rNAME`, review r2).
+const bareUse = (name) => new RegExp(`${BARE_BEFORE}${name}(?!\\w)|(?<![\\w$])-[A-Za-z]+${name}(?!\\w)`);
+// D-MG-58 (fail closed): the allowances of T-MG-132 — a brace list, a for loop as a segment of the line, a wait loop,
+// find as a read shape — hold only for a command with no unquoted glob character, no assignment word and no setter or
+// code-runner word anywhere (quotes stripped, words split at blanks, connectors, redirection marks and parentheses);
+// any other command is read as before T-MG-132.
+const GATE_WORD = /^(?:printf|read|mapfile|readarray|wait|getopts|declare|typeset|local|export|readonly|unset|let|eval|source|\.|set|shift|trap|alias|env|command|builtin|exec|nohup|setsid|nice|ionice|timeout|stdbuf|sudo|doas|xargs|sh|bash|zsh|dash|ksh|fish|node|nodejs|deno|python|python2|python3|perl|ruby|php|lua|osascript)$/;
+const ASSIGN_WORD = /^[A-Za-z_]\w*(?:\[[^\]]*\])?\+?=/;
+function unquotedGlob(src) {
+  let q = null;
+  for (const c of src) {
+    if (q) { if (c === q) q = null; continue; }
+    if (c === "'" || c === '"') q = c;
+    else if (c === '*' || c === '?' || c === '[') return true;
   }
+  return false;
+}
+const gateWords = (src) => src.replace(/['"]/g, '').split(/[\s;&|<>()]+/);
+export const closedShapes = (src) => unquotedGlob(src) || gateWords(src).some((t) => GATE_WORD.test(t) || ASSIGN_WORD.test(t));
+// D-MG-58 fallback for literal substitution (review r4 F1, r5 F1): in a line with an assignment word, a setter or
+// code-runner word anywhere, an unquoted glob, a word in command position that starts with $ (after a redirection or
+// an assignment word: the program comes from a variable) or a word glued to a short option that names an assigned variable
+// (-vNAME) means a substituted value may not be the one the shell uses.
+const REDIR_WORD = /^\d*(?:[<>]|&>)/;
+const REDIR_ALONE = /^\d*(?:[<>]+|&>+)&?$/;
+// A $ word as the program after a redirection or an assignment word: substitute() replaces a reference only after the
+// first word of a command, so this one would be replaced (a $ word that is the first word stays and is rejected).
+function variableCommand(text) {
+  const ws = text.replace(/['"]/g, '').split(/\s+/).filter(Boolean);
+  for (let k = 0; k < ws.length; k++) {
+    if (REDIR_WORD.test(ws[k])) { if (REDIR_ALONE.test(ws[k])) k++; continue; }
+    if (!ASSIGN_WORD.test(ws[k])) return k > 0 && ws[k].startsWith('$');
+  }
+  return false;
+}
+function substUnsafe(src) {
+  const words = gateWords(src);
+  const names = words.filter((t) => ASSIGN_WORD.test(t)).map((t) => /^[A-Za-z_]\w*/.exec(t)[0]);
+  if (!names.length) return false;
+  if (unquotedGlob(src) || words.some((t) => GATE_WORD.test(t))) return true;
+  const segs = segments(src);
+  if (segs === null || segs.some((x) => variableCommand(x.text))) return true;
+  // a word -<letters>NAME: NAME a suffix after at least one option letter; more than 64 names have no proof (bounded work)
+  const uniq = [...new Set(names)];
+  if (uniq.length > 64) return true;
+  return words.some((t) => {
+    const m = /^-[A-Za-z]+/.exec(t);
+    return m !== null && uniq.some((n) => t.length - n.length >= 2 && t.length - n.length <= m[0].length && t.endsWith(n));
+  });
+}
+// The last expansion (expandLiterals → parse of its result in one evaluate call): parse closes the shapes for a text
+// derived from a command that closes them (an assignment substituted away). Only ever makes parse stricter.
+let expansion = { out: null, closed: true };
+
+// A loop body that may set or unset a variable, or skip the rest of a pass, is not unrolled (review r1 F2, F3): an
+// unrolled body runs unconditionally in the guard's reading, so a value it sets would reach later words. Any word (quotes
+// stripped) that is an assignment, a builtin that sets, unsets or reads a variable by name, code from text, or
+// break / continue.
+const BODY_SETTER = /^(?:read|mapfile|readarray|printf|declare|export|local|readonly|typeset|getopts|unset|let|wait|eval|source|\.|break|continue|return|exit|set|shift)$/;
+// words are split at blanks, connectors and redirection marks: `printf>/dev/null -v …` holds the word printf (review r2 F1)
+const bodySets = (body) => body.split(/[\s;&|<>]+/).map((t) => t.replace(/['"]/g, '')).some((t) => BODY_SETTER.test(t) || /^[A-Za-z_]\w*(?:\[[^\]]*\])?\+?=/.test(t));
+const LOOPS = 8;
+function unroll(loop) {
+  const [, name, list, body] = loop;
+  const words = list.split(/\s+/).filter(Boolean).map(literal);
+  if (!words.length || words.some((w) => w === null) || SPECIAL.test(name) || ENV_EXEC.test(name)) return null;
+  if (bareUse(name).test(body) || bodySets(body)) return null;
+  if (words.length * (body.length + Math.max(...words.map((w) => w.length))) > UNROLL_MAX) return null;
+  return words.map((w) => substitute(body, new Map([[name, w]]))).join('; ');
+}
+// A for loop as one complete segment of the text, unrolled in place, or null (see the comment above ASSIGN_RE).
+const JOIN = new Set(['', ';', '\n', '&&']);
+const HEAD_SEP = new Set([';', '\n']);
+const COMPOUND = /^(?:for|while|until|select|if|then|else|elif|fi|case|esac|do|done|function|coproc)(?:\s|$)/;
+const WAIT_HEAD = /^(?:until|while)\s+/;
+const WAIT_READ = /^(?:test|\[|true|false|:|ls|cat|head|tail|wc|stat|grep|egrep|fgrep|diff|cmp)(?:\s|$)/;
+const SLEEP = /^sleep\s+\d+(?:\.\d+)?[smhd]?$/;
+// The wait loop whose head is segs[i], as `<condition>; <body>` in place, or null.
+function waitLoop(segs, i, glue) {
+  const cond = segs[i].text.trim().replace(WAIT_HEAD, '');
+  const doSeg = segs[i + 1]; const end = segs[i + 2];
+  if (!doSeg || !end || !HEAD_SEP.has(doSeg.sep) || end.text.trim() !== 'done' || !JOIN.has(end.sep)) return null;
+  const body = doSeg.text.trim().replace(/^do\s+/, '');
+  if (body === doSeg.text.trim() || /[<>&]/.test(cond + body) || !WAIT_READ.test(cond) || !(SLEEP.test(body) || WAIT_READ.test(body))) return null;
+  return `${glue(segs.slice(0, i))}${cond}; ${body}${end.sep}${glue(segs.slice(i + 3))}`;
+}
+function loopSegment(src) {
+  if (/[\\#]|<</.test(src)) return null;
+  const segs = segments(src);
+  if (!segs) return null;
+  const glue = (list) => list.map((x) => x.text + x.sep).join('');
+  for (let i = 0; i < segs.length; i++) {
+    if (!JOIN.has(i ? segs[i - 1].sep : '') || !HEAD_SEP.has(segs[i].sep)) continue;
+    if (WAIT_HEAD.test(segs[i].text.trim())) return waitLoop(segs, i, glue);
+    if (!FOR_HEAD.test(segs[i].text.trim())) continue;
+    let j = i + 1;
+    while (j < segs.length && segs[j].text.trim() !== 'done') j++;
+    if (j >= segs.length || !JOIN.has(segs[j].sep)) return null;
+    const inner = segs.slice(i + 1, j).map((x, k) => (k ? x.text.trim() : x.text.trim().replace(/^do\s+/, '')));
+    if (inner.some((t) => COMPOUND.test(t))) return null;
+    const loop = FOR.exec(glue(segs.slice(i, j)) + segs[j].text);
+    const body = loop && unroll(loop);
+    const after = segs[j].sep + glue(segs.slice(j + 1));
+    if (body === null || new RegExp(`\\$\\{?${loop[1]}(?!\\w)`).test(after)) return null;
+    return glue(segs.slice(0, i)) + body + after;
+  }
+  return null;
+}
+
+// Literal substitution reads the line as at the base; when substUnsafe holds, the text as written is appended to the
+// expansion, so the parser still rejects the line while the prescan and the state checks also read the substituted
+// text (review r3 F1: a state path assembled from a literal variable stays visible).
+export function expandLiterals(src) {
+  const closed = closedShapes(src);
+  let out = expandText(src, 0, closed);
+  if (out !== src && substUnsafe(src)) out = `${out}\n${src}`;
+  expansion = { out, closed };
+  return out;
+}
+function expandText(src, depth, closed) {
+  const loop = FOR.exec(src);
+  const whole = loop && unroll(loop);
+  if (whole !== null && whole !== undefined) return expandText(whole, depth + 1, closed);
+  const part = depth < LOOPS && !closed ? loopSegment(src) : null;
+  if (part !== null) return expandText(part, depth + 1, closed);
   const segs = segments(src);
   if (!segs) return src;
   const vars = new Map();
@@ -140,12 +279,15 @@ export function expandLiterals(src) {
   return substitute(text, vars);
 }
 
+const BRACE_CHAR = /[A-Za-z0-9._/,-]/;
 const MSG_SUB = /^"\$\(cat <<(-?)(['"])([A-Za-z_]\w*)\2\n([\s\S]*?)\n(\t*)\3\n\)"/;
 // tick() throws when the analysis is over its deadline; limit is the longest text read at once.
 export function parse(src, { tick = () => {}, limit = 65536 } = {}) {
   const cmds = []; const pending = []; const n = src.length;
   let cur = null; let word = null; let redir = null; let pipeIn = false; let i = 0; let sep = null;
-  const start = () => { cur = cur ?? { words: [], redirs: [], heredoc: null, pipeIn, pipeOut: false, before: sep, after: null }; };
+  // closed: the T-MG-132 shapes are off for this line (D-MG-58); each command carries it for lib/guard/protect.mjs
+  const closed = closedShapes(src) || (expansion.out === src && expansion.closed);
+  const start = () => { cur = cur ?? { words: [], redirs: [], heredoc: null, pipeIn, pipeOut: false, before: sep, after: null, closed }; };
   const add = (s) => { start(); word = word ?? { text: '', q: '', glob: false, at: false }; word.text += s; };
   const boundary = () => i >= n || /[\s;&|<>]/.test(src[i]);
   function special(text, q, len) { // a word of fixed form: $? or the message from a heredoc
@@ -157,9 +299,21 @@ export function parse(src, { tick = () => {}, limit = 65536 } = {}) {
     if (word === null) return;
     const w = word; word = null;
     if (w.at) why('unclosed ref@{…}');
-    if (redir) { if (w.q) why('redirection to an expansion'); cur.redirs.push({ op: redir, target: w.text, glob: w.glob }); redir = null; return; }
+    if (redir) { if (w.q || w.brace) why('redirection to an expansion'); cur.redirs.push({ op: redir, target: w.text, glob: w.glob }); redir = null; return; }
     if (!cur.words.length && /^[A-Za-z_]\w*(\[[^\]]*\])?\+?=/.test(w.text)) why('assignment before the command');
-    cur.words.push(w);
+    if (!w.brace) { cur.words.push(w); return; }
+    const { at, alts } = w.brace;
+    for (const a of alts) cur.words.push({ text: w.text.slice(0, at) + a + w.text.slice(at), q: '{', glob: w.glob, at: false });
+  }
+  // A brace list at src[i] === '{': its alternatives become the word's (one list per word); any other { } throws.
+  // One scan to the first character outside the list alphabet (linear, A-1).
+  function braceList() {
+    let j = i + 1;
+    while (j < n && BRACE_CHAR.test(src[j])) j++;
+    const body = src.slice(i + 1, j);
+    const alts = body.split(',');
+    if (closed || src[j] !== '}' || alts.length < 2 || alts.includes('') || body.includes('..') || word?.brace) why('group or { } expansion');
+    add(''); word.brace = { at: word.text.length, alts }; i = j + 1;
   }
   function endCmd(kind = null) {
     endWord();
@@ -241,6 +395,7 @@ export function parse(src, { tick = () => {}, limit = 65536 } = {}) {
     if (c === '(' || c === ')') why('subshell, group or ( ) substitution');
     if (c === '{' && word?.text.endsWith('@') && !word.at) { add(c); word.at = true; i++; continue; } // ref@{n}
     if (c === '}' && word?.at) { add(c); word.at = false; i++; continue; }
+    if (c === '{' && !word?.at) { braceList(); continue; }
     if (c === '{' || c === '}' || (word?.at && (c === ',' || src.startsWith('..', i)))) why('group or { } expansion');
     if (c === ';') { if (src[i + 1] === ';' || src[i + 1] === '&') why('case syntax ;;'); endCmd(';'); i++; continue; }
     if (c === '&') {
