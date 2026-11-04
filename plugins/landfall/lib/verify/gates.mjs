@@ -19,6 +19,31 @@ export function tailLines(output, max = TAIL_CHARS) {
   return tail === '' ? [] : tail.split('\n');
 }
 
+const FAIL_BLOCK_CHARS = 4096;
+const FAIL_BLOCKS = 20;
+
+// T-MG-153: the lines of the verify log: each failing test's TAP block (its `not ok` line and the deeper-indented YAML
+// block with error, stack and step output; at most 4 KB each, 20 blocks) followed by the output tail. Output with no
+// `not ok` line is just the tail.
+export function logLines(output) {
+  const lines = forTerminal(output).replace(/\t/g, '  ').replace(/\n+$/, '').split('\n');
+  const indent = (l) => l.length - l.trimStart().length;
+  const blocks = [];
+  let count = 0;
+  for (let i = 0; i < lines.length && count < FAIL_BLOCKS; i++) {
+    const head = /^( *)not ok /.exec(lines[i]);
+    if (!head) continue;
+    const block = [lines[i]];
+    for (let j = i + 1; j < lines.length && indent(lines[j]) > head[1].length; j++) block.push(lines[j]);
+    let text = block.join('\n');
+    if (text.length > FAIL_BLOCK_CHARS) text = `${text.slice(0, FAIL_BLOCK_CHARS)}\n  [cut]`;
+    blocks.push(...text.split('\n'));
+    count++;
+  }
+  const tail = tailLines(output);
+  return blocks.length ? [...blocks.slice(0, TAIL_CHARS - tail.length - 1), '--- output tail ---', ...tail] : tail;
+}
+
 // The environment of a gate: the caller's, except node:test's marker for its own child processes (verify run by a
 // test runner would otherwise turn a gate's `node --test` into a child speaking the runner's internal protocol).
 export function gateEnv(env) {

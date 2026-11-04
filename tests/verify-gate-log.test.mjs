@@ -31,14 +31,15 @@ test('logLines keeps the failing test block before the tail, and a passing run i
 });
 
 test('logLines caps a failure block at 4 KB and the failures at 20', () => {
-  const big = block(1, ` ${'x'.repeat(10000)}`);
-  const one = logLines(big.join('\n')).join('\n');
-  assert.ok(one.length <= 4096 + 4096 + 200, `one block ${one.length}`);
-  const many = Array.from({ length: 30 }, (_, i) => block(i + 1)).flat().concat(pad(2));
-  const text = logLines(many.join('\n')).join('\n');
-  assert.equal((text.match(/not ok \d+ - case/g) ?? []).length <= 21, true);
-  assert.match(text, /case 1\b/);
-  assert.doesNotMatch(text.split('\n').slice(0, 20 * 8).join('\n'), /case 25\b/);
-  const doc = logLines(many.join('\n'));
-  assert.ok(doc.length <= kinds.TAIL_CHARS, 'fits the log schema line count');
+  const one = logLines(block(1, ` ${'x'.repeat(10000)}`).join('\n'));
+  const kept = one.slice(0, one.indexOf('--- output tail ---')).join('\n');
+  assert.ok(kept.length <= 4096 + 10, `one block ${kept.length}`);
+  assert.match(kept, /\[cut\]/);
+  const many = Array.from({ length: 30 }, (_, i) => block(i + 1)).flat();
+  const lines = logLines(many.join('\n'));
+  const head = lines.slice(0, lines.indexOf('--- output tail ---')).join('\n');
+  assert.equal((head.match(/not ok \d+ - case/g) ?? []).length, 20);
+  assert.match(head, /case 20\b/);
+  assert.doesNotMatch(head, /case 21\b/);
+  assert.ok(lines.length <= kinds.TAIL_CHARS, 'fits the log schema line count');
 });
