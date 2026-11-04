@@ -250,3 +250,86 @@ test('F3: a train that died after moving the target is recovered by the next tra
   }
   assert.equal(r.store.read('verify', b).mode, 'train');
 });
+
+// Fix round 2 (security review r3): the train takes nothing `task merge` would refuse.
+test('F2: a needs-fixes review recorded while the train gate runs keeps the task out: nothing merged or done', async (t) => {
+  const r = repo(t, { extra: 'cp "$NEXT_REVIEW" "$REVIEW_DEST";' });
+  const id = r.task('feat/a', addTest('a.test.mjs'));
+  const next = join(r.dir, '..', 'r2.json');
+  writeFileSync(next, JSON.stringify({ schema: verify.VERIFY_KINDS.review.version, ...APPROVED, verdict: 'needs-fixes' }));
+  Object.assign(r.env, { NEXT_REVIEW: next, REVIEW_DEST: join(r.stateDir, 'tasks', id, 'review-r2.json') });
+  const tip = r.git('rev-parse', 'HEAD');
+  const res = await cli(['train', id, '--yes'], r);
+  assert.equal(res.code, 1, JSON.stringify(res.env.data.tasks));
+  assert.deepEqual(outcomes(res), [[id, 'skipped']]);
+  assert.match(res.env.data.tasks[0].why, /review/);
+  assert.equal(r.git('rev-parse', 'HEAD'), tip, 'the target did not move');
+  assert.equal(events(r, id, 'merged').length + events(r, id, 'done').length, 0);
+  assert.equal(r.store.read('verify', id), null);
+});
+
+test('F3: a test removed against the task merge base is refused, though the target tip lacks it too', async (t) => {
+  const r = repo(t);
+  const KEEP = `${BASE_TESTS}test('keep', () => {});\n`;
+  r.write('calc.test.mjs', KEEP);
+  r.git('commit', '-q', '-am', 'keep');
+  const id = r.task('feat/drop', (w) => w('calc.test.mjs', BASE_TESTS));
+  r.write('calc.test.mjs', BASE_TESTS);
+  r.git('commit', '-q', '-am', 'drop keep on main');
+  const res = await cli(['train', id, '--yes'], r);
+  assert.equal(res.code, 1, JSON.stringify(res.env.data.tasks));
+  assert.deepEqual(outcomes(res), [[id, 'failed']]);
+  assert.match(res.env.data.tasks[0].why, /removed or skipped without a decision/);
+});
+
+test('F5: a review that names the reviewed head binds it; a head the branch moved past is refused', async (t) => {
+  const r = repo(t);
+  const id = r.task('feat/rec', addTest('a.test.mjs'), { review: false });
+  const first = r.git('rev-parse', 'feat/rec');
+  r.git('checkout', '-q', 'feat/rec');
+  r.write('late.txt', 'late\n');
+  r.git('add', 'late.txt');
+  r.git('commit', '-q', '-m', 'late');
+  r.git('checkout', '-q', 'main');
+  const file = join(r.dir, '..', 'review.json');
+  writeFileSync(file, JSON.stringify({ ...APPROVED, head: first }));
+  const stale = await cli(['review', 'record', id, '--from', file, '--yes'], r);
+  assert.equal(stale.code, 1, JSON.stringify(stale.env));
+  assert.ok(stale.env.errors.some((e) => e.code === 'review-head-moved'), JSON.stringify(stale.env.errors));
+  assert.equal(events(r, id, 'review').length, 0);
+  const tip = r.git('rev-parse', 'feat/rec');
+  writeFileSync(file, JSON.stringify({ ...APPROVED, head: tip }));
+  const ok = await cli(['review', 'record', id, '--from', file, '--yes'], r);
+  assert.equal(ok.code, 0, JSON.stringify(ok.env.errors));
+  assert.equal(events(r, id, 'review').at(-1).data.head, tip);
+  writeFileSync(file, JSON.stringify({ ...APPROVED, head: 'not-a-sha' }));
+  assert.equal((await cli(['review', 'record', id, '--from', file, '--yes'], r)).code, 2);
+});
+
+test('F6: a done head that only contains the tip, written by no train, needs tree equality', async (t) => {
+  const r = repo(t);
+  const id = r.task('feat/d', addTest('d.test.mjs'));
+  r.git('checkout', '-q', '-b', 'other', 'feat/d');
+  r.write('extra.txt', 'not verified with the task\n');
+  r.git('add', 'extra.txt');
+  r.git('commit', '-q', '-m', 'extra');
+  const done = r.git('rev-parse', 'HEAD');
+  r.git('checkout', '-q', 'main');
+  r.store.update('task', id, (cur) => ({ ...cur, status: 'done', events: [...cur.events, { at: AT, by: r.handle, event: 'done', data: { head: done } }] }));
+  r.git('add', '-A');
+  r.git('commit', '-q', '-m', 'done d');
+  const res = await cli(['train', id, '--yes'], r);
+  assert.deepEqual(outcomes(res), [[id, 'skipped']]);
+  assert.match(res.env.data.tasks[0].why, /changed since done/);
+});
+
+test('F7: an escalated route is refused until its added steps exist, even with an approved review', async (t) => {
+  const r = repo(t);
+  const id = r.task('feat/esc', (w) => { addTest('x.test.mjs')(w); w('plugins/x/lib/state/migrations/099.mjs', 'export default 1;\n'); }, { cls: 'standard' });
+  const res = await cli(['train', id, '--yes'], r);
+  assert.equal(res.code, 1, JSON.stringify(res.env.data.tasks));
+  assert.deepEqual(outcomes(res), [[id, 'skipped']]);
+  assert.match(res.env.data.tasks[0].why, /the change is critical, not standard: the route adds spec-plan, cross-provider-review, rereview/);
+  assert.equal(r.store.read('verify', id), null);
+  assert.equal(events(r, id, 'merged').length, 0);
+});
