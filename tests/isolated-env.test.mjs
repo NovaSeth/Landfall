@@ -2,14 +2,10 @@
 // Run: node --test tests/isolated-env.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { isolatedEnv, relaxAdmission } from './helpers/isolated-env.mjs';
-import { admissionReasons, currentCalibration } from '../plugins/landfall/lib/sched/index.mjs';
+import { lib, names } from './helpers/hook-fixture.mjs';
 
-const lib = join(dirname(fileURLToPath(import.meta.url)), '..', 'plugins', 'landfall', 'lib');
-const names = JSON.parse(readFileSync(join(lib, 'name.json'), 'utf8'));
+const { admissionReasons, currentCalibration } = await lib('sched/index.mjs');
 const busy = { cores: 8, load1: 500, loadMeasurable: true, totalBytes: 1e10, availBytes: 1e8, freePct: 1, memMethod: 'test' };
 
 test('an isolated env admits under a load and memory pressure far above the defaults', (t) => {
