@@ -22,14 +22,15 @@ export const SKEW_MS = 5 * MIN_MS; // a startedAt later than now + this is not a
 
 // A loop document that starts now with `caps` (the defaults when omitted). byUser (startLoop's terminal check): the
 // caps raised above their defaults are recorded as the user's start, an extension; only then do they count.
-export function newLoop({ now, caps = DEFAULT_CAPS, id = null, byUser = false }) {
+export function newLoop({ now, caps = DEFAULT_CAPS, id = null, byUser = false, billing = null }) {
   const stamp = iso(now).replace(/\D/g, '').slice(0, 14);
   const suffix = id ?? Math.floor(Math.random() * 0x1000000).toString(16).padStart(6, '0');
   const raised = Object.fromEntries(Object.entries(caps).filter(([k, v]) => v > DEFAULT_CAPS[k]));
   return {
-    schema: 1, id: `L-${stamp}-${suffix}`, startedAt: iso(now), caps: { ...caps }, ticks: 0, fingerprint: null, sameCount: 0, sameSince: null,
+    schema: 2, id: `L-${stamp}-${suffix}`, startedAt: iso(now), caps: { ...caps }, ticks: 0, fingerprint: null, sameCount: 0, sameSince: null,
     costMicroUsd: 0, unmeasured: 0, exit: null, exitAt: null, reason: null,
     extensions: byUser && Object.keys(raised).length ? [{ at: iso(now), caps: raised, reason: USER_START }] : [],
+    ...(billing ? { billing: { mode: billing.mode, source: billing.source } } : {}),
   };
 }
 
@@ -54,8 +55,8 @@ export function cheapCap(loop, now) {
 
 // obs: { now (ms), fingerprint (sha256 hex), costMicroUsd (since startedAt; null: not measured, because a cheap cap
 // ends this tick), unmeasurable (the cost could not be measured at all), liveRuns, outcome: action|wait|done,
-// nextTickS }. Returns { doc, result: ACTION|WAIT|DONE|STALLED|BUDGET, reason, nextTickS, repeated }.
-export function decide(loop, { now, fingerprint, costMicroUsd = null, unmeasurable = false, liveRuns, outcome, nextTickS }) {
+// nextTickS, billing: subscription|api|unknown (default: the mode stored in the loop document, absent = unknown; the cost caps count unless subscription) }. Returns { doc, result: ACTION|WAIT|DONE|STALLED|BUDGET, reason, nextTickS, repeated }.
+export function decide(loop, { now, fingerprint, costMicroUsd = null, unmeasurable = false, liveRuns, outcome, nextTickS, billing = loop.billing?.mode ?? 'unknown' }) {
   if (loop.exit) return { doc: loop, result: loop.exit, reason: loop.reason, nextTickS: null, repeated: true };
   const ticks = loop.ticks + 1;
   const same = loop.fingerprint !== null && loop.fingerprint === fingerprint;
@@ -70,10 +71,12 @@ export function decide(loop, { now, fingerprint, costMicroUsd = null, unmeasurab
   if (!Number.isFinite(started) || started > now + SKEW_MS) {
     return end('STALLED', `the loop record ${loop.id} is invalid: its startedAt ${String(loop.startedAt).slice(0, 40)} is later than now, so no cap could end it`);
   }
+  // a subscription bills nothing per token: the API-price estimate is information there, not a cap (T-MG-104)
+  const money = billing !== 'subscription';
   const costCap = effectiveCaps(loop).costMicroUsd;
   const cap = cheapCap(loop, now)
-    ?? (doc.costMicroUsd >= costCap ? `cost cap reached: ${usd(doc.costMicroUsd)} of ${usd(costCap)} (estimate)` : null)
-    ?? (doc.unmeasured >= UNMEASURED ? `cost-unmeasurable: the cost since the start could not be measured for ${doc.unmeasured} ticks in a row` : null);
+    ?? (money && doc.costMicroUsd >= costCap ? `cost cap reached: ${usd(doc.costMicroUsd)} of ${usd(costCap)} (estimate at API prices)` : null)
+    ?? (money && doc.unmeasured >= UNMEASURED ? `cost-unmeasurable: the cost since the start could not be measured for ${doc.unmeasured} ticks in a row` : null);
   if (cap) return end('BUDGET', cap);
   const quietMin = Math.floor((now - Date.parse(doc.sameSince)) / MIN_MS);
   if (doc.sameCount >= STALL.ticks && quietMin >= STALL.minutes && liveRuns === 0) {

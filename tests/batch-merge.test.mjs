@@ -24,6 +24,7 @@ const lib = (rel) => import(pathToFileURL(join(pluginDir, 'lib', rel)).href);
 const state = await lib('state/index.mjs');
 const profile = await lib('profile/index.mjs');
 const { main } = await lib('cli/main.mjs');
+const { gateChanges, changesGates } = await lib('verify/merge.mjs');
 const names = JSON.parse(readFileSync(join(pluginDir, 'lib', 'name.json'), 'utf8'));
 const AT = '2026-10-15T05:42:00.000Z';
 const TESTS = "import { test } from 'node:test';\ntest('adds', () => {});\n";
@@ -58,7 +59,7 @@ function repo(t, { extra = '' } = {}) {
   store.write('state', null, { codename: names.codename, createdWith: '2.0.0', activatedAt: AT });
   writeFileSync(join(stateDir, '.gitignore'), 'local/\n');
   const handle = state.registerHandle(store, { name: 'Test User', email: 'test@example.com', at: AT }).handle;
-  const gate = `node --test; s=$?; pwd >> '${log}'; ${extra} exit $s`;
+  const gate = `node --test --test-concurrency=2; s=$?; pwd >> '${log}'; ${extra} exit $s`;
   profile.openStore(stateDir, names).write('profile', null, { ...profile.emptyProfile(), gates: [{ name: 'test', cmd: gate, timeoutS: 30, kind: 'test' }] });
   git('add', '-A');
   git('commit', '-q', '-m', 'state');
@@ -112,6 +113,151 @@ function cleaned(r, res) {
   assert.ok(res.env.data.worktree, 'the integration worktree is named');
   assert.ok(!existsSync(res.env.data.worktree), 'the integration worktree directory is removed');
 }
+
+// The directory ignore deliberately does not hide a symlink named node_modules from git status.
+function localDependency(r) {
+  r.write('.gitignore', '/node_modules/\n');
+  r.write('package-lock.json', '{"name":"batch-fixture","lockfileVersion":3}\n');
+  r.write('node_modules/batch-local/package.json', '{"name":"batch-local","main":"index.cjs"}\n');
+  r.write('node_modules/batch-local/index.cjs', 'module.exports = 42;\n');
+  r.git('add', '-A');
+  r.git('commit', '-q', '-m', 'local dependency lock');
+}
+const DEPENDENT_TEST = "import value from 'batch-local';\nimport assert from 'node:assert/strict';\ntest('local dependency', () => assert.equal(value, 42));";
+
+test('T-MG-105: matching locks link the main dependencies into the batch and cleanup preserves them', async (t) => {
+  const r = repo(t);
+  localDependency(r);
+  const ids = [r.task('feat/a', 'a.test.mjs', DEPENDENT_TEST), r.task('feat/b', 'b.test.mjs', DEPENDENT_TEST)];
+  const res = await cli(['task', 'merge', ...ids, '--yes'], r);
+  assert.equal(res.code, 0, JSON.stringify(res.env.errors));
+  assert.equal(res.env.data.result, 'pass');
+  assert.equal(res.env.data.gateRuns, 1);
+  assert.equal(r.runs(), 1, 'the tests passed in the integration worktree');
+  assert.equal(res.env.data.fallback, undefined, 'the batch itself passed');
+  assert.deepEqual(outcomes(res), ids.map((id) => [id, 'merged']));
+  cleaned(r, res);
+  assert.equal(readFileSync(join(r.dir, 'node_modules/batch-local/index.cjs'), 'utf8'), 'module.exports = 42;\n');
+});
+
+test('T-MG-105: a changed lock falls back to single-task merges in the requested order', async (t) => {
+  const r = repo(t);
+  localDependency(r);
+  const a = r.task('feat/a', 'a.test.mjs', DEPENDENT_TEST, {
+    onBranch: () => r.write('package-lock.json', '{"name":"batch-fixture","lockfileVersion":3,"version":"2"}\n'),
+  });
+  const b = r.task('feat/b', 'b.test.mjs', DEPENDENT_TEST);
+  const ids = [b, a];
+  const res = await cli(['task', 'merge', ...ids, '--yes'], r);
+  assert.equal(res.code, 0, JSON.stringify(res.env.errors));
+  assert.deepEqual(outcomes(res), ids.map((id) => [id, 'merged']));
+  assert.equal(res.env.data.fallback.mode, 'sequential');
+  assert.match(res.env.data.fallback.reason, /package-lock\.json.*differ/);
+  assert.ok(res.env.errors.some((e) => e.code === 'batch-fallback'), JSON.stringify(res.env.errors));
+  assert.equal(res.env.data.gateRuns, 0, 'no batch gate runs with mismatched dependencies');
+  assert.equal(merges(r, b)[0].data.batch, null, 'the single-task path records each merge');
+  assert.equal(merges(r, a)[0].data.batch, null);
+  assert.equal(r.git('rev-parse', `${merges(r, a)[0].data.commit}^1`), merges(r, b)[0].data.commit);
+  cleaned(r, res);
+  assert.ok(existsSync(join(r.dir, 'node_modules/batch-local/index.cjs')));
+});
+
+test('T-MG-105: a branch predating a target risk path is not a gate change', async (t) => {
+  const r = repo(t);
+  const a = r.task('feat/a', 'a.test.mjs');
+  const st = profile.openStore(r.stateDir, names);
+  const cur = st.read('profile', null);
+  st.write('profile', null, { ...cur, riskPaths: ['src/auth/**'] });
+  r.git('add', '-A');
+  r.git('commit', '-q', '-m', 'observe target risk path');
+  const b = r.task('feat/b', 'b.test.mjs');
+  const res = await cli(['task', 'merge', a, b, '--yes'], r);
+  assert.equal(res.code, 0, JSON.stringify(res.env.data.tasks));
+  assert.deepEqual(outcomes(res), [[a, 'merged'], [b, 'merged']]);
+  assert.deepEqual(st.read('profile', null).riskPaths, ['src/auth/**']);
+  cleaned(r, res);
+});
+
+test('T-MG-105: a changed gate command names the gate and profile in the skip reason', async (t) => {
+  const r = repo(t);
+  const a = r.task('feat/a', 'a.test.mjs');
+  const g = r.task('feat/g', 'g.test.mjs', undefined, {
+    onBranch: () => {
+      const st = profile.openStore(r.stateDir, names);
+      const cur = st.read('profile', null);
+      st.write('profile', null, { ...cur, gates: cur.gates.map((x) => ({ ...x, cmd: 'node --test' })) });
+    },
+  });
+  const res = await cli(['task', 'merge', a, g, '--yes'], r);
+  assert.equal(res.code, 1);
+  assert.deepEqual(outcomes(res), [[a, 'merged'], [g, 'skipped']]);
+  assert.equal(res.env.data.tasks.find((x) => x.task === g).why,
+    `changes the gates in ${names.stateDir}/profile.json: gate "test" command changed (merge it alone)`);
+  assert.equal(merges(r, g).length, 0);
+  cleaned(r, res);
+});
+
+test('T-MG-105: an initial gate error falls back and successful single-task results keep exit OK', async (t) => {
+  const r = repo(t, { extra: IN_BATCH('exit 127') });
+  const ids = [r.task('feat/a', 'a.test.mjs'), r.task('feat/b', 'b.test.mjs')];
+  const res = await cli(['task', 'merge', ...ids, '--yes'], r);
+  assert.equal(res.code, 0, JSON.stringify(res.env.errors));
+  assert.equal(res.env.data.fallback.mode, 'sequential');
+  assert.match(res.env.data.fallback.reason, /first batch gate run could not run/);
+  assert.ok(res.env.errors.some((e) => e.code === 'batch-fallback'));
+  assert.deepEqual(outcomes(res), ids.map((id) => [id, 'merged']));
+  assert.equal(res.env.data.gateRuns, 1);
+  for (const id of ids) assert.equal(merges(r, id)[0].data.batch, null);
+  cleaned(r, res);
+});
+
+test('T-MG-105: no lockfile falls back and stops at the first unsuccessful single-task merge', async (t) => {
+  const r = repo(t);
+  localDependency(r);
+  r.git('rm', 'package-lock.json');
+  r.git('commit', '-q', '-m', 'no lockfile');
+  const a = r.task('feat/a', 'a.test.mjs', DEPENDENT_TEST);
+  const b = r.task('feat/b', 'b.test.mjs', "test('breaks', () => { throw new Error('boom'); });");
+  const c = r.task('feat/c', 'c.test.mjs', DEPENDENT_TEST);
+  const res = await cli(['task', 'merge', a, b, c, '--yes'], r);
+  assert.equal(res.code, 1, JSON.stringify(res.env.errors));
+  assert.match(res.env.data.fallback.reason, /no lockfile/);
+  assert.deepEqual(outcomes(res), [[a, 'merged'], [b, 'failed'], [c, 'skipped']]);
+  assert.match(res.env.data.tasks[2].why, new RegExp(`stopped at ${b}`));
+  assert.equal(res.env.data.gateRuns, 0);
+  assert.equal(merges(r, a).length, 1);
+  assert.equal(merges(r, b).length + merges(r, c).length, 0);
+  assert.equal(r.git('rev-parse', 'HEAD'), merges(r, a)[0].data.commit);
+  cleaned(r, res);
+});
+
+test('T-MG-105: dependencies are linked again for every bisect and confirming gate run', async (t) => {
+  const r = repo(t);
+  localDependency(r);
+  const a = r.task('feat/a', 'a.test.mjs', DEPENDENT_TEST);
+  const b = r.task('feat/b', 'b.test.mjs', "test('breaks', () => { throw new Error('boom'); });");
+  const c = r.task('feat/c', 'c.test.mjs', DEPENDENT_TEST);
+  const res = await cli(['task', 'merge', a, b, c, '--yes'], r);
+  assert.equal(res.code, 1, JSON.stringify(res.env.errors));
+  assert.deepEqual(outcomes(res), [[a, 'merged'], [b, 'failed'], [c, 'merged']]);
+  assert.equal(res.env.data.fallback, undefined);
+  assert.equal(res.env.data.gateRuns, 4);
+  cleaned(r, res);
+  assert.ok(existsSync(join(r.dir, 'node_modules/batch-local/index.cjs')));
+});
+
+test('T-MG-105: gateChanges explains commands, removals, additions, reordering and dropped risk paths', () => {
+  const testGate = { name: 'test', cmd: 'node --test', timeoutS: 30, kind: 'test' };
+  const lintGate = { name: 'lint', cmd: 'lint', timeoutS: 30, kind: 'lint' };
+  const before = { ...profile.emptyProfile(), gates: [testGate, lintGate], riskPaths: ['src/auth/**'] };
+  const after = { ...before, gates: [{ ...testGate, cmd: 'other test', timeoutS: 60 }], riskPaths: [] };
+  assert.deepEqual(gateChanges(before, after), ['gate "test" command changed', 'gate "test" time limit changed', 'gate "lint" removed', 'risk path "src/auth/**" dropped']);
+  assert.deepEqual(gateChanges(before, { ...before, gates: [lintGate, testGate] }), ['gate order changed']);
+  assert.deepEqual(gateChanges(before, { ...before, gates: [...before.gates, { ...lintGate, name: 'build' }] }), ['gate "build" added']);
+  assert.deepEqual(gateChanges(before, { ...before, riskPaths: [...before.riskPaths, 'new/**'] }), []);
+  assert.equal(changesGates(before, after), true);
+  assert.equal(changesGates(before, before), false);
+});
 
 test('a batch of 3 passing tasks runs the gates once and records 3 merged events with the batch id', async (t) => {
   const r = repo(t);

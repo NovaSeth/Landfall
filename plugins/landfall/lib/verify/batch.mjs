@@ -2,7 +2,7 @@
 // integrated tree. Steps:
 //   1. Each task is checked: known, the caller's, done and not cancelled, not merged yet, its recorded branch names a
 //      commit that is not in the target yet, the code at that tip is the code its `done` verified, and its branch does
-//      not change the target's gates or risk paths (such a branch is skipped: merge it alone, with its decision).
+//      not change the gates or drop risk paths since its merge base (such a branch is skipped: merge it alone).
 //   2. A temporary branch `<codename>/batch-<UTC yyyymmddThhmmss>` starts at the target tip in a temporary worktree under
 //      os.tmpdir() (outside the repository: no state or code of the project holds it). Each task branch merges with
 //      --no-ff in order; a conflict is aborted there and that task is left out (`conflict`).
@@ -20,17 +20,19 @@
 //      and the new commit just after (else the ref is swapped back), and when the final integrated profile does not
 //      change the gates (F5); otherwise nothing changes (`target-moved`, `gate-change-required`). The working tree then
 //      follows by a two-tree `git read-tree -m -u`. Each merged task gets a `merged` event with the batch id.
-//   5. The temporary worktree and branch are removed in every case.
+//   5. Matching lockfiles let the integration worktree link the checkout's node_modules. If dependencies cannot be
+//      linked, or the first run cannot execute its gates, merge sequentially in the checkout and stop on failure.
+//      The temporary worktree and branch are removed in every case.
 // Values from the state reach git only after a check: a done head is an object id, a branch never starts with "-", and
 // revisions follow --end-of-options (AR-2).
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, lstatSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { authorHandle } from '../decisions/index.mjs';
 import { emptyProfile } from '../profile/index.mjs';
 import { KINDS, StateError, mergedOf, recordMerged } from '../state/index.mjs';
 import { requireTrustedGates } from './gates.mjs';
-import { changesGates, profileOf, targetOf, treeHeld } from './merge.mjs';
+import { gateChanges, mergeTask, profileOf, targetOf, treeHeld } from './merge.mjs';
 import { activeWhere, codeState, evaluate, gatesSha, gitIn, stateAt, storeOf } from './run.mjs';
 
 const fail = (code, message, hint = '') => new StateError(code, 'FAIL', message, { hint });
@@ -43,6 +45,9 @@ const order = (a, b) => {
 const OBJECT_ID = /^[0-9a-f]{40,64}$/;
 // A gate run that changed HEAD, the index or the working tree of the integration worktree (F1): nothing merges.
 class TreeChanged extends Error {}
+class SequentialFallback extends Error {}
+const describeChanges = (changes) => `${changes[0]}${changes.length > 1 ? ` (+${changes.length - 1} more)` : ''}`;
+const LOCKFILES = ['package-lock.json', 'npm-shrinkwrap.json', 'pnpm-lock.yaml', 'yarn.lock', 'bun.lockb', 'bun.lock'];
 
 // The IDs `--ready` takes: the caller's done tasks with a recorded branch and no merged event, in task order.
 export function readyIds(store, handle) {
@@ -88,7 +93,12 @@ export function batchMerge({ cwd, env, names, ids = null, ready = false, version
     if (!OBJECT_ID.test(sha)) return skip(`unknown branch ${task.branch}`);
     if (gitIn(where, env, ['merge-base', '--is-ancestor', '--end-of-options', sha, tip]).status === 0) return skip(`already in ${target} (${names.bin} task merge --adopt ${id})`);
     if (done !== sha && gitIn(where, env, ['diff', '--quiet', '--end-of-options', done, sha, ...scope]).status !== 0) return skip(`the branch changed since done at ${done.slice(0, 12)} (verify it again)`);
-    if (targetProfile.rel !== null && changesGates(profileOf(targetProfile.text), profileOf(stateAt(where, env, sha, 'profile.json').text))) return skip('changes the gates (merge it alone)');
+    if (targetProfile.rel !== null) {
+      const base = gitIn(where, env, ['merge-base', '--end-of-options', tip, sha]).stdout.trim();
+      if (!OBJECT_ID.test(base)) return skip('no merge base with the target');
+      const changes = gateChanges(profileOf(stateAt(where, env, base, 'profile.json').text), profileOf(stateAt(where, env, sha, 'profile.json').text));
+      if (changes.length) return skip(`changes the gates in ${join(targetProfile.rel, 'profile.json')}: ${describeChanges(changes)} (merge it alone)`);
+    }
     return { ...t, sha, outcome: null };
   });
   const candidates = tasks.filter((t) => t.outcome === null);
@@ -106,11 +116,69 @@ export function batchMerge({ cwd, env, names, ids = null, ready = false, version
   requireTrustedGates({ where, names, env, gates: batchGates });
   const trusted = gatesSha(batchGates);
 
+  const sequential = (reason) => {
+    result.fallback = { mode: 'sequential', reason };
+    result.verify = null;
+    result.output = [];
+    result.reasons.push({ code: 'batch-fallback', message: `falling back to sequential merges: ${reason}`, hint: '' });
+    if (symbolic() !== targetRef || head() !== tip) {
+      for (const t of candidates) { t.outcome = 'skipped'; t.why = 'target-moved'; }
+      result.reasons.push({ code: 'target-moved', message: 'the target moved before the sequential fallback; nothing was merged', hint: 'run task merge again' });
+      return finish(result);
+    }
+    // Retry every eligible candidate, including integration conflicts, in the original ID order.
+    let stopped = null;
+    for (const t of candidates) {
+      t.conflicts = [];
+      t.tests = [];
+      if (stopped) { t.outcome = 'skipped'; t.why = `sequential merge stopped at ${stopped}`; continue; }
+      const single = mergeTask({ cwd, env, names, id: t.task, branch: t.sha, version, at });
+      result.verify = single.verify;
+      result.output.push(...single.output);
+      result.reasons.push(...single.reasons);
+      result.exit = single.exit;
+      if (single.merged) {
+        t.outcome = 'merged'; t.why = null;
+        result.commit = single.commit;
+      } else {
+        t.conflicts = single.conflicts;
+        t.tests = single.verify?.failures?.new?.slice(0, 10) ?? [];
+        t.outcome = single.conflicts.length ? 'conflict' : single.upToDate ? 'skipped' : 'failed';
+        t.why = single.reasons[0]?.message ?? 'already up to date';
+        stopped = t.task;
+      }
+    }
+    return finish(result);
+  };
+
   // 2–5. The integration worktree, removed in every case.
   const wt = mkdtempSync(join(tmpdir(), `${names.codename}-batch-`));
   result.worktree = wt;
   const here = { ...where, worktree: wt };
   let created = false;
+  const modules = join(wt, 'node_modules');
+  let linked = false;
+  const unlinkDependencies = () => {
+    // Unlink only the link we created; never recursively remove or follow its target.
+    if (linked && lstatSync(modules, { throwIfNoEntry: false })?.isSymbolicLink()) unlinkSync(modules);
+    linked = false;
+  };
+  const linkDependencies = () => {
+    const source = join(where.worktree, 'node_modules');
+    if (!statSync(source, { throwIfNoEntry: false })?.isDirectory()) return;
+    const lock = LOCKFILES.find((file) => existsSync(join(where.worktree, file)));
+    if (!lock) throw new SequentialFallback('the main checkout has node_modules but no lockfile');
+    try {
+      if (!existsSync(join(wt, lock)) || !readFileSync(join(where.worktree, lock)).equals(readFileSync(join(wt, lock)))) {
+        throw new SequentialFallback(`${lock} differs between the main checkout and the integration worktree`);
+      }
+      symlinkSync(source, modules, 'dir');
+      linked = true;
+    } catch (err) {
+      if (err instanceof SequentialFallback) throw err;
+      throw new SequentialFallback(`cannot link the main checkout's node_modules (${err.code ?? 'filesystem error'})`);
+    }
+  };
   try {
     const add = gitIn(where, env, ['worktree', 'add', '-q', '-b', branch, wt, tip]);
     if (add.status !== 0) throw new StateError('git-failed', 'ENV', `git cannot create the integration worktree (${String(add.stderr).trim().slice(0, 200)})`, { hint: 'check git worktree list and the temporary directory' });
@@ -120,8 +188,9 @@ export function batchMerge({ cwd, env, names, ids = null, ready = false, version
     const build = (set) => {
       const key = set.map((t) => t.task).join(' ');
       if (built?.key === key) return built.ok;
+      unlinkDependencies();
       gitIn(here, env, ['checkout', '-q', '-f', '-B', branch, tip]); // the integration branch back at the target tip, local changes dropped
-      gitIn(here, env, ['clean', '-q', '-fd']);
+      gitIn(here, env, ['clean', '-q', '-fd', '-e', '/node_modules']);
       const ok = [];
       for (const t of set) {
         const m = gitIn(here, env, ['merge', '--no-ff', '--no-edit', '-q', '-m', `Merge branch '${t.branch}' (${t.task}, ${batch})`, '--end-of-options', t.sha]);
@@ -140,14 +209,17 @@ export function batchMerge({ cwd, env, names, ids = null, ready = false, version
     const scopeHere = codeState(here, env).scope;
     const passed = new Map(); // the set key of a passing run → the commit it verified
     const gates = (set) => {
+      unlinkDependencies();
       gitIn(here, env, ['checkout', '-q', '-f', '-B', branch, 'HEAD']);
-      gitIn(here, env, ['clean', '-q', '-fd']);
+      gitIn(here, env, ['clean', '-q', '-fd', '-e', '/node_modules']);
+      linkDependencies();
       const commit = gitIn(here, env, ['rev-parse', 'HEAD']).stdout.trim();
       const tree = gitIn(here, env, ['write-tree']).stdout.trim();
       result.gateRuns += 1;
       const memo = { trusted };
       const byTask = new Map(set.map((t) => [t.task, evaluate({ where: here, names, env, id: t.task, mode: 'merge', at, anchor: tip, merged: commit, version, memo })]));
-      if (!treeHeld(here, env, scopeHere, commit) || gitIn(here, env, ['write-tree']).stdout.trim() !== tree) throw new TreeChanged();
+      const checkedScope = linked ? [...scopeHere, ':(top,exclude)node_modules'] : scopeHere;
+      if (!treeHeld(here, env, checkedScope, commit) || gitIn(here, env, ['status', '--porcelain', '--untracked-files=all', ...checkedScope]).stdout.trim() !== '' || gitIn(here, env, ['write-tree']).stdout.trim() !== tree) throw new TreeChanged();
       const all = [...byTask.values()];
       for (const o of all) o.publish?.(); // the gate-cache entry, only now that the tree held (fix round 2, F1)
       const worst = all.find((o) => o.doc.result === 'error') ?? all.find((o) => o.doc.result !== 'pass') ?? all[0];
@@ -159,7 +231,7 @@ export function batchMerge({ cwd, env, names, ids = null, ready = false, version
     let out = gates(set);
     let final = set;
     let integrated = out.commit;
-    if (out.doc.result === 'error') return finish(errored(result, out, set));
+    if (out.doc.result === 'error') throw new SequentialFallback(`the first batch gate run could not run: ${out.reasons.find((r) => r.level !== 'warn')?.message ?? 'gate error'}`);
     if (out.doc.result !== 'pass') {
       // Binary search over the prefixes: prefix(k) = set[0..k]; prefix(-1) is the target tip, prefix(N-1) failed.
       let lo = 0;
@@ -201,9 +273,10 @@ export function batchMerge({ cwd, env, names, ids = null, ready = false, version
     }
     set = final;
     // 4. The final integrated profile must not change the target's gates (each branch was checked alone in step 1).
-    if (targetProfile.rel !== null && changesGates(profileOf(targetProfile.text), profileOf(stateAt(where, env, integrated, 'profile.json').text))) {
+    const finalChanges = targetProfile.rel === null ? [] : gateChanges(profileOf(targetProfile.text), profileOf(stateAt(where, env, integrated, 'profile.json').text));
+    if (finalChanges.length) {
       for (const t of set) { t.outcome = 'skipped'; t.why = 'gate-change-required'; }
-      result.reasons.push({ code: 'gate-change-required', message: 'the integrated batch changes the target\'s gates or drops one of its risk paths; nothing was merged', hint: `merge the tasks one by one: ${names.bin} task merge <id>` });
+      result.reasons.push({ code: 'gate-change-required', message: `the integrated batch changes the gates in ${join(targetProfile.rel, 'profile.json')}: ${describeChanges(finalChanges)}; nothing was merged`, hint: `merge the tasks one by one: ${names.bin} task merge <id>` });
       return finish(result);
     }
     // Fast-forward the target to the verified commit (F5, fix round 2). Only the ref read before the gates moves, by one
@@ -243,11 +316,13 @@ export function batchMerge({ cwd, env, names, ids = null, ready = false, version
     if (!result.verify) { result.verify = out.doc; result.output = out.output; }
     return finish(result);
   } catch (err) {
+    if (err instanceof SequentialFallback) return sequential(err.message);
     if (!(err instanceof TreeChanged)) throw err;
     for (const t of tasks) if (t.outcome === null || t.outcome === 'failed') { t.outcome = 'skipped'; t.why = 'merge-tree-changed'; }
     result.reasons.push({ code: 'merge-tree-changed', message: 'HEAD, the index or the working tree of the integration worktree changed while the gates ran: they did not verify what would be merged; nothing was merged', hint: 'find what writes to tracked files or commits during the gates (a formatter, a build into the tree), then merge again' });
     return finish(result);
   } finally {
+    unlinkDependencies();
     if (created) gitIn(where, env, ['worktree', 'remove', '--force', wt]);
     rmSync(wt, { recursive: true, force: true });
     gitIn(where, env, ['worktree', 'prune']);
