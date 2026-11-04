@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { isolatedEnv } from './helpers/isolated-env.mjs';
+import { isolatedEnv, relaxAdmission } from './helpers/isolated-env.mjs';
 import { lib, names } from './helpers/hook-fixture.mjs';
 import { trustWith } from './helpers/trust.mjs';
 
@@ -31,6 +31,7 @@ async function setup(t, { timeoutS, cmd }) {
   const data = join(iso.base, 'data');
   mkdirSync(data);
   const env = { ...iso.env, CLAUDE_PLUGIN_DATA: data };
+  relaxAdmission(env); // verify takes the heavy lease in this data dir (T-MG-163)
   const repo = join(iso.base, 'main');
   mkdirSync(repo);
   git(repo, env, ['-c', 'init.defaultBranch=main', 'init', '-q']);

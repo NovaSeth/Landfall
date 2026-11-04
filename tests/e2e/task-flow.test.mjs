@@ -11,7 +11,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { isolatedEnv, isolateProcessEnv } from '../helpers/isolated-env.mjs';
+import { isolatedEnv, isolateProcessEnv, relaxAdmission } from '../helpers/isolated-env.mjs';
 
 isolateProcessEnv();
 
@@ -59,11 +59,7 @@ function project(t, { calc, tests }) {
   const p = { base: iso.base, dir, git, write, cli, ok, commit, read };
 
   git('init', '-q');
-  // T-MG-153: the fixture's gate (timeoutS 1800) takes the heavy lease, whose admission waits up to 590 s while the
-  // machine's load is at or above the load limit; that wait outlived cli()'s 240 s timeout under other sessions' load.
-  // The throwaway machine data directory gets limits no load reaches, so admission never waits (what the test proves
-  // is the task flow, not the scheduler).
-  ok(cli('slots', 'calibrate', '--load-max', '99999', '--free-min', '1'));
+  relaxAdmission(env); // verify takes the heavy lease; admission must not wait on the machine's load (T-MG-153/156)
   write('package.json', `${JSON.stringify({ name: 'calc', private: true, type: 'module', scripts: { test: 'node --test' } }, null, 2)}\n`);
   write('calc.mjs', calc);
   write('calc.test.mjs', tests);
