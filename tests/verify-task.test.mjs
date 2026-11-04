@@ -236,8 +236,8 @@ test('the route is re-classified from the diff against the task base: a larger c
   let res = await run(r);
   assert.equal(res.code, 1, show(res));
   assert.equal(res.env.data.result, 'route-escalated');
-  assert.deepEqual(res.env.data.route, { declared: 'trivial', actual: 'critical', escalated: true, missingSteps: ['spec-plan', 'cross-provider-review', 'rereview'] });
-  assert.equal(r.store.read('task', r.id).class, 'critical', 'the ratchet is written to task.json');
+  assert.deepEqual(res.env.data.route, { declared: 'trivial', actual: 'standard', escalated: true, missingSteps: ['plan-in-brief', 'review'] });
+  assert.equal(r.store.read('task', r.id).class, 'standard', 'the ratchet is written to task.json');
   res = await run(r);
   assert.deepEqual([res.env.data.result, res.env.data.route.escalated, res.env.data.artifacts.review], ['missing-artifact', false, 'missing']);
   // The state directory is not part of the change; risk paths count.
@@ -249,18 +249,18 @@ test('the route is re-classified from the diff against the task base: a larger c
 
 for (const tracked of [true, false]) {
   const mode = tracked ? 'tracked' : 'untracked';
-  for (const [path, loc, cls] of [['mockups/b.js', 300, 'standard'], ['src/b.js', 600, 'critical']]) {
+  for (const [path, loc, cls] of [['mockups/b.js', 300, 'standard'], ['src/b.js', 600, 'standard']]) {
     test(`verify measured LOC: ${mode} src/a.js plus ${path} counts ${loc} LOC`, async (t) => {
       const files = { 'calc.test.mjs': TESTS, ...(tracked ? { 'src/a.js': '', [path]: '' } : {}) };
       const r = repo(t, { files, cls: null });
-      review(r, 1, 'approved', cls === 'critical' ? 'external' : 'claude');
+      review(r, 1, 'approved', 'claude');
       r.write('src/a.js', '// source\n'.repeat(300));
       r.write(path, '// second file\n'.repeat(300));
       const res = await run(r);
       assert.equal(res.code, 0, show(res));
       assert.equal(res.env.data.route.actual, cls, show(res));
       const task = r.store.read('task', r.id);
-      assert.equal(task.classHistory.at(-1).reason, `${cls}: ${loc} LOC > ${cls === 'critical' ? 400 : 30}`);
+      assert.equal(task.classHistory.at(-1).reason, `${cls}: ${loc} LOC > 30${loc > 400 ? `; split: ${loc} LOC > 400` : ''}`);
       assert.equal((await run(r)).env.data.route.actual, cls, 'a repeated verify keeps the class');
     });
   }
@@ -278,9 +278,30 @@ for (const tracked of [true, false]) {
       assert.equal(res.env.data.route.actual, 'critical');
       const reason = r.store.read('task', r.id).classHistory.at(-1).reason;
       assert.match(reason, /matches risk glob/, 'the light path remains in the measured paths');
-      assert.match(reason, /600 LOC > 400/, 'risk LOC counts even for a weightless extension');
     });
   }
+}
+
+test('verify measured change: test lines never say split (T-MG-181)', async (t) => {
+  const r = repo(t);
+  r.write('src/a.js', 'export const a = 1;\n');
+  for (let i = 0; i < 5; i++) r.write(`tests/t${i}.js`, '// test line\n'.repeat(200));
+  r.write('src/b.test.js', '// test line\n'.repeat(200));
+  const res = await run(r);
+  assert.equal(res.env.data.route.actual, 'standard', show(res));
+  assert.ok(!/split/.test(r.store.read('task', r.id).classHistory.at(-1).reason), 'test lines are no split');
+});
+
+for (const tracked of [true, false]) {
+  test(`verify reroute: ${tracked ? 'tracked' : 'untracked'} src/a.js plus a 5000-line test file is not trivial (F3)`, async (t) => {
+    const files = { 'calc.test.mjs': TESTS, ...(tracked ? { 'src/a.js': '', 'tests/big.test.mjs': '' } : {}) };
+    const r = repo(t, { files });
+    r.write('src/a.js', 'export const a = 1;\n');
+    r.write('tests/big.test.mjs', '// test line\n'.repeat(5000));
+    const res = await run(r);
+    assert.equal(res.env.data.route.actual, 'standard', show(res));
+    assert.ok(!/split/.test(r.store.read('task', r.id).classHistory.at(-1)?.reason ?? ''), 'test lines are no split');
+  });
 }
 
 // ---- --ci, owner, inactive, unknown ----

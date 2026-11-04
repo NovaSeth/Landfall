@@ -176,8 +176,8 @@ export const ignoredReasons = (store) => {
 
 // Classifies the declared plan of task `id` and applies the ratchet. `handle` is the caller's registered handle;
 // `riskPaths` are the profile's risk globs (added to the defaults).
-export function routeTask(store, id, { paths, loc, flags = [], riskPaths = [], handle, at = new Date().toISOString() }) {
-  const plan = classify({ paths, loc, flags, riskPaths, thresholds: routerThresholds(store) });
+export function routeTask(store, id, { paths, loc, locCode, flags = [], riskPaths = [], handle, at = new Date().toISOString() }) {
+  const plan = classify({ paths, loc, locCode, flags, riskPaths, thresholds: routerThresholds(store) });
   let step;
   const doc = store.update('task', id, (cur) => {
     step = applyClass(owned(cur, id, handle), plan, { at, by: handle });

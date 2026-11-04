@@ -21,7 +21,7 @@ export function checkQuote(quote) {
   return text;
 }
 
-// "2 risk paths, loc-over, risk-flag:migration" for recorded reason keys.
+// "2 risk paths, split-loc, risk-flag:migration" for recorded reason keys.
 export function describeKeys(keys) {
   const paths = keys.filter((k) => k.startsWith('risk-path:')).length;
   const rest = keys.filter((k) => !k.startsWith('risk-path:')).sort();
