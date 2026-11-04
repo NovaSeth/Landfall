@@ -30,7 +30,27 @@ const firstLine = (r) => (r.stderr || r.stdout).trim().split('\n')[0] ?? '';
 
 // Whether `merged` changes the gate set of `target` in any way, or drops one of its risk globs (the scanned risk paths
 // and the said riskGlobs alike: lib/profile riskGlobsOf).
-export const changesGates = (target, merged) => gatesSha(target.gates) !== gatesSha(merged.gates) || riskGlobsOf(target).some((p) => !riskGlobsOf(merged).includes(p));
+export const changesGates = (target, merged) => gateChanges(target, merged).length > 0;
+
+export function gateChanges(target, merged) {
+  const changes = [];
+  if (gatesSha(target.gates) !== gatesSha(merged.gates)) {
+    const before = new Map(target.gates.map((g) => [g.name, g]));
+    const after = new Map(merged.gates.map((g) => [g.name, g]));
+    for (const [name, gate] of before) {
+      const next = after.get(name);
+      if (!next) { changes.push(`gate "${name}" removed`); continue; }
+      if (gatesSha([gate]) === gatesSha([next])) continue;
+      const fields = [['cmd', 'command'], ['timeoutS', 'time limit'], ['kind', 'kind']];
+      const changed = fields.filter(([key]) => gate[key] !== next[key]);
+      changes.push(...(changed.length ? changed.map(([, label]) => `gate "${name}" ${label} changed`) : [`gate "${name}" changed`]));
+    }
+    for (const name of after.keys()) if (!before.has(name)) changes.push(`gate "${name}" added`);
+    if (!changes.length) changes.push('gate order changed');
+  }
+  for (const path of riskGlobsOf(target)) if (!riskGlobsOf(merged).includes(path)) changes.push(`risk path "${path}" dropped`);
+  return changes;
+}
 
 // The gates, risk paths and facts of a committed profile text (empty when there is none or it cannot be read).
 export function profileOf(text) {
