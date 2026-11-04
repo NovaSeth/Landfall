@@ -129,8 +129,14 @@ function tap(text, ctx) {
   const lines = text.split('\n');
   const inv = builder(ctx.repo);
   const open = [];
+  let yamlPad = -1; // indent of the `---` opening a diagnostic block we are inside, else -1
   for (let i = 0; i < lines.length; i++) {
-    const sub = TAP_SUBTEST.exec(lines[i]);
+    if (yamlPad >= 0) {
+      if (lines[i].trim() === '...' && indentOf(lines[i]) === yamlPad) yamlPad = -1;
+      continue;
+    }
+    if (lines[i].trim() === '---' && i > 0 && TAP_RESULT.test(lines[i - 1])) { yamlPad = indentOf(lines[i]); continue; }
+    const sub =TAP_SUBTEST.exec(lines[i]);
     if (sub) {
       const level = Math.floor(sub[1].length / 4);
       open.length = level;

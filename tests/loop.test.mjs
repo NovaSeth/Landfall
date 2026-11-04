@@ -10,7 +10,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { appendFileSync, chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, utimesSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -29,6 +29,8 @@ const pluginDir = (() => {
 const names = JSON.parse(readFileSync(join(pluginDir, 'lib', 'name.json'), 'utf8'));
 const lib = (rel) => import(pathToFileURL(join(pluginDir, 'lib', rel)).href);
 const loop = await lib('loop/index.mjs');
+const limits = await lib('loop/limits.mjs');
+const receiptsRuns = await lib('runs/index.mjs');
 const state = await lib('state/index.mjs');
 const receipts = await lib('receipts/index.mjs');
 const method = await lib('method/index.mjs');
@@ -1240,6 +1242,25 @@ test('billing (f) S1: the subscription override at loop start counts only from a
   assert.equal(r.out.data.billing.mode, 'api');
 });
 
+test('billing (k) an unrecognized override on a tick of a stored subscription loop is ignored: BUDGET at the cap', async (t) => {
+  const { r } = await overCap(t, { [BILL]: 'subscription' }, { tty: true, tickEnv: { ANTHROPIC_API_KEY: 'x', [BILL]: 'garbage' } });
+  assert.equal(r.code, 6, show(r));
+  assert.equal(r.out.data.billing.mode, 'api');
+});
+
+test('billing (l) a control-character override value keeps the source within 100 characters and a ratcheting tick stores it', async (t) => {
+  const { billingMode } = await lib('loop/billing.mjs');
+  const odd = '\u0001'.repeat(40);
+  const m = billingMode({ env: { ANTHROPIC_API_KEY: 'x', [BILL]: odd }, names, home: '/missing', envOnly: true });
+  assert.equal(m.mode, 'api');
+  assert.ok(m.source.length <= 100, `${m.source.length}`);
+  assert.ok(m.source.startsWith('ANTHROPIC_API_KEY'), 'the winner is kept');
+  const { r } = await overCap(t, { [BILL]: 'subscription' }, { tty: true, tickEnv: { ANTHROPIC_API_KEY: 'x', [BILL]: odd } });
+  assert.equal(r.code, 6, show(r));
+  assert.equal(r.out.data.billing.mode, 'api');
+  assert.ok(r.out.data.billing.source.length <= 120);
+});
+
 test('billing (g) S1: a schema-1 loop document without billing still reads, is treated as unknown and ends at the cap', async (t) => {
   const p = await repo(t);
   let r = await p.run(['loop', 'start', '--caps', 'usd=0.01'], { env: p.env });
@@ -1278,8 +1299,17 @@ test('billing (c) billingMode: the account file, API signals and the override; n
   const byUser = (env) => billingMode({ env: { CLAUDE_CONFIG_DIR: dir, ...env }, names, home: join(dir, 'nohome'), byUser: true });
   assert.equal(byUser({ [BILL]: 'subscription', ANTHROPIC_API_KEY: 'k' }).mode, 'subscription', 'a user start: the override beats the key');
   const odd = mode({ [BILL]: 'free' });
-  assert.equal(odd.mode, 'unknown');
-  assert.match(odd.source, /not recognized/);
+  assert.equal(odd.mode, 'subscription', 'an unrecognized value is ignored; the account file decides');
+  const bare = (env, extra = {}) => billingMode({ env: { CLAUDE_CONFIG_DIR: join(dir, 'none'), ...env }, names, home: join(dir, 'nohome'), ...extra });
+  assert.equal(bare({ [BILL]: 'free' }).mode, 'unknown');
+  assert.match(bare({ [BILL]: 'free' }).source, /not recognized/);
+  assert.match(bare({ [BILL]: 'free' }).source, /free/, 'the unrecognized value is named');
+  assert.equal(bare({ ANTHROPIC_API_KEY: 'x', [BILL]: 'garbage' }, { envOnly: true }).mode, 'api', 'an unrecognized value does not hide an API key');
+  assert.equal(bare({ [BILL]: 'garbage' }, { envOnly: true }).mode, 'unknown');
+  const note = `${BILL}="garbage" is not recognized`;
+  assert.equal(bare({ [BILL]: 'garbage', ANTHROPIC_API_KEY: 'x' }, { envOnly: true }).source, `ANTHROPIC_API_KEY (${note})`, 'the API variable keeps the note');
+  assert.equal(bare({ [BILL]: 'garbage', CLAUDE_CODE_USE_BEDROCK: '1' }).source, `CLAUDE_CODE_USE_BEDROCK (${note})`, 'the API flag keeps the note');
+  assert.equal(mode({ [BILL]: 'garbage' }).source, `claude.json billingType (${note})`, 'the account file keeps the note');
   const home = join(dir, 'home');
   mkdirSync(home);
   writeFileSync(join(home, '.claude.json'), JSON.stringify({ oauthAccount: { billingType: 'max_subscription' } }));
@@ -1342,4 +1372,177 @@ test('billing (j) F2: a stored subscription loop with the subscription override 
   const r = tickWith({ [BILL]: 'subscription' });
   assert.notEqual(r.result, 'BUDGET');
   assert.deepEqual(doc().billing, { mode: 'subscription', source: 'kept source' });
+});
+
+// ---- usage limits (T-MG-107): a plan quota window makes the tick wait for the reset ----
+
+const local = (y, mo, d, h = 0, mi = 0) => new Date(y, mo - 1, d, h, mi).getTime(); // machine local time
+
+test('limits (a) parseReset: clock forms, the next occurrence after `at`, across midnight, a weekday, a zone suffix', () => {
+  const at = local(2026, 10, 15, 14, 0); // a Thursday
+  assert.equal(limits.parseReset('3:45pm', at), local(2026, 10, 15, 15, 45));
+  assert.equal(limits.parseReset('3pm', at), local(2026, 10, 15, 15, 0));
+  assert.equal(limits.parseReset('15:45', at), local(2026, 10, 15, 15, 45));
+  assert.equal(limits.parseReset('4:10 PM', at), local(2026, 10, 15, 16, 10));
+  assert.equal(limits.parseReset('3:45pm (Europe/Warsaw)', at), local(2026, 10, 15, 15, 45));
+  assert.equal(limits.parseReset('12:00am', at), local(2026, 10, 16, 0, 0), 'midnight is tomorrow');
+  assert.equal(limits.parseReset('1:30pm', local(2026, 10, 15, 23, 50)), local(2026, 10, 16, 13, 30), 'across midnight');
+  assert.equal(limits.parseReset('3:45pm', local(2026, 10, 15, 16, 0)), local(2026, 10, 16, 15, 45), 'already past today');
+  assert.equal(limits.parseReset('Mon 12:00am', at), local(2026, 10, 19, 0, 0), 'the next Monday');
+  assert.equal(limits.parseReset('Thu 3pm', at), local(2026, 10, 15, 15, 0), 'the same weekday, later today');
+  assert.equal(limits.parseReset('Thu 1pm', at), local(2026, 10, 22, 13, 0), 'the same weekday, earlier today: next week');
+  for (const bad of ['', 'soon', '25:00', '13pm', 'Funday 3pm', '3:75pm', null, 42]) assert.equal(limits.parseReset(bad, at), null, String(bad));
+});
+
+function limitFixture(t) {
+  const base = realpathSync(mkdtempSync(join(tmpdir(), 'loop-limits-')));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  const repo = join(base, 'repo');
+  mkdirSync(repo);
+  const env = { CLAUDE_CONFIG_DIR: join(base, 'cfg'), HOME: join(base, 'home') };
+  const dir = join(env.CLAUDE_CONFIG_DIR, 'projects', repo.replace(/[^A-Za-z0-9]/g, '-'));
+  mkdirSync(dir, { recursive: true });
+  const write = (name, text, ts, mtimeMs) => {
+    const file = join(dir, name);
+    writeFileSync(file, `${JSON.stringify({ type: 'assistant', timestamp: new Date(ts).toISOString(), isApiErrorMessage: true, message: { content: [{ type: 'text', text }] } })}\n`);
+    utimesSync(file, new Date(mtimeMs), new Date(mtimeMs));
+    return file;
+  };
+  return { repo, env, dir, write, find: (extra) => limits.usageLimit({ repo, env, names, ...extra }) };
+}
+
+test('limits (b) usageLimit: a session limit stamped 2 minutes ago is found with its reset; older, stale files and a server throttle are not', (t) => {
+  const f = limitFixture(t);
+  const now = local(2026, 10, 15, 14, 30);
+  const since = now - 60 * MIN;
+  f.write('s1.jsonl', "You've hit your session limit · resets 3:45pm", now - 2 * MIN, now - MIN);
+  const hit = f.find({ now, since });
+  assert.deepEqual([hit.kind, hit.resetAt, hit.source], ['session', local(2026, 10, 15, 15, 45), 's1.jsonl']);
+  for (const [word, kind] of [['weekly', 'weekly'], ['Opus', 'opus'], ['Sonnet', 'sonnet']]) {
+    const g = limitFixture(t);
+    g.write('a.jsonl', `You've hit your ${word} limit · resets Mon 12:00am`, now - MIN, now);
+    assert.equal(g.find({ now, since }).kind, kind);
+  }
+  const old = limitFixture(t);
+  old.write('o.jsonl', "You've hit your session limit · resets 3:45pm", now - 16 * MIN, now - MIN);
+  assert.equal(old.find({ now, since }), null, 'a hit older than 15 minutes');
+  const stale = limitFixture(t);
+  stale.write('s.jsonl', "You've hit your session limit · resets 3:45pm", now - 2 * MIN, since - MIN);
+  assert.equal(stale.find({ now, since }), null, 'a transcript modified before the loop start');
+  const thr = limitFixture(t);
+  thr.write('t.jsonl', 'Server is temporarily limiting requests (not your usage limit)', now - MIN, now);
+  assert.equal(thr.find({ now, since }), null, 'a server throttle is not a plan quota');
+  const two = limitFixture(t);
+  two.write('x.jsonl', "You've hit your session limit · resets 3:45pm", now - 10 * MIN, now);
+  two.write('y.jsonl', "You've hit your weekly limit · resets Mon 12:00am", now - 3 * MIN, now);
+  assert.equal(two.find({ now, since }).kind, 'weekly', 'the latest hit wins');
+  assert.equal(limits.usageLimit({ repo: '/nonexistent-repo', env: { CLAUDE_CONFIG_DIR: '/nonexistent' }, names, now, since }), null);
+  assert.equal(limits.usageLimit({ repo: null, env: null, names, now, since }), null);
+});
+
+test('limits (c) usageLimit: a Codex run that ended a minute ago with a usage-limit line is a codex limit with its reset', (t) => {
+  const f = limitFixture(t);
+  const now = local(2026, 10, 15, 14, 30);
+  const since = now - 60 * MIN;
+  const run = (over) => ({ runId: 'codex-T-1-reviewer-1', provider: 'codex', status: 'failed', endedAt: new Date(now - MIN).toISOString(), lastLine: null, error: null, ...over });
+  const hit = f.find({ now, since, runs: [run({ lastLine: "You've hit your usage limit. Try again at 4:10 PM." })] });
+  assert.deepEqual([hit.kind, hit.resetAt, hit.source], ['codex', local(2026, 10, 15, 16, 10), 'codex-T-1-reviewer-1']);
+  assert.equal(f.find({ now, since, runs: [run({ error: 'usage limit reached' })] }).resetAt, null);
+  assert.equal(f.find({ now, since, runs: [run({ lastLine: "You've hit your usage limit.", endedAt: new Date(now - 20 * MIN).toISOString() })] }), null, 'ended too long ago');
+  assert.equal(f.find({ now, since, runs: [run({ lastLine: 'all good' })] }), null);
+});
+
+test('limits (d) decide: a Claude limit waits until the reset + 60 s (clamped), is never STALLED, and the caps still end the loop', () => {
+  const now = local(2026, 10, 15, 15, 30);
+  const startedAt = now - 40 * MIN;
+  const l0 = loop.newLoop({ now: startedAt });
+  const limit = { kind: 'session', resetAt: local(2026, 10, 15, 15, 45), source: 's1.jsonl' };
+  const obs = (extra) => ({ now, fingerprint: 'same', liveRuns: 0, outcome: 'action', nextTickS: null, limit, ...extra });
+  const r = loop.decide(l0, obs());
+  assert.equal(r.result, 'WAIT');
+  assert.equal(r.nextTickS, 15 * 60 + 60);
+  assert.match(r.reason, /usage limit: session, resets 15:45/);
+  assert.equal(r.doc.exit, null);
+  assert.equal(loop.decide(l0, obs({ limit: { ...limit, resetAt: now + 5 * 3600e3 } })).nextTickS, 3600, 'clamped to an hour');
+  assert.equal(loop.decide(l0, obs({ limit: { ...limit, resetAt: now - 5 * MIN } })).nextTickS, 60, 'a reset in the past: the minimum');
+  const unknown = loop.decide(l0, obs({ limit: { ...limit, resetAt: null } }));
+  assert.equal(unknown.nextTickS, 1800);
+  assert.match(unknown.reason, /reset time unknown/);
+  // three ticks over 40 minutes with the same fingerprint: WAIT each time, never STALLED
+  let doc = l0;
+  for (const min of [0, 20, 40]) {
+    const x = loop.decide(doc, obs({ now: startedAt + min * MIN, limit: { ...limit, resetAt: startedAt + (min + 30) * MIN } }));
+    assert.equal(x.result, 'WAIT', `at ${min} min`);
+    assert.equal(x.doc.sameCount, 0);
+    doc = x.doc;
+  }
+  assert.equal(loop.decide({ ...l0, startedAt: new Date(now - 500 * MIN).toISOString() }, obs()).result, 'BUDGET', 'the wall-time cap still ends it');
+  assert.equal(loop.decide(l0, obs({ limit: null, outcome: 'done' })).result, 'DONE');
+  assert.equal(loop.decide(l0, obs({ limit: { kind: 'codex', resetAt: now + MIN, source: 'r' } })).result, 'ACTION', 'a codex limit never waits');
+});
+
+test('limits (e) tickStore: a hit makes the tick WAIT; a later tick without it returns to the table; a codex hit is an info row; a cap skips the probe; a throwing probe is no limit', (t) => {
+  const s = storeDir(t);
+  s.store.write('task', 'T-TU-1', task('T-TU-1', 'new'));
+  const calls = [];
+  let hit = { kind: 'session', resetAt: T0 + 5 * MIN, source: 's.jsonl' };
+  const limitsProbe = (args) => { calls.push(args); return hit; };
+  const a = s.run(2, { limits: limitsProbe });
+  assert.equal(a.result, 'WAIT');
+  assert.equal(a.nextTickS, 3 * 60 + 60);
+  assert.match(a.reason, /usage limit: session/);
+  assert.equal(calls[0].since, a.loop.startedAt, 'since is the loop start');
+  assert.ok(Array.isArray(calls[0].runs));
+  hit = null;
+  assert.equal(s.run(3, { limits: limitsProbe }).result, 'ACTION');
+  hit = { kind: 'codex', resetAt: local(2026, 10, 15, 16, 10), source: 'run-1', provider: 'codex' };
+  const c = s.run(4, { limits: limitsProbe });
+  assert.equal(c.result, 'ACTION');
+  const row = c.info.find((i) => /usage limit/.test(i.state));
+  assert.match(row.state, /codex usage limit until 16:10: send reviews and implementations to Claude until then/);
+  assert.equal(s.run(5, { limits: () => { throw new Error('boom'); } }).result, 'ACTION');
+  const n = calls.length;
+  assert.equal(s.run(500, { limits: limitsProbe }).result, 'BUDGET');
+  assert.equal(calls.length, n, 'a cap that ends the tick does not read the transcripts');
+});
+
+// ---- usage limits, fix round 1 (review r1) ----
+
+test('limits (f) F1: the real probe uses the tick\'s injected now, not the wall clock', (t) => {
+  const f = limitFixture(t);
+  const now = local(2026, 10, 15, 14, 30);
+  const where = { repo: f.repo, dir: join(f.repo, '..', 'state'), local: join(f.repo, '..', 'state', 'local'), active: true, linked: false };
+  const rstore = receiptsRuns.runsStore(where.dir, names);
+  rstore.write('run', 'codex-T-TU-1-reviewer-1', {
+    runId: 'codex-T-TU-1-reviewer-1', task: 'T-TU-1', role: 'reviewer', provider: 'codex', adapterVersion: null, model: null, sandbox: 'read-only', cwd: f.repo,
+    pid: null, pidStart: null, pidMethod: null, lease: null, status: 'failed', queuedAt: new Date(now - 5 * MIN).toISOString(), startedAt: new Date(now - 4 * MIN).toISOString(),
+    endedAt: new Date(now - MIN).toISOString(), elapsedMs: 0, capS: 900, tokens: null, tokensReason: null, costMicroUsd: null,
+    lastLine: "You've hit your usage limit. Try again at 4:10 PM.", unknownEvents: 0, outFile: join(f.repo, 'out.json'), exit: 1, error: null,
+  });
+  const probe = loop.gitProbe(where, f.env, names);
+  const hit = probe.limits({ since: new Date(now - 60 * MIN).toISOString(), runs: [], now });
+  assert.deepEqual([hit?.kind, hit?.resetAt], ['codex', local(2026, 10, 15, 16, 10)]);
+});
+
+test('limits (g) F2: no cap of any kind lets the tick read the limit probe; the subscription mode skips the cost caps', (t) => {
+  const mk = (patch, cost, billing = null) => {
+    const s = storeDir(t);
+    s.store.write('task', 'T-TU-1', task('T-TU-1', 'new'));
+    s.store.write('loop', null, { ...loop.newLoop({ now: T0, caps: { ...CAPS, costMicroUsd: 10000 }, billing }), ...patch });
+    let calls = 0;
+    const run = () => s.run(1, { cost: () => cost, limits: () => { calls++; return { kind: 'session', resetAt: T0 + 20 * MIN, source: 's' }; } });
+    return { run, calls: () => calls };
+  };
+  let x = mk({}, { costMicroUsd: 10000, partial: false });
+  assert.equal(x.run().result, 'BUDGET');
+  assert.equal(x.calls(), 0, 'the measured cost cap');
+  x = mk({ costMicroUsd: 10000 }, { costMicroUsd: 0, partial: false });
+  assert.equal(x.run().result, 'BUDGET');
+  assert.equal(x.calls(), 0, 'the stored cost cap');
+  x = mk({ unmeasured: loop.UNMEASURED - 1 }, { costMicroUsd: 0, partial: true, unmeasurable: true });
+  assert.equal(x.run().result, 'BUDGET');
+  assert.equal(x.calls(), 0, 'the unmeasurable-cost cap');
+  x = mk({}, { costMicroUsd: 10000, partial: false }, { mode: 'subscription', source: 'test' });
+  assert.equal(x.run().result, 'WAIT');
+  assert.equal(x.calls(), 1, 'subscription: the cost caps do not apply');
 });

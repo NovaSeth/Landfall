@@ -162,6 +162,21 @@ test('T-MG-105: a changed lock falls back to single-task merges in the requested
   assert.ok(existsSync(join(r.dir, 'node_modules/batch-local/index.cjs')));
 });
 
+test('T-MG-111: a sequential fallback merge commit names the task branch, not the sha', async (t) => {
+  const r = repo(t);
+  localDependency(r);
+  const a = r.task('feat/a', 'a.test.mjs', DEPENDENT_TEST, {
+    onBranch: () => r.write('package-lock.json', '{"name":"batch-fixture","lockfileVersion":3,"version":"2"}\n'),
+  });
+  const b = r.task('feat/b', 'b.test.mjs', DEPENDENT_TEST);
+  const res = await cli(['task', 'merge', a, b, '--yes'], r);
+  assert.equal(res.code, 0, JSON.stringify(res.env.errors));
+  assert.equal(res.env.data.fallback.mode, 'sequential');
+  for (const [id, name] of [[a, 'feat/a'], [b, 'feat/b']]) {
+    assert.equal(r.git('log', '-1', '--format=%s', merges(r, id)[0].data.commit), `Merge branch '${name}'`);
+  }
+});
+
 test('T-MG-105: a branch predating a target risk path is not a gate change', async (t) => {
   const r = repo(t);
   const a = r.task('feat/a', 'a.test.mjs');
