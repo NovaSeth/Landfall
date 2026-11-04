@@ -3,7 +3,7 @@
 // is; only the schema is stamped. An older plugin refuses a schema-3 file as newer (GC9) instead of failing on an
 // unknown fact.
 export default Object.freeze({
-  id: '008-profile-fast-guards',
+  id: '010-profile-fast-guards',
   kind: 'profile',
   from: 2,
   to: 3,

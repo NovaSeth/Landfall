@@ -38,7 +38,7 @@ const observation = {
   f: { facts: allFacts((value) => ({ t: 'obj', f: { value, evidence, confidence } })), gates, riskPaths, files: { t: 'int', min: 0, max: 100000000 } },
 };
 
-// Profile schema 3: the said facts riskGlobs and reviewFocus (migration 003) and fastGuards (008) (each stamps an older file; its
+// Profile schema 3: the said facts riskGlobs and reviewFocus (migration 003) and fastGuards (010) (each stamps an older file; its
 // content needs no change).
 export const PROFILE_KINDS = Object.freeze({
   profile: defineKind('profile', 3, {

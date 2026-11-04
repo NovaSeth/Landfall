@@ -385,10 +385,10 @@ test('006-task-outcome and 007-finding-regression: migrate changes only the sche
   assert.deepEqual(state.migrate(state.open(dir, { names })).steps, [], 'a second run writes nothing');
 });
 
-// T-MG-152: profile 2 -> 3 (008, the fact fastGuards) is a no-op step: only the schema line changes (GC9).
-test('008-profile-fast-guards: migrate changes only the schema of a v2 profile', async (t) => {
+// T-MG-152: profile 2 -> 3 (010, the fact fastGuards) is a no-op step: only the schema line changes (GC9).
+test('010-profile-fast-guards: migrate changes only the schema of a v2 profile', async (t) => {
   const { PROFILE_KINDS } = await import(pathToFileURL(join(pluginDir, 'lib', 'profile', 'index.mjs')).href);
-  const step = MIGRATIONS.find((m) => m.id === '008-profile-fast-guards');
+  const step = MIGRATIONS.find((m) => m.id === '010-profile-fast-guards');
   assert.deepEqual(step && { kind: step.kind, from: step.from, to: step.to }, { kind: 'profile', from: 2, to: 3 });
   assert.equal(PROFILE_KINDS.profile.version, 3);
   const dir = scratch(t);
@@ -396,6 +396,6 @@ test('008-profile-fast-guards: migrate changes only the schema of a v2 profile',
   const before = readFileSync(join(dir, 'profile.json'), 'utf8');
   const s = state.open(dir, { names, kinds: { ...KINDS, ...PROFILE_KINDS } });
   const out = state.migrate(s, { at: new Date(AT) });
-  assert.deepEqual(out.steps.filter((x) => x.rel === 'profile.json').map(({ from, to, ids }) => ({ from, to, ids })), [{ from: 2, to: 3, ids: ['008-profile-fast-guards'] }]);
+  assert.deepEqual(out.steps.filter((x) => x.rel === 'profile.json').map(({ from, to, ids }) => ({ from, to, ids })), [{ from: 2, to: 3, ids: ['010-profile-fast-guards'] }]);
   assert.equal(readFileSync(join(dir, 'profile.json'), 'utf8'), before.replace(/^ {2}"schema": 2,$/m, '  "schema": 3,'));
 });
