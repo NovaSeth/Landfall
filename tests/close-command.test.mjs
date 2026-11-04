@@ -161,3 +161,23 @@ test('a stop line keeps the step and the whole next command within the message l
     if (why === 'short cause') assert.ok(message.includes(': short cause;'), message);
   }
 });
+
+// Fix round 2 (F2 for batches): with many IDs the task list and the retry command are bounded too; the retry command is
+// never cut mid-word, and the full ID list stays in --json data.tasks.
+test('a batch stop line with 15 IDs fits the message limit and ends with a whole retry command', async () => {
+  const { stopMessage } = await import(join(pluginDir, 'lib', 'cli', 'close.mjs'));
+  const { LIMITS, normalizeError } = await import(join(pluginDir, 'lib', 'cli', 'envelope.mjs'));
+  const ids = Array.from({ length: 15 }, (_, k) => `T-MG-${178 + k}`);
+  for (const why of ['failed', 'z'.repeat(400)]) {
+    const raw = stopMessage({ names, ids, tasks: ids, step: 'merge', code: 1, why });
+    const message = normalizeError({ code: 'close-stopped', message: raw }).message;
+    assert.equal(message, raw, `not clipped by the envelope (${raw.length} chars)`);
+    assert.ok(message.length <= LIMITS.message, `${message.length}`);
+    assert.ok(message.startsWith('15 tasks: close stopped at merge (exit 1)'), message);
+    const next = /; next: (\S+ close(?: T-MG-\d+)+) … \(\+(\d+) more; all \d+ in --json data\.tasks\)$/.exec(message);
+    assert.ok(next, message);
+    assert.ok(next[1].startsWith(`${names.bin} close T-MG-178 T-MG-179`), next[1]);
+    assert.equal(next[1].split(' ').length - 2 + Number(next[2]), 15, 'shown IDs plus the rest are all 15');
+    if (why === 'failed') assert.ok(message.includes(': failed;'), message);
+  }
+});
