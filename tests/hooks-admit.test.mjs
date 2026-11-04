@@ -60,3 +60,21 @@ test('malformed input allows and writes nothing', (t) => {
   assert.equal(hook('bind-agent', { cwd: f.dir, tool_use_id: 'toolu_1', tool_response: { agentId: 7 } }, { env: f.env }).stdout, '');
   assert.equal(leases(f).length, 0); assert.deepEqual(shadowLog(f), []);
 });
+
+// S4 (T-MG-180): the implementer keeps the model its agent file declares; an override is denied in every admission mode.
+for (const mode of ['off', 'shadow', 'on']) {
+  test(`model lock (${mode}): an implementer launched with another model is denied, ORC-21 and the designer named`, (t) => {
+    const f = repo(t);
+    f.store.write('config', null, { schema: 1, flags: { admission: mode } });
+    const call = (tool_input) => hook('admit-agent', { hook_event_name: 'PreToolUse', tool_name: 'Agent', session_id: 'sess-1', cwd: f.dir, tool_use_id: 'toolu_m', tool_input }, { env: f.env });
+    const v = call({ subagent_type: type, model: 'opus', prompt: 'x' });
+    assert.equal(v.decision, 'deny');
+    assert.match(v.reason, /ORC-21/); assert.match(v.reason, new RegExp(`hard work goes to ${names.plugin}:designer \\(ORC-1\\)`));
+    assert.equal(call({ subagent_type: type, model: 'sonnet', prompt: 'x' }).decision, 'allow');
+    assert.equal(call({ subagent_type: type, prompt: 'x' }).decision, 'allow');
+    assert.equal(call({ subagent_type: `${names.plugin}:designer`, model: 'opus' }).decision, 'allow');
+    assert.equal(call({ subagent_type: 'Explore', model: 'opus' }).decision, 'allow');
+    assert.equal(call({ subagent_type: type, model: 7 }).decision, 'allow');
+    assert.equal(call(null).decision, 'allow');
+  });
+}
