@@ -695,7 +695,7 @@ test('defects cap families at 20 plus other and stay under 4096 bytes', async ()
 test('saveReceipt never erases saved details with null; a new value replaces them', async (t) => {
   const p = await project(t);
   const { taskReceipt, saveReceipt } = await lib('receipts/index.mjs');
-  const ctx = { cwd: p.dir, env: p.env, names };
+  const ctx = { cwd: p.repo, env: p.env, names };
   const first = taskReceipt('T-TU-1', ctx);
   const gates = { attempts: 1, firstPass: true, gatesMs: 5, heavyWaitMs: 0, cache: 'hit' };
   const defects = { blocking: 1, minor: 0, byFamily: { SEC: 1 }, rounds: 1 };
