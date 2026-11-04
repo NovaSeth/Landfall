@@ -344,7 +344,7 @@ const ACCEPTED_FP = [
   ['git merge --no-ff -m "$MSG" feat/x'], ['git add "$FILE" && git commit -m "fix stash"'], ['git checkout -b "feat/$NAME" && git push -u origin HEAD'],
   ['git rebase --onto "$BASE" main feat/x'], ['git -C "$REPO" status && git push origin feat/x'], ['git push "-o$OPT" origin feat/x'],
   // a shell with any option (-c, -o, -O, -e …) in a line with a guarded token: the guard does not interpret options or values (R3-1)
-  ["bash -c 'echo $HOME'"], ['bash -c "npm test" && git push -f', null, 'feat'], ["sh -c 'cd /tmp' && git push -f", null, 'feat'],
+  ["bash -c 'git push origin $B'"], ['bash -c "npm test" && git push -f', null, 'feat'], ["sh -c 'cd /tmp' && git push -f", null, 'feat'],
   ['bash -o pipefail .workflow/bin/check-secrets.sh; echo $?'], ['zsh -o pipefail .workflow/bin/check-secrets.sh; echo $?'],
   ['bash -o pipefail -c "npm test" | tail -1'], ['bash -O extglob .workflow/bin/task.sh P1 complete "commits a..b"'],
   ['bash -eu .workflow/bin/check-secrets.sh && git push -u origin HEAD', null, 'feat'],
@@ -630,20 +630,32 @@ const MUST_BLOCK = [...PORTED_BLOCK, ...NEW_BLOCK].map(([c, id, ctx]) => [withBi
 const MUST_ALLOW = [...PORTED_ALLOW, ...NEW_ALLOW].map(([c, id, ctx]) => [withBin(c), id, ctx]);
 const DAILY_ROWS = DAILY.map(([c, id, ctx]) => [withBin(c), id, ctx]);
 
-// A repository on a branch with one commit.
-function gitRepo(branch) {
+// The guard does nothing where Landfall has no state, so a fixture that expects verdicts holds an active state (no
+// registered handle, so the team mode stays unknown unless a test activates handles).
+function markActive(d) {
+  const store = state.open(join(d, names.stateDir), { names });
+  if (!existsSync(join(d, names.stateDir, 'state.json'))) {
+    store.write('state', null, { codename: names.codename, createdWith: readJson(join(pluginDir, '.claude-plugin', 'plugin.json')).version, activatedAt: '2026-10-15T10:00:00.000Z' });
+  }
+  return store;
+}
+// A repository on a branch with one commit and an active state; { state: false }: none.
+function gitRepo(branch, { state: withState = true } = {}) {
   const d = mkdtempSync(join(tmpdir(), `g-${branch}-`));
   spawnSync('git', ['init', '-q', '-b', branch, d]);
   spawnSync('git', ['-C', d, '-c', 'user.name=T', '-c', 'user.email=t@example.com', 'commit', '-q', '--allow-empty', '-m', 'x']);
+  if (withState) markActive(d);
   return d;
 }
+let stateDirRepo;
+const stateRepo = () => (stateDirRepo ??= gitRepo('main')); // a directory where Landfall has state: the guard works there
 let dirs;
 function contexts() {
   if (dirs) return dirs;
-  const none = mkdtempSync(join(tmpdir(), 'g-none-'));
+  const none = mkdtempSync(join(tmpdir(), 'g-none-')); spawnSync('git', ['init', '-q', none]); markActive(none); // unborn: the branch is unknown
   const main = gitRepo('main'); const feat = gitRepo('feat');
   spawnSync('git', ['-C', main, 'config', 'alias.pub', 'push --force origin main']); spawnSync('git', ['-C', main, 'config', 'alias.lg', 'log --oneline']);
-  const pkg = mkdtempSync(join(tmpdir(), 'g-npm-')); mkdirSync(join(pkg, 'src'));
+  const pkg = mkdtempSync(join(tmpdir(), 'g-npm-')); mkdirSync(join(pkg, 'src')); spawnSync('git', ['init', '-q', pkg]); markActive(pkg);
   writeFileSync(join(pkg, 'package.json'), JSON.stringify({ scripts: PKG_SCRIPTS }));
   return (dirs = { none, main, feat, npm: join(pkg, 'src'), tracked: trackedRepo(), corrupt: trackedRepo(), newer: trackedRepo(), nogit: trackedRepo() });
 }
@@ -661,9 +673,8 @@ function ctxEnv(ctx) {
 // and a decision record; untracked build/ and node_modules/.
 function trackedRepo() {
   const d = gitRepo('feat');
-  const store = state.open(join(d, names.stateDir), { names });
+  const store = markActive(d);
   const at = '2026-10-15T10:00:00.000Z';
-  store.write('state', null, { codename: names.codename, createdWith: readJson(join(pluginDir, '.claude-plugin', 'plugin.json')).version, activatedAt: at });
   state.registerHandle(store, { name: 'Dev AB', email: 'ab@example.com', handle: 'AB' });
   store.write('task', 'T-AB-1', { id: 'T-AB-1', kind: 'task', title: 'x', lane: null, owner: 'AB', class: null, classHistory: [], status: 'new', round: 0,
     events: [{ at, by: 'AB', event: 'created', data: {} }], base: null, branch: null });
@@ -808,11 +819,11 @@ test('guard messages: English, at most 300 characters, start with the rule ID, s
 });
 
 test('guard hook output: a block is the PreToolUse permission decision JSON; an allow prints nothing (launcher, exit 0)', async () => {
-  const deny = await launch(eventOf('git stash', tmpdir()));
+  const deny = await launch(eventOf('git stash', stateRepo()));
   assert.equal(deny.status, 0, deny.stderr);
   assert.deepEqual(Object.keys(JSON.parse(deny.stdout)), ['hookSpecificOutput']);
   assert.equal(deny.event, 'PreToolUse'); assert.equal(deny.decision, 'deny'); assert.match(deny.reason, /^ORC-13: /);
-  const allow = await launch(eventOf('git status', tmpdir()));
+  const allow = await launch(eventOf('git status', stateRepo()));
   assert.equal(allow.status, 0, allow.stderr); assert.equal(allow.stdout, ''); assert.equal(allow.stderr, '');
 });
 
@@ -828,7 +839,7 @@ test('guard: a huge or deeply nested command ends fast: blocked with a token, al
   ];
   let most = 0;
   for (const [cmd, want] of cases) {
-    const r = await launch(eventOf(cmd, tmpdir()));
+    const r = await launch(eventOf(cmd, stateRepo()));
     most = Math.max(most, r.cpuMs);
     assert.equal(r.status, 0, r.stderr);
     assert.equal(r.decision, want, `${cmd.slice(0, 40)}…: ${r.reason}`);
@@ -929,8 +940,7 @@ test('guard team mode (readProjectMode): solo allows a plain push main → main,
 
 // The default readers come from lib/state (I3.2): the repository of the command's directory, resolved once per call.
 function activate(dir, handles) {
-  const store = state.open(join(dir, names.stateDir), { names });
-  store.write('state', null, { codename: names.codename, createdWith: readJson(join(pluginDir, '.claude-plugin', 'plugin.json')).version, activatedAt: '2026-10-15T10:00:00.000Z' });
+  const store = markActive(dir);
   handles.forEach((h, k) => state.registerHandle(store, { name: `Dev ${h}`, email: `${h.toLowerCase()}${k}@example.com`, handle: h }));
   return store;
 }
@@ -958,7 +968,7 @@ test('guard project rules from lib/state: guard-extra.txt of an active state dir
   writeFileSync(join(active, names.stateDir, 'guard-extra.txt'), rule);
   const v = await launch(eventOf('./deploy.sh staging', active));
   assert.equal(v.decision, 'deny'); assert.match(v.reason, /^SEC-4: blocked by a project rule \(guard-extra\.txt:1\): deploys need the release checklist/);
-  const inactive = gitRepo('feat'); mkdirSync(join(inactive, names.stateDir));
+  const inactive = gitRepo('feat', { state: false }); mkdirSync(join(inactive, names.stateDir));
   writeFileSync(join(inactive, names.stateDir, 'guard-extra.txt'), rule);
   assert.equal((await launch(eventOf('./deploy.sh staging', inactive))).decision, 'allow', 'no state.json: not active, no project rules');
   // a rule file the guard cannot read safely (a symbolic link): a guarded token is blocked, the rest passes
@@ -984,7 +994,7 @@ test('guard removal: the repository from a subdirectory, its parent, another rep
   assert.match(at(repo, `rm -rf ${wt}`).reason, /^PRI-17: .*worktree/);
   symlinkSync('src', join(repo, 'lnk'));
   assert.equal(at(repo, 'rm -rf lnk').decision, 'allow', 'a link to a tracked directory: rm removes only the link');
-  const unborn = mkdtempSync(join(tmpdir(), 'g-unborn-')); spawnSync('git', ['init', '-q', unborn]); mkdirSync(join(unborn, 'src'));
+  const unborn = mkdtempSync(join(tmpdir(), 'g-unborn-')); spawnSync('git', ['init', '-q', unborn]); markActive(unborn); mkdirSync(join(unborn, 'src'));
   assert.equal(at(unborn, 'rm -rf src').decision, 'allow', 'nothing committed yet: no tracked directory');
   assert.equal(at(unborn, 'rm -rf .').decision, 'deny', 'the repository itself still is one');
 });
@@ -1048,9 +1058,9 @@ test('guard: unknown state (branch, git, package.json) blocks a token and passes
   const deny = (d, command, env) => { const v = run(d, command, env); assert.equal(v.decision, 'deny', `${command}: ${v.reason}`); assert.match(v.reason, /^SEC-3: /, command); };
   const detached = gitRepo('feat'); spawnSync('git', ['-C', detached, 'checkout', '-q', '--detach']);
   for (const cmd of ['git push', 'git push -f', 'git push origin HEAD']) deny(detached, cmd);
-  const unborn = mkdtempSync(join(tmpdir(), 'g-unborn-')); spawnSync('git', ['init', '-q', '-b', 'feat', unborn]); deny(unborn, 'git push -f');
+  const unborn = mkdtempSync(join(tmpdir(), 'g-unborn-')); spawnSync('git', ['init', '-q', '-b', 'feat', unborn]); markActive(unborn); deny(unborn, 'git push -f');
   const corrupt = gitRepo('feat'); writeFileSync(join(corrupt, '.git/HEAD'), 'garbage\n'); deny(corrupt, 'git push -f');
-  deny(mkdtempSync(join(tmpdir(), 'g-no-repo-')), 'git push -u origin HEAD');
+  assert.equal(run(mkdtempSync(join(tmpdir(), 'g-no-repo-')), 'git push -u origin HEAD').decision, 'allow', 'no repository, no state: the guard does nothing');
   const feat = gitRepo('feat');
   assert.equal(run(feat, 'git push -f').decision, 'allow', 'a task branch with a commit');
   deny(feat, 'git push -f', { PATH: '/nonexistent' });
@@ -1209,11 +1219,11 @@ test('own-command auto-allow: off logs nothing (userConfig auto_allow_own_comman
 
 test('own-command auto-allow: the default shadow log is one JSON line in the plugin data directory (launcher)', async () => {
   const data = mkdtempSync(join(tmpdir(), 'plugin-data-'));
-  const r = await launch(eventOf(withBin('@BIN@ status'), tmpdir()), { CLAUDE_PLUGIN_DATA: data });
+  const r = await launch(eventOf(withBin('@BIN@ status'), stateRepo()), { CLAUDE_PLUGIN_DATA: data });
   assert.equal(r.status, 0); assert.equal(r.stdout, '', r.stderr);
   const lines = readFileSync(join(data, 'shadow.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
   assert.equal(lines.length, 1); assert.equal(lines[0].event, 'would-allow'); assert.equal(lines[0].command, withBin('@BIN@ status'));
-  const none = await launch(eventOf(withBin('@BIN@ status'), tmpdir()));
+  const none = await launch(eventOf(withBin('@BIN@ status'), stateRepo()));
   assert.equal(none.status, 0); assert.equal(none.stdout, ''); assert.equal(none.stderr, '', 'no plugin data directory: no log, no error');
 });
 
@@ -1269,4 +1279,22 @@ test('launcher catch: a broken plugin copy blocks a guarded Bash command as unve
     assert.equal(run(eventOf('git stash', tmpdir()), 'session-start').status, registryLoads ? 0 : 2, `${missing}: another hook`);
     rmSync(copy, { recursive: true, force: true });
   }
+});
+
+test('guard does nothing where Landfall has no state: a repository without a state directory allows what an active one blocks', () => {
+  const heredoc = "python3 - <<'E'\nprint(1)\nE";
+  const none = gitRepo('main', { state: false }); const active = gitRepo('main'); activate(active, ['AB']);
+  for (const c of ['git push --force origin main', 'git push origin $B', heredoc]) {
+    assert.equal(judgeAt(none, c, { readProjectMode: () => 'unknown' }).decision, 'allow', `no state: ${c}`);
+    if (c !== heredoc) assert.equal(judgeAt(active, c, { readProjectMode: () => 'solo' }).decision, 'deny', `active: ${c}`);
+  }
+  const plain = mkdtempSync(join(tmpdir(), 'g-plain-dir-'));
+  assert.equal(judgeAt(plain, 'git push origin $B').decision, 'allow', 'not a repository');
+  // the state cannot be resolved (git missing, an active-looking marker): still blocked
+  const unknown = trackedRepo();
+  const v = judgeAt(unknown, 'git push origin $B', { env: { ...process.env, CLAUDE_PROJECT_DIR: unknown, PATH: mkdtempSync(join(tmpdir(), 'g-nogit-')) } });
+  assert.equal(v.decision, 'deny', 'unknown state keeps blocking');
+  // a state directory that exists in any form (here without state.json) keeps today's verdicts
+  const partial = gitRepo('main', { state: false }); mkdirSync(join(partial, names.stateDir));
+  assert.equal(judgeAt(partial, 'git push origin $B').decision, 'deny', 'a state directory exists');
 });
