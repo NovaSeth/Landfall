@@ -27,7 +27,13 @@ export const why = (w) => { throw new NotPlain(w); };
 // the shell, git or a loader reads (PATH, IFS, HOME, the ENV_EXEC list …: its value changes what runs, not only a
 // word), a name is set or used any other way in the text (printf -v, read, declare, export, for, unset, +=, an array
 // index) or assigned twice, or a reference stands where the command name goes (a command from a variable has no shape).
-// `for NAME in <literal words>; do <body>; done` as the whole text is unrolled the same way.
+// `for NAME in <literal words>; do <body>; done` is unrolled the same way: as the whole text, or as one complete segment
+// of it (T-MG-132: it starts the text or follows ;, a newline or &&, and ;, a newline, && or the end follows its done),
+// when its NAME is no variable the shell or a loader reads, its body sets or names NAME in no other way than $NAME /
+// ${NAME} (a reassignment would change the value the body runs with) and, for a segment, the rest of the line does not
+// read $NAME (its value after the loop) and the body holds no other compound command. A segment is found on the
+// top-level segments, so a text with a backslash, a # or a << (an escape, a comment, a heredoc: they move where bash
+// ends the loop) is never split; at most LOOPS loops are unrolled in one text.
 // (linear, A-1: the value's trailing whitespace is trimmed after the match, not by a lazy `(.*?)\s*$`)
 const ASSIGN_RE = /^\s*([A-Za-z_]\w*)=(.*)$/s;
 const ASSIGN = { exec: (s) => { const m = ASSIGN_RE.exec(s); return m && [m[0], m[1], m[2].trimEnd()]; } };
@@ -110,12 +116,50 @@ function substitute(text, vars) {
   return out;
 }
 
-export function expandLiterals(src) {
-  const loop = FOR.exec(src);
-  if (loop) {
-    const words = loop[2].split(/\s+/).filter(Boolean).map(literal);
-    if (words.length && words.every((w) => w !== null)) return expandLiterals(words.map((w) => substitute(loop[3], new Map([[loop[1], w]]))).join('; '));
+// The body of `loop` ([, name, words, body]) once per literal word with $NAME substituted, or null (no proof of the
+// value: a word that is not a literal, a special NAME, the body naming NAME another way, a result over UNROLL_MAX).
+const UNROLL_MAX = 65536;
+const LOOPS = 8;
+function unroll(loop) {
+  const [, name, list, body] = loop;
+  const words = list.split(/\s+/).filter(Boolean).map(literal);
+  if (!words.length || words.some((w) => w === null) || SPECIAL.test(name) || ENV_EXEC.test(name)) return null;
+  if (new RegExp(`(?<![\\w$\\{])${name}(?!\\w)`).test(body)) return null;
+  if (words.length * (body.length + Math.max(...words.map((w) => w.length))) > UNROLL_MAX) return null;
+  return words.map((w) => substitute(body, new Map([[name, w]]))).join('; ');
+}
+// A for loop as one complete segment of the text, unrolled in place, or null (see the comment above ASSIGN_RE).
+const JOIN = new Set(['', ';', '\n', '&&']);
+const HEAD_SEP = new Set([';', '\n']);
+const COMPOUND = /^(?:for|while|until|select|if|then|else|elif|fi|case|esac|do|done|function|coproc)(?:\s|$)/;
+function loopSegment(src) {
+  if (/[\\#]|<</.test(src)) return null;
+  const segs = segments(src);
+  if (!segs) return null;
+  const glue = (list) => list.map((x) => x.text + x.sep).join('');
+  for (let i = 0; i < segs.length; i++) {
+    if (!FOR_HEAD.test(segs[i].text.trim()) || !JOIN.has(i ? segs[i - 1].sep : '') || !HEAD_SEP.has(segs[i].sep)) continue;
+    let j = i + 1;
+    while (j < segs.length && segs[j].text.trim() !== 'done') j++;
+    if (j >= segs.length || !JOIN.has(segs[j].sep)) return null;
+    const inner = segs.slice(i + 1, j).map((x, k) => (k ? x.text.trim() : x.text.trim().replace(/^do\s+/, '')));
+    if (inner.some((t) => COMPOUND.test(t))) return null;
+    const loop = FOR.exec(glue(segs.slice(i, j)) + segs[j].text);
+    const body = loop && unroll(loop);
+    const after = segs[j].sep + glue(segs.slice(j + 1));
+    if (body === null || new RegExp(`\\$\\{?${loop[1]}(?!\\w)`).test(after)) return null;
+    return glue(segs.slice(0, i)) + body + after;
   }
+  return null;
+}
+
+export function expandLiterals(src) { return expandText(src, 0); }
+function expandText(src, depth) {
+  const loop = FOR.exec(src);
+  const whole = loop && unroll(loop);
+  if (whole !== null && whole !== undefined) return expandText(whole, depth + 1);
+  const part = depth < LOOPS ? loopSegment(src) : null;
+  if (part !== null) return expandText(part, depth + 1);
   const segs = segments(src);
   if (!segs) return src;
   const vars = new Map();
