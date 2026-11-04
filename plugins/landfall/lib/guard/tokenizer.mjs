@@ -33,7 +33,10 @@ export const why = (w) => { throw new NotPlain(w); };
 // ${NAME} (a reassignment would change the value the body runs with) and, for a segment, the rest of the line does not
 // read $NAME (its value after the loop) and the body holds no other compound command. A segment is found on the
 // top-level segments, so a text with a backslash, a # or a << (an escape, a comment, a heredoc: they move where bash
-// ends the loop) is never split; at most LOOPS loops are unrolled in one text.
+// ends the loop) is never split; at most LOOPS loops are unrolled in one text. A wait loop `until|while <one plain read
+// or test>; do <sleep N | one plain read>; done`, found the same way, is read as `<condition>; <body>`: its programs
+// (WAIT_READ, sleep) change no directory, branch or file, so one pass proves every pass; a redirection or & in either
+// part leaves the loop as written (the shapes still check both commands).
 // (linear, A-1: the value's trailing whitespace is trimmed after the match, not by a lazy `(.*?)\s*$`)
 const ASSIGN_RE = /^\s*([A-Za-z_]\w*)=(.*)$/s;
 const ASSIGN = { exec: (s) => { const m = ASSIGN_RE.exec(s); return m && [m[0], m[1], m[2].trimEnd()]; } };
@@ -132,13 +135,27 @@ function unroll(loop) {
 const JOIN = new Set(['', ';', '\n', '&&']);
 const HEAD_SEP = new Set([';', '\n']);
 const COMPOUND = /^(?:for|while|until|select|if|then|else|elif|fi|case|esac|do|done|function|coproc)(?:\s|$)/;
+const WAIT_HEAD = /^(?:until|while)\s+/;
+const WAIT_READ = /^(?:test|\[|true|false|:|ls|cat|head|tail|wc|stat|grep|egrep|fgrep|diff|cmp)(?:\s|$)/;
+const SLEEP = /^sleep\s+\d+(?:\.\d+)?[smhd]?$/;
+// The wait loop whose head is segs[i], as `<condition>; <body>` in place, or null.
+function waitLoop(segs, i, glue) {
+  const cond = segs[i].text.trim().replace(WAIT_HEAD, '');
+  const doSeg = segs[i + 1]; const end = segs[i + 2];
+  if (!doSeg || !end || !HEAD_SEP.has(doSeg.sep) || end.text.trim() !== 'done' || !JOIN.has(end.sep)) return null;
+  const body = doSeg.text.trim().replace(/^do\s+/, '');
+  if (body === doSeg.text.trim() || /[<>&]/.test(cond + body) || !WAIT_READ.test(cond) || !(SLEEP.test(body) || WAIT_READ.test(body))) return null;
+  return `${glue(segs.slice(0, i))}${cond}; ${body}${end.sep}${glue(segs.slice(i + 3))}`;
+}
 function loopSegment(src) {
   if (/[\\#]|<</.test(src)) return null;
   const segs = segments(src);
   if (!segs) return null;
   const glue = (list) => list.map((x) => x.text + x.sep).join('');
   for (let i = 0; i < segs.length; i++) {
-    if (!FOR_HEAD.test(segs[i].text.trim()) || !JOIN.has(i ? segs[i - 1].sep : '') || !HEAD_SEP.has(segs[i].sep)) continue;
+    if (!JOIN.has(i ? segs[i - 1].sep : '') || !HEAD_SEP.has(segs[i].sep)) continue;
+    if (WAIT_HEAD.test(segs[i].text.trim())) return waitLoop(segs, i, glue);
+    if (!FOR_HEAD.test(segs[i].text.trim())) continue;
     let j = i + 1;
     while (j < segs.length && segs[j].text.trim() !== 'done') j++;
     if (j >= segs.length || !JOIN.has(segs[j].sep)) return null;
