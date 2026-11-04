@@ -643,3 +643,30 @@ test('node-test spec: a result line whose name is only a location is no test', (
   ].join('\n');
   assert.deepEqual(ids(parse(out)), ['outer flow', 'real']);
 });
+
+test('node-test TAP: lines inside a YAML diagnostic block are never results or subtests', () => {
+  const out = [
+    'TAP version 13',
+    '# Subtest: real one',
+    'not ok 1 - real one',
+    '  ---',
+    '  duration_ms: 1.4',
+    '  error: |-',
+    '    stdout of an inner run:',
+    '    # Subtest: inner',
+    '    ok 3 - x',
+    '    not ok 4 - y',
+    '    ok handler',
+    '  ...',
+    '# Subtest: real two',
+    'ok 2 - real two',
+    '  ---',
+    '  duration_ms: 0.1',
+    '  ...',
+    '1..2',
+    '# tests 2',
+    '# fail 1',
+    '',
+  ].join('\n');
+  assert.deepEqual(ids(parse(out)), ['real one', 'real two']);
+});
