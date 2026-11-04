@@ -119,6 +119,11 @@ const compile = (globs) => globs.map((glob) => ({ glob, segs: compileGlob(glob) 
 const DEFAULT_GLOBS = compile(DEFAULT_RISK_PATHS);
 const DEFAULT_LIGHT = compile(DEFAULT_LIGHT_PATHS);
 
+export function riskMatcher(riskPaths = []) {
+  const globs = checkGlobs(riskPaths);
+  return (path) => { const names = path.split('/'); return globs.some((g) => matchSegments(g.segs, names)); };
+}
+
 export function lightMatcher(thresholds) {
   const lights = Array.isArray(thresholds.lightPaths) ? (thresholds === THRESHOLDS ? DEFAULT_LIGHT : compile(thresholds.lightPaths)) : [];
   return (path) => { const names = path.split('/'); return lights.some((g) => matchSegments(g.segs, names)); };
@@ -191,7 +196,7 @@ export function classify({ paths, loc, flags = [], riskPaths = [], thresholds = 
   const { trivial, critical } = thresholds;
   const light = lightMatcher(thresholds);
   // A risk path is never weightless: a change to agent instructions (CLAUDE.md, SKILL.md, ...) is no docs-only change.
-  const risky = (p) => { const names = p.split('/'); return globs.some((g) => matchSegments(g.segs, names)); };
+  const risky = riskMatcher(riskPaths);
   const sized = files.filter((p) => risky(p) || (!weightless(p) && !light(p)));
   const docsOnly = sized.length === 0;
   const lightOnly = docsOnly && files.some(light);
