@@ -16,6 +16,8 @@ import taskMergedAt from './004-task-merged-at.mjs';
 import loopBilling from './005-loop-billing.mjs';
 import taskOutcome from './006-task-outcome.mjs';
 import findingRegression from './007-finding-regression.mjs';
+import verifyMachine from './008-verify-machine.mjs';
+import reviewFocus from './009-review-focus.mjs';
 
-export const MIGRATIONS = Object.freeze([stateFlagsToConfig, profileSaidGlobs, taskMergedAt, loopBilling, taskOutcome, findingRegression]);
+export const MIGRATIONS = Object.freeze([stateFlagsToConfig, profileSaidGlobs, taskMergedAt, loopBilling, taskOutcome, findingRegression, verifyMachine, reviewFocus]);
 export const LAYOUTS = Object.freeze([renameStateDir]);

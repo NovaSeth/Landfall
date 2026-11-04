@@ -119,7 +119,7 @@ test('verify re-runs every profile gate and writes verify.json in the §8.4 shap
   assert.deepEqual(Object.keys(doc), ['schema', 'task', 'head', 'gatesSha', 'baselineSha', 'class', 'startedAt', 'durationMs', 'gates', 'inventory', 'failures', 'route', 'artifacts', 'result']);
   assert.equal(doc.gatesSha, verify.gatesSha(GATES));
   assert.equal(doc.baselineSha, verify.baselineSha(r.vstore.read('baseline', null)));
-  assert.deepEqual([doc.schema, doc.task, doc.head, doc.class, doc.result], [1, r.id, r.git('rev-parse', 'HEAD'), 'trivial', 'pass']);
+  assert.deepEqual([doc.schema, doc.task, doc.head, doc.class, doc.result], [verify.VERIFY_KINDS.verify.version, r.id, r.git('rev-parse', 'HEAD'), 'trivial', 'pass']);
   assert.deepEqual(doc.gates.map((g) => [g.name, g.cmd, g.exit, g.result]), [['test', 'node --test', 0, 'pass'], ['lint', 'node -e 0', 0, 'pass']]);
   assert.deepEqual(Object.keys(doc.gates[0]), ['name', 'cmd', 'exit', 'durationMs', 'result'], 'no gate output in committed state');
   assert.ok(res.env.data.output[0].lines.some((l) => l.includes('adds')), 'the tail of the gate output, in the reply');

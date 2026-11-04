@@ -97,7 +97,7 @@ test('a done reviewer run of the task records an external review with the run ID
   assert.equal(res.code, 0, res.text);
   assert.equal(res.env.data.round, 1);
   const sha256 = createHash('sha256').update(readFileSync(outFile)).digest('hex');
-  assert.deepEqual(r.vstore.read('review', verify.reviewKey(r.id, 1)), { schema: 1, ...EXTERNAL, run: runId, sha256 });
+  assert.deepEqual(r.vstore.read('review', verify.reviewKey(r.id, 1)), { schema: verify.VERIFY_KINDS.review.version, ...EXTERNAL, run: runId, sha256 });
   const event = r.store.read('task', r.id).events.at(-1);
   assert.deepEqual([event.event, event.data.reviewer], ['review', 'external']);
 });
@@ -162,7 +162,7 @@ test('kind claude with --from still records, with no run and no sha256', async (
     const res = await cli(['review', 'record', r.id, '--from', file, ...extra], r);
     assert.equal(res.code, 0, res.text);
   }
-  assert.deepEqual(r.vstore.read('review', verify.reviewKey(r.id, 1)), { schema: 1, ...CLAUDE });
+  assert.deepEqual(r.vstore.read('review', verify.reviewKey(r.id, 1)), { schema: verify.VERIFY_KINDS.review.version, ...CLAUDE });
   assert.deepEqual(reviewKeys(r).length, 2);
 });
 
@@ -227,7 +227,7 @@ test('a stored external round without run and sha256 does not count; verify name
   assert.equal(verify.reviewState(r.vstore, r.id, ['review'], { tier: 'L1' }), 'missing', 'it counts for no route');
   assert.equal(verify.reviewState(r.vstore, r.id, ['review']), 'not-required', 'nor as an approval where none is needed');
   assert.equal(verify.reviewProblem(r.vstore, r.id, names), `external review without its run: record it again with ${names.bin} review record ${r.id} --kind external --run <run ID>`);
-  assert.deepEqual(r.vstore.read('review', verify.reviewKey(r.id, 1)), { schema: 1, ...EXTERNAL }, 'the old round is kept');
+  assert.deepEqual(r.vstore.read('review', verify.reviewKey(r.id, 1)), { schema: verify.VERIFY_KINDS.review.version, ...EXTERNAL }, 'the old round is kept');
   const { runId } = addRun(r);
   assert.equal((await viaRun(r, runId)).code, 0);
   assert.equal(verify.reviewState(r.vstore, r.id, steps, { providerAvailable: true }), 'approved');

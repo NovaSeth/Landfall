@@ -426,6 +426,6 @@ test('008-verify-machine and 009-review-focus: migrate changes only the schema o
     assert.equal(readFileSync(join(dir, rel), 'utf8'), want, `${rel}: only the schema changed, byte for byte`);
     assert.equal(readFileSync(join(dir, out.backup, rel), 'utf8'), before[rel], `${rel}: the original is backed up`);
   }
-  assert.deepEqual(snapshot(dir, { skip: (r) => r in files || r.startsWith('local/backup') }), untouched, 'nothing else changed');
+  assert.deepEqual(snapshot(dir, { skip: (r) => r in files || r.startsWith('local/backup') || r === 'local/.machine' }), untouched, 'nothing else changed');
   assert.deepEqual(state.migrate(state.open(dir, { names, kinds })).steps, [], 'a second run writes nothing');
 });

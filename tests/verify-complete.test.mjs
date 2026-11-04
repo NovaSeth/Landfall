@@ -126,7 +126,7 @@ test('review record: a valid typed review becomes review-r<k>.json through the r
   assert.equal(res.code, 0, show(res));
   assert.deepEqual([res.env.command, res.env.data.task, res.env.data.round, res.env.data.verdict], ['review record', r.id, 1, 'needs-fixes']);
   assert.equal(res.env.data.file, `${names.stateDir}/tasks/${r.id}/review-r1.json`);
-  assert.deepEqual(r.vstore.read('review', verify.reviewKey(r.id, 1)), { schema: 1, ...first });
+  assert.deepEqual(r.vstore.read('review', verify.reviewKey(r.id, 1)), { schema: verify.VERIFY_KINDS.review.version, ...first });
   const event = r.store.read('task', r.id).events.at(-1);
   assert.deepEqual([event.event, event.by, event.data], ['review', r.handle, { round: 1, verdict: 'needs-fixes', reviewer: 'claude' }]);
   assert.equal(verify.reviewState(r.vstore, r.id, ['review']), 'missing', 'the latest round needs fixes');
@@ -206,7 +206,7 @@ test('review.schema.json is the typed contract: strict objects, every property r
   ];
   for (const s of samples) {
     const bySchema = verify.reviewErrors(s).length === 0;
-    const byKind = state.check(verify.VERIFY_KINDS.review, { schema: 1, ...s }).length === 0;
+    const byKind = state.check(verify.VERIFY_KINDS.review, { schema: verify.VERIFY_KINDS.review.version, ...s }).length === 0;
     assert.equal(bySchema, byKind, `schema and kind disagree on ${JSON.stringify(s).slice(0, 120)}`);
   }
   assert.throws(() => verify.schemaErrors({ type: 'string', format: 'email' }, 'a'), /format/, 'an unsupported keyword is an error, never ignored');
