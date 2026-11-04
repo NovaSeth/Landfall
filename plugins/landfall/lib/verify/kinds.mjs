@@ -49,7 +49,7 @@ export const VERIFY_KINDS = Object.freeze({
     },
     opt: ['pinnedBy'],
   }),
-  verify: defineKind('verify', 2, {
+  verify: defineKind('verify', 3, {
     dir: 'tasks',
     keyPattern: PATTERNS.taskId,
     file: (id) => `tasks/${id}/verify.json`,
@@ -86,8 +86,13 @@ export const VERIFY_KINDS = Object.freeze({
       cache: { t: 'enum', of: CACHE_STATES },
       heavyWaitMs: count,
       gatesMs: count,
+      // Schema 3 (T-MG-186, D-MG-65): a verify written by the merge train. The passing train gate on the integrated tree
+      // is the task's verify: mode train, the commit the gate ran on, the head the target was fast-forwarded to (both
+      // contain the task tip) and the train's batch id.
+      mode: { t: 'enum', of: ['train'] },
+      train: { t: 'obj', f: { commit: str(64, { re: PATTERNS.sha }), head: str(64, { re: PATTERNS.sha }), batch: str(80, { re: /^batch-\d{8}T\d{6}(?:-\d+)?$/ }) } },
     },
-    opt: ['machine', 'cache', 'heavyWaitMs', 'gatesMs'],
+    opt: ['machine', 'cache', 'heavyWaitMs', 'gatesMs', 'mode', 'train'],
   }),
   // The output tails of the latest verify of a task: machine-local (local/ is never committed), JSON text.
   verifyLog: defineKind('verifyLog', 1, {

@@ -19,6 +19,7 @@ import findingRegression from './007-finding-regression.mjs';
 import verifyMachine from './008-verify-machine.mjs';
 import reviewFocus from './009-review-focus.mjs';
 import profileFastGuards from './010-profile-fast-guards.mjs';
+import verifyTrain from './011-verify-train.mjs';
 
-export const MIGRATIONS = Object.freeze([stateFlagsToConfig, profileSaidGlobs, taskMergedAt, loopBilling, taskOutcome, findingRegression, verifyMachine, reviewFocus, profileFastGuards]);
+export const MIGRATIONS = Object.freeze([stateFlagsToConfig, profileSaidGlobs, taskMergedAt, loopBilling, taskOutcome, findingRegression, verifyMachine, reviewFocus, profileFastGuards, verifyTrain]);
 export const LAYOUTS = Object.freeze([renameStateDir]);

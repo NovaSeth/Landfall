@@ -96,7 +96,7 @@ test('every command the templates, skills, agents, loop steps, hook messages and
   }
   const has = (part, name) => refs.some((r) => r.where.startsWith(part) && isPrefix(name, r.words));
   for (const [part, name] of [['templates/', 'gen apply'], ['templates/', 'decisions check'], ['skills/', 'rule'], ['agents/', 'rule'], ['lib/loop/', 'task set'],
-    ['lib/loop/', 'brief'], ['lib/loop/', 'verify'], ['lib/hooks/', 'tick'], ['lib/guard/', 'decisions supersede']]) assert.ok(has(part, name), `${part}: names ${name}`);
+    ['lib/loop/', 'brief'], ['lib/loop/', 'train'], ['lib/hooks/', 'tick'], ['lib/guard/', 'decisions supersede']]) assert.ok(has(part, name), `${part}: names ${name}`);
   assert.ok(OWN_COMMANDS.length >= 8, 'the allow list is scanned');
   assert.deepEqual(unresolved(refs), []);
 });

@@ -1,6 +1,6 @@
 // Commands of the verify unit (spec §8.1, §8.2), loaded by their rows in lib/cli/commands.mjs: `verify <id> [--ci]`,
 // `task done <id>`, `task merge <id> [--branch <b>]` (several IDs or --ready: a batch, batch.mjs), `review record <id> --from <file> | --kind external --run <runId>`, `baseline show`,
-// `baseline pin --decision <D>`. Context comes from io (cwd, env), never from process state (COD-9). A typed error
+// `baseline pin --decision <D>`, `train <id…> | --ready` (train.mjs). Context comes from io (cwd, env), never from process state (COD-9). A typed error
 // of lib/state, lib/router or lib/profile becomes its exit code with message and hint.
 // Exit: verify and task merge by result (pass 0 · error 8 · any other 1); task done 0 when done; review record 0
 // when recorded, 2 with one error per failing field; baseline show 1 when the sha256 does not match the content.
@@ -14,6 +14,7 @@ import { batchMerge } from './batch.mjs';
 import { markDone } from './done.mjs';
 import { adoptMerged, mergeTask } from './merge.mjs';
 import { pinBaseline, showBaseline } from './pin.mjs';
+import { runTrain } from './train.mjs';
 import { EXTERNAL_HINT, recordReview } from './review.mjs';
 import { verifyTask } from './run.mjs';
 
@@ -97,6 +98,18 @@ export const taskMerge = typed(({ args, flags, names, version, io }) => {
   else if (r.verify) lines = [`merge of ${r.branch} aborted: the outcome gates are ${r.result}`, ...renderVerify(r.verify).slice(1)];
   else lines = [`merge of ${r.branch} aborted${r.conflicts.length ? `: conflicts in ${some(r.conflicts)}` : ''}`];
   return { code: EXIT[exit], data, errors: reasons, warnings: receiptWarnings(r.receiptProblem, r.task, names), text: `${forTerminal(lines.join('\n'))}\n` };
+});
+
+// `train <id…> | --ready` (T-MG-186): one line per task (merged and done, or why not), the gate runs and the batch id.
+export const train = typed(({ args, flags, names, version, io }) => {
+  const ids = [].concat(args.id ?? []);
+  if (flags.ready && ids.length) return { code: EXIT.USAGE, errors: [{ code: 'unexpected-argument', message: '--ready takes the approved tasks itself: give no IDs', hint: `${names.bin} train --ready` }] };
+  if (!flags.ready && ids.length === 0) return { code: EXIT.USAGE, errors: [{ code: 'missing-argument', message: 'train: missing <id>', hint: `${names.bin} train <id…> | --ready` }] };
+  const b = runTrain({ cwd: io.cwd, env: io.env, names, ids, ready: Boolean(flags.ready), version: version ?? null });
+  const { exit, reasons, ...data } = b;
+  const lines = b.tasks.length === 0 ? ['no task is ready for the train'] : b.tasks.map((t) => `${t.task}  ${t.outcome === 'merged' ? `merged${t.done ? ' and done' : ''}` : `${t.outcome}: ${t.why}`}`);
+  if (b.tasks.length) lines.push(`gate runs: ${b.gateRuns} · batch ${b.batch}${b.commit ? ` · ${b.target} at ${b.commit.slice(0, 12)}` : ''}`);
+  return { code: EXIT[exit], data, errors: reasons, warnings: b.tasks.flatMap((t) => receiptWarnings(t.receiptProblem, t.task, names)), text: `${forTerminal(lines.join('\n'))}\n` };
 });
 
 export const reviewRecord = typed(({ args, flags, names, io }) => {
