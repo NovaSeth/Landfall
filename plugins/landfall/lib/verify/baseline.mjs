@@ -63,3 +63,25 @@ export function splitFailures(referenceFailing, current) {
   const unique = [...new Set(current)];
   return { preexisting: unique.filter((f) => known.has(f)).sort(byCodeUnit), new: unique.filter((f) => !known.has(f)).sort(byCodeUnit) };
 }
+
+// Whether the working baseline `current` only grew since the verify record `v` compared against it (task done: another
+// task's passing verify grows the shared baseline, which must not make this verify stale). verify.json keeps the
+// inventory the baseline became on pass, so the baseline the verify saw is rebuilt from it and proven by v.baselineSha;
+// without that proof the answer is false. True only when the rebuilt baseline and the verify's own inventory hold:
+//   - the same collector and the same failure fingerprints (as a set: an allowance another verify dropped or added
+//     changes what the verify tolerated), and every test of the rebuilt baseline is still listed, skipped exactly as then (an added
+//     test is growth; a removed, newly skipped or un-skipped one is not);
+//   - no test the verify's inventory reports as removed or newly skipped is listed in `current` again.
+export function grewOnly(current, v) {
+  const inv = v?.inventory;
+  if (!current || !inv || !Array.isArray(inv.tests) || !Array.isArray(v.failures?.preexisting)) return false;
+  const seen = { collector: inv.collector, tests: inv.tests, failing: v.failures.preexisting };
+  if (v.baselineSha === null || baselineSha(seen) !== v.baselineSha) return false;
+  if (current.collector !== seen.collector) return false;
+  const was = new Set(seen.failing);
+  const failing = new Set(current.failing ?? []);
+  if (was.size !== failing.size || [...was].some((f) => !failing.has(f))) return false;
+  const now = new Map(current.tests.map((t) => [t.id, t]));
+  if (seen.tests.some((t) => !now.has(t.id) || now.get(t.id).skipped !== t.skipped)) return false;
+  return ![...(inv.removed ?? []), ...(inv.newlySkipped ?? [])].some((id) => now.has(id));
+}
