@@ -49,7 +49,7 @@ import { authorHandle, readRecords, stateRel } from '../decisions/index.mjs';
 import { git } from '../git/index.mjs';
 import { PROFILE_KINDS, emptyProfile, listFiles, observe, riskGlobsOf } from '../profile/index.mjs';
 import { lightMatcher, riskMatcher } from '../router/classify.mjs';
-import { MAX_PATHS, addedSteps, applyClass, classify, rank, recordedKeys, routeFor, routeTask, routerThresholds, weightless } from '../router/index.mjs';
+import { MAX_PATHS, addedSteps, applyClass, classify, rank, recordedKeys, routeFor, routeTask, routerThresholds, testPath, weightless } from '../router/index.mjs';
 import { KINDS, StateError, check, gatesShaOf, open, resolve } from '../state/index.mjs';
 import { appliedTier, readReport, reportHasEvidence, reviewNeed, reviewProblem, reviewState } from './artifacts.mjs';
 import { measureAt } from './base.mjs';
@@ -245,6 +245,8 @@ function integrationRefs(where, env) {
 // (lib/router) count no LOC unless they match a risk glob.
 function changeSince(where, env, base, scope, light = () => false, risky = () => false) {
   const counted = (path) => risky(path) || (!weightless(path) && !light(path));
+  // Total LOC also counts test files (the trivial cut); `counted` alone, without them, feeds the split rule.
+  const countedAll = (path) => counted(path) || (testPath(path) && !light(path));
   const wt = gitIn(where, env, ['diff', '--name-only', '-z', 'HEAD', ...scope]);
   if (wt.status !== 0) return null;
   const paths = new Set(wt.stdout.split('\0').filter(Boolean));
@@ -260,22 +262,28 @@ function changeSince(where, env, base, scope, light = () => false, risky = () =>
   }
   const tracked = [...paths].filter((p) => !UNSAFE_PATH.test(p)).slice(0, MAX_PATHS);
   let loc = 0;
+  let locCode = 0;
   if (tracked.length) {
     const d = gitIn(where, env, ['diff', '--numstat', '-z', '--no-renames', base, '--', ...tracked]);
     if (d.status !== 0) return null;
     for (const rec of d.stdout.split('\0')) {
       const m = /^(\d+|-)\t(\d+|-)\t([\s\S]+)$/.exec(rec);
-      if (!m || m[1] === '-' || !counted(m[3])) continue;
+      if (!m || m[1] === '-' || !countedAll(m[3])) continue;
       loc += Number(m[1]) + Number(m[2]);
+      if (counted(m[3])) locCode += Number(m[1]) + Number(m[2]);
     }
   }
   const u = gitIn(where, env, ['ls-files', '-z', '--others', '--exclude-standard', ...scope]);
   for (const p of u.status === 0 ? u.stdout.split('\0').filter(Boolean) : []) {
     if (paths.has(p)) continue;
     paths.add(p);
-    if (counted(p)) loc += lineCount(join(where.worktree, p));
+    if (countedAll(p)) {
+      const n = lineCount(join(where.worktree, p));
+      loc += n;
+      if (counted(p)) locCode += n;
+    }
   }
-  return { paths: [...paths].filter((p) => !UNSAFE_PATH.test(p)).slice(0, MAX_PATHS), loc };
+  return { paths: [...paths].filter((p) => !UNSAFE_PATH.test(p)).slice(0, MAX_PATHS), loc, locCode };
 }
 
 // The paths a merge in progress brings onto the target tip (the index against the tip), the state directory left out.
@@ -290,7 +298,7 @@ function reroute({ store, task, id, write, handle, riskPaths, change, at }) {
   const route = { declared, actual: declared, escalated: false, missingSteps: [] };
   let flags = recordedKeys(task).flags;
   if (change.paths.length === 0) return { route, flags };
-  const plan = { paths: change.paths, loc: change.loc, flags: [], riskPaths };
+  const plan = { paths: change.paths, loc: change.loc, locCode: change.locCode, flags: [], riskPaths };
   if (write) {
     const r = routeTask(store, id, { ...plan, handle, at });
     flags = recordedKeys(store.read('task', id)).flags;

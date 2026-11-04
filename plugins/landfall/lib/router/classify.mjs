@@ -174,9 +174,10 @@ const strip = ({ code, text, path }) => (path === undefined ? { code, text } : {
 // and its translation, one a batch of screenshots. A path is weightless by its extension alone (a script under docs/ is
 // code; archives, executable formats, .txt manifests such as requirements.txt and .svg, which may carry script, never
 // are: review r1 F4); a change made only of weightless paths is `docs-only`: size never raises it above standard.
-// Test files (the root tests/ directory, or a real *.test.<ext> suffix) never count toward the split thresholds; the trivial cut still counts every file.
+// Test files (the root tests/ directory, or a real *.test.<ext> suffix) never count toward the split thresholds; the trivial cut still counts every file and every line (`loc`); `locCode` is the LOC without test lines, for the split rule only.
 const TEST_PATH = /^tests\/|\.test\.(?:js|mjs|cjs|ts|tsx|py)$/i;
 const WEIGHTLESS_EXT = /\.(?:md|mdx|markdown|rst|adoc|asciidoc|png|jpe?g|gif|webp|avif|ico|bmp|tiff?|pdf|mp[34]|mov|webm|ogg|wav|woff2?|ttf|otf|eot)$/i;
+export const testPath = (path) => TEST_PATH.test(path);
 export const weightless = (path) => WEIGHTLESS_EXT.test(path) || TEST_PATH.test(path);
 
 // Light paths (incident 2026-10-27: a project whose only code was a throwaway UI prototype under mockups/ had every
@@ -189,9 +190,10 @@ export const weightless = (path) => WEIGHTLESS_EXT.test(path) || TEST_PATH.test(
 // `riskPaths` are the profile's globs, added to the defaults; `thresholds` are the shipped ones with the repository's
 // overrides (lib/config thresholdsOf), the shipped ones when omitted. Size thresholds count the paths that carry weight;
 // a docs-only change (every path weightless, no flag) is trivial when small and standard otherwise.
-export function classify({ paths, loc, flags = [], riskPaths = [], thresholds = THRESHOLDS } = {}) {
+export function classify({ paths, loc, locCode = loc, flags = [], riskPaths = [], thresholds = THRESHOLDS } = {}) {
   const files = checkPaths(paths);
   checkLoc(loc);
+  checkLoc(locCode);
   const declared = checkFlags(flags);
   const globs = checkGlobs(riskPaths);
   const { trivial, split } = thresholds;
@@ -216,7 +218,7 @@ export function classify({ paths, loc, flags = [], riskPaths = [], thresholds = 
   if (!docsOnly && files.length > trivial.maxFiles) add('standard', 'files-over-trivial', `${files.length} files > ${trivial.maxFiles}`, 'files-over-trivial');
   if (!docsOnly && loc > trivial.maxLoc) add('standard', 'loc-over-trivial', `${loc} LOC > ${trivial.maxLoc}`, 'loc-over-trivial');
   if (sized.length > split.overFiles) add('standard', 'split-files', `split: ${sized.length} files > ${split.overFiles}`, 'split-files');
-  if (!docsOnly && loc > split.overLoc) add('standard', 'split-loc', `split: ${loc} LOC > ${split.overLoc}`, 'split-loc');
+  if (!docsOnly && locCode > split.overLoc) add('standard', 'split-loc', `split: ${locCode} LOC > ${split.overLoc}`, 'split-loc');
   for (const f of declared) if (!CRITICAL_FLAGS.includes(f)) add('standard', 'flag', `flag ${f}`, `flag:${f}`);
 
   const cls = all.some((r) => r.level === 'critical') ? 'critical' : all.length ? 'standard' : 'trivial';
