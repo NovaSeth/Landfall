@@ -15,6 +15,7 @@ const profile = await lib('profile/index.mjs');
 const state = await lib('state/index.mjs'); // trustWith (T-MG-83)
 const { main } = await lib('cli/main.mjs');
 const { VERIFY_KINDS } = await lib('verify/kinds.mjs');
+const { measure } = await lib('verify/measure.mjs');
 
 const IDENTITY = '[user]\n\tname = Test User\n\temail = test@example.com\n';
 const REPORT = '---\nred: {"command": "node --test", "exit": 1, "excerpt": "1 failing"}\ngreen: {"command": "node --test", "exit": 0, "excerpt": "1 passing"}\n---\n\n# Report\n';
@@ -211,4 +212,18 @@ test('a wait of the base measurement counts in heavyWaitMs', { timeout: 120000 }
   assert.ok(d.gatesMs + d.heavyWaitMs <= d.durationMs, `${d.gatesMs} + ${d.heavyWaitMs} <= ${d.durationMs}`);
   await holder.released;
   assert.equal(waitLines(s).length, 1);
+});
+
+// Fix round 1 (review r1 F1): the waits log is optional telemetry. A directory at local/waits.jsonl (EISDIR) neither
+// fails a call that passed nor replaces the error of a call that threw (heavy-busy reaches the caller as it was).
+test('a waits log that cannot be written changes no result and hides no error of the call that waited', async (t) => {
+  const s = await setup(t, { timeoutS: 30, cmd: 'node --test' });
+  mkdirSync(join(s.stateDir, 'local', 'waits.jsonl'), { recursive: true });
+  const store = profile.openStore(s.stateDir, names);
+  const cost = measure({ store, id: s.id, mode: 'write' });
+  const wait = () => cost.meter.waits.push({ at: '2026-11-04T10:00:00.000Z', until: '2026-11-04T10:00:03.000Z' });
+  assert.equal(cost.heavy(() => { wait(); return 'runs'; }), 'runs', 'a call that passed keeps its result');
+  const busy = new state.StateError('heavy-busy', 'ENV', 'no heavy slot within 590 s');
+  assert.throws(() => cost.heavy(() => { wait(); throw busy; }), (e) => e === busy, 'the call\'s own error, not the log\'s');
+  assert.equal(cost.fields('miss').cache, 'miss');
 });
