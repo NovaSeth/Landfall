@@ -598,3 +598,68 @@ test('r1 #6: profile observe writes node:test gates with the TAP reporter and Je
     assert.equal(profile.observeFiles(dir, files).gates[0].cmd, cmd, script);
   });
 });
+
+// A stack frame of a failing test's YAML block ("ok (file:///tmp/base-x/t.test.mjs:4:32)") reads like a TAP result line
+// `ok (<location>)`; a name that is only a location is no test, and a real name that holds a path stays one.
+test('node-test TAP: a stack frame named ok in a failure block is no test; a real name holding a path stays', () => {
+  const out = (dir) => [
+    'TAP version 13',
+    '# Subtest: outer flow',
+    'not ok 1 - outer flow',
+    '  ---',
+    '  duration_ms: 1.4',
+    "  location: '" + dir + "/a.test.mjs:3:1'",
+    '  error: |-',
+    '    step failed',
+    '  stack: |-',
+    '    ok (file://' + dir + '/a.test.mjs:4:32)',
+    '    TestContext.<anonymous> (file://' + dir + '/a.test.mjs:5:3)',
+    '    ok ' + dir + '/a.test.mjs:4:32',
+    '  ...',
+    '# Subtest: reads /etc/hosts:1:2 text',
+    'ok 2 - reads /etc/hosts:1:2 text',
+    '  ---',
+    '  duration_ms: 0.1',
+    '  ...',
+    '1..2',
+    '# tests 2',
+    '# fail 1',
+    '',
+  ].join('\n');
+  const a = parse(out('/tmp/base-AAA'));
+  const b = parse(out('/tmp/base-BBB'));
+  assert.deepEqual(ids(a), ['outer flow', 'reads /etc/hosts:1:2 text']);
+  assert.deepEqual(ids(a), ids(b));
+});
+
+test('node-test TAP: lines inside a YAML diagnostic block are never results or subtests', () => {
+  const out = [
+    'TAP version 13',
+    '# Subtest: real one',
+    'not ok 1 - real one',
+    '  ---',
+    '  duration_ms: 1.4',
+    '  error: |-',
+    '    stdout of an inner run:',
+    '    # Subtest: inner',
+    '    ok 3 - x',
+    '    not ok 4 - y',
+    '    ok handler',
+    '  ...',
+    '# Subtest: real two',
+    'ok 2 - real two',
+    '  ---',
+    '  duration_ms: 0.1',
+    '  ...',
+    '1..2',
+    '# tests 2',
+    '# fail 1',
+    '',
+  ].join('\n');
+  assert.deepEqual(ids(parse(out)), ['real one', 'real two']);
+});
+
+test('node-test TAP: a real test name that holds a path-like text is kept', () => {
+  const out = ['TAP version 13', 'ok 1 - (input=/tmp/a:1:2)', '1..1', '# tests 1', '# fail 0', ''].join('\n');
+  assert.deepEqual(ids(parse(out)), ['(input=/tmp/a:1:2)']);
+});
