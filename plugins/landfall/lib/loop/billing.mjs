@@ -44,14 +44,15 @@ export function billingMode({ env, names, home, byUser = false, envOnly = false 
     let note = null;
     if (typeof forced === 'string' && forced !== '') {
       if (forced === 'api' || (forced === 'subscription' && byUser)) return { mode: forced, source: name };
-      if (forced !== 'subscription') note = `${name}=${JSON.stringify(forced.slice(0, 40))} is not recognized (api or subscription)`;
+      if (forced !== 'subscription') note = `${name}=${JSON.stringify(forced.slice(0, 40))} is not recognized`;
     }
-    for (const k of KEYS) if (typeof e[k] === 'string' && e[k] !== '') return { mode: 'api', source: k };
-    for (const k of FLAGS) if (e[k] === '1' || e[k] === 'true') return { mode: 'api', source: k };
+    const by = (source) => (note === null ? source : `${source} (${note})`);
+    for (const k of KEYS) if (typeof e[k] === 'string' && e[k] !== '') return { mode: 'api', source: by(k) };
+    for (const k of FLAGS) if (e[k] === '1' || e[k] === 'true') return { mode: 'api', source: by(k) };
     if (envOnly) return { mode: 'unknown', source: note ?? 'no billing signal in the environment' };
     const dir = typeof e.CLAUDE_CONFIG_DIR === 'string' && e.CLAUDE_CONFIG_DIR !== '' ? e.CLAUDE_CONFIG_DIR : (home ?? homedir());
     const type = billingType(join(dir, '.claude.json'));
-    if (type !== null && type.toLowerCase().includes('subscription')) return { mode: 'subscription', source: 'claude.json billingType' };
+    if (type !== null && type.toLowerCase().includes('subscription')) return { mode: 'subscription', source: by('claude.json billingType') };
     return { mode: 'unknown', source: note ?? 'no billing signal found' };
   } catch {
     return { mode: 'unknown', source: 'billing could not be determined' };
