@@ -17,6 +17,7 @@ import { CHECKLISTS, globMatch, recordedKeys, reviewFocus } from '../router/inde
 import { KINDS, open, resolve, writeTaskText } from '../state/index.mjs';
 import { codeState } from '../verify/run.mjs';
 import { openStore } from '../verify/index.mjs';
+import { taskWhere } from '../verify/where.mjs';
 import { dataLine, fenceLine } from '../text/data.mjs';
 import { seal, unedited } from './brief.mjs';
 import { EXIT } from './commands.mjs';
@@ -64,9 +65,10 @@ export function reviewBrief({ args, flags, names, io, pluginRoot }) {
     if (!(asked >= 1 && asked <= 999)) return usage('invalid-value', `--round ${String(flags.round).slice(0, 40)}: expected an integer from 1 to 999`, `${bin} review brief ${id} --round 2`);
   }
   if (flags.force && !flags.write) return usage('missing-flag', '--force applies only with --write', `${bin} review brief ${id} --write --force`);
-  const where = resolve({ cwd: io.cwd, env: io.env, names });
+  let where = resolve({ cwd: io.cwd, env: io.env, names });
   if (!where.active) return { code: EXIT.REFUSED, errors: [{ code: 'inactive', message: `${where.repo} is not active: a review brief is rendered from its state`, hint: `'${bin} init' activates it` }] };
   const store = open(where.dir, { names });
+  where = taskWhere(where, store, id);
   const task = store.read('task', id);
   if (!task) return fail('task-unknown', `no task ${id} in ${where.dir}`, `'${bin} task list' lists the tasks`);
   if (!task.class) return fail('task-unrouted', `${id} is not routed: its class decides the rules of the brief`, `${bin} route ${id} --paths <p,…> --loc <n>`);
