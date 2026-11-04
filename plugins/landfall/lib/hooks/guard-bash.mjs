@@ -66,10 +66,6 @@ function guardStates(s, names) {
 
 // True when the resolved state is certainly empty: no repository, or a repository whose state directory does not exist,
 // is not linked, has no worktree copy, and the directory is not inside one. Active, unknown or any trace goes to the guard.
-// A command that could act in another directory (cd, pushd, popd, -C, --git-dir, --work-tree, GIT_DIR, GIT_WORK_TREE, an
-// absolute, parent or home path, a command word from a variable, a substitution) is never skipped: it may reach a repository
-// with state.
-const LEAVES_CWD = /\b(cd|pushd|popd|chdir)\b|(^|\s)-C|--git-dir|--work-tree|GIT_DIR|GIT_WORK_TREE|(^|[\s='":;&|(<>])\/|\.\.|~|`|\$\(|(^|[;&|(]\s*)\$/;
 function stateless(s, cwd) {
   if (s.none) return s.certain === true;
   const w = s.where;
@@ -79,6 +75,13 @@ function stateless(s, cwd) {
   const inside = (d) => c === d || c.startsWith(d + sep);
   return !inside(w.dir) && !(w.copy && inside(w.copy));
 }
+
+// Fails closed, no parsing: a command is never skipped when it contains a quote, a backslash, `$` or a backtick (a word can be
+// split or built), a directory option or variable (--directory, --git-dir, --work-tree, GIT_DIR, GIT_WORK_TREE, -C), cd, pushd,
+// popd, chdir, an absolute, parent or home path, or a command that moves or removes files (rm mv cp ln find xargs): any of
+// them may reach a repository with state.
+const MUST_GUARD = /['"\\$`]|\b(cd|pushd|popd|chdir|rm|mv|cp|ln|find|xargs)\b|(^|\s)-C|--directory|--git-dir|--work-tree|GIT_DIR|GIT_WORK_TREE|(^|[\s=:;&|(<>])\/|\.\.|~/;
+export const mustGuard = (command) => MUST_GUARD.test(command);
 
 const decision = (permissionDecision, reason) => ({
   stdout: JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision, permissionDecisionReason: reason } }),
@@ -137,7 +140,7 @@ function guardDecision(input, opts = {}) {
   let resolved; // once, and only when a default reader needs it
   const s = () => (resolved ??= stateOf(cwd, env, opts.deadline ?? Infinity));
   const active = () => (s().where?.active ? s().where : null);
-  if (opts.state === undefined && !LEAVES_CWD.test(command) && stateless(s(), cwd)) return { stdout: '' };
+  if (opts.state === undefined && !mustGuard(command) && stateless(s(), cwd)) return { stdout: '' };
   let v;
   for (const state of opts.state !== undefined ? [opts.state] : guardStates(s(), names)) {
     v = evaluate(command, {
