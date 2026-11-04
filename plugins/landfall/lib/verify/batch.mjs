@@ -137,6 +137,8 @@ export function batchMerge({ cwd, env, names, ids = null, ready = false, version
       const named = gitIn(where, env, ['rev-parse', '--verify', '-q', `${t.branch}^{commit}`]);
       const ref = !t.branch.startsWith('-') && named.status === 0 && named.stdout.trim() === t.sha ? t.branch : t.sha;
       const single = mergeTask({ cwd, env, names, id: t.task, branch: ref, version, at });
+      t.receipt = single.receipt;
+      t.receiptProblem = single.receiptProblem;
       result.verify = single.verify;
       result.output.push(...single.output);
       result.reasons.push(...single.reasons);

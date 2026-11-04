@@ -162,6 +162,49 @@ test('batch merge saves a receipt for every merged task after recording its even
   }
 });
 
+for (const json of [true, false]) {
+  test(`sequential batch fallback keeps success and exposes receipt build failures (${json ? 'JSON' : 'text'})`, async (t) => {
+    const r = repo(t, { timeoutS: 30 });
+    const heads = ['a', 'b'].map((name) => r.branch(`feat/${name}`, `${name}.test.mjs`));
+    const ids = ['a', 'b'].map((name, i) => {
+      const id = r.task(`feat/${name}`);
+      r.store.update('task', id, (task) => ({ ...task, events: [{ at: AT, by: r.handle, event: 'done', data: { head: heads[i] } }] }));
+      return id;
+    });
+    r.git('add', '-A');
+    r.git('commit', '-q', '-m', 'tasks');
+    // Dependencies without a lockfile force the real sequential fallback.
+    mkdirSync(join(r.dir, 'node_modules'));
+    r.env.CLAUDE_PLUGIN_DATA = state.resolve({ cwd: r.dir, env: r.env, names }).dataDir;
+    r.env.CLAUDE_CONFIG_DIR = join(r.env.HOME, 'unreadable-transcripts');
+    mkdirSync(r.env.CLAUDE_CONFIG_DIR);
+    symlinkSync('projects', join(r.env.CLAUDE_CONFIG_DIR, 'projects'));
+    const res = await cli(['task', 'merge', ...ids, '--yes'], { ...r, json });
+    assert.equal(res.code, 0, JSON.stringify(res.env ?? res.stderr));
+    for (const id of ids) assert.equal(merges(r, id).length, 1, 'receipt failure does not stop subsequent merges');
+    if (json) {
+      assert.equal(res.env.data.fallback.mode, 'sequential');
+      assert.match(res.env.data.fallback.reason, /no lockfile/);
+      assert.equal(res.env.data.tasks.length, ids.length);
+      for (const id of ids) {
+        const result = res.env.data.tasks.find((task) => task.task === id);
+        assert.equal(result.outcome, 'merged');
+        assert.equal(result.receiptProblem?.code, 'receipt-not-saved');
+        assert.match(result.receiptProblem.message, /ELOOP/);
+        assert.equal(result.receipt, null);
+      }
+    } else {
+      assert.match(res.stderr, /falling back to sequential merges: .*no lockfile/);
+      const warnings = res.stderr.trim().split('\n').filter((line) => line.startsWith('warning:'));
+      assert.equal(warnings.length, ids.length, 'one receipt warning per merged task');
+      for (const [i, id] of ids.entries()) {
+        assert.match(warnings[i], /^warning: .*receipt-not-saved/);
+        assert.ok(warnings[i].includes(`${names.bin} receipt --task ${id}`));
+      }
+    }
+  });
+}
+
 test('a single task merge writes the merged event and mergedAt through lib/state', async (t) => {
   const r = repo(t);
   r.branch('feat/a', 'a.test.mjs');
