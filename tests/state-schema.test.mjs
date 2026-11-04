@@ -320,7 +320,7 @@ test('num: finite numbers within min..max pass; NaN, Infinity, strings, null and
     assert.deepEqual(at(k, { x, y: null, z: 0 }), ['x:invalid-value'], `x ${String(x)}`);
   }
   for (const z of [NaN, Infinity, -Infinity, null]) assert.deepEqual(at(k, { x: 1, y: null, z }), ['z:invalid-value'], `unbounded z ${String(z)}`);
-  assert.equal(serialize(k.spec, { x: 2.5, y: null, z: 0 }), '{\n  "x": 2.5,\n  "y": null,\n  "z": 0\n}\n');
+  assert.equal(serialize(k, { x: 2.5, y: null, z: 0 }), '{\n  "x": 2.5,\n  "y": null,\n  "z": 0\n}\n');
 });
 
 test('arr min and unique: an empty list fails at the field, a duplicate at its second occurrence', () => {
