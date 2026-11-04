@@ -123,14 +123,14 @@ const WEB = {
 // ---- keys ----
 
 test('the profile keys are the spec §7.3 list, fixed in keys.mjs; the deployment fact is deployedToUsers (§7.4a)', () => {
-  assert.deepEqual(profile.KEYS, ['goal', 'productKind', 'phase', 'people', 'ui', 'backend', 'llm', 'dataSensitivity', 'deployedToUsers', 'deadline', 'stack', 'ci', 'otherHarnesses', 'riskGlobs', 'reviewFocus', 'gates', 'riskPaths']);
+  assert.deepEqual(profile.KEYS, ['goal', 'productKind', 'phase', 'people', 'ui', 'backend', 'llm', 'dataSensitivity', 'deployedToUsers', 'deadline', 'stack', 'ci', 'otherHarnesses', 'riskGlobs', 'reviewFocus', 'fastGuards', 'gates', 'riskPaths']);
   assert.ok(!profile.KEYS.includes('deployed'), '`deployed` is not a key (§7.4a)');
   const F = profile.FACT_KEYS;
   assert.deepEqual(Object.keys(F), profile.KEYS.filter((k) => k !== 'gates' && k !== 'riskPaths'), 'gates and riskPaths are profile fields of their own (§5.1)');
-  assert.deepEqual([F.riskGlobs.type, F.reviewFocus.type], ['globs', 'notes'], 'the said risk globs and the review focus (retro 2026-10)');
+  assert.deepEqual([F.riskGlobs.type, F.reviewFocus.type, F.fastGuards.type], ['globs', 'notes', 'notes'], 'the said risk globs and the review focus (retro 2026-10)');
   assert.deepEqual(profile.parseValue('riskGlobs', 'client/src/ai/**, server/src/{hosts,webhooks}.ts'), ['client/src/ai/**', 'server/src/{hosts,webhooks}.ts']);
   assert.deepEqual(profile.parseValue('reviewFocus', 'maskedIds and hiddenIds in private mode, LAN-only webhooks'), ['maskedIds and hiddenIds in private mode', 'LAN-only webhooks']);
-  for (const [k, raw] of [['riskGlobs', 'a b/**'], ['riskGlobs', ''], ['reviewFocus', ''], ['riskGlobs', 'x/**, x/**']]) {
+  for (const [k, raw] of [['riskGlobs', 'a b/**'], ['riskGlobs', ''], ['reviewFocus', ''], ['fastGuards', ''], ['riskGlobs', 'x/**, x/**']]) {
     assert.throws(() => profile.parseValue(k, raw), (e) => e.exit === 'USAGE' && e.code === 'invalid-value', `${k}=${raw}`);
   }
   assert.deepEqual(F.productKind.of, ['library', 'cli', 'web', 'mobile', 'service', 'data', 'other']);

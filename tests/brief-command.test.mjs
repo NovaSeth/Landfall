@@ -73,6 +73,24 @@ async function project(t) {
 
 const rulesFor = (cls, role) => [...new Set([...method.BRIEF_RULES.role[role], ...method.BRIEF_RULES.class[cls]])];
 
+// T-MG-152: the profile fact fastGuards (fast cross-cutting checks) follows the profile gates in the gate block.
+const FAST = ['node --test tests/name.test.mjs', 'node --test tests/architecture.test.mjs'];
+const MARK = '# fast guards (profile fastGuards): run them with the task\'s own tests';
+test('brief appends the profile fastGuards after the gates, under a marker line; without the fact the text is unchanged', async (t) => {
+  const p = await project(t);
+  const base = await cli(['brief', 'T-TU-1'], p);
+  assert.equal(base.code, 0, show(base));
+  assert.ok(!base.out.includes('fast guards'), 'no fact, no marker');
+  const facts = { fastGuards: { value: FAST, source: 'said', evidence: 'said', confidence: 1, at: '2026-11-04T10:00:00.000Z' } };
+  profile.openStore(p.store, names).write('profile', null, { ...profile.emptyProfile(), gates: GATES, facts });
+  const r = await cli(['brief', 'T-TU-1'], p);
+  assert.equal(r.code, 0, show(r));
+  const gates = GATES.map((g) => g.cmd).join('\n');
+  assert.ok(r.out.includes(`\`\`\`bash\n${gates}\n${MARK}\n${FAST.join('\n')}\n${BIN} secrets\n\`\`\``), r.out);
+  const strip = (x) => x.replace(/sha256 [0-9a-f]{64}/, 'sha256 X');
+  assert.equal(strip(r.out.replace(`${MARK}\n${FAST.join('\n')}\n`, '')), strip(base.out), 'only the guard lines are added');
+});
+
 test('BRIEF_RULES: every role and class lists live rules of the method; briefRules is the role\'s then the class\'s, once each', () => {
   assert.deepEqual(Object.keys(method.BRIEF_RULES.role).sort(), ['implementer', 'reviewer', 'security-reviewer']);
   assert.deepEqual(Object.keys(method.BRIEF_RULES.class).sort(), ['critical', 'standard', 'trivial']);
