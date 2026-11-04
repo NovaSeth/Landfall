@@ -173,7 +173,7 @@ const NOT_RECORDED = Object.freeze({ mode: 'unknown', source: 'not recorded in t
 // One tick on an open store. probe: { heads() → text, email() → text | null, cost(startedAt) → { costMicroUsd, partial,
 // unmeasurable, problems }, dirty() → [path] }. Returns { result, reason, nextTickS, repeated, loop, steps, info,
 // costPartial, costProblems }.
-export function tickStore(store, { where, names, now, plan = null, probe, watch = [], billing = null }) {
+export function tickStore(store, { where, names, now, plan = null, probe, watch = [], billing = null, signal = null }) {
   const pre = store.read(LOOP.name, null);
   const measured = pre && !pre.exit ? { id: pre.id, startedAt: pre.startedAt, cost: measure(probe, pre, now) } : null;
   const heads = probe.heads();
@@ -185,7 +185,9 @@ export function tickStore(store, { where, names, now, plan = null, probe, watch 
       out = { ...decide(cur, {}), loop: cur, steps: [], info: [], costPartial: false, costProblems: [] };
       return undefined;
     }
-    const loop = cur ?? newLoop({ now, billing }); // the mode is decided here, once; later ticks use the stored one
+    let loop = cur ?? newLoop({ now, billing: typeof billing === 'function' ? billing() : billing }); // the mode is decided here, once; later ticks use the stored one
+    // one-way ratchet (F2): the tick environment may tighten the stored mode to api, never loosen it
+    if (cur && signal?.mode === 'api' && cur.billing?.mode !== 'api') loop = { ...cur, billing: { mode: 'api', source: `${signal.source} (at tick ${cur.ticks + 1})`.slice(0, 120) } };
     // a loop started by this tick has spent nothing; a loop replaced since the measurement is measured again
     const cost = cur === null ? { costMicroUsd: 0, partial: false }
       : measured && measured.id === cur.id && measured.startedAt === cur.startedAt ? measured.cost : measure(probe, cur, now);
@@ -211,7 +213,7 @@ export function tickStore(store, { where, names, now, plan = null, probe, watch 
 export function tick({ cwd, env, names, now = Date.now(), plan = null, readings = null }) {
   const { where, store } = activeStore({ cwd, env, names });
   const planDoc = plan === null ? null : readPlan(where.worktree, plan);
-  return { where, plan: planDoc?.path ?? null, ...tickStore(store, { where, names, now, plan: planDoc, probe: gitProbe(where, env, names), watch: readWatch({ names, env, now, readings }), billing: billingMode({ env, names }) }) }; // only a loop this tick creates stores it
+  return { where, plan: planDoc?.path ?? null, ...tickStore(store, { where, names, now, plan: planDoc, probe: gitProbe(where, env, names), watch: readWatch({ names, env, now, readings }), billing: () => billingMode({ env, names }), signal: billingMode({ env, names, envOnly: true }) }) }; // billing: only a loop this tick creates stores it; signal: may tighten a stored one
 }
 
 // A new loop with `caps` over the defaults. A running loop is never replaced; after an ended one (DONE, `loop stop`

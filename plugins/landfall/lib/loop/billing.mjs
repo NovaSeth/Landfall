@@ -33,9 +33,10 @@ function billingType(file) {
   }
 }
 
+// envOnly: steps 1-2 only (the account file is read at the loop creation, never by a tick).
 // byUser: the loop is started from a terminal. Only then does the override `subscription` count (it switches the cost cap
 // off); `api` always counts (it only tightens). Without byUser the override `subscription` is ignored and the steps 2-4 decide.
-export function billingMode({ env, names, home, byUser = false } = {}) {
+export function billingMode({ env, names, home, byUser = false, envOnly = false } = {}) {
   try {
     const e = env && typeof env === 'object' ? env : {};
     const name = `${names?.envPrefix ?? ''}BILLING`;
@@ -46,6 +47,7 @@ export function billingMode({ env, names, home, byUser = false } = {}) {
     }
     for (const k of KEYS) if (typeof e[k] === 'string' && e[k] !== '') return { mode: 'api', source: k };
     for (const k of FLAGS) if (e[k] === '1' || e[k] === 'true') return { mode: 'api', source: k };
+    if (envOnly) return { mode: 'unknown', source: 'no billing signal in the environment' };
     const dir = typeof e.CLAUDE_CONFIG_DIR === 'string' && e.CLAUDE_CONFIG_DIR !== '' ? e.CLAUDE_CONFIG_DIR : (home ?? homedir());
     const type = billingType(join(dir, '.claude.json'));
     if (type !== null && type.toLowerCase().includes('subscription')) return { mode: 'subscription', source: 'claude.json billingType' };
