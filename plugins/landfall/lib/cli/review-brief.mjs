@@ -89,7 +89,7 @@ export function reviewBrief({ args, flags, names, io, pluginRoot }) {
     if (m) from = m[1];
   }
 
-  const rel = stateRel(where.worktree, where.dir);
+  const rel = stateRel(where.repo, where.dir);
   const exclude = rel ? [`:(exclude)${rel}`] : [];
   const env = io.env;
   const diff = git(['diff', '-U10', `${from}..${head}`, '--', '.', ...exclude], { cwd: where.worktree, env });
