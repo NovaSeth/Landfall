@@ -24,6 +24,7 @@ const pluginDir = (() => {
 })();
 const lib = (rel) => import(pathToFileURL(join(pluginDir, 'lib', rel)).href);
 const router = await lib('router/index.mjs');
+const classifier = await lib('router/classify.mjs');
 const state = await lib('state/index.mjs');
 const decisions = await lib('decisions/index.mjs');
 const { main } = await lib('cli/main.mjs');
@@ -146,6 +147,25 @@ test('classifier: thresholds and default risk globs are data with the spec value
   assert.deepEqual(data.riskPaths, ['**/auth/**', '**/payment*/**', '**/migrations/**', '**/security/**', '.github/workflows/**', '**/*.sql', '.claude/**', '**/CLAUDE.md', '**/AGENTS.md', '**/GEMINI.md', '**/SKILL.md', '**/agents/*.md', '**/prompts/**']);
   assert.deepEqual(data.lightPaths, ['mockups/', 'prototype/', 'prototypes/', '**/*.stories.*', '**/storybook/**']);
   assert.deepEqual(router.THRESHOLDS, data, 'the router reads exactly this file');
+});
+
+test('lightMatcher: shipped light paths use the classifier glob semantics', () => {
+  assert.equal(typeof classifier.lightMatcher, 'function');
+  const light = classifier.lightMatcher(router.THRESHOLDS);
+  for (const path of ['mockups/x.js', 'a/b.stories.tsx', 'MOCKUPS/nested/x.js', 'src/mockups/x.js']) assert.equal(light(path), true, path);
+  for (const path of ['src/x.js', 'mockupsX/x.js']) assert.equal(light(path), false, path);
+});
+
+test('lightMatcher: custom thresholds supply their own light paths; absent paths match nothing', () => {
+  assert.equal(typeof classifier.lightMatcher, 'function');
+  const thresholds = { ...router.THRESHOLDS, lightPaths: ['generated/', '**/*.copy.js'] };
+  const light = classifier.lightMatcher(thresholds);
+  assert.equal(light('generated/x.js'), true);
+  assert.equal(light('src/x.copy.js'), true);
+  assert.equal(light('mockups/x.js'), false);
+  assert.equal(router.classify({ paths: ['generated/x.js'], loc: 900, thresholds }).class, 'standard');
+  assert.equal(classifier.lightMatcher({ ...thresholds, lightPaths: [] })('generated/x.js'), false);
+  assert.equal(classifier.lightMatcher({ ...thresholds, lightPaths: undefined })('generated/x.js'), false);
 });
 
 test('classifier: invalid input is a usage error (exit name USAGE), never a guess', () => {

@@ -119,6 +119,11 @@ const compile = (globs) => globs.map((glob) => ({ glob, segs: compileGlob(glob) 
 const DEFAULT_GLOBS = compile(DEFAULT_RISK_PATHS);
 const DEFAULT_LIGHT = compile(DEFAULT_LIGHT_PATHS);
 
+export function lightMatcher(thresholds) {
+  const lights = Array.isArray(thresholds.lightPaths) ? (thresholds === THRESHOLDS ? DEFAULT_LIGHT : compile(thresholds.lightPaths)) : [];
+  return (path) => { const names = path.split('/'); return lights.some((g) => matchSegments(g.segs, names)); };
+}
+
 function checkPaths(paths) {
   if (!Array.isArray(paths) || paths.length === 0) throw usage('missing-paths', 'name at least one path the plan touches', 'pass --paths <p,…> (repository-relative)');
   if (paths.length > MAX_PATHS) throw usage('limit-exceeded', `${paths.length} paths; the limit is ${MAX_PATHS}`, 'name the directories instead of every file');
@@ -184,8 +189,7 @@ export function classify({ paths, loc, flags = [], riskPaths = [], thresholds = 
   const declared = checkFlags(flags);
   const globs = checkGlobs(riskPaths);
   const { trivial, critical } = thresholds;
-  const lights = Array.isArray(thresholds.lightPaths) ? (thresholds === THRESHOLDS ? DEFAULT_LIGHT : compile(thresholds.lightPaths)) : [];
-  const light = (p) => { const names = p.split('/'); return lights.some((g) => matchSegments(g.segs, names)); };
+  const light = lightMatcher(thresholds);
   // A risk path is never weightless: a change to agent instructions (CLAUDE.md, SKILL.md, ...) is no docs-only change.
   const risky = (p) => { const names = p.split('/'); return globs.some((g) => matchSegments(g.segs, names)); };
   const sized = files.filter((p) => risky(p) || (!weightless(p) && !light(p)));
