@@ -61,12 +61,13 @@ function render(r, rules, names, now, carried) {
   if (r.steps.length || r.info.length) out.push(DATA_MARKER); // the rows carry titles and states from repository files
   const head = ended ? '| left open | state | next step | rules |' : '| task | state | next step | rules |';
   if (r.steps.length) out.push(table(r.steps, head));
-  const sections = [['blocked', 'Blocked (informational):'], ['others', 'Others (informational):'], ['plan', 'Next in the plan (informational):'], ['watch', 'Watch (informational, ORC-24):']];
+  const sections = [['blocked', 'Blocked (informational):'], ['others', 'Others (informational):'], ['plan', 'Next in the plan (informational):'], ['watch', 'Watch (informational, ORC-24):'], ['limit', 'Usage limit (informational):']];
   for (const [kind, title] of sections) {
     const rows = r.info.filter((i) => i.kind === kind);
     if (rows.length) out.push('', title, table(rows, '| task | state | next step | rules |'));
   }
   if (rules.length) out.push('', "Rules for this tick's steps:", ...rules.map((x) => `${x.id}. ${x.text}`));
+  if (r.result === 'WAIT' && r.reason) out.push(`Waiting: ${cell(r.reason)}; dispatch nothing until the reset.`);
   if (ended) out.push(`NEXT_TICK: none — schedule no wakeup; cancel a pending one (ScheduleWakeup with stop: true) and report to the user.`);
   else if (r.result === 'WAIT') out.push(`NEXT_TICK: ${r.nextTickS}s — work is in progress; schedule one wakeup in ${r.nextTickS}s with the fixed prompt: ${fixedPrompt(names, carried)}`);
   else out.push(`NEXT_TICK: now — do the steps above, then run \`${names.bin} tick${carried ? ` --plan ${carried}` : ''}\` again.`);
