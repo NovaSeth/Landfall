@@ -669,3 +669,34 @@ test('a small pane with one task and five agents folds the extra agents into one
   for (const t of texts) expect([...t].length).toBeLessThanOrEqual(60)
   await ui.unmount()
 })
+
+const taskRow = (n: number) => ({ id: `T-TU-${n}`, kind: 'task', title: `Row ${n}`, status: 'planned', class: 'standard', owner: 'TU', lane: null, round: 0 })
+const linesAt = async ($: any, rows: number, columns: number) => {
+  const ui = await $.ui.mount({ ...PANE, props: { ...PANE.props, bodyColumns: columns, scroll: { offset: 0, bodyRows: rows } } })
+  const texts = (await ui.findAll({ type: 'Text' })).map((n: any) => n.text as string)
+  await ui.unmount()
+  return texts
+}
+
+test('a live agent is never invisible: with no room for a task and its agent the agent falls to UNASSIGNED or its fold (review r1 F1)', async ($, on) => {
+  const w = world(on, { status: withTask({}, [taskRow(8)]), runs: quiet })
+  w.agents.length = 0
+  w.agents.push(...agentsFor('T-TU-7', 1), ...agentsFor('T-TU-8', 1).map(a => ({ ...a, id: 'm1' })))
+  await $.session.start(SESSION)
+  await w.clock.settle()
+  const texts = await linesAt($, 9, 60)
+  expect(texts.filter(t => /^ {4}↳ /.test(t)).length).toBeGreaterThan(0)
+  expect(texts.length).toBeLessThanOrEqual(9)
+})
+
+test('every budgeted line counts: five tasks and one agent without a task never draw more lines than the pane has rows (review r1 F2)', async ($, on) => {
+  const w = world(on, { status: withTask({}, [taskRow(8), taskRow(9), taskRow(10), taskRow(11)]), runs: quiet })
+  w.agents.length = 0
+  w.agents.push({ id: 'u1', description: 'Explore the code', type: 'landfall:implementer', status: 'running' })
+  await $.session.start(SESSION)
+  await w.clock.settle()
+  const texts = await linesAt($, 11, 60)
+  expect(texts.length).toBeLessThanOrEqual(11)
+  expect(texts.some(t => /^UNASSIGNED$/.test(t))).toBe(true)
+  expect(texts.some(t => /^ {4}↳ ● implementer/.test(t))).toBe(true)
+})
