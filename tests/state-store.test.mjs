@@ -594,3 +594,55 @@ state.open(${JSON.stringify(dir)}, { names: ${JSON.stringify(names)} }).append('
   assert.ok(!got.includes(0), 'the rewrite happened');
   assert.ok(got.includes(n - 1), 'the newest old line is kept');
 });
+
+// Fix round 1 (review r1, F1 and F2): the capped rewrite on a Store whose reads of the guard log are scripted. The
+// first read is the one append() decides on; the second is the re-read just before the rename, after other lines
+// arrived outside the lock. The rewrite is captured instead of written.
+function scripted(t, reads) {
+  const { dir } = scratch(t);
+  const s = active(dir);
+  const file = state.LOGS.guard.file;
+  const queue = [...reads];
+  const readText = s.readText.bind(s);
+  const writeText = s.writeText.bind(s);
+  let written = null;
+  s.readText = (rel) => (rel === file ? queue.shift() : readText(rel));
+  s.writeText = (rel, text) => { if (rel === file) written = text; else writeText(rel, text); };
+  return { s, written: () => written, left: () => queue.length };
+}
+const L = `${JSON.stringify({ p: 'p'.repeat(4000) })}\n`;
+const wholeRows = (text) => {
+  assert.ok(text.endsWith('\n'), 'ends with a whole line');
+  return text.slice(0, -1).split('\n').map((row) => JSON.parse(row));
+};
+
+test('append (r1 F1): lines that arrive outside the lock during a capped rewrite still leave at most capBytes', (t) => {
+  const first = `${'{}\n'.repeat(65)}${L.repeat(65)}`;
+  const h = scripted(t, [first, `${first}${L}`]);
+  h.s.append('guard', JSON.parse(L));
+  assert.equal(h.left(), 0, 'both reads happened');
+  const out = h.written();
+  assert.ok(Buffer.byteLength(out) <= state.LOGS.guard.capBytes, `${Buffer.byteLength(out)} bytes, the cap is ${state.LOGS.guard.capBytes}`);
+  const rows = wholeRows(out);
+  assert.equal(rows.length >= 2, true);
+  assert.deepEqual(rows.at(-1), JSON.parse(L), 'the new line is last');
+});
+
+test('append (r1 F2): a partial last line completed during a capped rewrite is kept whole, never as a fragment', (t) => {
+  const first = `${'{}\n'.repeat(65)}${L.repeat(65)}{"p":"par`;
+  const h = scripted(t, [first, `${first}tial"}\n`]);
+  h.s.append('guard', JSON.parse(L));
+  const out = h.written();
+  assert.ok(Buffer.byteLength(out) <= state.LOGS.guard.capBytes, 'at most capBytes');
+  const rows = wholeRows(out);
+  assert.deepEqual(rows.at(-2), { p: 'partial' }, 'the completed line, whole');
+  assert.deepEqual(rows.at(-1), JSON.parse(L), 'the new line is last');
+});
+
+test('append (r1 F2): a torn fragment that another line completes into invalid JSON is dropped, not kept', (t) => {
+  const first = `${'{}\n'.repeat(65)}${L.repeat(65)}{"p":"to`;
+  const h = scripted(t, [first, `${first}${L}`]);
+  h.s.append('guard', JSON.parse(L));
+  const rows = wholeRows(h.written());
+  assert.deepEqual(rows.at(-1), JSON.parse(L));
+});
