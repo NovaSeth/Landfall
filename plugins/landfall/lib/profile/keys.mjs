@@ -75,6 +75,8 @@ const goodItem = (s) => goodText(s, LIMITS.listItem) && s === s.toLowerCase() &&
 // A risk glob (the router's syntax: ** * ? and {a,b}; a comma only inside braces) or a review note (any text, no comma).
 const goodGlob = (s) => goodText(s, LIMITS.glob) && !/\s/.test(s) && !s.replace(/\{[^{}]*\}/g, '').includes(',');
 const goodNote = (s) => goodText(s, LIMITS.glob) && !s.includes(',');
+// A fast guard is one command line that is rendered inside the brief's bash fence: no line break, no fence run (SEC-14).
+const goodGuard = (s) => goodNote(s) && !/[\r\n\u2028\u2029]/.test(s) && !/`{3,}|~{3,}/.test(s);
 const distinct = (list, max, ok) => Array.isArray(list) && list.length >= 1 && list.length <= max && list.every(ok) && new Set(list).size === list.length;
 
 // Whether `value` is a valid stored value of fact `key`.
@@ -89,7 +91,7 @@ export function validValue(key, value) {
     case 'token': return typeof value === 'string' && value.length <= LIMITS.token && TOKEN.test(value);
     case 'list': return Array.isArray(value) && value.length <= LIMITS.listItems && value.every(goodItem) && new Set(value).size === value.length && value.join(', ').length <= LIMITS.value;
     case 'globs': return distinct(value, LIMITS.riskPaths, goodGlob);
-    case 'notes': return distinct(value, LIMITS.listItems, goodNote);
+    case 'notes': return distinct(value, LIMITS.listItems, key === 'fastGuards' ? goodGuard : goodNote);
     default: return false;
   }
 }

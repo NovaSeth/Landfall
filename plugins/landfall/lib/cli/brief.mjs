@@ -56,7 +56,7 @@ export function renderBrief({ template, task, role, gates, lease, review = null,
     '<rule IDs>': briefRules({ cls: task.class, role }).join(' '),
     ...(task.branch ? { '<branch>': task.branch } : {}),
     ...(task.base ? { '<base SHA>': task.base } : {}),
-    ...(gates.length || fastGuards.length ? { [GATE_LINES]: (gates.length ? gates.map((g) => `${g}\n`).join('') : GATE_LINES) + (fastGuards.length ? `${FAST_MARK}\n${fastGuards.map((g) => `${g}\n`).join('')}` : '') } : {}),
+    ...(gates.length || fastGuards.length ? { [GATE_LINES]: (gates.length ? gates.map((g) => `${g}\n`).join('') : GATE_LINES) + (fastGuards.length ? `${FAST_MARK}\n${fastGuards.map((g) => `${fenceLine(dataLine(g))}\n`).join('')}` : '') } : {}),
     '{{bin}}': names.bin,
   };
   for (const ph of [...Object.keys(fills), `\n${WORKTREE}`]) {
