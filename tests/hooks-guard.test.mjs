@@ -37,7 +37,14 @@ const state = await lib('state/index.mjs');
 // @STATEGLOB@ and @STATECLASS@ are globs that reach the state directory (bypass rows): its first two characters + '*', and its
 // second character in a bracket class; @STATEQ@, @STATEBR@ and @STATEBRACE@: last character as '?', last character bracketed,
 // third character in a brace list.
-const withBin = (s) => s.split('@BIN@').join(names.bin).split('@STATEHEAD@').join(names.stateDir.slice(0, 2)).split('@STATETAIL@').join(names.stateDir.slice(2)).split('@STATEGLOB@').join(`${names.stateDir.slice(0, 2)}*`).split('@STATECLASS@').join(`.[${names.stateDir[1]}]${names.stateDir.slice(2)}`).split('@STATEQ@').join(`${names.stateDir.slice(0, -1)}?`).split('@STATEBR@').join(`${names.stateDir.slice(0, -1)}[${names.stateDir.slice(-1)}]`).split('@STATEBRACE@').join(`${names.stateDir.slice(0, 2)}{${names.stateDir[2]},b}${names.stateDir.slice(3)}`).split('@STATE@').join(names.stateDir);
+// @RENAMED@, @LFLINK@ and @SPACETOOL@: absolute paths of a renamed copy of the launcher with a space in its name, a renamed
+// link to it, and another script with a space in its name (T-MG-154).
+const RENAMED_DIR = mkdtempSync(join(tmpdir(), 'g-renamed-'));
+const FIXTURES = { '@RENAMED@': join(RENAMED_DIR, 'renamed launcher'), '@LFLINK@': join(RENAMED_DIR, 'lf'), '@SPACETOOL@': join(RENAMED_DIR, 'other tool') };
+cpSync(LAUNCHER, FIXTURES['@RENAMED@']); symlinkSync(LAUNCHER, FIXTURES['@LFLINK@']);
+writeFileSync(FIXTURES['@SPACETOOL@'], '#!/bin/sh\necho hook\n'); chmodSync(FIXTURES['@SPACETOOL@'], 0o755);
+const withFixtures = (s) => Object.entries(FIXTURES).reduce((t, [k, v]) => t.split(k).join(v), s);
+const withBin = (s) => withFixtures(s).split('@BIN@').join(names.bin).split('@STATEHEAD@').join(names.stateDir.slice(0, 2)).split('@STATETAIL@').join(names.stateDir.slice(2)).split('@STATEGLOB@').join(`${names.stateDir.slice(0, 2)}*`).split('@STATECLASS@').join(`.[${names.stateDir[1]}]${names.stateDir.slice(2)}`).split('@STATEQ@').join(`${names.stateDir.slice(0, -1)}?`).split('@STATEBR@').join(`${names.stateDir.slice(0, -1)}[${names.stateDir.slice(-1)}]`).split('@STATEBRACE@').join(`${names.stateDir.slice(0, 2)}{${names.stateDir[2]},b}${names.stateDir.slice(3)}`).split('@STATE@').join(names.stateDir);
 
 // ---------- corpus context ----------
 // Row: [command, rule ID or phrase in the reason (blocks only), context]. Context = the command's directory: 'none'
@@ -377,6 +384,12 @@ const NEW_BLOCK = [
   // fix round 2 (review r1 F1): the script after node's `--` (and `-m`) is checked too
   ['node -- ./plugins/x/bin/@BIN@ hook prompt-consent < event.json', 'FLW-7'], ['node -m plugins/x/bin/@BIN@ hook prompt-consent', 'FLW-7'],
   ['nice node /opt/p/bin/@BIN@ hook prompt-consent', 'FLW-7'], ['ls; @BIN@ hook guard-bash', 'FLW-7'],
+  // T-MG-154: a renamed launcher with a space in its path (B-MG-11), an absolute one after a cd the guard cannot follow, and a
+  // relative path word before hook there (fails closed)
+  ['node -- "@RENAMED@" hook prompt-consent', 'FLW-7'], ['"@RENAMED@" hook prompt-consent', 'FLW-7'], ['node "@RENAMED@" --json hook session-start', 'FLW-7'],
+  ['cd ~ && @LFLINK@ hook prompt-consent', 'FLW-7'], ['cd - && node -- @LFLINK@ hook prompt-consent', 'FLW-7'],
+  ['cd ~ && ./lf hook prompt-consent', 'FLW-7'], ['cd - && node -- bin/lf hook prompt-consent', 'FLW-7'],
+  ['printf x > @STATE@/local/loop-consent.json', 'FLW-7', 'tracked'],
   // a gate behind a wrapper (env, nice, timeout, command) is still the executed program
   ['command @BIN@ verify T-AB-1 | tail -1', 'TRP-2'], ['nice @BIN@ verify T-AB-1 | tail -1', 'TRP-2'], ['env FOO=1 @BIN@ secrets | tail -1', 'SEC-6'],
   ['timeout 600 bash .workflow/bin/budget.sh agent | tail -1', 'TRP-2'], ['env -i npm test | tail -1', UNV], ['npm run budget | tail -1', 'TRP-2', 'npm'],
@@ -495,6 +508,8 @@ const NEW_BLOCK = [
 const NEW_ALLOW = [
   // T-MG-149: the word hook elsewhere in the plugin's own command is data
   ['@BIN@ task new "hook up the API"'], ['@BIN@ rule FLW-7 hook'], ['@BIN@ status hook'],
+  // T-MG-154: another script with a space in its path, and a path word before hook where the directory is known
+  ['node -- "@SPACETOOL@" hook x'], ['"@SPACETOOL@" hook x'], ['cat docs/a.md | grep hook'], ['cd /tmp && ./lf hook x'],
   ['git log --oneline task/T-AB-3'], ['git branch -d task/T-AB-3'], ['git merge --abort', null, 'main'],
   // gate commands without a pipe, or with the output in a file
   ['npm test > out.txt 2>&1; echo $?'], ['npm test; echo "exit $?"'], ['node --test tests/a.test.mjs'], ['bash .workflow/bin/budget.sh agent; echo $?'],
