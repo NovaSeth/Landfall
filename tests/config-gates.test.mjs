@@ -9,7 +9,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { isolatedEnv, isolateProcessEnv } from './helpers/isolated-env.mjs';
+import { isolatedEnv, isolateProcessEnv, relaxAdmission } from './helpers/isolated-env.mjs';
 
 isolateProcessEnv();
 
@@ -44,6 +44,7 @@ async function repository(t) {
   mkdirSync(repo);
   writeFileSync(join(repo, 'package.json'), JSON.stringify({ name: 'x', version: '1.0.0', scripts: { test: 'node -e 0' } }));
   const env = { ...iso.env, CLAUDE_PLUGIN_DATA: join(iso.base, 'data') };
+  relaxAdmission(env); // verify takes the heavy lease in this data dir (T-MG-163)
   git(repo, env, ['-c', 'init.defaultBranch=main', 'init', '-q']);
   git(repo, env, ['add', '-A']);
   git(repo, env, ['commit', '-q', '-m', 'start']);
