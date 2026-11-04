@@ -11,7 +11,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { isolatedEnv, isolateProcessEnv } from '../helpers/isolated-env.mjs';
+import { isolatedEnv, isolateProcessEnv, relaxAdmission } from '../helpers/isolated-env.mjs';
 
 isolateProcessEnv();
 
@@ -59,6 +59,7 @@ function project(t, { calc, tests }) {
   const p = { base: iso.base, dir, git, write, cli, ok, commit, read };
 
   git('init', '-q');
+  relaxAdmission(env); // verify takes the heavy lease; admission must not wait on the machine's load (T-MG-153/156)
   write('package.json', `${JSON.stringify({ name: 'calc', private: true, type: 'module', scripts: { test: 'node --test' } }, null, 2)}\n`);
   write('calc.mjs', calc);
   write('calc.test.mjs', tests);
