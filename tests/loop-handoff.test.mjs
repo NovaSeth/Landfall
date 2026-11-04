@@ -50,7 +50,7 @@ function storeDir(t) {
   store.write('team', 'TU', { handle: 'TU', emailSha256: state.emailHash('test@example.com'), addedAt: at(0) });
   const probe = { heads: () => 'main 1111111', email: () => 'test@example.com', cost: () => ({ costMicroUsd: 0, partial: false }), dirty: () => [] };
   const run = (now, extra = {}) => loop.tickStore(store, { where, names, now: T0 + now * MIN, plan: null, probe: { ...probe, ...extra } });
-  return { store, run };
+  return { store, run, local: where.local };
 }
 const strip = (r) => ({ result: r.result, reason: r.reason, nextTickS: r.nextTickS, steps: r.steps, info: r.info, handoff: r.handoff });
 
@@ -98,6 +98,32 @@ test('handoff (store path): with a task in flight the tick drains: only its row,
   assert.ok(Number.isInteger(r.nextTickS) && r.nextTickS >= 60, String(r.nextTickS));
   assert.deepEqual(r.steps.map((s2) => s2.task), ['T-TU-3'], 'T-TU-1 is not dispatched in this session');
   assert.equal(r.handoff.draining, true);
+});
+
+test('handoff (fix round 1, F1): while draining, the collection of a finished run of an in-flight task stays (keyed by its run ID)', (t) => {
+  const s = storeDir(t);
+  s.store.write('task', 'T-TU-1', task('T-TU-1', 'new'));
+  s.store.write('task', 'T-TU-3', task('T-TU-3', 'dispatched', [ev('dispatched', 4, { executor: 'fake:implementer', base: 'abc1234' })]));
+  const runs = join(s.local, 'runs');
+  mkdirSync(runs, { recursive: true });
+  const runId = 'fake-T-TU-3-implementer-1';
+  writeFileSync(join(runs, `${runId}.json`), JSON.stringify({ schema: 1, runId, task: 'T-TU-3', role: 'implementer', provider: 'fake', model: null, status: 'done', startedAt: at(4), endedAt: at(6), tokens: null, costMicroUsd: 0, exit: 0 }));
+  const r = s.run(7, { session: () => ({ tokens: 300000, startedAt: at(0) }) });
+  assert.equal(r.handoff?.draining, true);
+  assert.ok(r.steps.some((x) => x.task === runId && x.kind === 'action' && /collect its result/.test(x.step)), JSON.stringify(r.steps));
+  assert.ok(!r.steps.some((x) => x.task === 'T-TU-1'), 'no new dispatch while draining');
+  assert.equal(r.result, 'ACTION');
+});
+
+test('handoff (fix round 1, F2): a task whose review is recorded is not in flight: the tick hands off instead of starting the fix round', (t) => {
+  const s = storeDir(t);
+  s.store.write('task', 'T-TU-4', task('T-TU-4', 'in-review', [ev('dispatched', 4, { executor: 'fake:reviewer', base: 'abc1234' }), ev('review', 6, { verdict: 'needs-fixes', round: 1 })]));
+  const r = s.run(7, { session: () => ({ tokens: 300000, startedAt: at(0) }) });
+  assert.deepEqual(r.steps.map((x) => x.task), ['HANDOFF'], JSON.stringify(r.steps));
+  assert.equal(r.handoff.draining, false);
+  const plain = storeDir(t);
+  plain.store.write('task', 'T-TU-4', task('T-TU-4', 'in-review', [ev('dispatched', 4, { executor: 'fake:reviewer', base: 'abc1234' })]));
+  assert.equal(plain.run(7, { session: () => ({ tokens: 300000, startedAt: at(0) }) }).handoff.draining, true, 'without a review it is still in flight');
 });
 
 test('handoff (store path): a session probe that throws or finds nothing changes nothing; an ended loop stays ended', (t) => {
