@@ -116,7 +116,7 @@ test('verify re-runs every profile gate and writes verify.json in the §8.4 shap
   assert.equal(res.code, 0, show(res));
   assert.deepEqual([res.env.command, res.env.ok, res.env.exit], ['verify', true, 'OK']);
   const doc = r.vstore.read('verify', r.id);
-  assert.deepEqual(Object.keys(doc), ['schema', 'task', 'head', 'gatesSha', 'baselineSha', 'class', 'startedAt', 'durationMs', 'gates', 'inventory', 'failures', 'route', 'artifacts', 'result', 'machine', 'cache', 'heavyWaitMs', 'gatesMs']);
+  assert.deepEqual(Object.keys(doc), ['schema', 'task', 'head', 'gatesSha', 'baselineSha', 'class', 'startedAt', 'durationMs', 'gates', 'inventory', 'failures', 'route', 'artifacts', 'result', 'machine', 'cache', 'heavyWaitMs', 'gatesMs', 'mode']);
   assert.deepEqual(Object.keys(doc.machine), ['load1Start', 'load1End', 'cores'], 'the v2 cost fields (T-MG-121)');
   assert.equal(doc.gatesSha, verify.gatesSha(GATES));
   assert.equal(doc.baselineSha, verify.baselineSha(r.vstore.read('baseline', null)));
@@ -542,7 +542,7 @@ test('verify, task done and task merge are command rows that change files; help 
   for (const name of ['verify', 'task done']) assert.deepEqual(row(name).args.map((a) => [a.name, Boolean(a.required)]), [['id', true]], name);
   // T-MG-80: task merge takes several IDs (a batch, --adopt) or none (--ready)
   assert.deepEqual(row('task merge').args.map((a) => [a.name, Boolean(a.required), Boolean(a.variadic)]), [['id', false, true]]);
-  assert.deepEqual(row('verify').flags.map((f) => f.flag), ['--ci', '--no-cache']);
+  assert.deepEqual(row('verify').flags.map((f) => f.flag), ['--ci', '--no-cache', '--full']);
   assert.deepEqual(row('task merge').flags.map((f) => f.flag), ['--branch', '--ready', '--adopt']);
   assert.deepEqual(row('verify').exits, ['OK', 'FAIL', 'USAGE', 'REFUSED', 'ENV']);
   const r = repo(t);

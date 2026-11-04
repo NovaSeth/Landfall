@@ -3,6 +3,7 @@
 // overrides count (route) only once trusted (lib/state trust.mjs). Without a terminal, or with --yes, it is refused:
 // an agent cannot consent for the user. --json lists the state and writes nothing (no adoption either).
 import { PROFILE_KINDS } from '../profile/index.mjs';
+import { guardGates } from '../verify/index.mjs';
 import * as state from '../state/index.mjs';
 import { EXIT } from './commands.mjs';
 import { ask } from './output.mjs';
@@ -13,21 +14,27 @@ export async function trust({ names, io, json, yes = false }) {
   const where = state.resolve({ cwd: io.cwd, env: io.env, names });
   if (!where.active) return { code: EXIT.REFUSED, errors: [{ code: 'inactive', message: `${where.repo} is not active: it has no gates or overrides to trust`, hint: `'${names.bin} init' activates it` }] };
   const store = state.open(where.dir, { names, kinds: { ...state.KINDS, ...PROFILE_KINDS } });
-  const gates = store.read('profile', null)?.gates ?? [];
+  const profile = store.read('profile', null);
+  const gates = profile?.gates ?? [];
+  // the profile's fastGuards run as gates in a fast verify (T-MG-182): a set of their own to trust
+  const guards = profile ? guardGates(profile) : [];
   const thresholds = store.read('config', null)?.thresholds ?? {};
   const hint = state.TRUST_HINT.replaceAll('{bin}', names.bin);
   const check = (kind, sha) => (sha ? state.isTrusted({ dir: where.dir, dataDir: where.dataDir, names, env: io.env, kind, sha, adopt: !json }).trusted : true);
   const gatesSha = gates.length ? state.gatesShaOf(gates) : null;
+  const guardsSha = guards.length ? state.gatesShaOf(guards) : null;
   const overridesSha = Object.keys(thresholds).length ? state.overridesShaOf(thresholds) : null;
   const untrusted = {
     gates: check('gates', gatesSha) ? [] : gates.map((g) => ({ name: g.name, cmd: g.cmd })),
+    guards: check('gates', guardsSha) ? [] : guards.map((g) => ({ name: g.name, cmd: g.cmd })),
     overrides: check('overrides', overridesSha) ? [] : Object.entries(thresholds).map(([key, o]) => ({ key, value: o.value, decision: o.decision })),
   };
-  const data = { repo: where.repo, key: state.repoKey(where.dir, { env: io.env }), gatesSha, overridesSha, untrusted, recorded: false };
+  const data = { repo: where.repo, key: state.repoKey(where.dir, { env: io.env }), gatesSha, guardsSha, overridesSha, untrusted, recorded: false };
   const lines = [`repository: ${where.repo}`];
   if (untrusted.gates.length) lines.push('gate commands (not trusted on this machine):', ...untrusted.gates.map((g) => `  ${g.name}: ${g.cmd}`));
+  if (untrusted.guards.length) lines.push('fast guards, run by a fast verify (not trusted on this machine):', ...untrusted.guards.map((g) => `  ${g.name}: ${g.cmd}`));
   if (untrusted.overrides.length) lines.push('threshold overrides (not trusted on this machine):', ...untrusted.overrides.map((o) => `  ${o.key} = ${o.value} · ${o.decision}`));
-  const none = untrusted.gates.length === 0 && untrusted.overrides.length === 0;
+  const none = untrusted.gates.length === 0 && untrusted.guards.length === 0 && untrusted.overrides.length === 0;
   if (none) lines.push('nothing to trust: this machine trusts the gate commands and threshold overrides of this repository');
   const text = `${lines.join('\n')}\n`;
   if (json || none) return { data, text };
@@ -37,5 +44,6 @@ export async function trust({ names, io, json, yes = false }) {
   const answer = await ask(io, `${text}${QUESTION}`);
   if (!/^\s*y(?:es)?\s*$/i.test(answer)) return { code: EXIT.REFUSED, data, errors: [{ code: 'not-trusted', message: 'nothing was trusted', hint }] };
   state.recordTrust({ dataDir: where.dataDir, names, key: data.key, gates: untrusted.gates.length ? gatesSha : null, overrides: untrusted.overrides.length ? overridesSha : null });
+  if (untrusted.guards.length) state.recordTrust({ dataDir: where.dataDir, names, key: data.key, gates: guardsSha });
   return { data: { ...data, recorded: true }, text: 'trusted for this repository on this machine\n' };
 }

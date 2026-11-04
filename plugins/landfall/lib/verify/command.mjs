@@ -37,6 +37,7 @@ const typed = (fn) => (ctx) => {
 // pairs of tests that changed their title and kept their body (no decision needed).
 export function renderVerify(doc, reused = null, renamed = []) {
   const lines = [`${doc.task}: ${doc.result} (${doc.head ? `head ${doc.head.slice(0, 12)}` : 'uncommitted changes'}, class ${doc.class ?? 'none'})`];
+  if (doc.mode) lines.push(`mode: ${doc.mode.kind} (${doc.mode.why})`);
   if (doc.gates.length) {
     const width = Math.max(...doc.gates.map((g) => g.name.length));
     lines.push(reused ? `gates: reused from ${reused}` : 'gates:', ...doc.gates.map((g) => `  ${g.name.padEnd(width)}  ${g.result.padEnd(7)}  exit ${g.exit ?? '-'}  ${seconds(g.durationMs)}`));
@@ -54,7 +55,7 @@ export function renderVerify(doc, reused = null, renamed = []) {
 }
 
 export const verify = typed(({ args, flags, names, version, io }) => {
-  const out = verifyTask({ cwd: io.cwd, env: io.env, names, id: args.id, ci: Boolean(flags.ci), cache: !flags.noCache, version: version ?? null });
+  const out = verifyTask({ cwd: io.cwd, env: io.env, names, id: args.id, ci: Boolean(flags.ci), cache: !flags.noCache, full: Boolean(flags.full), version: version ?? null });
   const data = { ...out.doc, renamed: out.renamed, written: out.written, attempt: out.attempt, closed: out.closed, ...(out.candidates ? { candidates: out.candidates } : {}), output: out.output, reusedFrom: out.reused };
   const tail = out.written ? `gate output: local/verify/${out.doc.task}.log in the state directory (attempt ${out.attempt}: ${out.doc.task}-${out.attempt}.log)`
     : out.closed ? `nothing written: ${out.doc.task} is ${out.closed}, a closed task takes no further state` : 'nothing written (--ci)';

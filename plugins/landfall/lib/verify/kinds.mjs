@@ -49,7 +49,7 @@ export const VERIFY_KINDS = Object.freeze({
     },
     opt: ['pinnedBy'],
   }),
-  verify: defineKind('verify', 2, {
+  verify: defineKind('verify', 3, {
     dir: 'tasks',
     keyPattern: PATTERNS.taskId,
     file: (id) => `tasks/${id}/verify.json`,
@@ -86,8 +86,11 @@ export const VERIFY_KINDS = Object.freeze({
       cache: { t: 'enum', of: CACHE_STATES },
       heavyWaitMs: count,
       gatesMs: count,
+      // Schema 3 (T-MG-182): which gates ran: fast (the change's test files and the fastGuards; files: the test files
+      // selected) or full (the profile gate set), and why. Optional: a record written before it has none.
+      mode: { t: 'obj', f: { kind: { t: 'enum', of: ['fast', 'full'] }, why: str(200, { min: 1 }), files: many(str(LIMITS.path), 1000) } },
     },
-    opt: ['machine', 'cache', 'heavyWaitMs', 'gatesMs'],
+    opt: ['machine', 'cache', 'heavyWaitMs', 'gatesMs', 'mode'],
   }),
   // The output tails of the latest verify of a task: machine-local (local/ is never committed), JSON text.
   verifyLog: defineKind('verifyLog', 1, {

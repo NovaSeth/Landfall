@@ -174,8 +174,8 @@ test('1.x self-verified round → approved: verify, merge, close (REV-11, FLW-8)
   let s = row(table([task('T-TU-1', 'fix-round', { round: 1, events })]), 'T-TU-1');
   assert.deepEqual(s.rules, ['REV-11', 'ORC-25', 'FLW-8']);
   assert.match(s.step, new RegExp(`${BIN} task done T-TU-1\`, then \`${BIN} task merge T-TU-1\``));
-  assert.match(s.step, new RegExp(`${BIN} task merge --ready`));
-  assert.doesNotMatch(s.step, /squash|by hand|locally/);
+  assert.match(s.step, new RegExp(`${BIN} task merge T-TU-1\` at once, not held for a batch`));
+  assert.doesNotMatch(s.step, /squash|by hand|locally|--ready/);
   s = row(table([task('T-TU-1', 'verified')]), 'T-TU-1');
   assert.deepEqual(s.rules, ['REV-11', 'ORC-25', 'FLW-8']);
   // a self-check of round 1 does not approve round 2

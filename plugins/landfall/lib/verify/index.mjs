@@ -15,3 +15,4 @@ export { markDone } from './done.mjs';
 export { mergeTask } from './merge.mjs';
 export { reviewErrors, reviewSchema, recordReview, schemaErrors } from './review.mjs';
 export { PIN_KINDS, pinBaseline, showBaseline } from './pin.mjs';
+export { SHARED_GLOBS, fastPlan, guardGates } from './fast.mjs';

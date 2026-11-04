@@ -100,7 +100,7 @@ test('fastPlan: one changed lib module runs only its mapped tests and the fastGu
 
 test('fastPlan: package.json, tests/helpers, scripts, a risk path, an unmapped path, a critical task, --full and untrusted guards run the full set', () => {
   for (const [paths, extra, why] of [
-    [['package.json'], {}, /shared or risk path: package\.json/],
+    [['package.json'], {}, /shared or risk path changed: package\.json/],
     [['tests/helpers/env.mjs'], {}, /shared or risk path/],
     [['scripts/gen.mjs'], {}, /shared or risk path/],
     [['lib/auth/login.mjs'], { riskPaths: ['**/auth/**'] }, /shared or risk path/],
@@ -171,4 +171,17 @@ test('loop: an approved task\'s next step is its own task merge at once, not a b
   const s = steps.find((x) => x.task === 'T-TU-1');
   assert.match(s.step, new RegExp(`${names.bin} task merge T-TU-1\` at once`));
   assert.doesNotMatch(s.step, /--ready/);
+});
+
+test('a document-only change runs only the guards; a later full run is not refused as another collector', (t) => {
+  const r = repo(t);
+  r.write('README.md', '# changed\n');
+  r.git('add', '-A');
+  r.git('commit', '-q', '-m', 'docs');
+  const out = r.run();
+  assert.equal(out.doc.result, 'pass', JSON.stringify(out.reasons));
+  assert.deepEqual([out.doc.mode.kind, out.doc.gates.map((g) => g.name).join(), out.doc.inventory.collector], ['fast', 'guard-1', 'none']);
+  const full = r.run({ full: true });
+  assert.equal(full.doc.mode.kind, 'full');
+  assert.ok(!full.reasons.some((x) => x.code === 'collector-changed'), JSON.stringify(full.reasons));
 });
