@@ -144,9 +144,37 @@ function unquotedGlob(src) {
 }
 const gateWords = (src) => src.replace(/['"]/g, '').split(/[\s;&|<>()]+/);
 export const closedShapes = (src) => unquotedGlob(src) || gateWords(src).some((t) => GATE_WORD.test(t) || ASSIGN_WORD.test(t));
-// D-MG-58 fallback for literal substitution (review r4 F1): in a line with an assignment word, a setter or code-runner
-// word anywhere or an unquoted glob means a substituted value may not be the one the shell uses.
-const substUnsafe = (src) => gateWords(src).some((t) => ASSIGN_WORD.test(t)) && (unquotedGlob(src) || gateWords(src).some((t) => GATE_WORD.test(t)));
+// D-MG-58 fallback for literal substitution (review r4 F1, r5 F1): in a line with an assignment word, a setter or
+// code-runner word anywhere, an unquoted glob, a word in command position that starts with $ (after a redirection or
+// an assignment word: the program comes from a variable) or a word glued to a short option that names an assigned variable
+// (-vNAME) means a substituted value may not be the one the shell uses.
+const REDIR_WORD = /^\d*(?:[<>]|&>)/;
+const REDIR_ALONE = /^\d*(?:[<>]+|&>+)&?$/;
+// A $ word as the program after a redirection or an assignment word: substitute() replaces a reference only after the
+// first word of a command, so this one would be replaced (a $ word that is the first word stays and is rejected).
+function variableCommand(text) {
+  const ws = text.replace(/['"]/g, '').split(/\s+/).filter(Boolean);
+  for (let k = 0; k < ws.length; k++) {
+    if (REDIR_WORD.test(ws[k])) { if (REDIR_ALONE.test(ws[k])) k++; continue; }
+    if (!ASSIGN_WORD.test(ws[k])) return k > 0 && ws[k].startsWith('$');
+  }
+  return false;
+}
+function substUnsafe(src) {
+  const words = gateWords(src);
+  const names = words.filter((t) => ASSIGN_WORD.test(t)).map((t) => /^[A-Za-z_]\w*/.exec(t)[0]);
+  if (!names.length) return false;
+  if (unquotedGlob(src) || words.some((t) => GATE_WORD.test(t))) return true;
+  const segs = segments(src);
+  if (segs === null || segs.some((x) => variableCommand(x.text))) return true;
+  // a word -<letters>NAME: NAME a suffix after at least one option letter; more than 64 names have no proof (bounded work)
+  const uniq = [...new Set(names)];
+  if (uniq.length > 64) return true;
+  return words.some((t) => {
+    const m = /^-[A-Za-z]+/.exec(t);
+    return m !== null && uniq.some((n) => t.length - n.length >= 2 && t.length - n.length <= m[0].length && t.endsWith(n));
+  });
+}
 // The last expansion (expandLiterals → parse of its result in one evaluate call): parse closes the shapes for a text
 // derived from a command that closes them (an assignment substituted away). Only ever makes parse stricter.
 let expansion = { out: null, closed: true };
