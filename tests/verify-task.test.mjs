@@ -360,6 +360,50 @@ test('task done refuses a verify that does not match the code: changed, uncommit
   assert.notEqual(r.store.read('task', r.id).status, 'done');
 });
 
+// Another task's passing verify grows the shared working baseline (write: what `grow` does with its own inventory).
+function growBaseline(r, edit) {
+  const cur = r.vstore.read('baseline', null);
+  const next = { ...cur, tests: edit(cur.tests.map((x) => ({ ...x }))) };
+  r.vstore.write('baseline', null, { ...next, sha256: verify.baselineSha(next) });
+}
+const OTHER = { id: 'other.test.mjs > ten', file: 'other.test.mjs', skipped: false };
+
+test('task done accepts a verify when the baseline only grew by tests another task added (L-MG-5)', async (t) => {
+  const r = repo(t);
+  assert.equal((await run(r)).code, 0);
+  growBaseline(r, (tests) => [...tests, OTHER]);
+  assert.notEqual(r.vstore.read('verify', r.id).baselineSha, verify.baselineSha(r.vstore.read('baseline', null)));
+  const d = await done(r);
+  assert.equal(d.code, 0, show(d));
+  assert.equal(r.store.read('task', r.id).status, 'done');
+});
+
+test('task done stays verify-stale when the baseline changed by a removed, newly skipped or re-flagged test', async (t) => {
+  const edits = {
+    removed: (tests) => tests.slice(1),
+    skipped: (tests) => tests.map((x, k) => (k === 0 ? { ...x, skipped: true } : x)),
+    'removed and added': (tests) => [...tests.slice(1), OTHER],
+  };
+  for (const [name, edit] of Object.entries(edits)) {
+    const r = repo(t);
+    assert.equal((await run(r)).code, 0);
+    growBaseline(r, edit);
+    const d = await done(r);
+    assert.deepEqual([d.code, errorCodes(d)[0]], [1, 'verify-stale'], `${name}: ${show(d)}`);
+    assert.notEqual(r.store.read('task', r.id).status, 'done');
+  }
+});
+
+test('task done stays verify-stale for a code change since verify even when the baseline only grew', async (t) => {
+  const r = repo(t);
+  assert.equal((await run(r)).code, 0);
+  r.write('calc.js', 'export const x = 1;\n');
+  commitAll(r);
+  growBaseline(r, (tests) => [...tests, OTHER]);
+  const d = await done(r);
+  assert.deepEqual([d.code, errorCodes(d)[0]], [1, 'verify-stale'], show(d));
+});
+
 test('task done needs the approved review the route asks for at close time, not only at verify time', async (t) => {
   const r = repo(t, { cls: 'standard' });
   review(r, 1, 'approved');
