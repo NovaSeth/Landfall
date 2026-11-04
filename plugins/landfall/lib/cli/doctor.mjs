@@ -19,8 +19,8 @@
 //   context      the always-on cost from the one `claude plugin details` call the hooks check reads: over the SC3
 //                budget → warn
 //   permissions  the permission rules U3 advises, looked up in the user and project settings (never written)
-//   security     a second automatic security review (the security-guidance plugin) → warn with the setting that
-//                turns its reviews off for the repository (never written)
+//   security     the security-guidance plugin's review of each commit and push (kept next to SEC-13): its log ending
+//                on an auth error (HTTP 401) → warn with the sign-in step
 //   protection   branch protection of the claim refs needs gh, which only lib/mirror may run (spec §4.3), not in this
 //                version → skip
 // Exit 0 healthy · 1 a check or row failed · 8 claude or git missing or not runnable (the report is still listed).
@@ -365,28 +365,44 @@ function permissionsRow({ names, io, repo }) {
   return row('permissions', 'ok', `allowed: ${rules.join(', ')}`, hint);
 }
 
-// T-MG-185: one security review per repository. The security-guidance plugin reviews every commit, push and turn with
-// an LLM on its own; the plugin's security reviewer at task level (SEC-13) is the one review it relies on. Its reviews
-// are off when ENABLE_CODE_SECURITY_REVIEW is "0" (or SECURITY_GUIDANCE_DISABLE is on, or ENABLE_SECURITY_REMINDER is
-// "0") in the session environment or the env of a settings file, or when a project settings file disables the plugin.
-// Read-only: doctor names the setting and never writes it (GC2).
+// T-MG-185: the plugin keeps two security reviews (SEC-13): its own security reviewer at task level and the
+// security-guidance plugin's LLM review of each commit and push. This row reports when that second review is failing:
+// the last outcome in its log (SECURITY_GUIDANCE_DEBUG_LOG, else <SECURITY_WARNINGS_STATE_DIR | CLAUDE_CONFIG_DIR/security |
+// ~/.claude/security>/log.txt) is an auth error (HTTP 401) rather than a completed review. Whether the plugin is enabled
+// follows the settings precedence: the user scope (`claude plugin list`), then <repo>/.claude/settings.json, then
+// settings.local.json. Read-only: doctor reads the log and the settings, and writes nothing (GC2).
 export const SECURITY_GUIDANCE = 'security-guidance@claude-plugins-official';
+const LOG_TAIL_BYTES = 262144;
+const AUTH_FAILED = /API error: 401\b|\(HTTP 401\)|authentication_error/;
+const REVIEWED = /review: no (?:medium\+ )?(?:security issues|vulnerabilities) found|review found \d+/;
 const settingsOf = (file) => { try { const s = JSON.parse(readFileSync(file, 'utf8')); return s && typeof s === 'object' ? s : {}; } catch { return {}; } };
-function securityReviewRow({ names, io, repo, plugins }) {
-  const hint = `put "env": {"ENABLE_CODE_SECURITY_REVIEW": "0"} in <repo>/.claude/settings.local.json; ${names.plugin}'s security reviewer (SEC-13) is the one review; doctor writes no settings`;
-  if (!Array.isArray(plugins)) return row('security', 'skip', 'unknown: `claude plugin list --json` is not readable', hint);
-  if (!plugins.some((p) => p?.id === SECURITY_GUIDANCE && p.enabled === true)) return row('security', 'ok', `one security review: ${names.plugin}'s security reviewer (SEC-13)`, hint);
-  const env = io.env ?? {};
-  const config = isAbsolute(env.CLAUDE_CONFIG_DIR ?? '') ? env.CLAUDE_CONFIG_DIR : isAbsolute(env.HOME ?? '') ? join(env.HOME, '.claude') : null;
-  const project = repo ? ['settings.json', 'settings.local.json'].map((f) => settingsOf(join(repo, '.claude', f))) : [];
-  const all = [config ? settingsOf(join(config, 'settings.json')) : {}, ...project];
-  const vars = Object.assign({}, ...all.map((s) => (s.env && typeof s.env === 'object' ? s.env : {})), env);
-  const off = String(vars.ENABLE_CODE_SECURITY_REVIEW) === '0' || String(vars.ENABLE_SECURITY_REMINDER) === '0'
-    || ['1', 'true', 'yes', 'on'].includes(String(vars.SECURITY_GUIDANCE_DISABLE ?? '').trim().toLowerCase())
-    || project.some((s) => s.enabledPlugins?.[SECURITY_GUIDANCE] === false);
-  if (off) return row('security', 'ok', `one security review: ${SECURITY_GUIDANCE} reviews are off here`, hint);
-  return row('security', 'warn', `${SECURITY_GUIDANCE} also reviews every commit, push and turn: a second security review`, hint);
+function guidanceLog(env) {
+  const abs = (p) => (isAbsolute(p ?? '') ? p : null);
+  if (abs(env.SECURITY_GUIDANCE_DEBUG_LOG)) return env.SECURITY_GUIDANCE_DEBUG_LOG;
+  const dir = abs(env.SECURITY_WARNINGS_STATE_DIR) ?? (abs(env.CLAUDE_CONFIG_DIR) ? join(env.CLAUDE_CONFIG_DIR, 'security') : abs(env.HOME) ? join(env.HOME, '.claude', 'security') : null);
+  return dir ? join(dir, 'log.txt') : null;
 }
+function securityReviewRow({ names, io, repo, plugins }) {
+  const hint = `sign Claude Code in again (/login), then start a new session: the plugin reviews with that sign-in; ${names.plugin} keeps both reviews (SEC-13)`;
+  if (!Array.isArray(plugins)) return row('security', 'skip', 'unknown: `claude plugin list --json` is not readable', hint);
+  const entry = plugins.find((p) => p?.id === SECURITY_GUIDANCE);
+  let enabled = entry?.enabled === true;
+  for (const f of repo ? ['settings.json', 'settings.local.json'] : []) {
+    const v = settingsOf(join(repo, '.claude', f)).enabledPlugins?.[SECURITY_GUIDANCE];
+    if (typeof v === 'boolean') enabled = v;
+  }
+  if (!entry || !enabled) return row('security', 'ok', `${names.plugin}'s security reviewer (SEC-13); ${SECURITY_GUIDANCE} ${entry ? 'disabled here' : 'not installed'}`, hint);
+  const log = guidanceLog(io.env ?? {});
+  let text = '';
+  try { text = log ? readFileSync(log, 'utf8').slice(-LOG_TAIL_BYTES) : ''; } catch { text = ''; }
+  const last = text.split('\n').reverse().find((l) => AUTH_FAILED.test(l) || REVIEWED.test(l));
+  if (last && AUTH_FAILED.test(last)) {
+    const at = /^\[([^\]]{1,40})\]/.exec(last)?.[1] ?? 'unknown time';
+    return row('security', 'warn', `${SECURITY_GUIDANCE} review is failing: HTTP 401 (sign-in rejected) at ${at}; log ${log}`, hint);
+  }
+  return row('security', 'ok', `two reviews: ${names.plugin}'s security reviewer (SEC-13) and ${SECURITY_GUIDANCE}${last ? ' (its last review completed)' : ''}`, hint);
+}
+
 
 const LABEL = { ok: 'ok  ', warn: 'warn', fail: 'FAIL', skip: 'skip' };
 const line = (label, id, detail) => `  ${label}  ${id.padEnd(13)}${detail}`;
