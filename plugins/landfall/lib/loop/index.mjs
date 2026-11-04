@@ -25,7 +25,7 @@ import { usageLimit } from './limits.mjs';
 import { cheapCap, clock, decide, effectiveCaps, newLoop, parseCaps } from './decide.mjs';
 import { CAP_RANGE, CARRIED_PLAN, DEFAULT_CAPS, LOOP, LOOP_ID, STALL, TERMINAL, THRESHOLDS, UNMEASURED, fixedPrompt } from './kind.mjs';
 import { DEFAULT_BUDGET_MIN, budgetOf, readBudgets } from './budget.mjs';
-import { OUTSIDE_MAX, STATUS_MIN, TABLE_RULES, WAIT_S, nextSteps, parsePlan, readWatch } from './table.mjs';
+import { OUTSIDE_MAX, STATUS_MIN, TABLE_RULES, WAIT_S, inFlight, nextSteps, parsePlan, readWatch } from './table.mjs';
 
 export { DEFAULT_BUDGET_MIN, budgetOf, readBudgets };
 export { billingMode, CAP_RANGE, CARRIED_PLAN, DEFAULT_CAPS, LOOP, LOOP_ID, STALL, STATUS_MIN, TABLE_RULES, TERMINAL, UNMEASURED, WAIT_S, cheapCap, decide, fixedPrompt, newLoop, nextSteps, parseCaps, parsePlan };
@@ -201,16 +201,12 @@ function readSession(probe) {
   }
 }
 
-// A task an executor of this session may still be working on: ending the session would end that agent.
-const inFlight = (t) => t.status === 'dispatched' || t.status === 'in-review'
-  || (t.status === 'fix-round' && [...(t.events ?? [])].reverse().find((e) => e.event === 'fix-round')?.data?.open > 0);
-
 // Short orchestrator life (T-MG-177): a session whose context reached `threshold` tokens, or in which a task was merged
 // (a milestone), hands off: one HANDOFF action step (commit, schedule no wakeup, end the session; the next session
 // resumes with `status`). The loop stays running. While a task of this tick is in flight the tick drains instead: only
 // that task's rows, no new dispatch, WAIT (with the fixed wakeup prompt) or ACTION for its status request; the handoff
 // follows once none is left. Returns the fields that replace the tick's, or null (no session, or no handoff due).
-export function handoffOf({ session, tasks, steps, liveRuns = 0, threshold, bin }) {
+export function handoffOf({ session, tasks, steps, runs = [], liveRuns = 0, threshold, bin }) {
   if (!session) return null;
   const since = Date.parse(session.startedAt ?? '');
   const merged = Number.isFinite(since) ? tasks.filter((t) => (t.events ?? []).some((e) => e.event === 'merged' && Date.parse(e.at) >= since)).map((t) => t.id).sort() : [];
@@ -221,7 +217,8 @@ export function handoffOf({ session, tasks, steps, liveRuns = 0, threshold, bin 
   const busy = new Set(tasks.filter((t) => shown.has(t.id) && inFlight(t)).map((t) => t.id));
   const base = { reason, tokens: session.tokens, threshold };
   if (busy.size) {
-    const kept = steps.filter((s) => busy.has(s.task));
+    const runOf = new Map(runs.map((r) => [r.runId, r.task])); // a collection row is keyed by its run ID (fix round 1, F1)
+    const kept = steps.filter((s) => busy.has(s.task) || busy.has(runOf.get(s.task)));
     const acting = kept.some((s) => s.kind === 'action');
     const nextTickS = acting ? null : Math.min(WAIT_S.max, Math.max(WAIT_S.min, liveRuns > 0 ? WAIT_S.runs : WAIT_S.agents));
     return { handoff: { ...base, draining: true }, steps: kept, result: acting ? 'ACTION' : 'WAIT', reason: null, nextTickS };
@@ -274,7 +271,7 @@ export function tickStore(store, { where, names, now, plan = null, probe, watch 
       : table.info;
     // a usage-limit wait stands (it wakes after the reset); an ended loop needs no handoff
     const h = d.doc.exit || (d.result === 'WAIT' && d.reason) ? null
-      : handoffOf({ session, tasks: snap.tasks, steps: table.steps, liveRuns: table.liveRuns, threshold: thresholdsWithOverrides('loop', THRESHOLDS, store).handoffTokens, bin: names.bin });
+      : handoffOf({ session, tasks: snap.tasks, steps: table.steps, runs: snap.runs, liveRuns: table.liveRuns, threshold: thresholdsWithOverrides('loop', THRESHOLDS, store).handoffTokens, bin: names.bin });
     out = { ...d, loop: d.doc, steps: table.steps, info, costPartial: cost?.partial === true, costProblems: cost?.problems ?? [], ...(h ?? {}) };
     return d.doc;
   });

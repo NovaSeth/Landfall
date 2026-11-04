@@ -72,6 +72,17 @@ const timeOf = (e) => Date.parse(e?.at ?? '') || 0;
 const lastEvent = (t) => t.events.reduce((m, e) => Math.max(m, timeOf(e)), 0);
 const lastIndex = (events, names) => { for (let i = events.length - 1; i >= 0; i--) if (names.includes(events[i].event)) return i; return -1; };
 
+// A task an executor may still be working on (the handoff drains it, T-MG-177): dispatched, in review, or in a fix round
+// with open findings, and no review recorded since the last report, fix round or dispatch (that review decides the next
+// step, as in taskRow: fix round 1, F2).
+const REVIEWABLE = new Set(['dispatched', 'in-review', 'implemented', 'fix-round']);
+export function inFlight(t) {
+  const events = t.events ?? [];
+  if (!REVIEWABLE.has(t.status) || events.slice(lastIndex(events, ['implementer', 'fix-round', 'dispatched']) + 1).some((e) => e.event === 'review')) return false;
+  if (t.status === 'dispatched' || t.status === 'in-review') return true;
+  return t.status === 'fix-round' && events[lastIndex(events, ['fix-round'])]?.data?.open > 0;
+}
+
 // Plan entries of a Markdown plan: [{ ref, title }] in order.
 export function parsePlan(text) {
   const out = [];
