@@ -227,3 +227,11 @@ test('a waits log that cannot be written changes no result and hides no error of
   assert.throws(() => cost.heavy(() => { wait(); throw busy; }), (e) => e === busy, 'the call\'s own error, not the log\'s');
   assert.equal(cost.fields('miss').cache, 'miss');
 });
+
+// Fix round 2 (review r2 F1): only the expected failures of the waits append are dropped; a programming error propagates.
+test('an unexpected failure of the waits append is not swallowed', () => {
+  const store = { append() { throw new TypeError('bug'); } };
+  const cost = measure({ store, id: 'T-1', mode: 'write' });
+  cost.meter.waits.push({ at: '2026-11-04T10:00:00.000Z', until: '2026-11-04T10:00:03.000Z' });
+  assert.throws(() => cost.heavy(() => 'pass'), TypeError);
+});
