@@ -68,7 +68,9 @@ function render(r, rules, names, now, carried) {
   }
   if (rules.length) out.push('', "Rules for this tick's steps:", ...rules.map((x) => `${x.id}. ${x.text}`));
   if (r.result === 'WAIT' && r.reason) out.push(`Waiting: ${cell(r.reason)}; dispatch nothing until the reset.`);
-  if (ended) out.push(`NEXT_TICK: none — schedule no wakeup; cancel a pending one (ScheduleWakeup with stop: true) and report to the user.`);
+  if (r.handoff?.draining) out.push(`Handoff due (${cell(r.handoff.reason)}): dispatch nothing new; the rows above are the work in flight, and the tick hands off once none is left.`);
+  if (r.handoff && !r.handoff.draining) out.push(`NEXT_TICK: new session — do the HANDOFF step: commit, schedule no wakeup in this session (cancel a pending one) and end this session; resume in a new session with \`${names.bin} status\`, then \`${names.bin} tick${carried ? ` --plan ${carried}` : ''}\`.`);
+  else if (ended) out.push(`NEXT_TICK: none — schedule no wakeup; cancel a pending one (ScheduleWakeup with stop: true) and report to the user.`);
   else if (r.result === 'WAIT') out.push(`NEXT_TICK: ${r.nextTickS}s — work is in progress; schedule one wakeup in ${r.nextTickS}s with the fixed prompt: ${fixedPrompt(names, carried)}`);
   else out.push(`NEXT_TICK: now — do the steps above, then run \`${names.bin} tick${carried ? ` --plan ${carried}` : ''}\` again.`);
   return `${out.join('\n')}\n`;
@@ -87,7 +89,7 @@ export function tick({ flags, names, io }) {
   }
   return {
     code: CODE[r.result],
-    data: { result: r.result, repeated: r.repeated, reason: r.reason, nextTickS: r.nextTickS, steps: r.steps, info: r.info, rules, loop: summary(r.loop), partial: r.costPartial, billing: r.billing },
+    data: { result: r.result, repeated: r.repeated, reason: r.reason, nextTickS: r.nextTickS, steps: r.steps, info: r.info, rules, loop: summary(r.loop), partial: r.costPartial, billing: r.billing, ...(r.handoff ? { handoff: r.handoff } : {}) },
     errors: r.costProblems.slice(0, 5),
     text: render(r, rules, names, now, carried),
     warnings,

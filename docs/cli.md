@@ -215,8 +215,8 @@ Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
 usage: landfall config set <key> <value> [--decision <D>] [--yes] [--json]
 
 Set one config value: a threshold override (only with an active decision) or the providers of an executor role.
-Keys: thresholds.<unit>.<path> (a whole number of lib/router or lib/engine thresholds.json, such as
-thresholds.router.trivial.maxLoc) and executors.reviewer|implementer (providers in order, comma-separated).
+Keys: thresholds.<unit>.<path> (a whole number of lib/router or lib/engine thresholds.json or of the loop, such as
+thresholds.router.trivial.maxLoc or thresholds.loop.handoffTokens) and executors.reviewer|implementer (providers in order, comma-separated).
 A threshold override needs --decision with an active decision (else exit 1, nothing written); config.json keeps
 the decision with the value. The value default removes an override or a preference. Flags: use flags set.
 Changes files: needs a terminal or --yes.
@@ -1586,7 +1586,9 @@ reset (60 to 3600 s), never STALLED; an external run's usage limit adds an infor
 state (git heads, the files under tasks/, run statuses) for 3 ticks over ≥ 30 min with no live run → STALLED. Every task
 done or cancelled and the state directory committed → DONE. The exit is written to local/loop.json before it is printed;
 every later tick returns it. Writes only that loop record (never committed), so it needs no --yes. Exit 7 in an inactive
-repository.
+repository. A session whose context (its transcript, by CLAUDE_CODE_SESSION_ID) reaches thresholds.loop.handoffTokens
+(default 200000), or in which a task was merged, gets one HANDOFF action step: commit, schedule no wakeup, end the
+session, resume in a new one with status; while tasks are in flight the tick lists only them. No transcript: no change.
 
 Options:
   --plan <file>  a plan whose "### Task <id>: <title>" entries the loop must finish (relative to the repository root); a docs/plans/*.md plan travels in the wakeup prompt

@@ -36,7 +36,7 @@ const LIVE_GRACE_S = 120; // a live-status run past capS + this is not live: its
 
 // Every rule ID this table cites (tests check that each resolves in the method).
 export const TABLE_RULES = Object.freeze(['FLW-3', 'ORC-4', 'FLW-4', 'ORC-9', 'FLW-6', 'PRI-6', 'ORC-5', 'REV-6', 'REV-20', 'REV-7', 'REV-5',
-  'REV-11', 'FLW-8', 'ORC-7', 'ORC-11', 'SPC-1', 'SPC-2', 'SPC-11', 'FLW-9', 'PRI-1', 'COL-24', 'FLW-7', 'ORC-24', 'ORC-25']);
+  'REV-11', 'FLW-8', 'ORC-7', 'ORC-11', 'SPC-1', 'SPC-2', 'SPC-11', 'FLW-9', 'PRI-1', 'COL-24', 'FLW-7', 'ORC-24', 'ORC-25', 'FLW-10']);
 
 const HEAVY_WAIT_MIN = 10;
 

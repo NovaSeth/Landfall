@@ -148,3 +148,24 @@ export function readLedger({ repo, env, bin }) {
   const requests = sessions.flatMap((s) => attribute(s, seen));
   return { requests, versions, problems, found: dirs.length > 0 };
 }
+
+// The calling session's context (T-MG-177): the transcript <id>.jsonl of CLAUDE_CODE_SESSION_ID (Claude Code sets it in
+// the environment of its tools) in the repository's transcript directories → { tokens: the last request's input +
+// cache read + cache write, startedAt: its first request's time or null }; null when there is no such session or its
+// transcript cannot be read. Never throws: a tick without it is the tick of before.
+const SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+export function sessionContext({ repo, env, bin }) {
+  try {
+    const id = env.CLAUDE_CODE_SESSION_ID;
+    if (typeof id !== 'string' || !SESSION_ID.test(id)) return null;
+    const file = projectDirs({ repo, env }).map((d) => join(d, `${id}.jsonl`)).find(isFile);
+    if (!file) return null;
+    const { requests } = parseTranscript(file, { bin });
+    const last = requests[requests.length - 1];
+    if (!last) return null;
+    const t = last.tokens;
+    return { tokens: t.input + t.cacheRead + t.cacheWrite5m + t.cacheWrite1h, startedAt: requests.find((r) => r.at)?.at ?? null };
+  } catch {
+    return null;
+  }
+}

@@ -177,7 +177,6 @@ test('tick through the CLI: a fixture transcript over the threshold prints the H
   assert.equal(body(under.text), body(base.text), 'under the threshold nothing changes');
 
   chmodSync(p.file, 0o000);
-  t.after(() => chmodSync(p.file, 0o600));
   writeFileSync(join(dirname(p.file), 'decoy.jsonl'), transcript(900000));
   const unreadable = await cli(['tick'], { ...p, env });
   assert.equal(unreadable.code, 0);
