@@ -246,6 +246,42 @@ test('the route is re-classified from the diff against the task base: a larger c
   assert.deepEqual([res.env.data.result, res.env.data.route.actual], ['route-escalated', 'critical']);
 });
 
+for (const tracked of [true, false]) {
+  const mode = tracked ? 'tracked' : 'untracked';
+  for (const [path, loc, cls] of [['mockups/b.js', 300, 'standard'], ['src/b.js', 600, 'critical']]) {
+    test(`verify measured LOC: ${mode} src/a.js plus ${path} counts ${loc} LOC`, async (t) => {
+      const files = { 'calc.test.mjs': TESTS, ...(tracked ? { 'src/a.js': '', [path]: '' } : {}) };
+      const r = repo(t, { files, cls: null });
+      review(r, 1, 'approved', cls === 'critical' ? 'external' : 'claude');
+      r.write('src/a.js', '// source\n'.repeat(300));
+      r.write(path, '// second file\n'.repeat(300));
+      const res = await run(r);
+      assert.equal(res.code, 0, show(res));
+      assert.equal(res.env.data.route.actual, cls, show(res));
+      const task = r.store.read('task', r.id);
+      assert.equal(task.classHistory.at(-1).reason, `${cls}: ${loc} LOC > ${cls === 'critical' ? 400 : 30}`);
+      assert.equal((await run(r)).env.data.route.actual, cls, 'a repeated verify keeps the class');
+    });
+  }
+
+  for (const [path, riskPaths] of [['mockups/auth/b.js', []], ['mockups/CLAUDE.md', []], ['mockups/custom/b.js', ['mockups/custom/**']]]) {
+    test(`verify measured LOC: ${mode} risk path ${path} keeps its LOC despite being light`, async (t) => {
+      const files = { 'calc.test.mjs': TESTS, ...(tracked ? { 'src/a.js': '', [path]: '' } : {}) };
+      const r = repo(t, { files, cls: null });
+      profile.openStore(r.stateDir, names).write('profile', null, { ...profile.emptyProfile(), gates: GATES, riskPaths });
+      review(r, 1, 'approved', 'external');
+      r.write('src/a.js', '// source\n'.repeat(300));
+      r.write(path, '// risk path\n'.repeat(300));
+      const res = await run(r);
+      assert.equal(res.code, 0, show(res));
+      assert.equal(res.env.data.route.actual, 'critical');
+      const reason = r.store.read('task', r.id).classHistory.at(-1).reason;
+      assert.match(reason, /matches risk glob/, 'the light path remains in the measured paths');
+      assert.match(reason, /600 LOC > 400/, 'risk LOC counts even for a weightless extension');
+    });
+  }
+}
+
 // ---- --ci, owner, inactive, unknown ----
 
 test('--ci writes nothing and needs no registered owner; the result and exit code are the same', async (t) => {
