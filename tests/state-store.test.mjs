@@ -536,7 +536,7 @@ test('append: the waits log past its cap behaves like the guard log (newest half
   const cap = state.LOGS.waits.capBytes;
   const file = join(dir, 'local', 'waits.jsonl');
   const n = fill(file, cap);
-  s.append('waits', { at: AT, until: AT, kind: 'tick', task: null, source: 'loop' });
+  s.append('waits', { at: AT, until: AT, kind: 'tick', task: null, source: 'loop', pad: 'p'.repeat(200) });
   assert.ok(readFileSync(file).length <= cap);
   const lines = logLines(file);
   assert.equal(lines.at(-1).kind, 'tick');
