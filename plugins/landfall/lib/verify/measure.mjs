@@ -4,6 +4,11 @@
 // call throws (heavy-busy), and only in a mode that writes (never ci). The doc's fields are added at the end of the run.
 import { readings } from '../sched/index.mjs';
 
+// The failures of the waits append that are dropped, by the code the store's errors or the file system carry: the store
+// lock held or stale, a state.json newer or corrupt, an inactive store, local/waits.jsonl not a regular file, a full,
+// read-only or refusing disk. Anything else (a programming error) propagates.
+const EXPECTED = new Set(['locked', 'stale-lock', 'schema-newer', 'state-invalid', 'inactive', 'EISDIR', 'ENOTDIR', 'ELOOP', 'ENOSPC', 'EDQUOT', 'EROFS', 'EACCES', 'EPERM']);
+
 // `cache`: 'hit' (the gate cache or a batch memo supplied the runs) · 'miss' (consulted, no entry) · 'off'.
 export const cacheState = ({ shared, hit, consulted }) => (shared || hit ? 'hit' : consulted ? 'miss' : 'off');
 
@@ -17,12 +22,10 @@ export function measure({ store, id, mode }) {
       if (mode === 'ci') continue;
       try {
         store.append('waits', { ...meter.waits[logged], kind: 'heavy-queue', task: id, source: 'verify' });
-      } catch {
-        // The waits log is optional telemetry (fix round 1, review r1 F1): any failure of its append is dropped, so it
-        // never fails or changes a verify, and in `heavy` never replaces the error of the call that waited (heavy-busy).
-        // Expected: the store lock held or stale (locked, stale-lock); a state.json newer or corrupt (schema-newer,
-        // state-invalid); an inactive store; local/waits.jsonl not a regular file (EISDIR, ENOTDIR, ELOOP); a full or
-        // read-only disk (ENOSPC, EDQUOT, EROFS, EACCES, EPERM).
+      } catch (err) {
+        // The waits log is optional telemetry (fix rounds 1-2): an expected failure is dropped, so it never fails or
+        // changes a verify, and in `heavy` never replaces the error of the call that waited (heavy-busy).
+        if (!EXPECTED.has(err?.code)) throw err;
       }
     }
   };
