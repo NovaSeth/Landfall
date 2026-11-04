@@ -141,7 +141,7 @@ export function outsideMerges({ where, env, tasks }) {
 }
 
 // Step 1 of the tick, measured in the repository.
-function gitProbe(where, env, names) {
+export function gitProbe(where, env, names) {
   const text = (r) => (r.status === 0 ? r.stdout : `error ${r.error ?? r.status}`);
   return {
     heads: () => {
@@ -157,10 +157,10 @@ function gitProbe(where, env, names) {
     dirty: () => stateChanges(where, env),
     outside: (tasks) => outsideMerges({ where, env, tasks }),
     // the run records carry the provider's last line (the tick's snapshot of runs does not); nothing here throws
-    limits: ({ since }) => {
+    limits: ({ since, now = Date.now() }) => {
       let records = [];
       try { records = readRunRecords(runsStore(where.dir, names)); } catch { /* no records: no external limit */ }
-      return usageLimit({ repo: where.repo, env, names, now: Date.now(), since, runs: records });
+      return usageLimit({ repo: where.repo, env, names, now, since, runs: records });
     },
   };
 }
@@ -178,9 +178,9 @@ function measure(probe, loop, now) {
 
 // The usage limit of the plan seen now, or null; read only when no cap ends the tick, and an error is no limit (GC4).
 function readLimit(probe, loop, runs, now) {
-  if (typeof probe.limits !== 'function' || cheapCap(loop, now)) return null;
+  if (typeof probe.limits !== 'function') return null;
   try {
-    const l = probe.limits({ since: loop.startedAt, runs });
+    const l = probe.limits({ since: loop.startedAt, runs, now });
     return l && typeof l === 'object' && typeof l.kind === 'string' ? l : null;
   } catch {
     return null;
@@ -217,11 +217,14 @@ export function tickStore(store, { where, names, now, plan = null, probe, watch 
       caps: effectiveCaps(loop), now, bin: names.bin, budgets: readBudgets(where.dir, snap.tasks), problem: snap.problem, dirty: probe.dirty, watch,
       outside: snap.problem ? [] : probe.outside?.(snap.tasks) ?? [],
     });
-    const limit = readLimit(probe, loop, snap.runs, now);
-    const d = decide(loop, {
+    const obs = {
       now, fingerprint: fingerprint(heads, snap.files, snap.runs), costMicroUsd: cost?.costMicroUsd ?? null, unmeasurable: cost?.unmeasurable === true,
-      liveRuns: table.liveRuns, outcome: table.outcome, nextTickS: table.nextTickS, limit,
-    });
+      liveRuns: table.liveRuns, outcome: table.outcome, nextTickS: table.nextTickS,
+    };
+    // the limit is read only when no cap of any kind ends this tick: decide without it first (it is pure)
+    const plain = decide(loop, obs);
+    const limit = plain.doc.exit === 'BUDGET' ? null : readLimit(probe, loop, snap.runs, now);
+    const d = limit ? decide(loop, { ...obs, limit }) : plain;
     const info = limit?.kind === 'codex' && !d.doc.exit
       ? [...table.info, { task: limit.provider ?? 'codex', state: `${limit.provider ?? 'codex'} usage limit ${Number.isFinite(limit.resetAt) ? `until ${clock(limit.resetAt)}` : '(reset time unknown)'}: send reviews and implementations to Claude until then`, step: null, rules: [], kind: 'limit' }]
       : table.info;
