@@ -32,6 +32,7 @@ const { pluginDir, names } = locate();
 const LAUNCHER = join(pluginDir, 'bin', names.bin);
 const lib = (rel) => import(pathToFileURL(join(pluginDir, 'lib', rel)).href);
 const { runHook } = await lib('hooks/registry.mjs');
+const { mustGuard } = await lib('hooks/guard-bash.mjs');
 const state = await lib('state/index.mjs');
 // Corpus rows spell the plugin's own command as @BIN@ and its state directory as @STATE@ (both from name.json).
 // @STATEGLOB@ and @STATECLASS@ are globs that reach the state directory (bypass rows): its first two characters + '*', and its
@@ -1282,14 +1283,13 @@ test('launcher catch: a broken plugin copy blocks a guarded Bash command as unve
 });
 
 test('guard does nothing where the plugin has no state: a repository without a state directory allows what an active one blocks', () => {
-  const heredoc = "python3 - <<'E'\nprint(1)\nE";
   const none = gitRepo('main', { state: false }); const active = gitRepo('main'); activate(active, ['AB']);
-  for (const c of ['git push --force origin main', 'git push origin $B', heredoc]) {
+  for (const c of ['git push --force origin main', 'git push origin main -f']) {
     assert.equal(judgeAt(none, c, { readProjectMode: () => 'unknown' }).decision, 'allow', `no state: ${c}`);
-    if (c !== heredoc) assert.equal(judgeAt(active, c, { readProjectMode: () => 'solo' }).decision, 'deny', `active: ${c}`);
+    assert.equal(judgeAt(active, c, { readProjectMode: () => 'solo' }).decision, 'deny', `active: ${c}`);
   }
   const plain = mkdtempSync(join(tmpdir(), 'g-plain-dir-'));
-  assert.equal(judgeAt(plain, 'git push origin $B').decision, 'allow', 'not a repository');
+  assert.equal(judgeAt(plain, 'git push --force origin main').decision, 'allow', 'not a repository');
   // the state cannot be resolved (git missing, an active-looking marker): still blocked
   const unknown = trackedRepo();
   const v = judgeAt(unknown, 'git push origin $B', { env: { ...process.env, CLAUDE_PROJECT_DIR: unknown, PATH: mkdtempSync(join(tmpdir(), 'g-nogit-')) } });
@@ -1319,4 +1319,15 @@ test('guard does nothing only when git certainly said there is no state: a git t
   const here = gitRepo('main', { state: false });
   const env = { ...process.env, CLAUDE_PROJECT_DIR: here, PATH: mkdtempSync(join(tmpdir(), 'g-nogit-')) };
   assert.equal(judgeAt(here, 'git push --force origin main', { env }).decision, 'deny', 'git missing: unknown, not none');
+});
+
+test('guard shortcut fails closed (fix round 1): quotes, backslashes, expansions, directory options and file-moving commands always get the full guard', () => {
+  const must = ['c""d nested && git push --force origin main', 'c${E}d nested && git push --force origin main', 'c\\d nested && git push --force origin main',
+    'git -"C" nested push --force origin main', 'make --directory=nested push', "git -'C' nested status", 'git push origin $B', 'echo `id`',
+    'rm -rf nested', 'mv nested x', 'cp -r nested x', 'ln -s nested x', 'find nested -delete', 'ls | xargs rm', 'git --git-dir nested/.git status', 'cd nested'];
+  for (const c of must) assert.equal(mustGuard(c), true, c);
+  for (const c of ['git push --force origin main', 'git status', 'ls -la', 'npm test']) assert.equal(mustGuard(c), false, c);
+  const parent = mkdtempSync(join(tmpdir(), 'g-parent-')); const nested = join(parent, 'nested');
+  spawnSync('git', ['init', '-q', '-b', 'main', nested]); activate(nested, ['AB']);
+  for (const c of must.filter((x) => /force|rm -rf/.test(x))) assert.equal(judgeAt(parent, c, { readProjectMode: () => 'solo' }).decision, 'deny', c);
 });
