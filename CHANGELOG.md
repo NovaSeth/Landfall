@@ -3,7 +3,7 @@
 ## 2.6.0
 
 - **Loop billing mode:**
-  - The loop detects at creation whether Claude Code bills by subscription or by API and stores it (loop schema 2, migration 005). The `<PREFIX>BILLING` override counts only from a terminal start; API environment variables (`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_USE_BEDROCK`, `_VERTEX`, `_FOUNDRY`) and `oauthAccount.billingType` in `.claude.json` decide otherwise. A tick may only tighten the mode to api.
+  - The loop detects at creation whether Claude Code bills by subscription or by API and stores it (loop schema 2, migration 005). The `<PREFIX>BILLING` override `subscription` counts only from a terminal start, while `api` counts anywhere and can only tighten a running loop; otherwise API environment variables (`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_USE_BEDROCK`, `_VERTEX`, `_FOUNDRY`) and `oauthAccount.billingType` in `.claude.json` decide. A tick may only tighten the mode to api.
   - In subscription mode the API-price dollar estimate does not end the loop; API and unknown billing keep the $25 cap. `loop start`, `loop status` and `tick` print `billing: <mode> (<source>)`. Caps are still raised only from a terminal.
 - **Usage limit:** a message such as `You've hit your session limit · resets …` (session, weekly, Opus or Sonnet) in the repository's transcripts makes `tick` wait until the reset, between 60 s and 3600 s, and never report STALLED. An external run's usage limit (Codex) adds an informational row.
 - **Dashboard:** live agents and runs show as `↳` rows under their task, with an UNASSIGNED group for the rest. The AGENTS section is gone, and every line fits the pane.
