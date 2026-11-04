@@ -670,3 +670,8 @@ test('node-test TAP: lines inside a YAML diagnostic block are never results or s
   ].join('\n');
   assert.deepEqual(ids(parse(out)), ['real one', 'real two']);
 });
+
+test('node-test TAP: a real test name that holds a path-like text is kept', () => {
+  const out = ['TAP version 13', 'ok 1 - (input=/tmp/a:1:2)', '1..1', '# tests 1', '# fail 0', ''].join('\n');
+  assert.deepEqual(ids(parse(out)), ['(input=/tmp/a:1:2)']);
+});
