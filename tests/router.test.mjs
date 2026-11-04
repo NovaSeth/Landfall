@@ -149,6 +149,31 @@ test('classifier: thresholds and default risk globs are data with the spec value
   assert.deepEqual(router.THRESHOLDS, data, 'the router reads exactly this file');
 });
 
+test('riskMatcher: defaults and profile globs agree with classifier risk-path reasons', () => {
+  assert.equal(typeof classifier.riskMatcher, 'function');
+  const globs = ['lib/public/**', 'api/v?/**'];
+  const risky = classifier.riskMatcher(globs);
+  const paths = [
+    ['SKILL.md', true],
+    ['plugins/x/skills/y/SKILL.md', true],
+    ['mockups/x/SKILL.md', true],
+    ['lib/public/client.js', true],
+    ['LIB/PUBLIC/client.js', true],
+    ['api/v2/users.js', true],
+    ['api/v10/users.js', false],
+    ['src/lib/public/client.js', false],
+    ['mockups/app.js', false],
+    ['src/app.js', false],
+  ];
+  for (const [path, expected] of paths) {
+    const result = router.classify({ paths: [path], loc: 1, riskPaths: globs });
+    assert.equal(risky(path), expected, path);
+    assert.equal(risky(path), result.reasons.some((reason) => reason.code === 'risk-path'), path);
+  }
+  assert.equal(classifier.riskMatcher()('plugins/x/SKILL.md'), true, 'omitted additions keep defaults');
+  assert.equal(classifier.riskMatcher()('lib/public/client.js'), false, 'profile additions stay local to the matcher');
+});
+
 test('lightMatcher: shipped light paths use the classifier glob semantics', () => {
   assert.equal(typeof classifier.lightMatcher, 'function');
   const light = classifier.lightMatcher(router.THRESHOLDS);

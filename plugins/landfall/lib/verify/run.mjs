@@ -48,7 +48,7 @@ import { join } from 'node:path';
 import { authorHandle, readRecords, stateRel } from '../decisions/index.mjs';
 import { git } from '../git/index.mjs';
 import { PROFILE_KINDS, emptyProfile, listFiles, observe, riskGlobsOf } from '../profile/index.mjs';
-import { DEFAULT_RISK_PATHS, globMatch, lightMatcher } from '../router/classify.mjs';
+import { lightMatcher, riskMatcher } from '../router/classify.mjs';
 import { MAX_PATHS, addedSteps, applyClass, classify, rank, recordedKeys, routeFor, routeTask, routerThresholds, weightless } from '../router/index.mjs';
 import { KINDS, StateError, check, gatesShaOf, open, resolve } from '../state/index.mjs';
 import { appliedTier, readReport, reportHasEvidence, reviewNeed, reviewProblem, reviewState } from './artifacts.mjs';
@@ -346,8 +346,7 @@ export function evaluate({ where, names, env, id, mode, handle = null, at = now(
   const anchorCommit = mode === 'merge' ? anchor : baseOk ? task.base : null;
   // The change under verification: since the base (verify), or what the merge brings onto the target tip.
   const riskPaths = riskGlobsOf(profile);
-  const riskGlobs = [...new Set([...DEFAULT_RISK_PATHS, ...riskPaths])];
-  const risky = (path) => riskGlobs.some((glob) => globMatch(glob, path));
+  const risky = riskMatcher(riskPaths);
   const change = mode === 'merge' ? mergeChange(where, env, anchor, code.routeScope) : baseOk ? changeSince(where, env, task.base, code.routeScope, lightMatcher(routerThresholds(store)), risky) : null;
   if (baseOk && change === null && mode !== 'merge') say('fail', 'base-missing', `git cannot compare the work with the base ${task.base.slice(0, 12)}`, 'fetch the base commit, then verify again');
 
