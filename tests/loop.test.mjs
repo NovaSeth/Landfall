@@ -1291,6 +1291,10 @@ test('billing (c) billingMode: the account file, API signals and the override; n
   assert.match(bare({ [BILL]: 'free' }).source, /free/, 'the unrecognized value is named');
   assert.equal(bare({ ANTHROPIC_API_KEY: 'x', [BILL]: 'garbage' }, { envOnly: true }).mode, 'api', 'an unrecognized value does not hide an API key');
   assert.equal(bare({ [BILL]: 'garbage' }, { envOnly: true }).mode, 'unknown');
+  const note = `${BILL}="garbage" is not recognized`;
+  assert.equal(bare({ [BILL]: 'garbage', ANTHROPIC_API_KEY: 'x' }, { envOnly: true }).source, `ANTHROPIC_API_KEY (${note})`, 'the API variable keeps the note');
+  assert.equal(bare({ [BILL]: 'garbage', CLAUDE_CODE_USE_BEDROCK: '1' }).source, `CLAUDE_CODE_USE_BEDROCK (${note})`, 'the API flag keeps the note');
+  assert.equal(mode({ [BILL]: 'garbage' }).source, `claude.json billingType (${note})`, 'the account file keeps the note');
   const home = join(dir, 'home');
   mkdirSync(home);
   writeFileSync(join(home, '.claude.json'), JSON.stringify({ oauthAccount: { billingType: 'max_subscription' } }));
