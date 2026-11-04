@@ -21,6 +21,7 @@ import { checkWrite } from './document.mjs';
 import { StateError, guarded } from './errors.mjs';
 import { allocateId } from './ids.mjs';
 import { KINDS, LIMITS, PATTERNS } from './kinds.mjs';
+import { OUTCOME_KINDS, adoptOutcomes, applyOutcome, setOutcome } from './outcome.mjs';
 import { resolve } from './resolve.mjs';
 import { validate } from './schema.mjs';
 import { open } from './store.mjs';
@@ -36,7 +37,8 @@ const STATES = Object.freeze({
   // implementer --report <status> [--round <k>]: a fix round's report delivery also records the round (the report command).
   implementer: { required: ['report'], optional: ['round'], status: (data) => REPORTS[data.report] },
   blocked: { required: ['reason'], status: () => 'blocked' },
-  cancelled: { required: ['reason'], status: () => 'cancelled' },
+  // --outcome <k> [--by <ref>]: the outcome of the cancellation is recorded in the same update (T-MG-118).
+  cancelled: { required: ['reason'], optional: ['outcome', 'by'], status: () => 'cancelled' },
   'fix-round': { required: ['round', 'addressed', 'open'], status: () => 'fix-round' },
   'self-verified': { optional: ['round'], status: unchanged },
   'status-request': { status: unchanged },
@@ -50,6 +52,8 @@ const VALUES = {
   worktree: text(LIMITS.path, { re: PATTERNS.absPath }),
   lane: text(LIMITS.lane, { re: PATTERNS.lane }),
   reason: text(LIMITS.reason),
+  outcome: { t: 'enum', of: OUTCOME_KINDS },
+  by: text(64, { re: PATTERNS.outcomeBy }),
   note: text(LIMITS.reason),
   report: { t: 'enum', of: Object.keys(REPORTS) },
   round: { t: 'int', min: 1, max: LIMITS.round },
@@ -79,6 +83,7 @@ function stateOptions(state, given, doneCommand) {
     if (!allowed.includes(name)) throw usage('unexpected-flag', `--${name} does not apply to ${state}`, `${state} takes ${allowed.map((n) => `--${n}`).join(', ')}`);
     out[name] = value(name, raw);
   }
+  if (out.by !== undefined && out.outcome === undefined) throw usage('missing-flag', '--by needs --outcome', 'cancelled --reason <t> --outcome <k> --by <ref>');
   const missing = (rule.required ?? []).filter((n) => out[n] === undefined);
   if (missing.length) throw usage('missing-flag', `${state} needs ${missing.map((n) => `--${n}`).join(' and ')}`, `${state} takes ${allowed.map((n) => `--${n}`).join(', ')}`);
   return out;
@@ -141,7 +146,7 @@ export function setTask({ cwd, env, names, id, state, options = {}, at = now() }
       if (doc === null) throw unknownTask(id, where, names);
       if (doc.owner !== by) throw new StateError('not-owner', 'FAIL', `${id} belongs to ${doc.owner}; only its owner records its state`, { hint: 'ask the owner; taking a task over needs a decision record' });
       if (CLOSED.includes(doc.status)) throw new StateError('task-closed', 'FAIL', `${id} is ${doc.status}: a closed task takes no further state`, { hint: `'${names.bin} task new' starts a new task` });
-      const data = { ...opts };
+      const { outcome, by: outcomeRef, ...data } = opts;
       if (state === 'self-verified' && data.round === undefined) data.round = Math.max(doc.round, 1);
       if (state === 'dispatched') {
         if (data.lane === undefined && doc.lane === null && lanesOn(store)) throw usage('lane-required', `${id} has no lane and the lanes capability is on`, 'pass --lane <lane>');
@@ -156,6 +161,7 @@ export function setTask({ cwd, env, names, id, state, options = {}, at = now() }
       doc.status = STATES[state].status(data, doc);
       event = { at, by, event: state, data };
       doc.events.push(event);
+      if (outcome !== undefined) applyOutcome(doc, { kind: outcome, by: outcomeRef ?? null, at, handle: by });
       return doc;
     });
     return { id, task, event };
@@ -270,5 +276,29 @@ export function showTask({ cwd, env, names, id } = {}) {
     const doc = where.active ? open(where.dir, { names }).read('task', id) : null;
     if (doc === null) throw unknownTask(id, where, names);
     return doc;
+  });
+}
+
+// `task outcome <id> <kind> [--by <ref>]`: { id, task }. Only the owner, only a cancelled task.
+export function recordOutcome({ cwd, env, names, id, kind, by = null, at = now() } = {}) {
+  return guarded(() => {
+    if (!OUTCOME_KINDS.includes(kind)) throw usage('invalid-value', `outcome kind ${JSON.stringify(kind)}: not one of ${OUTCOME_KINDS.join('|')}`);
+    if (by !== null) {
+      const errors = validate({ t: 'obj', f: { '--by': VALUES.by } }, { '--by': by });
+      if (errors.length) throw usage(errors[0].code, errors[0].message, 'a task ID, a commit SHA (7-40 hex) or a release vX.Y.Z');
+    }
+    const { where, store } = activeStore({ cwd, env, names });
+    KINDS.task.path(id);
+    const handle = actor(store, where, env, names);
+    if (store.read('task', id) === null) throw unknownTask(id, where, names);
+    return { id, task: setOutcome(store, id, { kind, by, at, handle }) };
+  });
+}
+
+// `task outcome --adopt [--yes]`: see adoptOutcomes. Nothing is written unless `write`.
+export function adoptTaskOutcomes({ cwd, env, names, write = false, at = now() } = {}) {
+  return guarded(() => {
+    const { where, store } = activeStore({ cwd, env, names });
+    return { dir: where.dir, ...adoptOutcomes(store, { handle: actor(store, where, env, names), at, write }) };
   });
 }
