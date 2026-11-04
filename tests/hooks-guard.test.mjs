@@ -1328,9 +1328,10 @@ test('guard shortcut fails closed (fix round 1): quotes, backslashes, expansions
     // fix round 2: brace expansion, git -c, every shell metacharacter, a tab or a newline
     'git {-C,nested} push --force origin main', '{git,-C,nested,push,--force,origin,main}', 'make {-C,nested} push',
     'git -c core.worktree=nested push --force origin main', 'git -c x push', 'git status;ls', 'git status\tls', 'git status\nls', 'ls *', 'ls [a]',
-    'ls > f', 'a=b git push', 'git status &', '(git push)', 'git push | cat', 'ls ?', 'ls  -l'];
+    'ls > f', 'a=b git push', 'git status &', '(git push)', 'git push | cat', 'ls ?', 'ls  -l',
+    'git -Cnested push --force origin main', 'make -Cnested push', 'tar -xC nested -f a.tar', 'git -cx=y push', 'git -C1 status'];
   for (const c of must) assert.equal(mustGuard(c), true, c);
-  for (const c of ['git push --force origin main', 'git status', 'ls -la', 'npm test']) assert.equal(mustGuard(c), false, c);
+  for (const c of ['git push --force origin main', 'git status', 'ls -l', 'npm test']) assert.equal(mustGuard(c), false, c);
   const parent = mkdtempSync(join(tmpdir(), 'g-parent-')); const nested = join(parent, 'nested');
   spawnSync('git', ['init', '-q', '-b', 'main', nested]); activate(nested, ['AB']);
   for (const c of must.filter((x) => /force|rm -rf/.test(x))) assert.equal(judgeAt(parent, c, { readProjectMode: () => 'solo' }).decision, 'deny', c);
