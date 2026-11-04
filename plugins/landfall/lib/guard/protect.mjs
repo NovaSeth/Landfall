@@ -42,13 +42,15 @@ export const OWNED = Object.freeze([
   { re: /^tasks\/([^/]+)\/verify\.json$/, rule: 'FLW-7', use: (bin, id) => `\`${bin} verify ${id}\`` },
   { re: /^baseline\/tests\.json$/, rule: 'FLW-7', use: (bin) => `\`${bin} verify <task>\` or \`${bin} baseline pin --decision <D>\`` },
   { re: /^local\/loop\.json$/, rule: 'FLW-7', use: (bin) => `\`${bin} loop start|stop\` and \`${bin} tick\`` },
+  // the loop start consent (lib/hooks/prompt-consent.mjs CONSENT, T-MG-149): only the user's own prompt writes it
+  { re: /^local\/loop-consent\.json$/, rule: 'FLW-7', use: (bin) => `\`${bin} loop start\`: the user sends it as their own prompt; the prompt hook records the consent` },
   { re: /^local\/gate-cache\/([^/]+)\.json$/, rule: 'FLW-7', use: (bin) => `\`${bin} verify <task>\`, which writes the gate cache (--no-cache runs the gates again)` },
   { re: /^local\/runs\/([^/]+)\.json$/, rule: 'FLW-7', use: (bin) => `\`${bin} exec\` (the run supervisor writes the record)` },
   { re: /^decisions\/([^/]+)\.md$/, rule: 'PRI-8', field: 'status', use: (bin, id) => `\`${bin} decisions supersede ${id}\` or \`${bin} decisions retire ${id}\`` },
   { re: /^guard-extra\.txt$/, rule: 'SEC-4', edit: true, use: () => 'the Edit tool, where the change is visible' },
 ]);
 // Text that names a state file wherever the state directory lives (prescan literals, lowercase).
-export const OWNED_NAMES = Object.freeze(['state.json', 'task.json', 'verify.json', 'tests.json', 'loop.json', 'guard-extra.txt', '/tombstones/', '/local/ids/', '/tasks/', '/decisions/',
+export const OWNED_NAMES = Object.freeze(['state.json', 'task.json', 'verify.json', 'tests.json', 'loop.json', 'loop-consent.json','guard-extra.txt', '/tombstones/', '/local/ids/', '/tasks/', '/decisions/',
   '/baseline/', '/findings/', '/lessons/', '/team/', '/gate-cache/', '/runs/']);
 const WORKTREES = /^local\/worktrees(\/|$)/; // separate checkouts of external executors, not state
 

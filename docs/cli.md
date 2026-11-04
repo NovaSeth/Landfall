@@ -875,6 +875,9 @@ usage: landfall loop start [--caps <k=v,…>] [--yes] [--json]
 Start a loop with caps (defaults: wallMin=480,ticks=200,usd=25,rounds=2); a running loop is never replaced.
 A cap above its default, and a new loop after an ended one (DONE, STALLED or BUDGET), are the user's decision: exit 7
 without a terminal.
+Inside Claude Code the user consents by sending `<bin> loop start [--caps k=v,…]` as the first line of their own
+prompt: the prompt hook records it, and one `loop start --yes` in that repository within 10 minutes, with caps at
+most the consented ones, uses it.
 Caps never extend by themselves. Exit 1 while a loop runs (`loop stop` ends it).
 The billing mode is decided here and stored: <PREFIX>BILLING=api, an API variable (ANTHROPIC_API_KEY,
 ANTHROPIC_AUTH_TOKEN, CLAUDE_CODE_USE_BEDROCK|VERTEX|FOUNDRY) or the account file's subscription billing type;

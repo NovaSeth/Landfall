@@ -13,7 +13,7 @@
 //   tick({ cwd, env, names, now, plan }) → { where, plan, ...result } · tickStore(store, { where, names, now, plan, probe }) (the core, with the
 //   probe of step 1 passed in) · startLoop · stopLoop · showLoop. Errors are StateErrors (the CLI maps their exit).
 import { createHash } from 'node:crypto';
-import { lstatSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { closeSync, fstatSync, lstatSync, openSync, readFileSync, readSync, readdirSync, statSync } from 'node:fs';
 import { isAbsolute, join, relative, sep } from 'node:path';
 import { git } from '../git/index.mjs';
 import { costSince, readRuns } from '../receipts/index.mjs';
@@ -22,6 +22,7 @@ import { billingMode } from './billing.mjs';
 import { readRunRecords, runsStore } from '../runs/index.mjs';
 import { usageLimit } from './limits.mjs';
 import { recordLoopWait } from './waits.mjs';
+import { CONSENT, consentAllows, consentCaps, consumeConsent } from '../hooks/prompt-consent.mjs';
 import { cheapCap, clock, decide, effectiveCaps, newLoop, parseCaps } from './decide.mjs';
 import { CAP_RANGE, CARRIED_PLAN, DEFAULT_CAPS, LOOP, LOOP_ID, STALL, TERMINAL, UNMEASURED, fixedPrompt } from './kind.mjs';
 import { DEFAULT_BUDGET_MIN, budgetOf, readBudgets } from './budget.mjs';
@@ -38,7 +39,7 @@ const iso = (ms) => new Date(ms).toISOString();
 const sha256 = (data) => createHash('sha256').update(data).digest('hex');
 
 const inactive = (where, names) => new StateError('inactive', 'REFUSED', `${where.repo} is not active: the loop runs on the project state`, { hint: `'${names.bin} init' activates it` });
-const userDecision = (message) => new StateError('user-decision', 'REFUSED', message, { hint: 'run it in a terminal: caps never extend automatically' });
+const userDecision = (message, names) => new StateError('user-decision', 'REFUSED', message, { hint: `run it in a terminal, or send \`${names.bin} loop start [--caps k=v,…]\` as your own prompt (one start within 10 min): caps never extend automatically` });
 
 function activeStore({ cwd, env, names }) {
   const where = resolve({ cwd, env, names });
@@ -252,22 +253,93 @@ export function tick({ cwd, env, names, now = Date.now(), plan = null, readings 
   return { where, plan: planDoc?.path ?? null, ...tickStore(store, { where, names, now, plan: planDoc, probe: gitProbe(where, env, names), watch: readWatch({ names, env, now, readings }), billing: () => billingMode({ env, names }), signal: billingMode({ env, names, envOnly: true }) }) }; // billing: only a loop this tick creates stores it; signal: may tighten a stored one
 }
 
+const TRANSCRIPT_TAIL = 256 * 1024;
+const TRANSCRIPT_SKEW_MS = 2 * 60 * 1000; // the transcript line may be stamped a little before the hook ran
+const sameCaps = (a, b) => Object.keys(a).length === Object.keys(b).length && Object.keys(a).every((k) => a[k] === b[k]);
+
+// The text of a human prompt line of a Claude Code transcript, or null: type and role user, not a meta line, the content
+// a string or text (and image) blocks only, so a tool result (also role user) never counts.
+function promptText(line) {
+  let o;
+  try { o = JSON.parse(line); } catch { return null; }
+  if (!o || o.type !== 'user' || o.isMeta === true || o.message?.role !== 'user') return null;
+  const c = o.message.content;
+  if (typeof c === 'string') return { text: c, at: Date.parse(o.timestamp) };
+  if (!Array.isArray(c) || !c.length || c.some((b) => b?.type !== 'text' && b?.type !== 'image')) return null;
+  const first = c.find((b) => b.type === 'text');
+  return typeof first?.text === 'string' ? { text: first.text, at: Date.parse(o.timestamp) } : null;
+}
+
+// { ok } when the last 256 KB of the consent's session transcript hold a human prompt whose first line is the consented
+// command (consentCaps, the same caps) stamped within the consent window; { ok: false, why } otherwise, also when the
+// file cannot be read (fail closed).
+function promptInTranscript(doc, bin, now) {
+  const from = Date.parse(doc.at) - TRANSCRIPT_SKEW_MS;
+  const to = Math.min(Date.parse(doc.expiresAt), now + TRANSCRIPT_SKEW_MS);
+  let fd;
+  let text;
+  try {
+    fd = openSync(doc.transcript, 'r');
+    const st = fstatSync(fd);
+    if (!st.isFile()) return { ok: false, why: 'the session transcript is not a regular file' };
+    const start = Math.max(0, st.size - TRANSCRIPT_TAIL);
+    const buf = Buffer.alloc(st.size - start);
+    let got = 0;
+    while (got < buf.length) { const n = readSync(fd, buf, got, buf.length - got, start + got); if (n <= 0) break; got += n; }
+    text = buf.subarray(0, got).toString('utf8');
+    if (start > 0) text = text.slice(text.indexOf('\n') + 1); // the first line is cut
+  } catch {
+    return { ok: false, why: 'the session transcript cannot be read' };
+  } finally {
+    if (fd !== undefined) try { closeSync(fd); } catch { /* closed */ }
+  }
+  for (const line of text.split('\n')) {
+    if (!line.includes('user')) continue; // cheap filter before the parse
+    const p = promptText(line);
+    if (!p || !(p.at >= from && p.at <= to)) continue;
+    const caps = consentCaps(p.text, bin);
+    if (caps && sameCaps(caps, doc.caps)) return { ok: true };
+  }
+  return { ok: false, why: 'the session transcript does not show the prompt' };
+}
+
 // A new loop with `caps` over the defaults. A running loop is never replaced; after an ended one (DONE, `loop stop`
-// included, STALLED or BUDGET), and for a cap above its default, only the user starts one (byUser: a terminal is
-// attached), so caps never extend by themselves (SD-17, GC4).
+// included, STALLED or BUDGET), and for a cap above its default, only the user starts one, so caps never extend by
+// themselves (SD-17, GC4). The user: byUser (a terminal is attached), or a consent the user's own prompt recorded
+// (lib/hooks/prompt-consent.mjs, T-MG-149), consumed here once: same repository, not expired, the caps within the
+// consented ones. A consent is consumed only when the start needs it, after the running-loop check; a refused start
+// leaves it unused. Session: the Bash environment carries no session id, so the consent matches the repository.
+// Human channel (fix round 2): the consent counts only when the session transcript it names holds the consented command
+// as the first line of a user prompt written in its window (promptInTranscript); an unreadable or missing transcript
+// refuses. The consent authorizes the restart and the caps only: the billing override stays a terminal's (byUser).
 export function startLoop({ cwd, env, names, now = Date.now(), caps = {}, byUser = false }) {
   const raised = Object.keys(caps).filter((k) => caps[k] > DEFAULT_CAPS[k]);
-  if (raised.length && !byUser) throw userDecision(`raising ${raised.join(', ')} above the default is the user's decision`);
-  const { where, store } = activeStore({ cwd, env, names });
+  const where = resolve({ cwd, env, names });
+  const store = where.active ? open(where.dir, { names, kinds: { ...STORE_KINDS, [CONSENT.name]: CONSENT } }) : null;
+  const ask = { repo: where.repo, caps, now, proof: (doc) => promptInTranscript(doc, names.bin, now) };
+  const because = (why) => (why && why !== 'no consent' ? ` (consent: ${why})` : '');
+  const raiseRefused = (why) => userDecision(`raising ${raised.join(', ')} above the default is the user's decision${because(why)}`, names);
+  if (raised.length && !byUser && !(store && consentAllows(store.read(CONSENT.name, null), ask).ok)) throw raiseRefused();
+  if (!store) throw inactive(where, names);
+  const running = (cur) => new StateError('loop-running', 'FAIL', `loop ${cur.id} is running (tick ${cur.ticks} of ${cur.caps.ticks})`, { hint: `'${names.bin} loop stop' ends it first` });
+  const ended = (cur, why) => userDecision(`the last loop ended with ${cur.exit}: a new loop after an ended one is the user's decision${because(why)}`, names);
+  const seen = store.read(LOOP.name, null);
+  if (seen && !seen.exit) throw running(seen);
+  let user = byUser;
+  if (!user && (raised.length || seen)) {
+    const c = consumeConsent(store, ask);
+    if (!c.ok) throw raised.length ? raiseRefused(c.why) : ended(seen, c.why);
+    user = true;
+  }
   let replaced = null;
-  const billing = billingMode({ env, names, byUser });
+  const billing = billingMode({ env, names, byUser }); // a terminal only (review r1 F2): a consent never switches the cost cap off
   const loop = store.update(LOOP.name, null, (cur) => {
-    if (cur && !cur.exit) throw new StateError('loop-running', 'FAIL', `loop ${cur.id} is running (tick ${cur.ticks} of ${cur.caps.ticks})`, { hint: `'${names.bin} loop stop' ends it first` });
-    if (cur && !byUser) throw userDecision(`the last loop ended with ${cur.exit}: a new loop after an ended one is the user's decision`);
+    if (cur && !cur.exit) throw running(cur);
+    if (cur && !user) throw ended(cur);
     replaced = cur;
-    return newLoop({ now, caps: { ...DEFAULT_CAPS, ...caps }, byUser, billing });
+    return newLoop({ now, caps: { ...DEFAULT_CAPS, ...caps }, byUser: user, billing });
   });
-  return { where, loop, replaced, billing: loop.billing };
+  return { where, loop, replaced, billing: loop.billing, consented: user && !byUser };
 }
 
 // Ends a running loop: exit DONE with the reason "stopped"; no loop or an ended one is left as it is.

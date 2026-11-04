@@ -16,6 +16,7 @@ import { realpathSync, statSync } from 'node:fs';
 import { join, sep } from 'node:path';
 import { forModel } from '../text/clean.mjs';
 import { loadNames, loopStatus } from './loop-state.mjs';
+import { consentCaps } from './prompt-consent.mjs';
 
 const names = loadNames();
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -56,6 +57,8 @@ const MSG = {
   contract: 'FLW-5: blocked the wakeup: its prompt must be fixed and carry no task state. '
     + `Instead use "${FIXED_PROMPT}" (optionally --plan docs/plans/<plan>.md), /${names.plugin}:<command>, `
     + `a /loop sentinel (${LOOP_SENTINELS[0]}, ${LOOP_SENTINELS[2]}, also -dynamic) or stop: true.`,
+  consent: `FLW-5: blocked the wakeup: its prompt is a \`${names.bin} loop start\` consent, which only the user's own prompt gives (T-MG-149). `
+    + 'Instead ask the user to send it themselves.',
   plan: 'FLW-5: blocked the wakeup: --plan must name one regular docs/plans/*.md file under the repository root as a plain relative path. '
     + `Instead fix the path, or schedule "${FIXED_PROMPT}" without --plan.`,
 };
@@ -83,7 +86,10 @@ function planOk(prompt, root) {
 export function guardWakeup(input, { env = process.env, deadline = Infinity } = {}) {
   const ti = input.tool_input;
   if (!ti || typeof ti !== 'object' || Array.isArray(ti) || ti.stop === true || typeof ti.prompt !== 'string') return { stdout: '' };
-  const st = loopStatus(input, env, deadline);
+  // a scheduled prompt fires as a prompt: one that the prompt hook would take as the user's loop start consent is denied
+  // in every state (inactive and outside a repository too), so the model never schedules a consent (T-MG-149)
+  if (consentCaps(ti.prompt, names.bin) !== null) return deny(MSG.consent);
+  const st =loopStatus(input, env, deadline);
   if (st.kind === 'inactive') return { stdout: '' };
   if (st.kind === 'unknown') return deny(MSG.unknown(st.why));
   if (st.kind === 'unreadable') return deny(MSG.unreadable(st.why));

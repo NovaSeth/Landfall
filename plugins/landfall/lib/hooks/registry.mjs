@@ -27,6 +27,7 @@ import { guardBash } from './guard-bash.mjs';
 import { guardWakeup } from './guard-wakeup.mjs';
 import { headroomHook } from './headroom.mjs';
 import { loadNames, stateOf } from './loop-state.mjs';
+import { promptConsent } from './prompt-consent.mjs';
 import { sessionStart } from './session-start.mjs';
 import { stopGuard } from './stop-guard.mjs';
 import { subagentStart } from './subagent-start.mjs';
@@ -58,6 +59,7 @@ export const HOOKS = [
   { name: 'headroom', event: 'PostToolUse', matcher: 'Bash|Edit|Write|Agent', timeout: TIMEOUT_S, budgetMs: BUDGET_MS, handler: headroomHook, onError: 'allow', capability: 'headroom' },
   { name: 'task-gate', event: 'TaskCompleted', timeout: TIMEOUT_S, budgetMs: BUDGET_MS, handler: taskGate, onError: 'allow', capability: 'task-mirror' },
   { name: 'stop-guard', event: 'Stop', timeout: TIMEOUT_S, budgetMs: BUDGET_MS, handler: stopGuard, onError: 'allow' },
+  { name: 'prompt-consent', event: 'UserPromptSubmit', timeout: TIMEOUT_S, budgetMs: BUDGET_MS, handler: promptConsent, onError: 'allow' },
 ];
 
 // The hooks modules (Claude Code function hooks) the plugin ships next to the command hooks: the dashboard pane and status

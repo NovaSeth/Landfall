@@ -42,6 +42,20 @@ export const gateById = (id) => GATES.find((g) => g.id === id);
 const GATE_NAME = /(^|[\s/])(check-secrets|budget\.sh|npm|pnpm|yarn|bun)(\s|$|\.|:)/;
 const BIN_WORD = new RegExp(`(^|[\\s/])${binRe}\\s`);
 const GATE_SUB = /\s(secrets|verify|slot|heavy)(\s|$)/;
+const HOOK_SUB = /\shook(\s|$)/;
+// A path word, then options, then `hook`: maybe the launcher renamed (a link or a copy; shapes.mjs sameLauncher). Linear.
+function pathThenHook(s) {
+  if (!s.includes('hook')) return false;
+  const ws = s.split(' ');
+  for (let k = 0; k < ws.length; k++) {
+    if (!ws[k].includes('/')) continue;
+    let j = k + 1;
+    while (j < ws.length && ws[j].startsWith('-')) j++;
+    if (ws[j] === 'hook') return true;
+    k = j - 1;
+  }
+  return false;
+}
 const after = (s, head, tail) => { const m = head.exec(s); return m !== null && tail.test(s.slice(m.index + m[0].length - 1)); };
 const GATE_LINE = { test: (s) => GATE_NAME.test(s) || after(s, BIN_WORD, GATE_SUB) };
 
@@ -123,6 +137,8 @@ export const GUARDED = Object.freeze([
   // a recursive removal (rm -r / -R / --recursive in any spelling, find … -delete): its target may be a tracked top-level
   // directory or the repository itself (spec §7.13, lib/guard/protect.mjs)
   { id: 'recursive remove', line: (s) => RM_RECURSIVE.test(s) || FIND_DELETE.test(s) },
+  // the plugin's hook entry point (`<bin> … hook`): only Claude Code runs it, from hooks.json (T-MG-149, shapes.mjs hookCli)
+  { id: 'hook entry point', line: (s) => after(s, BIN_WORD, HOOK_SUB) || pathThenHook(s) },
 ]);
 
 // ---------- normalization ----------
