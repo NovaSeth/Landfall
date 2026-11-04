@@ -35,6 +35,8 @@ export const PATTERNS = Object.freeze({
   absPath: /^\/(?!.*\/\.\.?(?:\/|$))/,
   // <unit>.<path to a number in the unit's threshold data>, such as router.trivial.maxLoc (lib/config checks the path).
   thresholdKey: /^[a-z][a-z0-9]*(?:\.[A-Za-z0-9]+)+$/,
+  // What delivered or replaced a cancelled task (plan RF2): a task ID, a 7–40 hex commit SHA or a release vX.Y.Z only.
+  outcomeBy: /^(?:T-[A-Z]{2,4}-[1-9]\d{0,5}|[0-9a-f]{7,40}|v\d+\.\d+\.\d+)$/,
 });
 
 const str = (max, extra = {}) => ({ t: 'str', max, ...extra });
@@ -103,7 +105,9 @@ export const KINDS = Object.freeze({
   }),
   // Task schema 2 (T-MG-80): the optional mergedAt (the time of the task's `merged` event, written by task merge) joins
   // the task; migration 004 is a no-op upgrade, so an older plugin refuses a schema-2 task as newer (GC9).
-  task: defineKind('task', 2, {
+  // Task schema 3 (T-MG-116, D-MG-38, plan P1): the optional outcome of a cancelled task { kind, by (outcomeBy, or null
+  // when unknown), at } and regressionOf (the task whose change caused this one); migration 006 is a no-op upgrade.
+  task: defineKind('task', 3, {
     dir: 'tasks',
     keyPattern: PATTERNS.taskId,
     file: (id) => `tasks/${id}/task.json`,
@@ -123,10 +127,14 @@ export const KINDS = Object.freeze({
       base: token(PATTERNS.sha, { max: 64, null: true }),
       branch: str(LIMITS.branch, { re: PATTERNS.branch, null: true }),
       mergedAt: time,
+      outcome: { t: 'obj', f: { kind: enumOf(['delivered', 'superseded', 'dropped']), by: token(PATTERNS.outcomeBy, { max: 64, null: true }), at: time } },
+      regressionOf: token(PATTERNS.taskId),
     },
-    opt: ['mergedAt'],
+    opt: ['mergedAt', 'outcome', 'regressionOf'],
   }),
-  finding: defineKind('finding', 1, {
+  // Finding schema 2 (T-MG-116, plan P13): the optional regressionOf (the task whose change caused the defect);
+  // migration 007 is a no-op upgrade, so an older plugin refuses a schema-2 finding as newer (GC9).
+  finding: defineKind('finding', 2, {
     dir: 'findings',
     keyPattern: PATTERNS.findingId,
     file: (id) => `findings/${id}.json`,
@@ -150,7 +158,9 @@ export const KINDS = Object.freeze({
       closedAt: { ...time, null: true },
       closedBy: token(/^[TD]-[A-Z]{2,4}-[1-9]\d{0,5}$/, { null: true }),
       reason: str(500, { null: true }),
+      regressionOf: token(PATTERNS.taskId),
     },
+    opt: ['regressionOf'],
   }),
   // Evidence-gated lesson (T-MG-29): a cue (the situation), one lesson naming a component, the evidence that supports
   // it and the verdicts of the changes made for it. A new lesson starts in shadow; admission is code (lib/lessons).
