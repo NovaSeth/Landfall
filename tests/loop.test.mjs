@@ -30,6 +30,7 @@ const names = JSON.parse(readFileSync(join(pluginDir, 'lib', 'name.json'), 'utf8
 const lib = (rel) => import(pathToFileURL(join(pluginDir, 'lib', rel)).href);
 const loop = await lib('loop/index.mjs');
 const limits = await lib('loop/limits.mjs');
+const receiptsRuns = await lib('runs/index.mjs');
 const state = await lib('state/index.mjs');
 const receipts = await lib('receipts/index.mjs');
 const method = await lib('method/index.mjs');
@@ -1475,4 +1476,45 @@ test('limits (e) tickStore: a hit makes the tick WAIT; a later tick without it r
   const n = calls.length;
   assert.equal(s.run(500, { limits: limitsProbe }).result, 'BUDGET');
   assert.equal(calls.length, n, 'a cap that ends the tick does not read the transcripts');
+});
+
+// ---- usage limits, fix round 1 (review r1) ----
+
+test('limits (f) F1: the real probe uses the tick\'s injected now, not the wall clock', (t) => {
+  const f = limitFixture(t);
+  const now = local(2026, 10, 15, 14, 30);
+  const where = { repo: f.repo, dir: join(f.repo, '..', 'state'), local: join(f.repo, '..', 'state', 'local'), active: true, linked: false };
+  const rstore = receiptsRuns.runsStore(where.dir, names);
+  rstore.write('run', 'codex-T-TU-1-reviewer-1', {
+    runId: 'codex-T-TU-1-reviewer-1', task: 'T-TU-1', role: 'reviewer', provider: 'codex', adapterVersion: null, model: null, sandbox: 'read-only', cwd: f.repo,
+    pid: null, pidStart: null, pidMethod: null, lease: null, status: 'failed', queuedAt: new Date(now - 5 * MIN).toISOString(), startedAt: new Date(now - 4 * MIN).toISOString(),
+    endedAt: new Date(now - MIN).toISOString(), elapsedMs: 0, capS: 900, tokens: null, tokensReason: null, costMicroUsd: null,
+    lastLine: "You've hit your usage limit. Try again at 4:10 PM.", unknownEvents: 0, outFile: join(f.repo, 'out.json'), exit: 1, error: null,
+  });
+  const probe = loop.gitProbe(where, f.env, names);
+  const hit = probe.limits({ since: new Date(now - 60 * MIN).toISOString(), runs: [], now });
+  assert.deepEqual([hit?.kind, hit?.resetAt], ['codex', local(2026, 10, 15, 16, 10)]);
+});
+
+test('limits (g) F2: no cap of any kind lets the tick read the limit probe; the subscription mode skips the cost caps', (t) => {
+  const mk = (patch, cost, billing = null) => {
+    const s = storeDir(t);
+    s.store.write('task', 'T-TU-1', task('T-TU-1', 'new'));
+    s.store.write('loop', null, { ...loop.newLoop({ now: T0, caps: { ...CAPS, costMicroUsd: 10000 }, billing }), ...patch });
+    let calls = 0;
+    const run = () => s.run(1, { cost: () => cost, limits: () => { calls++; return { kind: 'session', resetAt: T0 + 20 * MIN, source: 's' }; } });
+    return { run, calls: () => calls };
+  };
+  let x = mk({}, { costMicroUsd: 10000, partial: false });
+  assert.equal(x.run().result, 'BUDGET');
+  assert.equal(x.calls(), 0, 'the measured cost cap');
+  x = mk({ costMicroUsd: 10000 }, { costMicroUsd: 0, partial: false });
+  assert.equal(x.run().result, 'BUDGET');
+  assert.equal(x.calls(), 0, 'the stored cost cap');
+  x = mk({ unmeasured: loop.UNMEASURED - 1 }, { costMicroUsd: 0, partial: true, unmeasurable: true });
+  assert.equal(x.run().result, 'BUDGET');
+  assert.equal(x.calls(), 0, 'the unmeasurable-cost cap');
+  x = mk({}, { costMicroUsd: 10000, partial: false }, { mode: 'subscription', source: 'test' });
+  assert.equal(x.run().result, 'WAIT');
+  assert.equal(x.calls(), 1, 'subscription: the cost caps do not apply');
 });
