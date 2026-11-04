@@ -8,6 +8,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 const MAX_BYTES = 4 * 1024 * 1024;
+const MAX_SOURCE = 100; // the loop document stores 120 characters; the tick ratchet appends " (at tick N)"
 const KEYS = ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN'];
 const FLAGS = ['CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_USE_FOUNDRY'];
 
@@ -41,17 +42,20 @@ export function billingMode({ env, names, home, byUser = false, envOnly = false 
     const e = env && typeof env === 'object' ? env : {};
     const name = `${names?.envPrefix ?? ''}BILLING`;
     const forced = e[name];
+    let note = null;
     if (typeof forced === 'string' && forced !== '') {
       if (forced === 'api' || (forced === 'subscription' && byUser)) return { mode: forced, source: name };
-      if (forced !== 'subscription') return { mode: 'unknown', source: `${name} is not recognized (api or subscription)` };
+      // The quoted value is cut first so that the longest winner, the name and the words fit MAX_SOURCE (JSON escapes grow control characters).
+      if (forced !== 'subscription') note = `${name}=${JSON.stringify(forced.slice(0, 40)).slice(0, Math.max(0, MAX_SOURCE - 45 - name.length))} is not recognized`;
     }
-    for (const k of KEYS) if (typeof e[k] === 'string' && e[k] !== '') return { mode: 'api', source: k };
-    for (const k of FLAGS) if (e[k] === '1' || e[k] === 'true') return { mode: 'api', source: k };
-    if (envOnly) return { mode: 'unknown', source: 'no billing signal in the environment' };
+    const by = (source) => (note === null ? source : `${source} (${note})`).slice(0, MAX_SOURCE);
+    for (const k of KEYS) if (typeof e[k] === 'string' && e[k] !== '') return { mode: 'api', source: by(k) };
+    for (const k of FLAGS) if (e[k] === '1' || e[k] === 'true') return { mode: 'api', source: by(k) };
+    if (envOnly) return { mode: 'unknown', source: (note ?? 'no billing signal in the environment').slice(0, MAX_SOURCE) };
     const dir = typeof e.CLAUDE_CONFIG_DIR === 'string' && e.CLAUDE_CONFIG_DIR !== '' ? e.CLAUDE_CONFIG_DIR : (home ?? homedir());
     const type = billingType(join(dir, '.claude.json'));
-    if (type !== null && type.toLowerCase().includes('subscription')) return { mode: 'subscription', source: 'claude.json billingType' };
-    return { mode: 'unknown', source: 'no billing signal found' };
+    if (type !== null && type.toLowerCase().includes('subscription')) return { mode: 'subscription', source: by('claude.json billingType') };
+    return { mode: 'unknown', source: (note ?? 'no billing signal found').slice(0, MAX_SOURCE) };
   } catch {
     return { mode: 'unknown', source: 'billing could not be determined' };
   }

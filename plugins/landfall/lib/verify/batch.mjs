@@ -132,7 +132,10 @@ export function batchMerge({ cwd, env, names, ids = null, ready = false, version
       t.conflicts = [];
       t.tests = [];
       if (stopped) { t.outcome = 'skipped'; t.why = `sequential merge stopped at ${stopped}`; continue; }
-      const single = mergeTask({ cwd, env, names, id: t.task, branch: t.sha, version, at });
+      // The branch name when it still points at the verified sha (the merge commit then reads "Merge branch '<name>'").
+      const named = gitIn(where, env, ['rev-parse', '--verify', '-q', `${t.branch}^{commit}`]);
+      const ref = !t.branch.startsWith('-') && named.status === 0 && named.stdout.trim() === t.sha ? t.branch : t.sha;
+      const single = mergeTask({ cwd, env, names, id: t.task, branch: ref, version, at });
       result.verify = single.verify;
       result.output.push(...single.output);
       result.reasons.push(...single.reasons);
@@ -322,7 +325,6 @@ export function batchMerge({ cwd, env, names, ids = null, ready = false, version
     result.reasons.push({ code: 'merge-tree-changed', message: 'HEAD, the index or the working tree of the integration worktree changed while the gates ran: they did not verify what would be merged; nothing was merged', hint: 'find what writes to tracked files or commits during the gates (a formatter, a build into the tree), then merge again' });
     return finish(result);
   } finally {
-    unlinkDependencies();
     if (created) gitIn(where, env, ['worktree', 'remove', '--force', wt]);
     rmSync(wt, { recursive: true, force: true });
     gitIn(where, env, ['worktree', 'prune']);
