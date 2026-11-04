@@ -14,7 +14,7 @@ const METHOD = join(pluginDir(root), 'method');
 const GEN = join(root, 'scripts', 'gen-method-index.mjs');
 const MAX_TOPIC_BYTES = 12 * 1024;
 const MAX_CORE_BYTES = 60 * 1024;
-const CORE_RULES = [90, 150]; // near 100 obligations; split into separately citable rules
+const CORE_RULES = [90, 165]; // near 100 obligations; split into separately citable rules
 const MAX_RULE_CHARS = 500; // D-MG-8: OWASP checklist rules keep their full checks
 const MAX_RULE_SEMICOLONS = 2;
 const MAX_ALWAYS = 8; // session-start injection shows up to 8 always rules
@@ -43,7 +43,8 @@ const topic = (title, sections) => [`# ${title}`, '', '**Purpose:** p. **Reads:*
   ...sections.flatMap(([name, rules]) => [`### ${name}`, ...rules, '']), ''].join('\n');
 const ALPHA = (rules) => topic('Alpha', [['One', rules]]);
 const IN_PACK = (pack, rules) => ALPHA(rules).replace('## Core', `## Pack: ${pack}`);
-const errorsOf = (files) => validate(readTopics(fixture(files)));
+const errorsOf = (files, legacy) => validate(readTopics(fixture(files)), legacy);
+const LEGACY_RULES = JSON.parse(readFileSync(join(METHOD, 'legacy-ids.json'), 'utf8')).rules;
 
 test('method: core and pack topic files carry a title, purpose line, section map and the heading of their place', () => {
   assert.ok(topicFiles.length >= 8, `topic files: ${topicFiles}`);
@@ -59,7 +60,7 @@ test('method: core and pack topic files carry a title, purpose line, section map
 });
 
 test('method: committed topic files validate (IDs, sections, section maps, references)', () => {
-  assert.deepEqual(validate(readTopics(METHOD)), []);
+  assert.deepEqual(validate(readTopics(METHOD), LEGACY_RULES), []);
 });
 
 test('method: rule IDs use one v2 prefix per file, are unique and continuous from 1, one line each', () => {
@@ -75,7 +76,9 @@ test('method: rule IDs use one v2 prefix per file, are unique and continuous fro
     assert.ok(!owner.has(ids[0][1]), `${f}: prefix ${ids[0][1]} also used by ${owner.get(ids[0][1])}`);
     owner.set(ids[0][1], f);
     const nums = ids.map((m) => Number(m[2])).sort((a, b) => a - b);
-    assert.deepEqual(nums, nums.map((_, i) => i + 1), `${f}: continuous from 1, no duplicates`);
+    assert.equal(new Set(nums).size, nums.length, `${f}: no duplicates`);
+    const missing = Array.from({ length: nums[nums.length - 1] }, (_, i) => i + 1).filter((n) => !nums.includes(n));
+    assert.deepEqual(missing.filter((n) => !LEGACY_RULES[`${ids[0][1]}-${n}`]), [], `${f}: continuous from 1, a gap only for 1.x IDs in legacy-ids.json`);
     for (const m of ids) { assert.ok(!seen.has(m[0]), `${m[0]} in ${f} and ${seen.get(m[0])}`); seen.set(m[0], f); }
     for (const line of s.split('\n').filter((l) => /^\*\*[A-Z]{3}-\d+\.\*\*/.test(l))) assert.match(line, /^\*\*[A-Z]{3}-\d+\.\*\* \S.*\S$/, `${f}: one complete line: ${line.slice(0, 40)}`);
     assert.doesNotMatch(s, /^[-*] \*\*[A-Z]{3}-\d+\.\*\*/m, `${f}: rules are not list items`);
@@ -269,6 +272,16 @@ test('validate: catches duplicate, gap, mixed prefix, list-item rule, rule outsi
   assert.match(errorsOf({ 'alpha.md': outside }).join('\n'), /outside a section/);
   const badPack = ALPHA(['**ALP-1.** One.']).replace('## Core', '## Pack: nonsense');
   assert.match(errorsOf({ 'alpha.md': badPack }).join('\n'), /unknown pack nonsense/);
+});
+
+test('validate: a gap passes only when legacy-ids covers every missing ID, otherwise it names the uncovered one', () => {
+  const files = { 'alpha.md': ALPHA(['**ALP-1.** One.', '**ALP-4.** Four.']) };
+  assert.deepEqual(errorsOf(files, { 'ALP-2': { retired: 'x' }, 'ALP-3': { retired: 'x' } }), []);
+  const partial = errorsOf(files, { 'ALP-2': { retired: 'x' } }).join('\n');
+  assert.match(partial, /continuous/);
+  assert.match(partial, /ALP-3/);
+  assert.doesNotMatch(partial, /ALP-2\b/);
+  assert.match(errorsOf(files).join('\n'), /continuous/);
 });
 
 test('validate: a pack file sits in packs/<pack>/ and holds only that pack; each file has its own prefix', () => {

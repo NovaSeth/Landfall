@@ -7,6 +7,7 @@
 - §Single source of truth — one source per fact, generators, the user's channel, lossless updates, target context.
 - §Boundaries and decisions — module interfaces, self-checking guards, decisions cited in code.
 - §Gates in code — exit codes, void results, bounded workers, heavy commands.
+- §Code health — size, complexity, cycles, leaf constants, error cause, regex safety (COD-16…25).
 
 ## Core
 
@@ -32,3 +33,15 @@
 ### Gates in code
 **COD-13.** Gate tools exit 0 clean, 1 finding, 2 tool error (never "clean"); delete the old result before a run, and a result whose log lacks its target (device, browser, port) is void.
 **COD-14.** Bound test-runner workers in every brief (default 2), check how the package manager passes arguments to the test script, and MUST NOT use unbounded worker flags; when the heavy-command queue is on, run full tests, whole-repository typecheck, lint and build through the CLI `heavy`.
+
+### Code health
+**COD-16.** A module stays at or under 400 lines of code (non-blank, non-comment); a larger one is split by responsibility, and a large data table is split per area and joined in one place. Existing larger files are a ratchet baseline (COD-11): they may shrink, never grow.
+**COD-17.** A function stays at or under 80 lines and an own cyclomatic complexity of 20 (if, loops, case, catch, &&, ||, ??, ?:); above that, split it into named phases or a dispatch table.
+**COD-18.** Blocks nest at most 4 deep and a function takes at most 4 positional parameters; more inputs go in one options object.
+**COD-19.** A unit's index.mjs only re-exports; its logic lives in named modules of the unit.
+**COD-20.** No import cycle between files, and no new edge between units that joins a cycle; move the shared part into a leaf module (COD-10 keeps the public-interface rule).
+**COD-21.** A constant shared across units (exit codes, kinds, limits) lives in a leaf module; a domain unit never imports lib/cli.
+**COD-22.** Code that catches an error and throws another passes the caught one as `{ cause }`.
+**COD-23.** An empty catch holds a comment naming the failure it expects; on the hook path a catch handles only the error codes it expects.
+**COD-24.** Import builtins as `node:*`, never use `var`, and use no API newer than the engines floor in package.json.
+**COD-25.** A regular expression run on hook input or user text has no nested quantifier; check it with `nestedQuantifier` from lib/guard/extra.mjs.

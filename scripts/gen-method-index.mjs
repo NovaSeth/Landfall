@@ -128,7 +128,7 @@ export function readTopics(dir) {
 }
 
 // Every problem in a set of topic files; [] when the method is valid.
-export function validate(topics) {
+export function validate(topics, legacyRules = {}) {
   const errors = topics.flatMap((t) => t.problems);
   const all = new Map();
   const owner = new Map();
@@ -151,8 +151,9 @@ export function validate(topics) {
     }
     for (const p of prefixes) {
       const nums = t.rules.filter((r) => r.prefix === p).map((r) => r.n).sort((a, b) => a - b);
-      const want = nums.map((_, i) => i + 1);
-      if (nums.join() !== want.join()) errors.push(`${t.file}: ${p} IDs must be continuous from 1 (found ${nums.join(', ')}); retire a rule with a tombstone, never delete it`);
+      const missing = Array.from({ length: nums[nums.length - 1] }, (_, i) => i + 1).filter((n) => !nums.includes(n));
+      const uncovered = missing.filter((n) => !Object.hasOwn(legacyRules, `${p}-${n}`));
+      if (uncovered.length || new Set(nums).size !== nums.length) errors.push(`${t.file}: ${p} IDs must be continuous from 1 (found ${nums.join(', ')}); a gap is allowed only for 1.x IDs in legacy-ids.json (uncovered: ${uncovered.map((n) => `${p}-${n}`).join(', ') || 'none'}); retire a rule with a tombstone, never delete it`);
     }
     for (const r of t.rules) if (r.always && r.pack !== 'core') errors.push(`${t.file}:${r.line}: ${r.id} is tagged [always] outside "## Core"`);
   }
@@ -270,12 +271,19 @@ export function main(argv) {
   }
   if (!existsSync(dir)) { console.error(`gen-method-index: no method directory ${dir}`); return 2; }
   const topics = readTopics(dir);
-  const errors = validate(topics);
   const legacyFile = join(dir, 'legacy-ids.json');
   let legacyPrefixes = [];
+  let legacyRules = {};
+  let legacyError = null;
   if (existsSync(legacyFile)) {
-    try { legacyPrefixes = Object.keys(JSON.parse(readFileSync(legacyFile, 'utf8')).prefixes ?? {}); } catch { errors.push('legacy-ids.json is not valid JSON'); }
+    try {
+      const legacy = JSON.parse(readFileSync(legacyFile, 'utf8'));
+      legacyPrefixes = Object.keys(legacy.prefixes ?? {});
+      legacyRules = legacy.rules ?? {};
+    } catch { legacyError = 'legacy-ids.json is not valid JSON'; }
   }
+  const errors = validate(topics, legacyRules);
+  if (legacyError) errors.push(legacyError);
   const next = buildIndex(topics, legacyPrefixes);
   const path = join(dir, 'index.json');
   let committed = null;
