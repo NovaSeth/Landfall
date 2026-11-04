@@ -31,6 +31,7 @@ import { join } from 'node:path';
 import { authorHandle } from '../decisions/index.mjs';
 import { emptyProfile } from '../profile/index.mjs';
 import { KINDS, StateError, mergedOf, recordMerged } from '../state/index.mjs';
+import { refreshReceipt } from './done.mjs';
 import { requireTrustedGates } from './gates.mjs';
 import { gateChanges, mergeTask, profileOf, targetOf, treeHeld } from './merge.mjs';
 import { activeWhere, codeState, evaluate, gatesSha, gitIn, stateAt, storeOf } from './run.mjs';
@@ -136,6 +137,8 @@ export function batchMerge({ cwd, env, names, ids = null, ready = false, version
       const named = gitIn(where, env, ['rev-parse', '--verify', '-q', `${t.branch}^{commit}`]);
       const ref = !t.branch.startsWith('-') && named.status === 0 && named.stdout.trim() === t.sha ? t.branch : t.sha;
       const single = mergeTask({ cwd, env, names, id: t.task, branch: ref, version, at });
+      t.receipt = single.receipt;
+      t.receiptProblem = single.receiptProblem;
       result.verify = single.verify;
       result.output.push(...single.output);
       result.reasons.push(...single.reasons);
@@ -315,7 +318,10 @@ export function batchMerge({ cwd, env, names, ids = null, ready = false, version
     result.commit = integrated;
     const tree = gitIn(where, env, ['rev-parse', `${integrated}^{tree}`]).stdout.trim();
     recordMerged({ cwd, env, names, at, entries: set.map((t) => ({ id: t.task, data: { commit: integrated, target, batch, adopted: false, verify: tree } })) });
-    for (const t of set) { t.outcome = 'merged'; t.why = null; }
+    for (const t of set) {
+      t.outcome = 'merged'; t.why = null;
+      Object.assign(t, refreshReceipt({ cwd, env, names, id: t.task, mergedAt: at }));
+    }
     if (!result.verify) { result.verify = out.doc; result.output = out.output; }
     return finish(result);
   } catch (err) {

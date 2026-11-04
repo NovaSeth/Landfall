@@ -16,9 +16,9 @@
 import { authorHandle } from '../decisions/index.mjs';
 import { closeFindings, findingsForTask } from '../findings/index.mjs';
 import { emptyProfile } from '../profile/index.mjs';
-import { saveReceipt, taskReceipt } from '../receipts/index.mjs';
+import { RECEIPT, saveReceipt, taskReceipt } from '../receipts/index.mjs';
 import { recordedKeys, routeFor } from '../router/index.mjs';
-import { KINDS, StateError } from '../state/index.mjs';
+import { KINDS, StateError, open } from '../state/index.mjs';
 import { reviewState } from './artifacts.mjs';
 import { taskWhere } from './where.mjs';
 import { activeWhere, codeState, gatesSha, gitIn, storeOf, unknownTask, workingSha } from './run.mjs';
@@ -68,10 +68,29 @@ export function markDone({ cwd, env, names, id, at = new Date().toISOString() })
     const fixed = closeFindings(s, pending, { by: id, reason: `Fixed by ${id}`, at });
     return { task, fixed };
   });
-  // The receipt (spec §7.7) is written once, when the task closes; a receipt that cannot be built never undoes the close.
-  let receipt = null;
-  if (changed) {
-    try { const r = taskReceipt(id, { cwd, env, names }); receipt = saveReceipt(r.receipt, { where: r.where, names }).file; } catch { /* `receipt <id>` writes it later */ }
+  // A receipt failure never undoes the close; the command reports it with a retry hint.
+  const result = changed ? refreshReceipt({ cwd, env, names, id }) : { receipt: null, receiptProblem: null };
+  return { id, task, changed, head, ...result, fixed };
+}
+
+// Refresh after closing or recording a merge, through the receipt unit's state writer. Merge-time gates may
+// have no transcript timestamp, so the receipt's duration must also include the recorded merge and this refresh.
+export function refreshReceipt({ cwd, env, names, id, mergedAt = null }) {
+  try {
+    const r = taskReceipt(id, { cwd, env, names });
+    const throughMerge = (receipt) => {
+      if (mergedAt === null) return receipt;
+      const endedAt = new Date(Math.max(Date.now(), Date.parse(mergedAt), Date.parse(receipt.endedAt) || 0)).toISOString();
+      return { ...receipt, endedAt, wallMs: receipt.startedAt === null ? null : Date.parse(endedAt) - Date.parse(receipt.startedAt) };
+    };
+    const saved = saveReceipt(throughMerge(r.receipt), { where: r.where, names });
+    if (saved.kept && mergedAt !== null) {
+      // Transcripts may have disappeared. Keep the saved usage, but extend its duration under the state lock.
+      const store = open(r.where.dir, { names, kinds: { ...KINDS, [RECEIPT.name]: RECEIPT } });
+      store.update(RECEIPT.name, id, (cur) => cur === null ? undefined : throughMerge(cur));
+    }
+    return { receipt: saved.file, receiptProblem: null };
+  } catch (err) {
+    return { receipt: null, receiptProblem: { code: 'receipt-not-saved', message: `${id}: ${err?.message ?? String(err)}`.replace(/\s+/g, ' ') } };
   }
-  return { id, task, changed, head, receipt, fixed };
 }
