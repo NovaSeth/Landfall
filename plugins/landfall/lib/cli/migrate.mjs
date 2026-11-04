@@ -5,12 +5,13 @@
 // second run writes nothing. Exit 7 a newer schema (before any byte), no consent · 1 a file that does not parse · 8 not
 // a git repository. An inactive repository has no state: nothing to do.
 import { MANIFEST } from '../gen/index.mjs';
+import { LOOP } from '../loop/kind.mjs';
 import { PROFILE_KINDS } from '../profile/index.mjs';
 import { RECEIPT } from '../receipts/index.mjs';
 import { KINDS, LAYOUTS, migrate as migrateStore, open, resolve } from '../state/index.mjs';
 import { VERIFY_KINDS } from '../verify/index.mjs';
 
-export const MIGRATE_KINDS = Object.freeze({ ...KINDS, ...PROFILE_KINDS, ...VERIFY_KINDS, [RECEIPT.name]: RECEIPT, [MANIFEST.name]: MANIFEST });
+export const MIGRATE_KINDS = Object.freeze({ ...KINDS, ...PROFILE_KINDS, ...VERIFY_KINDS, [RECEIPT.name]: RECEIPT, [MANIFEST.name]: MANIFEST, [LOOP.name]: LOOP });
 
 // Layout steps first (directory moves of the rename, lib/state/migrations): a dry run lists them, a run applies them
 // and resolves again, as the moved directory is what makes the repository active.

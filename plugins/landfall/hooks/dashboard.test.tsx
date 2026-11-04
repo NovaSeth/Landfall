@@ -107,9 +107,9 @@ test('the pane says, from general to detail, the project, the tasks with their s
   expect((await ui.find({ type: 'Text', text: /in backlog/ }))?.text).toBe('⏸ 1 in backlog (landfall task list)')
   expect(await ui.find({ type: 'Text', text: /T-TU-3/ })).toBeUndefined()
   // the Claude subagent the engine lists and the external run, each with role, task, time and status
-  expect((await ui.find({ type: 'Text', text: /● reviewer/ }))?.text).toBe('● reviewer     T-TU-1   r2  00:00  running')
-  expect((await ui.find({ type: 'Text', text: /codex reviewer/ }))?.text).toBe('● codex reviewer  T-TU-1       05:00  running  → T-TU-1-r1.json  1.2k tok  reading the diff')
-  // a stopped run is not live: AGENTS lists only the agents and runs at work, with no fold line (intended change)
+  expect((await ui.find({ type: 'Text', text: /● reviewer/ }))?.text).toBe('    ↳ ● reviewer     r2  00:00  running')
+  expect((await ui.find({ type: 'Text', text: /codex reviewer/ }))?.text).toBe('    ↳ ● codex reviewer  05:00  running  → T-TU-1-r1.json  1.2k tok  reading the diff')
+  // a stopped run is not live: the agent rows list only the agents and runs at work, with no fold line (intended change)
   expect(await ui.find({ type: 'Text', text: /codex implementer/ })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: /ended/ })).toBeUndefined()
   expect((await ui.find({ type: 'Text', text: /^SLOTS/ }))?.text).toBe('SLOTS heavy 1')
@@ -129,7 +129,7 @@ test('a spawned agent is a row with the task, round and output file of its promp
   await w.clock.advance(1_000)
   // the engine's list does not carry the new agent yet: a fresh spawn stays a running row
   let ui = await $.ui.mount(PANE)
-  expect((await ui.find({ type: 'Text', text: /T-TU-9/ }))?.text).toBe('● reviewer     T-TU-9   r2  00:01  running  → T-TU-9-review-r2.json')
+  expect((await ui.find({ type: 'Text', text: /T-TU-9/ }))?.text).toBe('    ↳ ● reviewer     T-TU-9   r2  00:01  running  → T-TU-9-review-r2.json')
   await ui.unmount()
   // listed by the engine while it runs; its turn end closes the row even before the list drops it
   w.agents.push({ id: 'a2', description: 'Re-review T-TU-9', type: 'landfall:reviewer', status: 'running' })
@@ -182,7 +182,8 @@ test('with no agent and no run at work the section says none active', async ($, 
   await $.session.start(SESSION)
   await w.clock.settle()
   const ui = await $.ui.mount(PANE)
-  expect((await ui.find({ type: 'Text', text: /none/ }))?.text).toBe('  none active')
+  expect(await ui.find({ type: 'Text', text: /none active/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /AGENTS|UNASSIGNED/ })).toBeUndefined()
   await ui.unmount()
 })
 
@@ -195,7 +196,7 @@ test('a spawned agent takes its task from the description even when its prompt n
   await $.agent.spawn({ description: 'T-MG-59 slice A: method rules', prompt: 'Compare T-MG-1, T-MG-2 and T-MG-56.', subagentType: 'landfall:reviewer' })
   await w.clock.advance(1_000)
   const ui = await $.ui.mount(PANE)
-  expect((await ui.find({ type: 'Text', text: /^● reviewer/ }))?.text).toMatch(/^● reviewer\s+T-MG-59\s+00:01\s+running$/)
+  expect((await ui.find({ type: 'Text', text: /● reviewer/ }))?.text).toMatch(/^ {4}↳ ● reviewer\s+T-MG-59\s+00:01\s+running$/)
   await ui.unmount()
 })
 
@@ -208,7 +209,7 @@ test('a spawned audit agent has no task when only its prompt names multiple dist
   await $.agent.spawn({ description: 'Audit stale task records', prompt: 'Audit T-MG-1, T-MG-2 and T-MG-56.', subagentType: 'landfall:reviewer' })
   await w.clock.advance(1_000)
   const ui = await $.ui.mount(PANE)
-  expect((await ui.find({ type: 'Text', text: /^● reviewer/ }))?.text).toMatch(/^● reviewer\s+-\s+00:01\s+running$/)
+  expect((await ui.find({ type: 'Text', text: /● reviewer/ }))?.text).toMatch(/^ {4}↳ ● reviewer\s+-\s+00:01\s+running$/)
   await ui.unmount()
 })
 
@@ -221,7 +222,7 @@ test('a spawned agent takes the sole distinct task from its prompt even when it 
   await $.agent.spawn({ description: 'Review', prompt: 'Review T-MG-7 and report the result for T-MG-7.', subagentType: 'landfall:reviewer' })
   await w.clock.advance(1_000)
   const ui = await $.ui.mount(PANE)
-  expect((await ui.find({ type: 'Text', text: /^● reviewer/ }))?.text).toMatch(/^● reviewer\s+T-MG-7\s+00:01\s+running$/)
+  expect((await ui.find({ type: 'Text', text: /● reviewer/ }))?.text).toMatch(/^ {4}↳ ● reviewer\s+T-MG-7\s+00:01\s+running$/)
   await ui.unmount()
 })
 
@@ -612,3 +613,121 @@ test('a live run clock never moves backwards after a failed refresh', async ($, 
   expect((await ui.find({ type: 'Text', text: /codex reviewer/ }))?.text).toContain('05:30')
   await ui.unmount()
 })
+
+const agentsFor = (task: string, n: number) => Array.from({ length: n }, (_, k) => ({ id: `n${k}`, description: `Work on ${task} part ${k}`, type: 'landfall:implementer', status: 'running' }))
+
+test('an agent and a run sit indented under their task, without the task column', async ($, on) => {
+  const w = world(on)
+  await $.session.start(SESSION)
+  await w.clock.settle()
+  const ui = await $.ui.mount(PANE)
+  const agent = (await ui.find({ type: 'Text', text: /● reviewer/ }))?.text ?? ''
+  const run = (await ui.find({ type: 'Text', text: /codex reviewer/ }))?.text ?? ''
+  expect(agent).toMatch(/^ {4}↳ ● reviewer\s+r2\s+00:00\s+running$/)
+  expect(agent).not.toContain('T-TU-1')
+  expect(run).toMatch(/^ {4}↳ ● codex reviewer\s+05:00\s+running  → T-TU-1-r1\.json/)
+  expect(run).not.toContain('T-TU-1  ')
+  await ui.unmount()
+})
+
+test('an agent without a task and an agent of a task that is not shown go under UNASSIGNED with the task column', async ($, on) => {
+  const w = world(on, { runs: quiet })
+  w.agents.length = 0
+  w.agents.push({ id: 'u1', description: 'Explore the code', type: 'landfall:implementer', status: 'running' }, { id: 'u2', description: 'Docs for T-TU-3', type: 'landfall:reviewer', status: 'running' })
+  await $.session.start(SESSION)
+  await w.clock.settle()
+  const ui = await $.ui.mount(PANE)
+  const head = await ui.find({ type: 'Text', text: /^UNASSIGNED$/ })
+  expect(head).toBeDefined()
+  expect((await ui.find({ type: 'Text', text: /● implementer/ }))?.text).toMatch(/^ {4}↳ ● implementer\s+-\s+00:00\s+running$/)
+  expect((await ui.find({ type: 'Text', text: /● reviewer/ }))?.text).toMatch(/^ {4}↳ ● reviewer\s+T-TU-3\s+00:00\s+running$/)
+  expect(await ui.find({ type: 'Text', text: /^AGENTS/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /none active/ })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('with every live agent under a shown task there is no UNASSIGNED heading', async ($, on) => {
+  const w = world(on)
+  await $.session.start(SESSION)
+  await w.clock.settle()
+  const ui = await $.ui.mount(PANE)
+  expect(await ui.find({ type: 'Text', text: /UNASSIGNED/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /^AGENTS/ })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('a small pane with one task and five agents folds the extra agents into one more line and no line passes the width', async ($, on) => {
+  const w = world(on, { runs: quiet })
+  w.agents.length = 0
+  w.agents.push(...agentsFor('T-TU-1', 5))
+  await $.session.start(SESSION)
+  await w.clock.settle()
+  const ui = await $.ui.mount({ ...PANE, props: { ...PANE.props, bodyColumns: 60, scroll: { offset: 0, bodyRows: 11 } } })
+  const texts = (await ui.findAll({ type: 'Text' })).map((n: any) => n.text as string)
+  expect(texts.filter(t => /^ {4}↳ ● implementer/.test(t)).length).toBe(2)
+  expect(texts.filter(t => /^ {4}↳ … 3 more$/.test(t)).length).toBe(1)
+  for (const t of texts) expect([...t].length).toBeLessThanOrEqual(60)
+  await ui.unmount()
+})
+
+const taskRow = (n: number) => ({ id: `T-TU-${n}`, kind: 'task', title: `Row ${n}`, status: 'planned', class: 'standard', owner: 'TU', lane: null, round: 0 })
+const linesAt = async ($: any, rows: number, columns: number) => {
+  const ui = await $.ui.mount({ ...PANE, props: { ...PANE.props, bodyColumns: columns, scroll: { offset: 0, bodyRows: rows } } })
+  const texts = (await ui.findAll({ type: 'Text' })).map((n: any) => n.text as string)
+  await ui.unmount()
+  return texts
+}
+
+test('a live agent is never invisible: with no room for a task and its agent the agent falls to UNASSIGNED or its fold (review r1 F1)', async ($, on) => {
+  const w = world(on, { status: withTask({}, [taskRow(8)]), runs: quiet })
+  w.agents.length = 0
+  w.agents.push(...agentsFor('T-TU-7', 1), ...agentsFor('T-TU-8', 1).map(a => ({ ...a, id: 'm1' })))
+  await $.session.start(SESSION)
+  await w.clock.settle()
+  const texts = await linesAt($, 9, 60)
+  expect(texts.filter(t => /^ {4}↳ /.test(t)).length).toBeGreaterThan(0)
+  expect(texts.length).toBeLessThanOrEqual(9)
+})
+
+test('every budgeted line counts: five tasks and one agent without a task never draw more lines than the pane has rows (review r1 F2)', async ($, on) => {
+  const w = world(on, { status: withTask({}, [taskRow(8), taskRow(9), taskRow(10), taskRow(11)]), runs: quiet })
+  w.agents.length = 0
+  w.agents.push({ id: 'u1', description: 'Explore the code', type: 'landfall:implementer', status: 'running' })
+  await $.session.start(SESSION)
+  await w.clock.settle()
+  const texts = await linesAt($, 11, 60)
+  expect(texts.length).toBeLessThanOrEqual(11)
+  expect(texts.some(t => /^UNASSIGNED$/.test(t))).toBe(true)
+  expect(texts.some(t => /^ {4}↳ ● implementer/.test(t))).toBe(true)
+})
+
+// review r2 F3: for every pane height from the real minimum, the lines never pass the rows, and no live agent is silently dropped
+const shapes: [string, number, number][] = [['no agents', 0, 0], ['agents under tasks', 4, 0], ['unassigned agents', 0, 3], ['both', 3, 2]]
+for (const rows of [8, 9, 10, 11, 12, 13, 14]) {
+  for (const error of [false, true]) {
+    for (const [shape, under, loose] of shapes) {
+      for (const backlog of [false, true]) {
+        test(`the pane never has more lines than rows and counts every live agent (rows ${rows}, ${error ? 'error' : 'no error'}, ${shape}, ${backlog ? 'backlog' : 'no backlog'}) (review r2 F3)`, async ($, on) => {
+          const tasks = [7, 8, 9, 10, 11].map(taskRow) as any[]
+          if (backlog) tasks.push({ id: 'T-TU-20', kind: 'task', title: 'Raw', status: 'new', class: null, owner: 'TU', lane: null, round: 0 })
+          const status = { ...withTask({}, []), data: { ...withTask({}, []).data, tasks, steps: tasks.map(t => ({ task: t.id, state: 'planned', step: '', rules: [], kind: 'info' })) } }
+          const w = world(on, { status, runs: quiet })
+          w.agents.length = 0
+          for (let k = 0; k < under; k++) w.agents.push({ id: `a${k}`, description: `Work on T-TU-${7 + (k % 5)} part ${k}`, type: 'landfall:implementer', status: 'running' })
+          for (let k = 0; k < loose; k++) w.agents.push({ id: `l${k}`, description: `Explore ${k}`, type: 'landfall:reviewer', status: 'running' })
+          await $.session.start(SESSION)
+          await w.clock.settle()
+          if (error) {
+            w.cli.fails = true
+            await w.clock.advance(15_000)
+          }
+          const texts = await linesAt($, rows, 80)
+          expect(texts.length).toBeLessThanOrEqual(rows)
+          const shown = texts.filter(t => /^ {4}↳ ●/.test(t)).length
+          const folded = texts.map(t => /^ {4}↳ … (\d+)/.exec(t)).reduce((n, m) => n + (m ? Number(m[1]) : 0), 0)
+          expect(shown + folded).toBe(under + loose)
+        })
+      }
+    }
+  }
+}
