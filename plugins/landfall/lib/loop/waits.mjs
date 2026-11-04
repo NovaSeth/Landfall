@@ -8,10 +8,12 @@
 //   WAIT_KINDS · recordWait(store, wait) → entry · openLoadWait / closeLoadWait(store, { key, at }) → entry | null ·
 //   loopWait({ result, nextTickS, limit, now }) → wait | null · recordLoopWait(store, tick) → entry | null
 import { PATTERNS } from '../state/index.mjs';
+import { DEFAULTS } from '../sched/kinds.mjs';
 
 export const WAIT_KINDS = Object.freeze(['usage-limit', 'load', 'tick', 'heavy-queue']);
 const KEY = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/; // the admit hook's ID pattern (lib/hooks/admit.mjs)
 const SOURCE_MAX = 40;
+const STALE_MS = DEFAULTS.ttlS.heavy * 1000; // an open marker older than this belongs to a dead session: ignored
 
 const isIso = (v) => typeof v === 'string' && Number.isFinite(Date.parse(v)) && new Date(Date.parse(v)).toISOString() === v;
 const iso = (ms) => new Date(ms).toISOString();
@@ -49,10 +51,10 @@ function newest(text, hint, match) {
 }
 
 const hintOf = (field, value) => `"${field}":${JSON.stringify(value)}`;
-// The open marker of `key` when it is that key's newest load entry, else null.
-const openMarker = (text, key) => {
+// The open marker of `key` when it is that key's newest load entry and not older than STALE_MS at `now`, else null.
+const openMarker = (text, key, now) => {
   const last = newest(text, hintOf('key', key), (r) => r.kind === 'load' && r.key === key);
-  return last && last.until === null && isIso(last.at) ? last : null;
+  return last && last.until === null && isIso(last.at) && Date.parse(now) - Date.parse(last.at) <= STALE_MS ? last : null;
 };
 
 export function recordWait(store, wait) {
@@ -63,14 +65,14 @@ export function recordWait(store, wait) {
 // A session's load wait opens at its first deny: a marker, unless its newest load entry is already one.
 export function openLoadWait(store, { key, at }) {
   const marker = entryOf({ kind: 'load', at, until: null, task: null, source: 'admit', key });
-  return store.append('waits', (text) => (openMarker(text, key) ? undefined : marker));
+  return store.append('waits', (text) => (openMarker(text, key, at) ? undefined : marker));
 }
 
 // A session's admit closes its open load wait: the closed entry from the marker's at to `at` (never before it).
 export function closeLoadWait(store, { key, at }) {
   entryOf({ kind: 'load', at, until: null, task: null, source: 'admit', key });
   return store.append('waits', (text) => {
-    const open = openMarker(text, key);
+    const open = openMarker(text, key, at);
     if (!open) return undefined;
     return entryOf({ kind: 'load', at: open.at, until: Date.parse(at) < Date.parse(open.at) ? open.at : at, task: null, source: 'admit', key });
   });
