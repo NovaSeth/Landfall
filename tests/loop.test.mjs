@@ -1163,3 +1163,95 @@ test('T-MG-85: a live-status run record with neither a valid startedAt nor a val
   assert.equal(table([t1], { now, runs: [run({ startedAt: undefined, queuedAt: undefined })] }).liveRuns, 0, 'no time at all');
   assert.equal(table([t1], { now, runs: [run({ startedAt: 'x', queuedAt: 'y' })] }).liveRuns, 0, 'both invalid');
 });
+
+// ---- billing mode (T-MG-104): a subscription is not billed per token, so the API-price estimate does not end the loop ----
+
+const BILL = `${names.envPrefix}BILLING`;
+
+test('billing (a) decide: in subscription mode the cost cap and the cost-unmeasurable count do not end the loop; the cost is kept; the wall and tick caps still do', () => {
+  const over = obs({ costMicroUsd: 2000, outcome: 'wait', nextTickS: 600 });
+  const d = loop.decide(fresh({ costMicroUsd: 1000 }), { ...over, billing: 'subscription' });
+  assert.equal(d.result, 'WAIT');
+  assert.equal(d.doc.costMicroUsd, 2000, 'the cost is still measured and kept');
+  for (const billing of ['api', 'unknown', undefined]) assert.equal(loop.decide(fresh({ costMicroUsd: 1000 }), { ...over, billing }).result, 'BUDGET', `${billing}: as today`);
+  const blind = { ...fresh(), unmeasured: loop.UNMEASURED - 1 };
+  assert.equal(loop.decide(blind, obs({ unmeasurable: true, billing: 'subscription' })).result, 'ACTION');
+  assert.equal(loop.decide(blind, obs({ unmeasurable: true })).result, 'BUDGET');
+  assert.equal(loop.decide(fresh(), obs({ now: T0 + 480 * MIN, billing: 'subscription' })).result, 'BUDGET', 'wall cap unchanged');
+  assert.equal(loop.decide({ ...fresh({ ticks: 5 }), ticks: 4 }, obs({ billing: 'subscription' })).result, 'BUDGET', 'tick cap unchanged');
+  const e = loop.decide(fresh({ costMicroUsd: 1000 }), obs({ costMicroUsd: 2000 }));
+  assert.match(e.reason, /cost cap reached: \$0\.00 of \$0\.00 \(estimate at API prices\)/);
+});
+
+async function overCap(t, env = {}) {
+  const p = await repo(t);
+  let r = await p.run(['loop', 'start', '--caps', 'usd=0.01']);
+  assert.equal(r.code, 0, show(r));
+  const { startedAt } = r.out.data.loop;
+  writeFileSync(join(p.transcripts, 'a.jsonl'), `${line('req_1', startedAt, { input_tokens: 5000, output_tokens: 0 })}\n`); // 20,000 µ$ > $0.01
+  r = await p.run(['tick'], { env: { ...p.env, ...env } });
+  return { p, r };
+}
+
+test('billing (a) CLI: LANDFALL_BILLING=subscription, a loop over the cost cap is not ended; billing is shown in text and data', async (t) => {
+  const { p, r } = await overCap(t, { [BILL]: 'subscription' });
+  assert.ok([0, 3].includes(r.code), show(r));
+  assert.ok(r.out.data.loop.costMicroUsd > 10000);
+  assert.deepEqual(r.out.data.billing, { mode: 'subscription', source: BILL });
+  const x = await cliText(['tick'], { cwd: p.cwd, env: { ...p.env, [BILL]: 'subscription' } });
+  assert.match(x.text, /billing: subscription \(/);
+  assert.match(x.text, /at API prices \(estimate, not billed: subscription\)/);
+  assert.doesNotMatch(x.text, / of \$0\.01 /, 'no cap shown');
+});
+
+test('billing (b) CLI: ANTHROPIC_API_KEY set (api mode) → BUDGET at the cap as today', async (t) => {
+  const { r } = await overCap(t, { ANTHROPIC_API_KEY: 'x' });
+  assert.equal(r.code, 6, show(r));
+  assert.equal(r.out.data.billing.mode, 'api');
+  assert.match(r.out.data.reason, /cost cap reached: \$0\.02 of \$0\.01 \(estimate at API prices\)/);
+});
+
+test('billing (c) billingMode: the account file, API signals and the override; never throws', async (t) => {
+  const { billingMode } = await lib('loop/billing.mjs');
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'billing-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const file = join(dir, '.claude.json');
+  const mode = (env, home = join(dir, 'nohome')) => billingMode({ env: { CLAUDE_CONFIG_DIR: dir, ...env }, names, home });
+  assert.equal(mode({}).mode, 'unknown', 'a missing file');
+  writeFileSync(file, '{ not json');
+  assert.equal(mode({}).mode, 'unknown', 'a malformed file');
+  writeFileSync(file, JSON.stringify({ oauthAccount: { billingType: 'stripe_subscription', emailAddress: 'secret@example.com' } }));
+  const sub = mode({});
+  assert.equal(sub.mode, 'subscription');
+  assert.equal(sub.source, 'claude.json billingType');
+  assert.ok(!JSON.stringify(sub).includes('secret@example.com'));
+  assert.equal(mode({ ANTHROPIC_API_KEY: 'k' }).mode, 'api', 'an API key beats the file');
+  assert.ok(!JSON.stringify(mode({ ANTHROPIC_API_KEY: 'sk-value' })).includes('sk-value'), 'the value is never shown');
+  assert.match(mode({ ANTHROPIC_API_KEY: 'k' }).source, /ANTHROPIC_API_KEY/);
+  assert.equal(mode({ CLAUDE_CODE_USE_BEDROCK: '1' }).mode, 'api');
+  assert.equal(mode({ CLAUDE_CODE_USE_VERTEX: 'true' }).mode, 'api');
+  assert.equal(mode({ CLAUDE_CODE_USE_FOUNDRY: '0' }).mode, 'subscription', '0 is not a signal');
+  assert.equal(mode({ [BILL]: 'api' }).mode, 'api', 'the override beats the file');
+  assert.equal(mode({ [BILL]: 'subscription', ANTHROPIC_API_KEY: 'k' }).mode, 'subscription', 'the override beats the key');
+  const odd = mode({ [BILL]: 'free' });
+  assert.equal(odd.mode, 'unknown');
+  assert.match(odd.source, /not recognized/);
+  const home = join(dir, 'home');
+  mkdirSync(home);
+  writeFileSync(join(home, '.claude.json'), JSON.stringify({ oauthAccount: { billingType: 'max_subscription' } }));
+  assert.equal(billingMode({ env: {}, names, home }).mode, 'subscription', 'without CLAUDE_CONFIG_DIR the home file');
+  writeFileSync(file, JSON.stringify({ oauthAccount: { billingType: 'prepaid' } }));
+  assert.equal(mode({}).mode, 'unknown');
+  assert.equal(billingMode({ env: undefined, names, home: undefined }).mode === undefined, false, 'never throws');
+});
+
+test('billing (d) loop status --json carries billing.mode; start and status text carry the billing line', async (t) => {
+  const p = await repo(t);
+  const env = { ...p.env, [BILL]: 'subscription' };
+  let r = await p.run(['loop', 'status'], { env });
+  assert.equal(r.out.data.billing.mode, 'subscription');
+  r = await p.run(['loop', 'start'], { env });
+  assert.equal(r.out.data.billing.mode, 'subscription');
+  const x = await cliText(['loop', 'status'], { cwd: p.cwd, env });
+  assert.match(x.text, /billing: subscription \(/);
+});
