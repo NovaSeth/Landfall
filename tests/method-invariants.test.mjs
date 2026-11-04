@@ -49,7 +49,7 @@ const PINNED_RULES = {
   'ORC-17': ['MUST NOT patch a missing contract or shared part locally', 'NEEDS_CONTEXT'],
   'REV-3': ['MUST reproduce every Critical and Important finding'],
   'REV-6': ['ADDRESSED or NOT ADDRESSED', "only the round's diff"],
-  'REV-7': ['MUST NOT start a third', 'Critical findings are exempt'],
+  'REV-7': ['MUST NOT start a third', 'refuses a fix round past the cap'],
   'REV-10': ['secrets scan run without a pipe', 'clean tree'],
   'REV-11': ['merges `origin/main` into the task branch and re-runs verify'],
   'REV-13': ['Critical or High security finding', 'blocks a gate'],

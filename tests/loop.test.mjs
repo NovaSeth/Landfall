@@ -219,7 +219,7 @@ test('rounds (1.x breaker after 2 rounds): the second round names the decision; 
   assert.equal(s.kind, 'action');
   assert.deepEqual(s.rules, ['REV-7']);
   assert.match(s.step, /^decide: escalate to the user or change the approach/);
-  assert.match(s.step, /Critical findings are exempt/, '1.x: Critical is not subject to the breaker');
+  assert.doesNotMatch(s.step, /exempt/, 'no class is exempt from the breaker');
   s = row(table([round(1, 0)], { caps: { ...CAPS, rounds: 1 } }), 'T-TU-1');
   assert.ok(s.rules.includes('REV-7'), 'the rounds cap of the loop decides when');
 });

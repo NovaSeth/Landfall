@@ -13,6 +13,7 @@ import { DEFAULT_CAPS, LOOP, STORE_KINDS, nextSteps, readBudgets } from '../loop
 import { readRuns } from '../receipts/index.mjs';
 import * as state from '../state/index.mjs';
 import { openStore } from '../verify/index.mjs';
+import { roundsCap } from '../verify/artifacts.mjs';
 import { EXIT } from './commands.mjs';
 
 const target = (io, names) => ({ cwd: io.cwd, env: io.env, names });
@@ -127,7 +128,17 @@ export function taskNew({ args, flags, names, io }) {
   return { data: r, text: `${r.id}${after.length ? ` (after ${after.join(', ')})` : ''}\n` };
 }
 
+// REV-7 in code: no fix round past the loop's rounds cap, whatever the class (exit 7).
+function checkRoundsCap({ args, flags, names, io }) {
+  const k = Number(flags.round);
+  if (args.state !== 'fix-round' || !Number.isInteger(k)) return;
+  const where = state.resolve(target(io, names));
+  const cap = where.active ? roundsCap(openStore(where.dir, names)) : Infinity;
+  if (k > cap) throw new state.StateError('review-cap', 'REFUSED', `REV-7: fix round ${k} is past the ${cap}-round limit`, { hint: `${names.bin} decide --kind review-close --task ${args.id} --remaining <ids>` });
+}
+
 export function taskSet({ args, flags, names, io }) {
+  checkRoundsCap({ args, flags, names, io });
   const r = state.setTask({ ...target(io, names), id: args.id, state: args.state, options: flags });
   return { data: r, text: `${r.id}: ${args.state} recorded; status ${r.task.status}\n` };
 }
