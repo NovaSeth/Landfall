@@ -72,7 +72,7 @@ test('findings list is empty by default; add copies a recorded round once; show 
   assert.deepEqual(added.json.data.filed, [B(1), B(2)]);
   const doc = (await f.ok(['findings', 'show', B(2), '--json'])).json.data.finding;
   assert.deepEqual({ ...doc, filedAt: 'time' }, {
-    schema: 1, id: B(2), status: 'open', task: SOURCE, round: 2, reviewer: REVIEW.reviewer,
+    schema: state.KINDS.finding.version, id: B(2), status: 'open', task: SOURCE, round: 2, reviewer: REVIEW.reviewer,
     finding: 'N1', severity: 'minor', path: 'src/x.mjs', line: 56, rule: 'COD-2', text: REVIEW.findings[1].text,
     filedAt: 'time', filedBy: 'AB', takenBy: null, closedAt: null, closedBy: null, reason: null,
   });
@@ -217,7 +217,7 @@ test('finding IDs never reuse a deleted number and newer schemas refuse reads an
   await f.add();
   assert.equal(f.store.read('finding', B(3)).finding, 'N1');
   const file = join(f.dir, 'findings', `${B(3)}.json`);
-  writeFileSync(file, JSON.stringify({ ...f.store.read('finding', B(3)), schema: 2 }));
+  writeFileSync(file, JSON.stringify({ ...f.store.read('finding', B(3)), schema: state.KINDS.finding.version + 1 }));
   for (const args of [['findings', 'show', B(3)], ['findings', 'list'], ['status'],
     ['findings', 'take', B(1), '--yes'], ['findings', 'add', '--task', SOURCE, '--round', '1', '--ids', 'OLD', '--yes']]) {
     const before = snapshot(f.dir);
