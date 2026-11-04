@@ -307,3 +307,33 @@ test('task schema 2: mergedAt is optional, a schema-1 task reads upgraded, and a
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// D-MG-44 (T-MG-117): the finite-number type and the min and unique options of arr.
+const spec = (f, opt) => ({ spec: { t: 'obj', f, opt } });
+const at = (kind, doc) => check(kind, doc).map((e) => `${e.path}:${e.code}`);
+
+test('num: finite numbers within min..max pass; NaN, Infinity, strings, null and out-of-range values fail at the field', () => {
+  const k = spec({ x: { t: 'num', min: 0, max: 100 }, y: { t: 'num', null: true }, z: { t: 'num' } });
+  for (const x of [0, 0.5, 2.37, 100, 99.999]) assert.deepEqual(at(k, { x, y: null, z: -1.5 }), [], `x ${x}`);
+  assert.deepEqual(at(k, { x: 1, y: 3.25, z: Number.MAX_VALUE }), [], 'no bounds: any finite number');
+  for (const x of [-0.01, 100.5, NaN, Infinity, -Infinity, '1', null, true, [1]]) {
+    assert.deepEqual(at(k, { x, y: null, z: 0 }), ['x:invalid-value'], `x ${String(x)}`);
+  }
+  for (const z of [NaN, Infinity, -Infinity, null]) assert.deepEqual(at(k, { x: 1, y: null, z }), ['z:invalid-value'], `unbounded z ${String(z)}`);
+  assert.equal(serialize(k.spec, { x: 2.5, y: null, z: 0 }), '{\n  "x": 2.5,\n  "y": null,\n  "z": 0\n}\n');
+});
+
+test('arr min and unique: an empty list fails at the field, a duplicate at its second occurrence', () => {
+  const k = spec({ a: { t: 'arr', min: 1, max: 4, unique: true, of: { t: 'enum', of: ['p', 'q', 'r', 's'] } }, b: { t: 'arr', of: { t: 'int' } } });
+  assert.deepEqual(at(k, { a: ['p'], b: [] }), [], 'min and unique bind only where set');
+  assert.deepEqual(at(k, { a: ['p', 'q', 'r', 's'], b: [1, 1] }), []);
+  assert.deepEqual(at(k, { a: [], b: [] }), ['a:invalid-value']);
+  assert.deepEqual(at(k, { a: ['p', 'p'], b: [] }), ['a.1:invalid-value']);
+  assert.deepEqual(at(k, { a: ['q', 'r', 'q'], b: [] }), ['a.2:invalid-value']);
+  assert.deepEqual(at(k, { a: ['p', 'x'], b: [] }), ['a.1:invalid-value'], 'an item error is reported as before');
+  assert.deepEqual(at(k, { a: ['p', 'q', 'r', 's', 'p'], b: [] }), ['a:limit-exceeded'], 'max is checked first');
+  const objs = spec({ o: { t: 'arr', unique: true, min: 2, of: { t: 'obj', f: { n: { t: 'int' } } } } });
+  assert.deepEqual(at(objs, { o: [{ n: 1 }, { n: 2 }] }), []);
+  assert.deepEqual(at(objs, { o: [{ n: 1 }, { n: 1 }] }), ['o.1:invalid-value'], 'unique compares by value');
+  assert.deepEqual(at(objs, { o: [{ n: 1 }] }), ['o:invalid-value'], 'min counts items');
+});
