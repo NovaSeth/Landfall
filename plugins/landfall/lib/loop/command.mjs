@@ -61,7 +61,7 @@ function render(r, rules, names, now, carried) {
   if (r.steps.length || r.info.length) out.push(DATA_MARKER); // the rows carry titles and states from repository files
   const head = ended ? '| left open | state | next step | rules |' : '| task | state | next step | rules |';
   if (r.steps.length) out.push(table(r.steps, head));
-  const sections = [['blocked', 'Blocked (informational):'], ['others', 'Others (informational):'], ['plan', 'Next in the plan (informational):'], ['watch', 'Watch (informational, ORC-24):'], ['limit', 'Usage limit (informational):']];
+  const sections = [['question', 'Open questions (informational, SPC-5):'], ['blocked', 'Blocked (informational):'], ['others', 'Others (informational):'], ['plan', 'Next in the plan (informational):'], ['watch', 'Watch (informational, ORC-24):'], ['limit', 'Usage limit (informational):']];
   for (const [kind, title] of sections) {
     const rows = r.info.filter((i) => i.kind === kind);
     if (rows.length) out.push('', title, table(rows, '| task | state | next step | rules |'));

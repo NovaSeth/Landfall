@@ -19,6 +19,8 @@
 //   context      the always-on cost from the one `claude plugin details` call the hooks check reads: over the SC3
 //                budget → warn
 //   permissions  the permission rules U3 advises, looked up in the user and project settings (never written)
+//   security     the security-guidance plugin's review of each commit and push (kept next to SEC-13): its log ending
+//                on an auth error (HTTP 401) → warn with the sign-in step
 //   protection   branch protection of the claim refs needs gh, which only lib/mirror may run (spec §4.3), not in this
 //                version → skip
 // Exit 0 healthy · 1 a check or row failed · 8 claude or git missing or not runnable (the report is still listed).
@@ -363,6 +365,48 @@ function permissionsRow({ names, io, repo }) {
   return row('permissions', 'ok', `allowed: ${rules.join(', ')}`, hint);
 }
 
+// T-MG-185: the plugin keeps two security reviews (SEC-13): its own security reviewer at task level and the
+// security-guidance plugin's LLM review of each commit and push. This row reports when that second review is failing:
+// the last outcome in its log (SECURITY_GUIDANCE_DEBUG_LOG, else <SECURITY_WARNINGS_STATE_DIR | CLAUDE_CONFIG_DIR/security |
+// ~/.claude/security>/log.txt) is an auth error (HTTP 401) rather than a completed review. Whether the plugin is enabled
+// follows the settings precedence: the user scope (`claude plugin list`), then <repo>/.claude/settings.json, then
+// settings.local.json. Read-only: doctor reads the log and the settings, and writes nothing (GC2).
+export const SECURITY_GUIDANCE = 'security-guidance@claude-plugins-official';
+const LOG_TAIL_BYTES = 262144;
+const AUTH_FAILED = /API error: 401\b|\(HTTP 401\)|authentication_error/;
+// Every review outcome security-guidance 2.0.17 logs (hooks/security_reminder_hook.py, hooks/llm.py); skips, rate limits
+// and non-auth failures are no outcome. A commit or push review that delivers new findings logs no line of its own.
+const REVIEWED = /(?:Commit review|Push sweep|Stop hook|LLM code review|Concerns review):? (?:no (?:new findings|(?:medium\+ |high\/critical )?(?:security issues|vulnerabilities|concerns) found)|all findings already (?:known|delivered)|found \d+)/;
+const settingsOf = (file) => { try { const s = JSON.parse(readFileSync(file, 'utf8')); return s && typeof s === 'object' ? s : {}; } catch { return {}; } };
+function guidanceLog(env) {
+  const abs = (p) => (isAbsolute(p ?? '') ? p : null);
+  if (abs(env.SECURITY_GUIDANCE_DEBUG_LOG)) return env.SECURITY_GUIDANCE_DEBUG_LOG;
+  const dir = abs(env.SECURITY_WARNINGS_STATE_DIR) ?? (abs(env.CLAUDE_CONFIG_DIR) ? join(env.CLAUDE_CONFIG_DIR, 'security') : abs(env.HOME) ? join(env.HOME, '.claude', 'security') : null);
+  return dir ? join(dir, 'log.txt') : null;
+}
+function securityReviewRow({ names, io, repo, plugins }) {
+  const hint = `sign Claude Code in again (/login), then start a new session: the plugin reviews with that sign-in; ${names.plugin} keeps both reviews (SEC-13)`;
+  if (!Array.isArray(plugins)) return row('security', 'skip', 'unknown: `claude plugin list --json` is not readable', hint);
+  const entry = plugins.find((p) => p?.id === SECURITY_GUIDANCE);
+  let enabled = entry?.enabled === true;
+  for (const f of repo ? ['settings.json', 'settings.local.json'] : []) {
+    const v = settingsOf(join(repo, '.claude', f)).enabledPlugins?.[SECURITY_GUIDANCE];
+    if (typeof v === 'boolean') enabled = v;
+  }
+  if (!entry || !enabled) return row('security', 'ok', `${names.plugin}'s security reviewer (SEC-13); ${SECURITY_GUIDANCE} ${entry ? 'disabled here' : 'not installed'}`, hint);
+  const log = guidanceLog(io.env ?? {});
+  // the current log first, then its rotated copy (<log>.1); the newest outcome line decides
+  const tail = (file) => { try { return readFileSync(file, 'utf8').slice(-LOG_TAIL_BYTES).split('\n').reverse(); } catch { return []; } };
+  const outcome = (l) => AUTH_FAILED.test(l) || REVIEWED.test(l);
+  const last = log ? tail(log).find(outcome) ?? tail(`${log}.1`).find(outcome) : undefined;
+  if (last && AUTH_FAILED.test(last)) {
+    const at = /^\[([^\]]{1,40})\]/.exec(last)?.[1] ?? 'unknown time';
+    return row('security', 'warn', `${SECURITY_GUIDANCE} review is failing: HTTP 401 (sign-in rejected) at ${at}; log ${log}`, hint);
+  }
+  return row('security', 'ok', `two reviews: ${names.plugin}'s security reviewer (SEC-13) and ${SECURITY_GUIDANCE}${last ? ' (its last review completed)' : ''}`, hint);
+}
+
+
 const LABEL = { ok: 'ok  ', warn: 'warn', fail: 'FAIL', skip: 'skip' };
 const line = (label, id, detail) => `  ${label}  ${id.padEnd(13)}${detail}`;
 function render(bin, checks, rows, errors) {
@@ -392,6 +436,7 @@ export function doctor({ names, io, version, pluginRoot }) {
   let info = null;
   let entry = null;
   let marketplaces = null;
+  let plugins = null; // `claude plugin list --json`, when readable
   if (!claudeRuns) {
     const missing = v.error === 'missing';
     envErrors.push({
@@ -409,6 +454,7 @@ export function doctor({ names, io, version, pluginRoot }) {
 
     const list = jsonOf(run('claude', ['plugin', 'list', '--json'], opts));
     const listReadable = Array.isArray(list);
+    if (listReadable) plugins = list;
     entry = listReadable ? list.find((p) => p && p.id === id) ?? null : null;
     const enabled = entry?.enabled === true;
     const pluginHint = `claude plugin install ${names.plugin} --marketplace <owner>/<repo> (or claude plugin enable ${id}), then /reload-plugins`;
@@ -455,6 +501,7 @@ export function doctor({ names, io, version, pluginRoot }) {
     guardRow({ names, io }),
     contextRow(info),
     permissionsRow({ names, io, repo: repo.worktree ?? null }), // the project settings of the checkout Claude Code runs in
+    securityReviewRow({ names, io, repo: repo.worktree ?? null, plugins }),
     row('protection', 'skip', `${names.claimRefPrefix}* not checked: it needs gh, which this version does not run`,
       `with lanes on, check that the server's branch protection does not block ${names.claimRefPrefix}* (claims are pushed there)`),
   ];

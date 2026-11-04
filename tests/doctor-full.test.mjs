@@ -10,7 +10,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { accessSync, chmodSync, constants, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, realpathSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { accessSync, chmodSync, constants, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, join, relative } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -39,7 +39,7 @@ const { HOOKS } = await lib('hooks/registry.mjs');
 const EVENTS = [...new Set(HOOKS.map((h) => h.event))];
 
 // T-MG-77 A2 (intended): the local row follows flags.
-const ROW_IDS = ['release', 'heartbeat', 'bin-path', 'git', 'state', 'profile', 'flags', 'local', 'providers', 'scheduler', 'guard', 'context', 'permissions', 'protection'];
+const ROW_IDS = ['release', 'heartbeat', 'bin-path', 'git', 'state', 'profile', 'flags', 'local', 'providers', 'scheduler', 'guard', 'context', 'permissions', 'security', 'protection'];
 const STATUSES = ['ok', 'warn', 'fail', 'skip'];
 const RULES = [`Bash(${names.bin} exec:*)`, `Bash(${names.bin} wait:*)`]; // U3
 const SYSTEM_DIRS = ['/usr/bin', '/bin'];
@@ -449,4 +449,93 @@ test('T-MG-85: the git row passes at 2.24 or later and warns below it', (t) => {
   fakeGit('2.24.0');
   d = doctor(s);
   assert.equal(d.row('git').status, 'ok', JSON.stringify(d.row('git')));
+});
+
+// T-MG-185 (fix round 1, PO): the plugin keeps both security reviews, its own (SEC-13) and the security-guidance plugin's
+// on each commit and push. doctor never advises turning the second one off; it reports when that review is failing (its
+// log, <CLAUDE_CONFIG_DIR>/security/log.txt, ends on an auth error such as HTTP 401) and says to sign in again. Whether the
+// plugin is enabled follows the settings precedence: user (as `claude plugin list` reports it), then the project's
+// .claude/settings.json, then .claude/settings.local.json (F2).
+test('T-MG-185: a failing security-guidance review (HTTP 401 last in its log) warns with the sign-in step; a working or disabled one is ok', (t) => {
+  const s = scratch(t);
+  const SG = 'security-guidance@claude-plugins-official';
+  const list = (enabled) => JSON.stringify([...JSON.parse(healthyList()), { id: SG, version: '2.0.17', scope: 'user', enabled }]);
+  const project = repo(s.base, 'project');
+  const log = join(s.env.CLAUDE_CONFIG_DIR, 'security', 'log.txt');
+  const AUTH = '[2026-11-04 23:23:06.557] API error: 401 - {"type":"error","error":{"type":"authentication_error","message":"OAuth access token has been revoked."}}\n'
+    + "[2026-11-04 23:23:06.859] Commit review: got no verdict (the API rejected the plugin's credentials (HTTP 401)); not marked reviewed\n";
+  const OK = '[2026-11-04 23:30:00.000] Commit review: no security issues found\n';
+  const sec = (opts) => doctor(s, { cwd: project, ...opts }).row('security');
+
+  fakeClaude(s.bin);
+  assert.equal(sec().status, 'ok', 'not installed');
+
+  fakeClaude(s.bin, { list: list(true) });
+  assert.equal(sec().status, 'ok', 'enabled, no log yet');
+  mkdirSync(dirname(log), { recursive: true });
+  writeFileSync(log, `[2026-11-04 23:00:00.000] Hook called\n${AUTH}`);
+  const before = snapshot(s.base);
+  const d = doctor(s, { cwd: project });
+  assert.equal(d.r.status, 0, out(d.r));
+  const w = d.row('security');
+  assert.equal(w.status, 'warn', JSON.stringify(w));
+  assert.ok(w.detail.includes(SG) && w.detail.includes('HTTP 401'), w.detail);
+  assert.ok(w.hint.includes('/login'), w.hint);
+  assert.doesNotMatch(`${w.detail} ${w.hint}`, /ENABLE_CODE_SECURITY_REVIEW|turn (it )?off|disable/i, 'never advises turning the review off');
+  assert.deepEqual(changed(before, snapshot(s.base)), [], 'doctor wrote nothing');
+
+  writeFileSync(log, `${AUTH}${OK}`);
+  assert.equal(sec().status, 'ok', 'a review completed after the error');
+  writeFileSync(log, `${OK}${AUTH}`);
+  assert.equal(sec().status, 'warn', 'the error came after the last completed review');
+
+  // F2: the higher-priority setting decides, in both directions
+  mkdirSync(join(project, '.claude'));
+  const settings = (file, enabled) => writeFileSync(join(project, '.claude', file), JSON.stringify({ enabledPlugins: { [SG]: enabled } }));
+  settings('settings.json', false);
+  assert.equal(sec().status, 'ok', 'disabled for the project');
+  settings('settings.local.json', true);
+  assert.equal(sec().status, 'warn', 'project disabled, local enabled: enabled');
+  fakeClaude(s.bin, { list: list(false) });
+  rmSync(join(project, '.claude', 'settings.local.json'));
+  settings('settings.json', true);
+  assert.equal(sec().status, 'warn', 'user disabled, project enabled: enabled');
+  settings('settings.local.json', false);
+  assert.equal(sec().status, 'ok', 'project enabled, local disabled: disabled');
+  rmSync(join(project, '.claude'), { recursive: true });
+  assert.equal(sec().status, 'ok', 'installed but disabled for the user');
+});
+
+// T-MG-185 fix round 2 (F3): any review outcome security-guidance 2.0.17 logs after the auth error clears the warning;
+// lines that are no review outcome (skips, a non-auth failure) do not; the rotated log.txt.1 counts when log.txt holds
+// no outcome. Messages as the plugin writes them (hooks/security_reminder_hook.py, hooks/llm.py).
+test('T-MG-185 r2: every logged review completion after a 401 clears the warning; skips and other failures do not', (t) => {
+  const s = scratch(t);
+  const SG = 'security-guidance@claude-plugins-official';
+  fakeClaude(s.bin, { list: JSON.stringify([...JSON.parse(healthyList()), { id: SG, version: '2.0.17', scope: 'user', enabled: true }]) });
+  const project = repo(s.base, 'project');
+  const dir = join(s.env.CLAUDE_CONFIG_DIR, 'security');
+  mkdirSync(dir, { recursive: true });
+  const stamp = (msg) => `[2026-11-04 23:30:00.000] ${msg}\n`;
+  const AUTH = stamp('API error: 401 - {"type":"error","error":{"type":"authentication_error","message":"OAuth access token has been revoked."}}')
+    + stamp("Commit review: got no verdict (the API rejected the plugin's credentials (HTTP 401)); not marked reviewed");
+  const sec = () => doctor(s, { cwd: project }).row('security');
+  const DONE = ['Commit review: no security issues found', 'Commit review: all findings already known, skipping', 'Push sweep: no new findings',
+    'Stop hook: no security issues found', 'Stop hook: all findings already delivered by commit-review', 'LLM code review: no vulnerabilities found',
+    'LLM code review: no medium+ vulnerabilities found', 'LLM code review found 2 high/critical vulnerabilities', 'Concerns review: no concerns found',
+    'Concerns review: no high/critical concerns found', 'Concerns review: found 1 high/critical areas of concern'];
+  for (const msg of DONE) {
+    writeFileSync(join(dir, 'log.txt'), AUTH + stamp(msg));
+    assert.equal(sec().status, 'ok', msg);
+  }
+  const NEUTRAL = ['Commit review: hourly rate limit reached, skipping', 'Push sweep: every pushed commit already reviewed',
+    'Push sweep: no push-success signal in bash output', 'Commit review: got no verdict (the API did not answer in time); not marked reviewed',
+    'API 401 on x-api-key; falling back to ANTHROPIC_AUTH_TOKEN'];
+  writeFileSync(join(dir, 'log.txt'), stamp(DONE[0]) + AUTH + NEUTRAL.map(stamp).join(''));
+  assert.equal(sec().status, 'warn', 'only lines that are no review outcome follow the 401');
+  writeFileSync(join(dir, 'log.txt.1'), stamp(DONE[0]) + AUTH);
+  writeFileSync(join(dir, 'log.txt'), NEUTRAL.map(stamp).join(''));
+  assert.equal(sec().status, 'warn', 'the rotated log holds the latest outcome');
+  writeFileSync(join(dir, 'log.txt'), stamp(DONE[2]));
+  assert.equal(sec().status, 'ok', 'the current log wins over the rotated one');
 });
