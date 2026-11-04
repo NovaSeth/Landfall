@@ -76,12 +76,13 @@ function stateless(s, cwd) {
   return !inside(w.dir) && !(w.copy && inside(w.copy));
 }
 
-// Fails closed, no parsing: a command is never skipped when it contains a quote, a backslash, `$` or a backtick (a word can be
-// split or built), a directory option or variable (--directory, --git-dir, --work-tree, GIT_DIR, GIT_WORK_TREE, -C), cd, pushd,
-// popd, chdir, an absolute, parent or home path, or a command that moves or removes files (rm mv cp ln find xargs): any of
-// them may reach a repository with state.
-const MUST_GUARD = /['"\\$`]|\b(cd|pushd|popd|chdir|rm|mv|cp|ln|find|xargs)\b|(^|\s)-C|--directory|--git-dir|--work-tree|GIT_DIR|GIT_WORK_TREE|(^|[\s=:;&|(<>])\/|\.\.|~/;
-export const mustGuard = (command) => MUST_GUARD.test(command);
+// Fails closed, no parsing: the shortcut stays only for plain words (letters, digits and . _ : @ % + , -) separated by single
+// spaces, so no quote, escape, expansion, brace, glob, operator, redirection, tab or newline gets through, and none of a
+// directory option or variable (-C, -c, --directory, --git-dir, --work-tree, GIT_DIR, GIT_WORK_TREE), cd, pushd, popd, chdir,
+// a parent path, or a command that moves or removes files (rm mv cp ln find xargs): any of them may reach a repository with state.
+const PLAIN = /^[\w.:@%+,-]+( [\w.:@%+,-]+)*$/;
+const MUST_GUARD = /\b(cd|pushd|popd|chdir|rm|mv|cp|ln|find|xargs)\b|(^|\s)-[Cc]\b|--directory|--git-dir|--work-tree|GIT_DIR|GIT_WORK_TREE|\.\./;
+export const mustGuard = (command) => !PLAIN.test(command) || MUST_GUARD.test(command);
 
 const decision = (permissionDecision, reason) => ({
   stdout: JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision, permissionDecisionReason: reason } }),
