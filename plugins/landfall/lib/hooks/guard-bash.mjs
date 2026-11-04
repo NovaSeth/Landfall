@@ -82,6 +82,21 @@ function autoAllowMode(opts, env, where, names) {
   try { return modeOf(AUTO_ALLOW, readConfig(where, { names, env })); } catch { return rollout(AUTO_ALLOW).default; }
 }
 
+// Role gate (SEC-13): the trust anchor for a review is the hook input, which an agent cannot write. A subagent (agent_type
+// set) never dispatches, and records a review only as the plugin's reviewer or security-reviewer. Matched on the command
+// text, so a path, a wrapper or `bash -c` does not hide it; the main session (no agent_type) is unchanged.
+const DISPATCH = /\btask\s+set\b[^;&|\n]*\bdispatched\b/;
+const RECORD = /\breview\s+record\b/;
+export function roleDeny(input, command, plugin) {
+  const t = input?.agent_type;
+  if (typeof t !== 'string' || !t) return null;
+  if (DISPATCH.test(command)) return 'SEC-13: blocked: only the orchestrator dispatches. Instead leave `task set <id> dispatched` to the orchestrator session.';
+  if (RECORD.test(command) && t !== `${plugin}:reviewer` && t !== `${plugin}:security-reviewer`) {
+    return 'SEC-13: blocked: only the reviewer agents record a review. Instead let the orchestrator dispatch the reviewer and store its review file.';
+  }
+  return null;
+}
+
 const AGENT_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 // After the decision: refresh the heartbeat of the agent lease bound to input.agent_id (lib/sched, at most once a
 // minute). Only a string agent_id of the ID pattern is matched, so an event without one never refreshes an unbound
@@ -111,6 +126,11 @@ function guardDecision(input, opts = {}) {
   const env = opts.env ?? process.env;
   const cwd = typeof input.cwd === 'string' && input.cwd ? input.cwd : (env.CLAUDE_PROJECT_DIR || process.cwd());
   const names = loadNames();
+  const role = roleDeny(input, command, names.plugin);
+  if (role) {
+    (opts.shadowLog ?? defaultShadowLog(env))({ at: new Date().toISOString(), capability: 'guard-bash', event: 'block', rule: 'SEC-13', command: command.slice(0, 200), cwd });
+    return deny(role);
+  }
   if (isExternalAgent(input, names.plugin)) { // the external wrapper agent: its policy first (G2); an allowed command still meets the guard
     const r = externalBash(input);
     if (r.code === 2) return r;
