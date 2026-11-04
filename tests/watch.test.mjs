@@ -38,7 +38,7 @@ test('ORC-24 resolves with rule, in the method after ORC-23, within the rule cap
   assert.match(r.stdout, /past budget a status request \(ORC-9\), idle or hung the cause and a stop \(ORC-10\), too slow smaller slices or batches \(ORC-11\)/);
   const text = readFileSync(join(pluginDir, 'method', 'orchestration.md'), 'utf8');
   assert.ok(text.indexOf('**ORC-23.**') < text.indexOf('**ORC-24.**'));
-  assert.ok(text.indexOf('**ORC-24.**') < text.indexOf('**ORC-25.**') && text.indexOf('**ORC-25.**') < text.indexOf('**ORC-26.**') && !text.includes('**ORC-27.**')); // T-MG-80: ORC-25 follows the watchdog rule; T-MG-64: ORC-26 follows it
+  assert.ok(text.indexOf('**ORC-24.**') < text.indexOf('**ORC-25.**') && text.indexOf('**ORC-25.**') < text.indexOf('**ORC-26.**') && text.indexOf('**ORC-26.**') < text.indexOf('**ORC-27.**') && !text.includes('**ORC-28.**')); // T-MG-151: ORC-27 follows ORC-26; T-MG-80: ORC-25 follows the watchdog rule; T-MG-64: ORC-26 follows it
 });
 
 test('the dispatch and loop skills name ORC-24', () => {

@@ -478,7 +478,7 @@ test('task merge: merges with --no-commit, runs the outcome gates, commits only 
   assert.deepEqual(parents.slice(1), [before, r.git('rev-parse', 'feat/x')], 'a merge commit of main and the branch');
   // T-MG-80 (intended change): the code is clean; the merge record is an uncommitted state write, like task done's.
   assert.equal(r.git('status', '--porcelain', '--', '.', `:(exclude)${names.stateDir}`), '');
-  assert.deepEqual(r.git('status', '--porcelain').split('\n').map((l) => l.replace(/^\s*\S+\s+/, '')), [`${names.stateDir}/tasks/${r.id}/task.json`]);
+  assert.deepEqual(r.git('status', '--porcelain').split('\n').map((l) => l.replace(/^\s*\S+\s+/, '')), [`${names.stateDir}/tasks/${r.id}/task.json`, `${names.stateDir}/receipts/`]); // T-MG-119: a merge refreshes receipts
   assert.equal(res.env.data.result, 'pass');
 });
 

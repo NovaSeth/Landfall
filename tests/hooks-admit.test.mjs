@@ -97,7 +97,7 @@ test('RF1: with the store lock held by another process, a deny in on mode is unc
   const input = (n, session) => JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Agent', session_id: session, cwd: f.dir, tool_use_id: `toolu_${n}`,
     tool_input: { subagent_type: type, prompt: 'x' } });
   const run = (n, session) => measured((probe) => spawnSync(process.execPath, [...probe.nodeArgs, LAUNCHER, 'hook', 'admit-agent'],
-    { input: input(n, session), env: { ...f.env, ...probe.env }, cwd: f.dir, encoding: 'utf8', timeout: 30000 }));
+    { input: input(n, session), env: { ...process.env, ...f.env, ...probe.env }, cwd: f.dir, encoding: 'utf8', timeout: 30000 }));
   const free = run(90, 'sess-a');
   assert.equal(free.status, 0);
   assert.match(free.stdout, /"permissionDecision":"deny"/);
