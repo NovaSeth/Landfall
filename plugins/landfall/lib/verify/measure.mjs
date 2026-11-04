@@ -4,11 +4,6 @@
 // call throws (heavy-busy), and only in a mode that writes (never ci). The doc's fields are added at the end of the run.
 import { readings } from '../sched/index.mjs';
 
-// Failures of the waits append that never fail or change a verify: the store lock held past its timeout (locked) or
-// left by a dead process (stale-lock); a state.json newer or corrupt (schema-newer, state-invalid; also waits.jsonl not
-// a regular file); a store not active (inactive); a disk full or read-only (ENOSPC, EDQUOT, EROFS, EACCES, EPERM).
-const LOST = new Set(['locked', 'stale-lock', 'schema-newer', 'state-invalid', 'inactive', 'ENOSPC', 'EDQUOT', 'EROFS', 'EACCES', 'EPERM']);
-
 // `cache`: 'hit' (the gate cache or a batch memo supplied the runs) · 'miss' (consulted, no entry) · 'off'.
 export const cacheState = ({ shared, hit, consulted }) => (shared || hit ? 'hit' : consulted ? 'miss' : 'off');
 
@@ -22,8 +17,12 @@ export function measure({ store, id, mode }) {
       if (mode === 'ci') continue;
       try {
         store.append('waits', { ...meter.waits[logged], kind: 'heavy-queue', task: id, source: 'verify' });
-      } catch (err) {
-        if (!LOST.has(err?.code)) throw err;
+      } catch {
+        // The waits log is optional telemetry (fix round 1, review r1 F1): any failure of its append is dropped, so it
+        // never fails or changes a verify, and in `heavy` never replaces the error of the call that waited (heavy-busy).
+        // Expected: the store lock held or stale (locked, stale-lock); a state.json newer or corrupt (schema-newer,
+        // state-invalid); an inactive store; local/waits.jsonl not a regular file (EISDIR, ENOTDIR, ELOOP); a full or
+        // read-only disk (ENOSPC, EDQUOT, EROFS, EACCES, EPERM).
       }
     }
   };
