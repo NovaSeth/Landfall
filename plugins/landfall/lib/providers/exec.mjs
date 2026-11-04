@@ -165,7 +165,8 @@ export function exec({ flags, names, io, pluginRoot }) {
   child.stdout.destroy();
   child.stderr.destroy();
   child.unref();
-  return { data: { runId, status: 'starting', provider: row.id, capS }, text: `${runId}: starting (${row.id}, ${role}, cap ${capS} s)\n` };
+  const next = `wait for it in the background: ${bin} wait ${runId} --timeout 590 (repeat while it exits 3)`;
+  return { data: { runId, status: 'starting', provider: row.id, capS, next }, text: `${runId}: starting (${row.id}, ${role}, cap ${capS} s)\n${next}\n` };
 }
 
 // The reviewer's pinned review brief: the round asked for or the highest stored one.

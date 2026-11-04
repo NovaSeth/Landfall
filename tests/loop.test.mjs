@@ -326,6 +326,45 @@ test('1.x background runs (finding 6: the 1.x prerequisite, every task closed): 
   assert.equal(row(r, run.runId), undefined, 'an event after the run ended: collected');
 });
 
+test('T-MG-157: a finished reviewer replaces the stale task row and collection precedes every other action', () => {
+  const dispatched = task('T-TU-2', 'dispatched', { events: [ev('dispatched', 1, { executor: 'codex:reviewer' })] });
+  const run = { runId: 'codex-T-TU-2-reviewer-1', task: dispatched.id, status: 'done', queuedAt: at(1), startedAt: at(2), endedAt: at(10), exit: 0 };
+  for (const status of ['done', 'failed', 'timeout', 'stopped']) {
+    const r = table([task('T-TU-1', 'new'), dispatched], { now: T0 + 48 * MIN, runs: [{ ...run, status }] });
+    const s = row(r, dispatched.id);
+    assert.equal(s.state, `run ${run.runId} ${status}: collect it`);
+    assert.equal(s.kind, 'action');
+    assert.equal(s.step, `collect its result: check the exit code and the result count, then record T-TU-2's state`);
+    assert.equal(s.step, row(r, run.runId).step);
+    assert.doesNotMatch(`${s.state} ${s.step}`, /executor working|over budget|ask the executor/);
+    assert.deepEqual(r.steps.filter((x) => x.kind === 'action').map((x) => x.task), [dispatched.id, run.runId, 'T-TU-1']);
+  }
+});
+
+test('T-MG-157: only the newest uncollected run replaces its task row; a live run keeps the existing wait', () => {
+  const dispatched = task('T-TU-2', 'dispatched', { events: [ev('dispatched', 1, { executor: 'codex:reviewer' })] });
+  const ended = { runId: 'codex-T-TU-2-reviewer-9', task: dispatched.id, status: 'done', queuedAt: at(1), startedAt: at(2), endedAt: at(10), exit: 0 };
+  const newest = { ...ended, runId: 'fake-T-TU-2-reviewer-1', status: 'failed', queuedAt: at(40), startedAt: at(41), endedAt: at(45), exit: 1 };
+  const opts = { now: T0 + 48 * MIN, alive: () => true };
+  for (const runs of [[newest, ended], [ended, newest]]) {
+    assert.equal(row(table([dispatched], { ...opts, runs }), dispatched.id).state, `run ${newest.runId} failed: collect it`);
+  }
+  const live = { ...newest, status: 'running', endedAt: null, exit: null };
+  const waiting = row(table([dispatched], { ...opts, runs: [live, ended] }), dispatched.id);
+  assert.deepEqual(waiting, {
+    task: dispatched.id, state: `executor working (47 min since its last event); run ${live.runId} running`,
+    step: 'wait for the run; its record changes when it ends', rules: ['FLW-4'], kind: 'wait',
+  });
+  for (const tasks of [
+    [{ ...dispatched, events: [...dispatched.events, ev('status-request', 46)] }],
+    [dispatched, task('T-TU-3', 'cancelled', { title: `${ended.runId}: recorded` })],
+  ]) {
+    const r = table(tasks, { ...opts, runs: [ended] });
+    assert.doesNotMatch(row(r, dispatched.id).state, /collect it/);
+    assert.equal(row(r, ended.runId), undefined);
+  }
+});
+
 test('1.x team: actions only for my (or unowned) tasks; others\' tasks informational and WAIT; no handle → register it', () => {
   const mine = task('T-TU-1', 'new');
   const theirs = task('T-AB-1', 'dispatched', { owner: 'AB', lane: 'api', events: [ev('dispatched', -90, {}, 'AB')] });

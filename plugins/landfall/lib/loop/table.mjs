@@ -12,7 +12,8 @@
 // A live run (queued, starting, running) of an open task turns its row into a wait for that run, so a step is not
 // started twice; a live run of a closed task is a wait row of its own. A finished run whose end is newer than every
 // event of its task → collect its result, closed task or not (1.x: every finished run before the end); a closed task
-// takes no further state, so a task whose title starts with "<runId>:" records it.
+// takes no further state, so a task whose title starts with "<runId>:" records it. The newest run, when uncollected,
+// also replaces its open task's row; all collection rows precede other actions.
 // Team (more than one registered handle): actions only for my tasks and tasks of an owner who is not registered;
 // other owners' open tasks are information and keep the loop waiting. Plan (`--plan`): entries `### Task <ref>:
 // <title>` outside code fences; a task belongs to an entry when its ID is the ref or its title starts with
@@ -70,6 +71,7 @@ const action = (task, state, step, rules) => ({ task, state, step, rules, kind: 
 const wait = (task, state, step, rules) => ({ task, state, step, rules, kind: 'wait' });
 const timeOf = (e) => Date.parse(e?.at ?? '') || 0;
 const lastEvent = (t) => t.events.reduce((m, e) => Math.max(m, timeOf(e)), 0);
+const runTime = (r) => Date.parse(r.queuedAt ?? r.startedAt ?? r.endedAt ?? '') || 0;
 const lastIndex = (events, names) => { for (let i = events.length - 1; i >= 0; i--) if (names.includes(events[i].event)) return i; return -1; };
 
 // Plan entries of a Markdown plan: [{ ref, title }] in order.
@@ -185,14 +187,25 @@ export const OUTSIDE_MAX = 50;
 
 export function nextSteps({ tasks = [], runs = [], handles = [], me = null, plan = null, lanesOn = false, caps, now, bin, budgets = {}, problem = null, dirty = () => [], outside = [], watch = [], alive = supervisorAlive }) {
   const steps = [];
+  const collect = [];
   const info = [];
   const multi = handles.length > 1;
   const mine = (t) => !multi || (me !== null && t.owner === me) || !handles.includes(t.owner);
   const byId = new Map(tasks.map((t) => [t.id, t]));
   const open = (t) => t && !CLOSED.has(t.status);
+  // Collected: an event of its task after it ended, or a task named after the run (closed tasks take no further state).
+  const uncollected = (r, t) => FINISHED.has(r.status) && r.endedAt && Date.parse(r.endedAt) > lastEvent(t) && !tasks.some((x) => belongs(x, r.runId));
+  const collectStep = (r, t) => {
+    const record = open(t) ? `then record ${t.id}'s state`
+      : `${t.id} is ${t.status}, so record it as a task named after the run: ${codeSpan(`${bin} task new ${shellQuote(`${dataLine(r.runId)}: <what follows>`)}`)} (cancel that task with the reason when nothing follows)`;
+    return `collect its result: check the exit code and the result count, ${record}`;
+  };
   let liveRuns = 0;
   const liveOf = new Map(); // task → its first live run (sorted by run ID)
+  const newestOf = new Map(); // task → its latest launch; run ID breaks equal timestamps deterministically
   for (const r of [...runs].sort((a, b) => natural(a.runId, b.runId))) {
+    const newest = newestOf.get(r.task);
+    if (!newest || runTime(r) >= runTime(newest)) newestOf.set(r.task, r);
     if (!isLive(r, now, alive)) continue;
     liveRuns++; // a live run of any task, a closed one too: the loop waits for it
     if (!liveOf.has(r.task)) liveOf.set(r.task, r);
@@ -206,6 +219,11 @@ export function nextSteps({ tasks = [], runs = [], handles = [], me = null, plan
       if (!open(t)) continue;
       if (!mine(t)) { info.push({ task: t.id, state: cell(`${t.owner}: ${t.status}${t.lane ? ` (lane ${t.lane})` : ''}`), kind: 'others' }); continue; }
       ownOpen++;
+      const newest = newestOf.get(t.id);
+      if (newest && uncollected(newest, t)) {
+        collect.push(action(t.id, `run ${newest.runId} ${newest.status}: collect it`, collectStep(newest, t), ['FLW-6']));
+        continue;
+      }
       // a task created --after others waits, undispatched, until each of them is closed (retro 2026-10 §4.13: a
       // dependency is state, not a sentence in the brief); an unknown predecessor counts as open
       const pending = (t.status === 'new' || t.status === 'planned') ? afterOf(t).filter((id) => open(byId.get(id)) || !byId.has(id)) : [];
@@ -224,11 +242,8 @@ export function nextSteps({ tasks = [], runs = [], handles = [], me = null, plan
         if (!isLive(r, now, alive)) continue; // a dead live-status record waits for nothing
         // a live run of an open task waits in its task's row; of a closed task, in its own
         if (!open(t)) steps.push(wait(r.runId, `run ${r.status} for ${t.id}, ${t.status}`, 'wait for the run; its record changes when it ends', ['FLW-4']));
-      } else if (FINISHED.has(r.status) && r.endedAt && Date.parse(r.endedAt) > lastEvent(t) && !tasks.some((x) => belongs(x, r.runId))) {
-        // collected: an event of its task after it ended, or (a closed task takes no further state) a task named after it
-        const record = open(t) ? `then record ${t.id}'s state`
-          : `${t.id} is ${t.status}, so record it as a task named after the run: ${codeSpan(`${bin} task new ${shellQuote(`${dataLine(r.runId)}: <what follows>`)}`)} (cancel that task with the reason when nothing follows)`;
-        steps.push(action(r.runId, `run ${r.status}${r.exit === null || r.exit === undefined ? '' : `, exit ${r.exit}`} for ${t.id}`, `collect its result: check the exit code and the result count, ${record}`, ['FLW-6']));
+      } else if (uncollected(r, t)) {
+        collect.push(action(r.runId, `run ${r.status}${r.exit === null || r.exit === undefined ? '' : `, exit ${r.exit}`} for ${t.id}`, collectStep(r, t), ['FLW-6']));
       }
     }
     // done tasks whose branch was merged by hand: the merge is not in the state (T-MG-80)
@@ -245,6 +260,7 @@ export function nextSteps({ tasks = [], runs = [], handles = [], me = null, plan
       steps.push(action('START', 'no tasks yet', `write the spec and the plan (\`${bin} rule SPC-1 SPC-2\`), then create the first task: \`${bin} task new "<title>"\``, ['SPC-1', 'SPC-2']));
     }
   }
+  steps.unshift(...collect);
   for (const w of watch) info.push({ task: w.code, state: w.message, step: null, rules: ['ORC-24'], kind: 'watch' }); // notes: never a step, never an exit
   const acting = steps.some((s) => s.kind === 'action');
   const waiting = steps.some((s) => s.kind === 'wait') || info.some((i) => i.kind === 'blocked' || i.kind === 'others') || liveRuns > 0;
