@@ -66,8 +66,12 @@ function guardStates(s, names) {
 
 // True when the resolved state is certainly empty: no repository, or a repository whose state directory does not exist,
 // is not linked, has no worktree copy, and the directory is not inside one. Active, unknown or any trace goes to the guard.
+// A command that could act in another directory (cd, pushd, popd, -C, --git-dir, --work-tree, GIT_DIR, GIT_WORK_TREE, an
+// absolute, parent or home path, a command word from a variable, a substitution) is never skipped: it may reach a repository
+// with state.
+const LEAVES_CWD = /\b(cd|pushd|popd|chdir)\b|(^|\s)-C|--git-dir|--work-tree|GIT_DIR|GIT_WORK_TREE|(^|[\s='":;&|(<>])\/|\.\.|~|`|\$\(|(^|[;&|(]\s*)\$/;
 function stateless(s, cwd) {
-  if (s.none) return true;
+  if (s.none) return s.certain === true;
   const w = s.where;
   if (s.unknown || !w || w.active || w.linked) return false;
   if (existsSync(w.dir) || (w.copy && existsSync(w.copy))) return false;
@@ -133,7 +137,7 @@ function guardDecision(input, opts = {}) {
   let resolved; // once, and only when a default reader needs it
   const s = () => (resolved ??= stateOf(cwd, env, opts.deadline ?? Infinity));
   const active = () => (s().where?.active ? s().where : null);
-  if (opts.state === undefined && stateless(s(), cwd)) return { stdout: '' };
+  if (opts.state === undefined && !LEAVES_CWD.test(command) && stateless(s(), cwd)) return { stdout: '' };
   let v;
   for (const state of opts.state !== undefined ? [opts.state] : guardStates(s(), names)) {
     v = evaluate(command, {

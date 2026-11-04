@@ -1298,3 +1298,25 @@ test('guard does nothing where Landfall has no state: a repository without a sta
   const partial = gitRepo('main', { state: false }); mkdirSync(join(partial, names.stateDir));
   assert.equal(judgeAt(partial, 'git push origin $B').decision, 'deny', 'a state directory exists');
 });
+
+test('guard does nothing only for a command that stays in the stateless directory: every way out to an active repository is still guarded', () => {
+  const active = gitRepo('main'); activate(active, ['AB']);
+  const here = gitRepo('main', { state: false }); const plain = mkdtempSync(join(tmpdir(), 'g-plain-'));
+  const push = 'git push --force origin main';
+  const forms = [`cd ${active} && ${push}`, `pushd ${active} && ${push}`, `git -C ${active} push --force origin main`,
+    `git --git-dir=${active}/.git ${push.slice(4)}`, `git --work-tree=${active} ${push.slice(4)}`, `GIT_DIR=${active}/.git ${push}`,
+    `cd ../${active.split('/').pop()} && ${push}`, `cd ${active} && git push origin $B`, `cd ~ && ${push}`, `cd $(echo ${active}) && ${push}`,
+    `/usr/bin/${push}`];
+  for (const dir of [here, plain]) {
+    for (const c of forms) {
+      const cwd = dir === plain ? plain : here;
+      assert.equal(judgeAt(cwd, c, { readProjectMode: () => 'solo' }).decision, 'deny', `${cwd === plain ? 'plain' : 'repo'}: ${c}`);
+    }
+  }
+});
+
+test('guard does nothing only when git certainly said there is no state: a git that fails in a stateless directory still guards', () => {
+  const here = gitRepo('main', { state: false });
+  const env = { ...process.env, CLAUDE_PROJECT_DIR: here, PATH: mkdtempSync(join(tmpdir(), 'g-nogit-')) };
+  assert.equal(judgeAt(here, 'git push --force origin main', { env }).decision, 'deny', 'git missing: unknown, not none');
+});
