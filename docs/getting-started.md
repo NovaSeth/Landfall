@@ -29,7 +29,7 @@ A repository's gate commands run only once this machine trusts them. In a termin
 
 ### Merging finished work
 
-`landfall task merge --ready` merges every ready task as one batch, runs the gates once on the integrated tree and bisects on a failure. `landfall task merge <id…>` merges the tasks you name. If you merged a branch by hand, `landfall task merge <id> --adopt` records it.
+`landfall task merge --ready` merges every ready task as one batch, runs the gates once on the integrated tree and bisects on a failure. When the main checkout's lockfile matches, the batch reuses its `node_modules`; otherwise, or when the first gate cannot run, the tasks merge one by one. `landfall task merge <id…>` merges the tasks you name. If you merged a branch by hand, `landfall task merge <id> --adopt` records it.
 
 ### The findings backlog
 
