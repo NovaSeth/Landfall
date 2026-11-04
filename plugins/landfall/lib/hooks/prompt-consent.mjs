@@ -4,8 +4,8 @@
 // When the prompt's first line (trimmed) is exactly `<bin> loop start`, optionally followed by ` --caps k=v,…` (the CLI's
 // own form), the hook writes local/loop-consent.json of the repository's state directory through lib/state (machine-local,
 // never committed; the Bash guard blocks every non-read command on the state directory): { at, expiresAt (at + 10 min),
-// repo (the project's real path, lib/state resolve), session (the hook input's session_id), caps (parsed; {} for none),
-// usedAt (null) }. A later prompt replaces it. The prompt is allowed unchanged, with one context line. `loop start`
+// repo (the project's real path, lib/state resolve), session (the hook input's session_id), transcript (its
+// transcript_path, an absolute .jsonl path, required), caps (parsed; {} for none), usedAt (null) }. A later prompt replaces it. The prompt is allowed unchanged, with one context line. `loop start`
 // without a terminal consumes it once (consumeConsent, lib/loop). Anything else (another first line, input that is not a
 // UserPromptSubmit event, no active repository) writes nothing and allows (GC8).
 import { isAbsolute } from 'node:path';
@@ -31,6 +31,7 @@ export const CONSENT = defineKind('loopConsent', 1, {
     expiresAt: { t: 'time' },
     repo: { t: 'str', min: 1, max: 4096 },
     session: { t: 'str', min: 1, max: 128, re: SESSION_ID },
+    transcript: { t: 'str', min: 1, max: 4096 }, // the session transcript (hook input transcript_path): the start checks the prompt there
     caps: { t: 'data', maxBytes: 512 },
     usedAt: { t: 'time', null: true },
   },
@@ -74,28 +75,31 @@ export function consentAllows(doc, { repo, caps, now }) {
   return { ok: true };
 }
 
-// Consumes the consent of `store` for a start (one store lock section: read, check, mark used): true when consumed.
-export function consumeConsent(store, { repo, caps, now }) {
-  let ok = false;
+// Consumes the consent of `store` for a start (one store lock section: read, check, mark used): { ok } when consumed,
+// else { ok: false, why }. proof(doc) → { ok, why? }: the caller's check of the human channel (lib/loop: the session
+// transcript holds the prompt), run after the record's own checks and before the record is marked used.
+export function consumeConsent(store, { repo, caps, now, proof = () => ({ ok: true }) }) {
+  let out = { ok: false, why: 'no consent' };
   store.update(CONSENT.name, null, (cur) => {
-    if (!consentAllows(cur, { repo, caps, now }).ok) return undefined;
-    ok = true;
-    return { ...cur, usedAt: iso(now) };
+    out = consentAllows(cur, { repo, caps, now });
+    if (out.ok) out = proof(cur);
+    return out.ok ? { ...cur, usedAt: iso(now) } : undefined;
   });
-  return ok;
+  return out;
 }
 
 function record(input, env, deadline, now) {
   if (input.hook_event_name !== 'UserPromptSubmit') return NONE; // exactly; an event without its name is none
-  const { prompt, cwd, session_id: session } = input;
+  const { prompt, cwd, session_id: session, transcript_path: transcript } = input;
   if (typeof prompt !== 'string' || typeof cwd !== 'string' || !isAbsolute(cwd) || typeof session !== 'string' || !SESSION_ID.test(session)) return NONE;
+  if (typeof transcript !== 'string' || transcript.length > 4096 || !isAbsolute(transcript) || !transcript.endsWith('.jsonl')) return NONE;
   const names = loadNames();
   const caps = consentCaps(prompt, names.bin);
   if (caps === null) return NONE;
   const s = stateOf(cwd, env, deadline);
   if (!s.where?.active) return NONE;
   const store = open(s.where.dir, { names, kinds: { ...KINDS, [CONSENT.name]: CONSENT }, lockTimeoutMs: LOCK_WAIT_MS });
-  store.write(CONSENT.name, null, { at: iso(now), expiresAt: iso(now + CONSENT_TTL_MS), repo: s.where.repo, session, caps, usedAt: null });
+  store.write(CONSENT.name, null, { at: iso(now), expiresAt: iso(now + CONSENT_TTL_MS), repo: s.where.repo, session, transcript, caps, usedAt: null });
   if (store.skipped) return NONE;
   const flag = capsFlag(caps);
   const line = `${names.bin}: the user's consent to one \`${names.bin} loop start\` in this repository was recorded (${flag ? `caps ${flag}` : 'default caps'}, valid ${CONSENT_TTL_MS / 60000} min); run \`${names.bin} loop start${flag ? ` --caps ${flag}` : ''} --yes\` to use it.`;

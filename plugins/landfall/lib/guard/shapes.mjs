@@ -128,6 +128,24 @@ const binWords = (w) => { let k = 1; while (k < w.length && w[k].startsWith('-')
 // run by hand it feeds a hand-made event to a hook that writes state (T-MG-149: a loop start consent), so it is blocked
 // in every form that reaches the launcher (bare, by any path, behind node or a wrapper).
 const hookCli = (w) => binWords(w).words[0] === 'hook';
+// A path that is this plugin's launcher under another name (fix round 2): a link (its real path) or a copy (the same
+// bytes). Asked only when `hook` follows the word, so a command pays one realpath per such word at most.
+let launcherBytes = null;
+function sameLauncher(t, ctx) {
+  if (!t.includes('/') || OWN_LAUNCHER === null || typeof ctx.cwd !== 'string') return false;
+  const p = real(resolve(ctx.cwd, t));
+  if (p === null) return false;
+  if (p === OWN_LAUNCHER) return true;
+  try {
+    const st = statSync(p);
+    if (!st.isFile() || st.size > 1 << 16) return false;
+    launcherBytes ??= readFileSync(OWN_LAUNCHER);
+    return st.size === launcherBytes.length && readFileSync(p).equals(launcherBytes);
+  } catch { return false; }
+}
+// The hook entry point run by the word w[k] (the program, or an interpreter's script): `<bin>` by any path, or the
+// launcher renamed.
+const hookEntry = (w, k, ctx) => k < w.length && hookCli(w.slice(k)) && (base(w[k]) === BIN || sameLauncher(w[k], ctx));
 const binGate = (w) => {
   const { words } = binWords(w);
   return GATES.find((g) => g.sub?.some((s) => s.split(' ').every((x, j) => words[j] === x))) ?? null;
@@ -243,7 +261,7 @@ export function shape(c, ctx) {
     for (const t of w) if (wordTok(t) && !isPath(t)) why(`"${short(t)}" in the command ${short(b)} outside the list`);
     return null;
   }
-  if (base(name) === BIN && hookCli(w)) return MSG.hookCli(BIN); // any path to the launcher (T-MG-149)
+  if (hookEntry(w, 0, ctx)) return MSG.hookCli(BIN); // any path to the launcher, also renamed (T-MG-149)
   if (isLauncher(name, ctx)) return shape(asBin(c, 0), ctx); // the launcher by its path: the own command
   if (base(name) === BIN && name !== BIN) { const gate = pipeAfter(binGate(w), true); if (gate) return gate; } // another path: gates only
   if (isBin(name)) {
@@ -282,10 +300,13 @@ export function shape(c, ctx) {
       const t = w[k];
       const f = INTERP[b].find((x) => t === x || (x.length === 2 && t.startsWith(x)));
       if (f) return codeShape(b, t === f ? w[k + 1] ?? '' : t.slice(f.length), w.slice(t === f ? k + 2 : k + 1), ctx);
-      if (t === '-m' || t === '--') return scriptShape(w, k + 1 < w.length ? k + 1 : k);
+      if (t === '-m' || t === '--') { // the script after them is checked as one without them (review r1 F1)
+        if (hookEntry(w, k + 1, ctx)) return MSG.hookCli(BIN);
+        return scriptShape(w, k + 1 < w.length ? k + 1 : k);
+      }
       if (t === '-') why(`${b} reads code from its input`);
       if (!t.startsWith('-')) {
-        if (base(t) === BIN && hookCli(w.slice(k))) return MSG.hookCli(BIN); // `node <any>/bin/<bin> hook …` (T-MG-149)
+        if (hookEntry(w, k, ctx)) return MSG.hookCli(BIN); // `node <any>/bin/<bin> hook …`, also renamed (T-MG-149)
         return isLauncher(t, ctx) ? shape(asBin(c, k), ctx) : scriptShape(w, k);
       }
       if (wordTok(t) || (INTERP_VAL.includes(t) && wordTok(w[k + 1] ?? ''))) why(`an option of ${b} with a guarded word`);
