@@ -236,8 +236,8 @@ Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
 usage: landfall config set <key> <value> [--decision <D>] [--yes] [--json]
 
 Set one config value: a threshold override (only with an active decision) or the providers of an executor role.
-Keys: thresholds.<unit>.<path> (a whole number of lib/router or lib/engine thresholds.json or of the loop, such as
-thresholds.router.trivial.maxLoc or thresholds.loop.handoffTokens) and executors.reviewer|implementer (providers in order, comma-separated).
+Keys: thresholds.<unit>.<path> (a whole number of lib/router or lib/engine thresholds.json, of the loop or of verify's code health,
+such as thresholds.router.trivial.maxLoc or thresholds.health.file.hard) and executors.reviewer|implementer (providers in order, comma-separated).
 A threshold override needs --decision with an active decision (else exit 1, nothing written); config.json keeps
 the decision with the value. The value default removes an override or a preference. Flags: use flags set.
 Changes files: needs a terminal or --yes.

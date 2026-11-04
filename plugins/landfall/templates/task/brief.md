@@ -35,7 +35,7 @@ Consumes: <interfaces, files and fields this task reads, each with its owner>. P
 <tests with a worker limit>
 {{bin}} secrets
 ```
-Exit 0 prints `secrets: clean`. One commit per step; no push. A full suite or build runs through the heavy queue: `{{bin}} heavy` with the command after `--`.
+Exit 0 prints `secrets: clean`. Verify checks code health: a file over 800 lines or a function over 120 lines that grows fails, past 500 or 80 warns; split or refactor before handoff. One commit per step; no push. A full suite or build runs through the heavy queue: `{{bin}} heavy` with the command after `--`.
 
 ## Assignments (only when several agents share one worktree)
 <agent → its disjoint file list>. Agents run no git; the orchestrator commits. Shared vocabulary: <the names, headings and contract terms that must agree between the agents, as a table>.
