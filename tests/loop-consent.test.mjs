@@ -314,6 +314,45 @@ test('T-MG-154: the transcript the consent names must be the session\'s own (<co
   assert.ok(p.consent().usedAt);
 });
 
+test('T-MG-154 fix round 1: a session started in a repository subdirectory restarts the loop: the slug comes from the session cwd the consent records; a cwd outside the repository, or none, is refused', async (t) => {
+  const p = await ended(t, 'consent-sub-');
+  const sub = join(p.cwd, 'src', 'app'); mkdirSync(sub, { recursive: true });
+  const sessions = join(p.projects, realpathSync(sub).replace(/[^A-Za-z0-9]/g, '-')); mkdirSync(sessions);
+  const transcript = join(sessions, 'sess-1.jsonl');
+  const say = () => appendFileSync(transcript, `${JSON.stringify(p.userLine(`${BIN} loop start`))}\n`);
+  const { CONSENT } = await lib('hooks/prompt-consent.mjs');
+  const state = await lib('state/index.mjs');
+  const store = state.open(p.store, { names, kinds: { ...state.KINDS, [CONSENT.name]: CONSENT } });
+  const forge = (fields) => { const now = Date.now(); const doc = { at: new Date(now).toISOString(), expiresAt: new Date(now + 5 * MIN).toISOString(), repo: realpathSync(p.cwd), session: 'sess-1', transcript, caps: {}, usedAt: null, ...fields }; for (const k of Object.keys(doc)) if (doc[k] === undefined) delete doc[k]; store.write(CONSENT.name, null, doc); };
+  const refused = async (why) => {
+    const r = await p.run(['loop', 'start']);
+    assert.equal(r.code, 7, `${why}: ${show(r)}`);
+    assert.equal(r.out.errors[0].code, 'user-decision', why);
+    assert.equal(p.consent().usedAt, null, `${why}: the consent stays unused`);
+  };
+  say();
+  // the hook's record from the subdirectory session: accepted
+  const h = runHook('prompt-consent', JSON.stringify({ session_id: 'sess-1', transcript_path: transcript, cwd: sub, hook_event_name: 'UserPromptSubmit', prompt: `${BIN} loop start` }), { env: p.env });
+  assert.equal(h.code ?? 0, 0);
+  const r = await p.run(['loop', 'start']);
+  assert.equal(r.code, 0, `restarted from the subdirectory session's consent: ${show(r)}`);
+  assert.equal(p.consent().cwd, realpathSync(sub), 'the session cwd is recorded as its real path');
+  assert.ok(p.consent().usedAt);
+  assert.equal((await p.run(['loop', 'stop'])).out.data.stopped, true);
+  // a record (not the hook's) naming a cwd outside the repository whose slug directory holds the transcript
+  const away = join(p.base, 'away'); mkdirSync(away);
+  const awaySessions = join(p.projects, realpathSync(away).replace(/[^A-Za-z0-9]/g, '-')); mkdirSync(awaySessions);
+  appendFileSync(join(awaySessions, 'sess-1.jsonl'), `${JSON.stringify(p.userLine(`${BIN} loop start`))}\n`);
+  forge({ cwd: away, transcript: join(awaySessions, 'sess-1.jsonl') });
+  await refused('a cwd outside the repository');
+  // a record without a cwd (written before fix round 1): fail closed
+  forge({ cwd: undefined });
+  await refused('no cwd');
+  // the subdirectory's slug, but the record names the repository root as the cwd
+  forge({ cwd: realpathSync(p.cwd) });
+  await refused('the transcript is not under the slug of the recorded cwd');
+});
+
 test('SEC-14: the model cannot write the consent through Bash (the guard blocks the state directory)', async (t) => {
   const p = await repo(t, 'consent-sec-');
   const cmd = `echo '{"schema":1}' > ${join(names.stateDir, 'local', 'loop-consent.json')}`;
