@@ -197,8 +197,10 @@ function sedWrites(w, text) {
   return w.slice(1).some((t) => t.toLowerCase().includes(text) && !SED_SUBST.test(t));
 }
 
+// An unquoted glob in a word that starts with `-` may expand to an option or a find action (-d[e]lete, review r2 F2).
+const globOption = (c) => c.words.some((x) => x.glob && x.text.startsWith('-'));
 function readShape(c, w) {
-  if (c.redirs.some((r) => !safeRedir(r))) return false;
+  if (c.redirs.some((r) => !safeRedir(r)) || globOption(c)) return false;
   const b = base(w[0]);
   if (!READ_ONLY.has(b)) return false;
   const deny = READ_ONLY.get(b);
@@ -213,7 +215,7 @@ export function braceShape(c, w) {
   if (!c.words.some((x) => x.q === '{')) return;
   const b = base(w[0] ?? '');
   const deny = READ_ONLY.get(b);
-  if (c.words[0].q === '{' || !READ_ONLY.has(b) || BRACE_PROGRAM_NO.has(b) || (deny && w.slice(1).some((t) => deny.test(t))) || (b === 'printf' && w.some((t) => t.startsWith('-v')))) why('group or { } expansion');
+  if (c.words[0].q === '{' || globOption(c) || !READ_ONLY.has(b) || BRACE_PROGRAM_NO.has(b) || (deny && w.slice(1).some((t) => deny.test(t))) || (b === 'printf' && w.some((t) => t.startsWith('-v')))) why('group or { } expansion');
 }
 // Words a path can hide in: the word, the value of name=value / --option=value, a glued short option value (-Xpath).
 const candidates = (t) => [...(t.startsWith('-') ? [] : [t]), ...(t.includes('=') ? [t.slice(t.indexOf('=') + 1)] : []), ...(/^-[A-Za-z][^-=]/.test(t) ? [t.slice(2)] : [])];
@@ -375,12 +377,12 @@ export function removeShape(c, ctx) {
 }
 
 // find … -delete, or -exec / -execdir / -ok rm …, removes from each start path (default `.`), whatever the filters:
-// each start path is a removal target.
+// each start path is a removal target. An option word with an unquoted glob may be -delete (review r2 F2): the same.
 const FIND_GLOBAL = /^-(H|L|P|E|X|s|x|d|O\d*|D)$/;
 export function findDeleteShape(c, ctx) {
   const w = c.words.map((x) => x.text);
   const k = w.findIndex((t) => /^-(exec|execdir|ok|okdir)$/.test(t));
-  if (!w.includes('-delete') && !(k > 0 && base(w[k + 1] ?? '') === 'rm')) return null;
+  if (!w.includes('-delete') && !(k > 0 && base(w[k + 1] ?? '') === 'rm') && !globOption(c)) return null;
   const starts = [];
   for (const word of c.words.slice(1)) {
     if (FIND_GLOBAL.test(word.text)) continue;
