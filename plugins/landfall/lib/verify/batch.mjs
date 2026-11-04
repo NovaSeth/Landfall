@@ -132,7 +132,10 @@ export function batchMerge({ cwd, env, names, ids = null, ready = false, version
       t.conflicts = [];
       t.tests = [];
       if (stopped) { t.outcome = 'skipped'; t.why = `sequential merge stopped at ${stopped}`; continue; }
-      const single = mergeTask({ cwd, env, names, id: t.task, branch: t.sha, version, at });
+      // The branch name when it still points at the verified sha (the merge commit then reads "Merge branch '<name>'").
+      const named = gitIn(where, env, ['rev-parse', '--verify', '-q', `${t.branch}^{commit}`]);
+      const ref = !t.branch.startsWith('-') && named.status === 0 && named.stdout.trim() === t.sha ? t.branch : t.sha;
+      const single = mergeTask({ cwd, env, names, id: t.task, branch: ref, version, at });
       result.verify = single.verify;
       result.output.push(...single.output);
       result.reasons.push(...single.reasons);
