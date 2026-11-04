@@ -146,6 +146,29 @@ test('a fake-provider run: starting → running → done with tokens and lastLin
   await p.until('the lease to be released', () => p.externalLeases().length === 0, 5000);
 });
 
+test('T-MG-157: exec prints the background wait instruction', async (t) => {
+  const p = await project(t);
+  const out = [];
+  const err = [];
+  const code = await main(['exec', '--task', 'T-TU-1', '--role', 'reviewer', '--provider', 'fakeok', '--yes'], {
+    io: { out: (s) => out.push(s), err: (s) => err.push(s), stdinIsTTY: false, env: p.env, cwd: p.cwd, stdin: null },
+  });
+  assert.equal(code, 0, err.join(''));
+  const id = 'fakeok-T-TU-1-reviewer-1';
+  await p.ended(id);
+  const lines = out.join('').trimEnd().split('\n');
+  assert.equal(lines.length, 2);
+  assert.equal(lines[1], `wait for it in the background: ${names.bin} wait ${id} --timeout 590 (repeat while it exits 3)`);
+});
+
+test('T-MG-157: exec JSON carries the background wait instruction in data.next', async (t) => {
+  const p = await project(t);
+  const r = await startRun(p, 'T-TU-1', 'reviewer', 'fakeok');
+  assert.equal(r.code, 0, show(r));
+  await p.ended(r.e.data.runId);
+  assert.equal(r.e.data.next, `wait for it in the background: ${names.bin} wait fakeok-T-TU-1-reviewer-1 --timeout 590 (repeat while it exits 3)`);
+});
+
 test('with external max 1 a second run is queued until the first ends, then runs', async (t) => {
   const p = await project(t);
   sched.calibrate({ names, env: p.env, max: { external: 1 } });
