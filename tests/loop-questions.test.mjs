@@ -50,6 +50,21 @@ test('tick table: only an open question left → WAIT (the answer may come), nev
   assert.deepEqual(r.info.map((i) => i.kind), ['question']);
 });
 
+test('F1 (fix round 1): a queued question does not hold the plan: the next independent plan entry becomes the step', () => {
+  const plan = { path: 'docs/plans/p.md', entries: [{ ref: 'A', title: 'region' }, { ref: 'B', title: 'docs' }] };
+  const questioned = { ...task('T-TU-1', 'blocked', [ev('blocked', 1, { reason: 'question: which region?' })]), title: 'A: region' };
+  const r = loop.nextSteps({ tasks: [questioned], runs: [], handles: ['TU'], me: 'TU', plan, lanesOn: false, caps: loop.DEFAULT_CAPS,
+    now: T0 + 5 * MIN, bin: BIN, problem: null, dirty: () => [] });
+  assert.equal(r.outcome, 'action', JSON.stringify(r));
+  assert.deepEqual(r.steps.map((s) => s.task), ['B']);
+  assert.deepEqual(r.info.map((i) => [i.task, i.kind]), [['T-TU-1', 'question']]);
+  // a plain blocked task still holds the plan, as before
+  const blocked = { ...task('T-TU-1', 'blocked', [ev('blocked', 1, { reason: 'waiting for the API key' })]), title: 'A: region' };
+  const b = loop.nextSteps({ tasks: [blocked], runs: [], handles: ['TU'], me: 'TU', plan, lanesOn: false, caps: loop.DEFAULT_CAPS,
+    now: T0 + 5 * MIN, bin: BIN, problem: null, dirty: () => [] });
+  assert.deepEqual(b.steps, []);
+});
+
 const git = (cwd, env, args) => {
   const r = spawnSync('git', args, { cwd, env, encoding: 'utf8' });
   assert.equal(r.status, 0, `git ${args.join(' ')}: ${r.stderr}`);

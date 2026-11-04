@@ -10,7 +10,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { accessSync, chmodSync, constants, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, realpathSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { accessSync, chmodSync, constants, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, join, relative } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -451,46 +451,57 @@ test('T-MG-85: the git row passes at 2.24 or later and warns below it', (t) => {
   assert.equal(d.row('git').status, 'ok', JSON.stringify(d.row('git')));
 });
 
-// T-MG-185: one security review per repository. The security-guidance plugin of claude-plugins-official reviews every
-// commit and push (and each turn) on its own; doctor names the one setting that turns its reviews off for this
-// repository, and never writes it (GC2).
-test('T-MG-185: a second automatic security review warns with the exact setting; the setting, the env or a disabled plugin is ok', (t) => {
+// T-MG-185 (fix round 1, PO): the plugin keeps both security reviews, its own (SEC-13) and the security-guidance plugin's
+// on each commit and push. doctor never advises turning the second one off; it reports when that review is failing (its
+// log, <CLAUDE_CONFIG_DIR>/security/log.txt, ends on an auth error such as HTTP 401) and says to sign in again. Whether the
+// plugin is enabled follows the settings precedence: user (as `claude plugin list` reports it), then the project's
+// .claude/settings.json, then .claude/settings.local.json (F2).
+test('T-MG-185: a failing security-guidance review (HTTP 401 last in its log) warns with the sign-in step; a working or disabled one is ok', (t) => {
   const s = scratch(t);
   const SG = 'security-guidance@claude-plugins-official';
   const list = (enabled) => JSON.stringify([...JSON.parse(healthyList()), { id: SG, version: '2.0.17', scope: 'user', enabled }]);
   const project = repo(s.base, 'project');
+  const log = join(s.env.CLAUDE_CONFIG_DIR, 'security', 'log.txt');
+  const AUTH = '[2026-11-04 23:23:06.557] API error: 401 - {"type":"error","error":{"type":"authentication_error","message":"OAuth access token has been revoked."}}\n'
+    + "[2026-11-04 23:23:06.859] Commit review: got no verdict (the API rejected the plugin's credentials (HTTP 401)); not marked reviewed\n";
+  const OK = '[2026-11-04 23:30:00.000] Commit review: no security issues found\n';
+  const sec = (opts) => doctor(s, { cwd: project, ...opts }).row('security');
+
   fakeClaude(s.bin);
-  let d = doctor(s, { cwd: project });
-  assert.equal(d.row('security').status, 'ok', JSON.stringify(d.row('security')));
+  assert.equal(sec().status, 'ok', 'not installed');
 
   fakeClaude(s.bin, { list: list(true) });
-  d = doctor(s, { cwd: project });
+  assert.equal(sec().status, 'ok', 'enabled, no log yet');
+  mkdirSync(dirname(log), { recursive: true });
+  writeFileSync(log, `[2026-11-04 23:00:00.000] Hook called\n${AUTH}`);
+  const before = snapshot(s.base);
+  const d = doctor(s, { cwd: project });
   assert.equal(d.r.status, 0, out(d.r));
   const w = d.row('security');
   assert.equal(w.status, 'warn', JSON.stringify(w));
-  assert.ok(w.detail.includes(SG), w.detail);
-  assert.ok(w.hint.includes('"ENABLE_CODE_SECURITY_REVIEW": "0"') && w.hint.includes('.claude/settings.local.json'), w.hint);
-  assert.ok(w.hint.includes('SEC-13'), w.hint);
-
-  const before = snapshot(s.base);
-  d = doctor(s, { cwd: project, env: { ...s.env, ENABLE_CODE_SECURITY_REVIEW: '0' } });
-  assert.equal(d.row('security').status, 'ok', 'the variable in the session environment');
+  assert.ok(w.detail.includes(SG) && w.detail.includes('HTTP 401'), w.detail);
+  assert.ok(w.hint.includes('/login'), w.hint);
+  assert.doesNotMatch(`${w.detail} ${w.hint}`, /ENABLE_CODE_SECURITY_REVIEW|turn (it )?off|disable/i, 'never advises turning the review off');
   assert.deepEqual(changed(before, snapshot(s.base)), [], 'doctor wrote nothing');
 
+  writeFileSync(log, `${AUTH}${OK}`);
+  assert.equal(sec().status, 'ok', 'a review completed after the error');
+  writeFileSync(log, `${OK}${AUTH}`);
+  assert.equal(sec().status, 'warn', 'the error came after the last completed review');
+
+  // F2: the higher-priority setting decides, in both directions
   mkdirSync(join(project, '.claude'));
-  writeFileSync(join(project, '.claude', 'settings.local.json'), JSON.stringify({ env: { ENABLE_CODE_SECURITY_REVIEW: '0' } }));
-  d = doctor(s, { cwd: project });
-  assert.equal(d.row('security').status, 'ok', 'the setting in the project settings');
-
-  writeFileSync(join(project, '.claude', 'settings.local.json'), JSON.stringify({ enabledPlugins: { [SG]: false } }));
-  d = doctor(s, { cwd: project });
-  assert.equal(d.row('security').status, 'ok', 'the plugin disabled for the project');
-
-  writeFileSync(join(project, '.claude', 'settings.local.json'), JSON.stringify({ env: { ENABLE_CODE_SECURITY_REVIEW: '1' } }));
-  d = doctor(s, { cwd: project });
-  assert.equal(d.row('security').status, 'warn', 'any other value keeps the reviews on');
-
+  const settings = (file, enabled) => writeFileSync(join(project, '.claude', file), JSON.stringify({ enabledPlugins: { [SG]: enabled } }));
+  settings('settings.json', false);
+  assert.equal(sec().status, 'ok', 'disabled for the project');
+  settings('settings.local.json', true);
+  assert.equal(sec().status, 'warn', 'project disabled, local enabled: enabled');
   fakeClaude(s.bin, { list: list(false) });
-  d = doctor(s, { cwd: project });
-  assert.equal(d.row('security').status, 'ok', 'installed but disabled');
+  rmSync(join(project, '.claude', 'settings.local.json'));
+  settings('settings.json', true);
+  assert.equal(sec().status, 'warn', 'user disabled, project enabled: enabled');
+  settings('settings.local.json', false);
+  assert.equal(sec().status, 'ok', 'project enabled, local disabled: disabled');
+  rmSync(join(project, '.claude'), { recursive: true });
+  assert.equal(sec().status, 'ok', 'installed but disabled for the user');
 });
