@@ -71,7 +71,7 @@ test('a task with no dispatch takes no claude review', async (t) => {
   assert.equal((await record(r)).code, 7);
 });
 
-for (const executor of ['claude:reviewer', 'landfall:security-reviewer']) {
+for (const executor of ['claude:reviewer', `${names.codename}:security-reviewer`]) {
   test(`a task dispatched to ${executor} takes the review`, async (t) => {
     const r = repo(t);
     r.set('dispatched', { executor: 'claude:implementer', base: r.head });
