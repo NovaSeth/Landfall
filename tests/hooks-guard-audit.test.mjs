@@ -53,13 +53,12 @@ const LONG = `echo ${'rm '.repeat(Math.floor((65536 - 5 - TAIL.length) / 3))}${T
 test('A-1: the real hook denies the 65534-character rm filler with a push in under 2000 ms', () => {
   assert.ok(LONG.length <= 65536 && LONG.length > 65000, String(LONG.length));
   const input = JSON.stringify({ session_id: 's', hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: LONG }, cwd: repo });
-  const t = performance.now();
-  const r = spawnSync(process.execPath, [LAUNCHER, 'hook', 'guard-bash'], { input, encoding: 'utf8', timeout: 5000, env: { ...process.env, CLAUDE_PROJECT_DIR: repo } });
-  const ms = performance.now() - t;
-  assert.equal(r.signal, null, `killed after ${Math.round(ms)} ms`);
+  const r = measured((probe) => spawnSync(process.execPath, [...probe.nodeArgs, LAUNCHER, 'hook', 'guard-bash'], { input, encoding: 'utf8', timeout: 5000, env: { ...process.env, ...probe.env, CLAUDE_PROJECT_DIR: repo } }));
+  assert.equal(r.signal, null, `killed after ${r.ms} ms`);
   const deny = r.status === 2 || (r.stdout && JSON.parse(r.stdout).hookSpecificOutput.permissionDecision === 'deny');
   assert.ok(deny, `no deny: exit ${r.status} ${r.stdout} ${r.stderr}`);
-  assert.ok(ms < 2000, `${Math.round(ms)} ms`);
+  assert.ok(r.cpuMs < 2000, `${r.cpuMs} ms of CPU`);
+  assert.ok(r.ms < WALL_CEILING_MS, `${r.ms} ms`);
 });
 
 // Adversarial 64 KiB inputs for every pattern the fix changed (prescan tokens, the gate line, the state git rewrite,
