@@ -55,7 +55,7 @@ import { appliedTier, readReport, reportHasEvidence, reviewNeed, reviewProblem, 
 import { measureAt } from './base.mjs';
 import { baselineSha, compareInventory, excusable, fingerprint, referenceOf, splitFailures } from './baseline.mjs';
 import { cacheKey, lookup, machineKey, store as storeRuns, treeOf } from './gate-cache.mjs';
-import { requireTrustedGates, tailLines } from './gates.mjs';
+import { logLines, requireTrustedGates } from './gates.mjs';
 import { runHeavy } from './heavy.mjs';
 import { readProjectPatterns, runRedacted } from './redact.mjs';
 import { byCodeUnit, hashOf } from './inventory.mjs';
@@ -63,6 +63,7 @@ import { VERIFY_KINDS } from './kinds.mjs';
 import { detectRenames, idFiles } from './rename.mjs';
 import { parseReport } from './reporters.mjs';
 import { SKIP_DIRS, scanRepo, scannerOf } from './scan.mjs';
+import { taskWhere } from './where.mjs';
 
 const SOURCE_MAX = 1024 * 1024;
 const COUNT_MAX = 8 * 1024 * 1024;
@@ -372,7 +373,7 @@ export function evaluate({ where, names, env, id, mode, handle = null, at = now(
     if (memo) memo.runs = runs;
     reused = hit?.at ?? null;
     doc.gates = runs.map((r) => r.gate);
-    output = runs.map((r) => ({ name: r.gate.name, lines: tailLines(r.output) }));
+    output = runs.map((r) => ({ name: r.gate.name, lines: logLines(r.output) }));
     ctx = context(where, env, code.rel);
     inv = inventoryOf(runs, ctx);
     if (key && !hit && shared === null && mode !== 'ci') {
@@ -528,8 +529,9 @@ function grow(store, { inv, preexisting, head, at }) {
 // writes nothing (`closed` in the result), so a later run on another HEAD never replaces the record that closed it.
 const CLOSED = new Set(['done', 'cancelled']);
 export function verifyTask({ cwd, env, names, id, ci = false, cache = true, version = null, at = now() }) {
-  const where = activeWhere({ cwd, env, names });
+  const main = activeWhere({ cwd, env, names });
   KINDS.task.path(id);
+  const where = taskWhere(main, storeOf(main, names), id);
   let handle = null;
   let closed = null;
   if (!ci) {
