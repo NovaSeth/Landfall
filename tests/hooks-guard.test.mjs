@@ -1284,12 +1284,12 @@ test('launcher catch: a broken plugin copy blocks a guarded Bash command as unve
 
 test('guard does nothing where the plugin has no state: a repository without a state directory allows what an active one blocks', () => {
   const none = gitRepo('main', { state: false }); const active = gitRepo('main'); activate(active, ['AB']);
-  for (const c of ['git push --force origin main', 'git push origin main -f']) {
+  for (const c of ['git push origin main -f', 'git stash']) {
     assert.equal(judgeAt(none, c, { readProjectMode: () => 'unknown' }).decision, 'allow', `no state: ${c}`);
     assert.equal(judgeAt(active, c, { readProjectMode: () => 'solo' }).decision, 'deny', `active: ${c}`);
   }
   const plain = mkdtempSync(join(tmpdir(), 'g-plain-dir-'));
-  assert.equal(judgeAt(plain, 'git push --force origin main').decision, 'allow', 'not a repository');
+  assert.equal(judgeAt(plain, 'git push origin main -f').decision, 'allow', 'not a repository');
   // the state cannot be resolved (git missing, an active-looking marker): still blocked
   const unknown = trackedRepo();
   const v = judgeAt(unknown, 'git push origin $B', { env: { ...process.env, CLAUDE_PROJECT_DIR: unknown, PATH: mkdtempSync(join(tmpdir(), 'g-nogit-')) } });
@@ -1329,9 +1329,11 @@ test('guard shortcut fails closed (fix round 1): quotes, backslashes, expansions
     'git {-C,nested} push --force origin main', '{git,-C,nested,push,--force,origin,main}', 'make {-C,nested} push',
     'git -c core.worktree=nested push --force origin main', 'git -c x push', 'git status;ls', 'git status\tls', 'git status\nls', 'ls *', 'ls [a]',
     'ls > f', 'a=b git push', 'git status &', '(git push)', 'git push | cat', 'ls ?', 'ls  -l',
-    'git -Cnested push --force origin main', 'make -Cnested push', 'tar -xC nested -f a.tar', 'git -cx=y push', 'git -C1 status'];
+    'git -Cnested push --force origin main', 'make -Cnested push', 'tar -xC nested -f a.tar', 'git -cx=y push', 'git -C1 status',
+    // a long option on an otherwise plain command (fix round 2)
+    'git --exec-path=x status', 'make --prefix nested push', 'git --cwd nested status', 'git push --force origin main', 'tool --output x'];
   for (const c of must) assert.equal(mustGuard(c), true, c);
-  for (const c of ['git push --force origin main', 'git status', 'ls -l', 'npm test']) assert.equal(mustGuard(c), false, c);
+  for (const c of ['git push origin main -f', 'git status', 'ls -l', 'npm test', 'git --version', 'git --help']) assert.equal(mustGuard(c), false, c);
   const parent = mkdtempSync(join(tmpdir(), 'g-parent-')); const nested = join(parent, 'nested');
   spawnSync('git', ['init', '-q', '-b', 'main', nested]); activate(nested, ['AB']);
   for (const c of must.filter((x) => /force|rm -rf/.test(x))) assert.equal(judgeAt(parent, c, { readProjectMode: () => 'solo' }).decision, 'deny', c);
