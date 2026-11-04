@@ -6,7 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { isolatedEnv, isolateProcessEnv } from './helpers/isolated-env.mjs';
@@ -56,7 +56,15 @@ async function repo(t, prefix = 'consent-') {
   r.loopFile = join(r.store, 'local', 'loop.json');
   r.consentFile = join(r.store, 'local', 'loop-consent.json');
   r.consent = () => (existsSync(r.consentFile) ? JSON.parse(readFileSync(r.consentFile, 'utf8')) : null);
-  r.prompt = (prompt, extra = {}, opts = {}) => runHook('prompt-consent', JSON.stringify({ session_id: 'sess-1', transcript_path: join(iso.base, 't.jsonl'), cwd: dir, hook_event_name: 'UserPromptSubmit', prompt, ...extra }), { env: iso.env, ...opts });
+  r.transcript = join(iso.base, 't.jsonl');
+  // as Claude Code: the hook runs on the submitted prompt, and the prompt is in the session transcript as a user message
+  r.say = (line) => appendFileSync(r.transcript, `${JSON.stringify(line)}\n`);
+  r.userLine = (content, ms = Date.now()) => ({ type: 'user', sessionId: 'sess-1', timestamp: new Date(ms).toISOString(), message: { role: 'user', content } });
+  r.prompt = (prompt, extra = {}, { noTranscript = false, ...opts } = {}) => {
+    const out = runHook('prompt-consent', JSON.stringify({ session_id: 'sess-1', transcript_path: r.transcript, cwd: dir, hook_event_name: 'UserPromptSubmit', prompt, ...extra }), { env: iso.env, ...opts });
+    if (!noTranscript) r.say(r.userLine(prompt, opts.now));
+    return out;
+  };
   assert.equal((await r.run(['init'])).code, 0);
   return r;
 }
@@ -164,7 +172,7 @@ test('acceptance 2: an expired consent, one for another repository, or a cap abo
   const state = await lib('state/index.mjs');
   const store = state.open(p.store, { names, kinds: { ...state.KINDS, [CONSENT.name]: CONSENT } });
   const now = Date.now();
-  store.write(CONSENT.name, null, { at: new Date(now - MIN).toISOString(), expiresAt: new Date(now + 24 * 60 * MIN).toISOString(), repo: realpathSync(p.cwd), session: 'sess-1', caps: {}, usedAt: null });
+  store.write(CONSENT.name, null, { at: new Date(now - MIN).toISOString(), expiresAt: new Date(now + 24 * 60 * MIN).toISOString(), repo: realpathSync(p.cwd), session: 'sess-1', transcript: p.transcript, caps: {}, usedAt: null });
   await refused([], 'a validity over 10 minutes');
   p.prompt(`${BIN} loop start`);
   const r = await p.run(['loop', 'start'], { tty: false });
@@ -195,15 +203,16 @@ test('acceptance 3: the phrase anywhere but the whole first line, other forms an
     assert.equal(r.stdout, '', `no context for ${JSON.stringify(prompt)}`);
     assert.equal(p.consent(), null, `nothing recorded for ${JSON.stringify(prompt)}`);
   }
-  const malformed = ['', 'not json', '[]', '42', JSON.stringify({ prompt: 5, cwd: p.cwd, session_id: 's' }),
-    JSON.stringify({ prompt: `${BIN} loop start`, cwd: 'relative/dir', session_id: 's' }),
-    JSON.stringify({ prompt: `${BIN} loop start`, cwd: p.cwd }),
-    JSON.stringify({ prompt: `${BIN} loop start`, cwd: p.cwd, session_id: '../x' }),
-    JSON.stringify({ prompt: `${BIN} loop start`, cwd: p.cwd, session_id: 's', hook_event_name: 'PreToolUse' }),
+  // each malformed event differs from a valid one (ok, recorded at the end) in one field
+  const ok = { prompt: `${BIN} loop start`, cwd: p.cwd, session_id: 's', hook_event_name: 'UserPromptSubmit', transcript_path: p.transcript };
+  const without = (k) => { const o = { ...ok }; delete o[k]; return JSON.stringify(o); };
+  const malformed = ['', 'not json', '[]', '42', JSON.stringify({ ...ok, prompt: 5 }), JSON.stringify({ ...ok, cwd: 'relative/dir' }),
+    without('session_id'), JSON.stringify({ ...ok, session_id: '../x' }), JSON.stringify({ ...ok, hook_event_name: 'PreToolUse' }),
     // fix round 1: the event name is required, exactly (a hand-made event without it is no UserPromptSubmit)
-    JSON.stringify({ prompt: `${BIN} loop start`, cwd: p.cwd, session_id: 's' }),
-    JSON.stringify({ prompt: `${BIN} loop start`, cwd: p.cwd, session_id: 's', hook_event_name: 'userpromptsubmit' }),
-    JSON.stringify({ prompt: `${BIN} loop start`, cwd: join(p.base, 'nowhere'), session_id: 's' })];
+    without('hook_event_name'), JSON.stringify({ ...ok, hook_event_name: 'userpromptsubmit' }),
+    // fix round 2: the transcript path is required (an absolute .jsonl path): the start checks the prompt there
+    without('transcript_path'), JSON.stringify({ ...ok, transcript_path: 't.jsonl' }), JSON.stringify({ ...ok, transcript_path: join(p.base, 't.txt') }),
+    JSON.stringify({ ...ok, cwd: join(p.base, 'nowhere') })];
   for (const text of malformed) {
     const r = runHook('prompt-consent', text, { env: p.env });
     assert.equal(r.code ?? 0, 0, text);
@@ -215,9 +224,60 @@ test('acceptance 3: the phrase anywhere but the whole first line, other forms an
   const bare = join(iso.base, 'repo');
   mkdirSync(bare);
   git(bare, iso.env, ['-c', 'init.defaultBranch=main', 'init', '-q']);
-  runHook('prompt-consent', JSON.stringify({ prompt: `${BIN} loop start`, cwd: bare, session_id: 's', hook_event_name: 'UserPromptSubmit' }), { env: iso.env });
+  runHook('prompt-consent', JSON.stringify({ ...ok, cwd: bare }), { env: iso.env });
   assert.ok(!existsSync(join(bare, names.stateDir)), 'an inactive repository gets no state');
   assert.equal((await p.run(['loop', 'start'])).code, 7, 'still refused');
+  runHook('prompt-consent', JSON.stringify(ok), { env: p.env });
+  assert.ok(p.consent(), 'the valid event the malformed ones differ from records');
+});
+
+test('fix round 2 (review r1 F2): a consent never grants the terminal-only billing override: subscription from the environment is ignored', async (t) => {
+  const BILL = `${names.envPrefix}BILLING`;
+  const p = await ended(t, 'consent-bill-');
+  p.prompt(`${BIN} loop start`);
+  const r = await p.run(['loop', 'start'], { env: { ...p.env, [BILL]: 'subscription' } });
+  assert.equal(r.code, 0, show(r));
+  assert.equal(r.out.data.consented, true);
+  assert.notEqual(r.out.data.billing.mode, 'subscription', `the usd cap stays on: ${JSON.stringify(r.out.data.billing)}`);
+  // the same override from a terminal counts (the case discriminates)
+  assert.equal((await p.run(['loop', 'stop'])).code, 0);
+  const tty = await p.run(['loop', 'start'], { tty: true, env: { ...p.env, [BILL]: 'subscription' } });
+  assert.equal(tty.out.data.billing.mode, 'subscription', show(tty));
+});
+
+test('fix round 2: the consent is bound to the human channel: the session transcript must hold the prompt as a user message in the window', async (t) => {
+  const p = await ended(t, 'consent-tx-');
+  const refused = async (why) => {
+    const r = await p.run(['loop', 'start']);
+    assert.equal(r.code, 7, `${why}: ${show(r)}`);
+    assert.equal(r.out.errors[0].code, 'user-decision', why);
+    assert.equal(p.consent().usedAt, null, `${why}: the consent stays unused`);
+    return r;
+  };
+  // no transcript file: fail closed, with the terminal named
+  p.prompt(`${BIN} loop start`, {}, { noTranscript: true });
+  const r = await refused('no transcript');
+  assert.match(r.out.errors[0].message, /transcript/);
+  assert.match(r.out.errors[0].hint, /terminal/);
+  // the command only as an assistant message, a tool result, a meta line or a quote inside a user message
+  p.say({ type: 'assistant', timestamp: new Date().toISOString(), message: { role: 'assistant', content: [{ type: 'text', text: `${BIN} loop start` }] } });
+  p.say(p.userLine([{ type: 'tool_result', tool_use_id: 'x', content: `${BIN} loop start` }]));
+  p.say({ ...p.userLine(`${BIN} loop start`), isMeta: true });
+  p.say(p.userLine(`please run\n${BIN} loop start`));
+  await refused('not a user prompt');
+  // a user prompt for other caps, and one from before the window
+  p.say(p.userLine(`${BIN} loop start --caps ticks=300`));
+  p.say(p.userLine(`${BIN} loop start`, Date.now() - 20 * MIN));
+  await refused('other caps or too old');
+  // the prompt followed by more than the 256 KB tail that is read
+  p.say(p.userLine(`${BIN} loop start`));
+  for (let i = 0; i < 300; i++) p.say(p.userLine(`filler ${i} ${'x'.repeat(1024)}`));
+  await refused('outside the tail');
+  // the prompt as text blocks in the tail: accepted
+  p.say(p.userLine([{ type: 'text', text: `${BIN} loop start\nand keep going` }]));
+  const ok = await p.run(['loop', 'start']);
+  assert.equal(ok.code, 0, show(ok));
+  assert.ok(p.consent().usedAt);
 });
 
 test('SEC-14: the model cannot write the consent through Bash (the guard blocks the state directory)', async (t) => {

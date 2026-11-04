@@ -374,6 +374,8 @@ const NEW_BLOCK = [
   ['node plugins/x/bin/@BIN@ hook prompt-consent', 'FLW-7'], ['plugins/x/bin/@BIN@ hook prompt-consent < event.json', 'FLW-7'],
   ['X=1 @BIN@ hook prompt-consent', 'SEC-3'], ['env X=1 @BIN@ hook prompt-consent', 'FLW-7'], ['echo {} | @BIN@ hook prompt-consent', 'SEC-3'],
   ['cat event.json | @BIN@ hook prompt-consent', 'FLW-7'],
+  // fix round 2 (review r1 F1): the script after node's `--` (and `-m`) is checked too
+  ['node -- ./plugins/x/bin/@BIN@ hook prompt-consent < event.json', 'FLW-7'], ['node -m plugins/x/bin/@BIN@ hook prompt-consent', 'FLW-7'],
   ['nice node /opt/p/bin/@BIN@ hook prompt-consent', 'FLW-7'], ['ls; @BIN@ hook guard-bash', 'FLW-7'],
   // a gate behind a wrapper (env, nice, timeout, command) is still the executed program
   ['command @BIN@ verify T-AB-1 | tail -1', 'TRP-2'], ['nice @BIN@ verify T-AB-1 | tail -1', 'TRP-2'], ['env FOO=1 @BIN@ secrets | tail -1', 'SEC-6'],
@@ -776,6 +778,20 @@ test('T-MG-149: the running plugin\'s own launcher by its path with the hook sub
     assert.equal(v.decision, 'deny', cmd); assert.match(v.reason, /^FLW-7: /, cmd);
   }
   for (const cmd of [`${LAUNCHER} status`, `node ${LAUNCHER} rule FLW-7`]) assert.equal(judge(cmd).decision, 'allow', cmd);
+});
+
+test('T-MG-149 fix round 2: a renamed link or copy of the launcher with the hook subcommand is blocked (FLW-7); other subcommands and other scripts pass', (t) => {
+  const d = mkdtempSync(join(tmpdir(), 'renamed-launcher-'));
+  t.after(() => rmSync(d, { recursive: true, force: true }));
+  const link = join(d, 'lf'); symlinkSync(LAUNCHER, link);
+  const copy = join(d, 'copy'); cpSync(LAUNCHER, copy); // the same bytes elsewhere (beside a copied lib/ it would run)
+  const other = join(d, 'tool'); writeFileSync(other, '#!/bin/sh\necho hook\n'); chmodSync(other, 0o755);
+  for (const cmd of [`${link} hook prompt-consent`, `node ${link} hook prompt-consent < e.json`, `node -- ${link} --json hook session-start`,
+    `${copy} hook prompt-consent`, `node -- ${copy} hook prompt-consent`, `env X=1 ${link} hook prompt-consent`]) {
+    const v = judge(cmd);
+    assert.equal(v.decision, 'deny', cmd); assert.match(v.reason, /^FLW-7: /, cmd);
+  }
+  for (const cmd of [`${link} status`, `node ${link} rule FLW-7`, `${other} hook`, `node ${other} hook x`]) assert.equal(judge(cmd).decision, 'allow', cmd);
 });
 
 test('guard corpus: allowed commands close to blocked ones pass (no false alarms)', () => {

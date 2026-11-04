@@ -689,5 +689,7 @@
   ["echo {} | @BIN@ hook prompt-consent","none"],
   ["nice node /opt/p/bin/@BIN@ hook prompt-consent","none"],
   ["ls; @BIN@ hook guard-bash","none"],
-  ["cat event.json | @BIN@ hook prompt-consent","none"]
+  ["cat event.json | @BIN@ hook prompt-consent","none"],
+  ["node -- ./plugins/x/bin/@BIN@ hook prompt-consent < event.json","none"],
+  ["node -m plugins/x/bin/@BIN@ hook prompt-consent","none"]
 ]
