@@ -128,7 +128,7 @@ test('review record: a valid typed review becomes review-r<k>.json through the r
   assert.equal(res.env.data.file, `${names.stateDir}/tasks/${r.id}/review-r1.json`);
   assert.deepEqual(r.vstore.read('review', verify.reviewKey(r.id, 1)), { schema: verify.VERIFY_KINDS.review.version, ...first });
   const event = r.store.read('task', r.id).events.at(-1);
-  assert.deepEqual([event.event, event.by, event.data], ['review', r.handle, { round: 1, verdict: 'needs-fixes', reviewer: 'claude' }]);
+  assert.deepEqual([event.event, event.by, event.data], ['review', r.handle, { round: 1, verdict: 'needs-fixes', reviewer: 'claude', blocking: 1 }]);
   assert.equal(verify.reviewState(r.vstore, r.id, ['review']), 'missing', 'the latest round needs fixes');
 
   // A relative path is read from the current directory; the next round is r2.

@@ -136,7 +136,7 @@ test('verify classes a task from its own commits: main merged into the branch br
   r.git('add', '-A');
   r.git('commit', '-q', '-m', 'merge main, with 16 files slipped into the merge');
   const grown = await r.cli(['verify', 'T-TU-1', '--yes']);
-  assert.deepEqual([grown.code, grown.env.data.route.actual, grown.env.data.route.escalated], [1, 'critical', true], show(grown));
+  assert.deepEqual([grown.code, grown.env.data.route.actual, grown.env.data.route.escalated], [1, 'standard', true], show(grown));
 });
 
 test('a side branch merged cleanly into the task is the task\'s own work: its risk path and lines count (review r1 F3)', async (t) => {

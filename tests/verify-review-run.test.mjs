@@ -236,6 +236,6 @@ test('a stored external round without run and sha256 does not count; verify name
 
 test('the texts name the --run form: the dispatch skill step 6, and the providers CLI header names --env', () => {
   const dispatch = readFileSync(join(pluginDir, 'templates', 'skills', 'dispatch.md'), 'utf8');
-  assert.match(dispatch.split('\n').find((l) => l.startsWith('6. ')), /review record <id> --from <file> --yes`, external: `--kind external --run <run ID>`/);
+  assert.match(dispatch.split('\n').find((l) => l.startsWith('4. ')), /external: `\{\{bin\}\} review record <id> --kind external --run <run ID> --yes`/);
   assert.match(readFileSync(join(pluginDir, 'lib', 'providers', 'cli.mjs'), 'utf8').split('\n')[0], /--env/);
 });
