@@ -291,6 +291,18 @@ test('verify measured change: test lines never say split (T-MG-181)', async (t) 
   assert.ok(!/split/.test(r.store.read('task', r.id).classHistory.at(-1).reason), 'test lines are no split');
 });
 
+for (const tracked of [true, false]) {
+  test(`verify reroute: ${tracked ? 'tracked' : 'untracked'} src/a.js plus a 5000-line test file is not trivial (F3)`, async (t) => {
+    const files = { 'calc.test.mjs': TESTS, ...(tracked ? { 'src/a.js': '', 'tests/big.test.mjs': '' } : {}) };
+    const r = repo(t, { files });
+    r.write('src/a.js', 'export const a = 1;\n');
+    r.write('tests/big.test.mjs', '// test line\n'.repeat(5000));
+    const res = await run(r);
+    assert.equal(res.env.data.route.actual, 'standard', show(res));
+    assert.ok(!/split/.test(r.store.read('task', r.id).classHistory.at(-1)?.reason ?? ''), 'test lines are no split');
+  });
+}
+
 // ---- --ci, owner, inactive, unknown ----
 
 test('--ci writes nothing and needs no registered owner; the result and exit code are the same', async (t) => {

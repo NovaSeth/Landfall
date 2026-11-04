@@ -965,3 +965,12 @@ test('F1: only the root tests/ directory and a real test suffix are weightless',
   }
   assert.equal(router.classify({ paths: ['src/tests/auth/x.js'], loc: 2 }).class, 'critical');
 });
+
+test('F3: the trivial cut counts total LOC, only the split rule ignores test lines (locCode)', () => {
+  const small = router.classify({ paths: ['src/a.js', 'tests/big.test.mjs'], loc: 5005, locCode: 5 });
+  assert.equal(small.class, 'standard', 'a 5000-line test addition is no trivial change');
+  assert.ok(!small.reasons.some((x) => x.code === 'split-loc'), 'but it is no split');
+  const big = router.classify({ paths: ['src/a.js'], loc: 500, locCode: 500 });
+  assert.ok(big.reasons.some((x) => x.code === 'split-loc'));
+  assert.equal(router.classify({ paths: ['src/a.js'], loc: 5 }).class, 'trivial', 'locCode defaults to loc');
+});
