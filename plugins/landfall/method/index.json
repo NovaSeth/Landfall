@@ -266,7 +266,7 @@
     "REV-4": {"topic":"review","file":"review.md","line":20,"section":"Review","pack":"core","summary":"The reviewer rejects a dirty tree or a Global Constraint violation and cites rules by ID, not by…","hash":"e8af00c913ef"},
     "REV-5": {"topic":"review","file":"review.md","line":26,"section":"Fix rounds","pack":"core","summary":"A needs-fixes review becomes a findings file a fresh agent can act on without history","hash":"9f04ad984d27"},
     "REV-6": {"topic":"review","file":"review.md","line":28,"section":"Fix rounds","pack":"core","summary":"A scoped re-review covers only the round's diff","hash":"dd6fa030c812"},
-    "REV-7": {"topic":"review","file":"review.md","line":31,"section":"Fix rounds","pack":"core","summary":"After two fix rounds (default 2), MUST NOT start a third","must":true,"hash":"795a388a2fab"},
+    "REV-7": {"topic":"review","file":"review.md","line":31,"section":"Fix rounds","pack":"core","summary":"After two fix rounds (default 2), MUST NOT start a third","must":true,"hash":"dfdb7c2655d5"},
     "REV-8": {"topic":"review","file":"review.md","line":32,"section":"Fix rounds","pack":"core","summary":"A finding that shows a defective pattern, not one spot, is checked in every lane and fixed once in…","must":true,"hash":"d379dc4b609e"},
     "REV-9": {"topic":"review","file":"review.md","line":33,"section":"Fix rounds","pack":"core","summary":"An implementer does not fix a finding it disputes","hash":"2f9fd2a1ba90"},
     "REV-10": {"topic":"review","file":"review.md","line":36,"section":"Task gate","pack":"core","summary":"Before review: gate commands green, the secrets scan run without a pipe with its exit code…","hash":"a38c51b0ae67"},

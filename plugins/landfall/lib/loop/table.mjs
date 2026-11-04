@@ -107,7 +107,7 @@ function taskRow(t, { now, bin, lanesOn, caps, budget = DEFAULT_BUDGET_MIN }) {
   const record = `record it: \`${bin} task set ${id} dispatched --executor <reviewer> --base <sha>\``;
   const approved = (state) => action(id, state, `merge origin/main into its branch and verify it again: \`${bin} verify ${id}\`; then \`${bin} task done ${id}\`, then \`${bin} task merge ${id}\` (several ready: \`${bin} task merge --ready\`)`, ['REV-11', 'ORC-25', 'FLW-8']);
   const decide = (k) => action(id, `fix round ${k} after the ${caps.rounds}-round limit`,
-    'decide: escalate to the user or change the approach, and start no further fix round (Critical findings are exempt: they go to the strongest executor)', ['REV-7']);
+    'decide: escalate to the user or change the approach, and start no further fix round (`task set` refuses it; the remaining blocking findings close with a review-close decision)', ['REV-7']);
   // round k is delivered: approved when a self-verified event of round k follows the last fix-round event
   const delivered = (k) => {
     const from = lastIndex(t.events, ['fix-round']);
@@ -123,7 +123,8 @@ function taskRow(t, { now, bin, lanesOn, caps, budget = DEFAULT_BUDGET_MIN }) {
   const rv = [...t.events.slice(since + 1)].reverse().find((e) => e.event === 'review');
   if (rv && ['dispatched', 'in-review', 'implemented', 'fix-round'].includes(t.status)) {
     const n = rv.data?.round ?? '?';
-    if (rv.data?.verdict === 'approved') return approved(`review r${n} approved`);
+    // `blocking` counts the blocking findings; an older event lacks it (unknown: the verdict decides)
+    if (rv.data?.verdict === 'approved' || rv.data?.blocking === 0) return approved(`review r${n} approved`);
     const k = (t.round ?? 0) + 1;
     if (k > caps.rounds) return decide(k);
     return action(id, `review r${n}: needs-fixes`, `hand its blocking findings to the implementer as fix round ${k} (REV-5; the review file: \`${bin} task show ${id}\`) and record it: \`${bin} task set ${id} fix-round --round ${k} --addressed 0 --open <n>\``, ['REV-5', 'PRI-6']);

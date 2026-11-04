@@ -219,7 +219,7 @@ test('rounds (1.x breaker after 2 rounds): the second round names the decision; 
   assert.equal(s.kind, 'action');
   assert.deepEqual(s.rules, ['REV-7']);
   assert.match(s.step, /^decide: escalate to the user or change the approach/);
-  assert.match(s.step, /Critical findings are exempt/, '1.x: Critical is not subject to the breaker');
+  assert.doesNotMatch(s.step, /exempt/, 'no class is exempt from the breaker');
   s = row(table([round(1, 0)], { caps: { ...CAPS, rounds: 1 } }), 'T-TU-1');
   assert.ok(s.rules.includes('REV-7'), 'the rounds cap of the loop decides when');
 });
@@ -1584,4 +1584,14 @@ test('limits (g) F2: no cap of any kind lets the tick read the limit probe; the 
   x = mk({}, { costMicroUsd: 10000, partial: false }, { mode: 'subscription', source: 'test' });
   assert.equal(x.run().result, 'WAIT');
   assert.equal(x.calls(), 1, 'subscription: the cost caps do not apply');
+});
+
+test('a needs-fixes review with no blocking finding asks for no fix round: it is treated as approved (REV-7, REV-11)', () => {
+  const rev = (blocking) => ev('review', 3, { round: 1, verdict: 'needs-fixes', reviewer: 'claude', blocking });
+  const t = (blocking) => task('T-TU-1', 'implemented', { events: [ev('implementer', 2, { report: 'done' }), rev(blocking)] });
+  let s = row(table([t(0)]), 'T-TU-1');
+  assert.deepEqual(s.rules, ['REV-11', 'ORC-25', 'FLW-8']);
+  assert.match(s.state, /review r1 approved/);
+  s = row(table([t(1)]), 'T-TU-1');
+  assert.deepEqual(s.rules, ['REV-5', 'PRI-6']);
 });
