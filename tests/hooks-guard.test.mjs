@@ -373,6 +373,8 @@ const NEW_BLOCK = [
   // are no gate (ruling R60: verify re-runs the gates itself)
   ['bash .workflow/bin/budget.sh agent | tail -1', 'TRP-2'], ['.workflow/bin/budget.sh agent | tail -1', 'TRP-2'], ['env bash .workflow/bin/budget.sh e2e | cat', 'TRP-2'],
   ['@BIN@ verify T-AB-1 | tail -1', 'TRP-2'], ['@BIN@ secrets | tail -1', 'SEC-6'],
+  // T-MG-178 fix round 1 (F1): close runs verify and task merge, so a pipe after it hides their exit code too
+  ['@BIN@ close T-AB-1 --yes | tail -1', 'TRP-2'], ['@BIN@ close T-AB-1 T-AB-2 --yes 2>&1 | head', 'TRP-2'], ['./bin/@BIN@ close T-AB-1 | cat', 'TRP-2'],
   ['@BIN@ secrets --range main..HEAD 2>&1 | head', 'SEC-6'], ['@BIN@ slot acquire agent | cat', 'TRP-2'], ['@BIN@ heavy -- npm test | tail -1', 'TRP-2'],
   ['./bin/@BIN@ verify T-AB-1 | tail -1', 'TRP-2'],
   // T-MG-149 fix round 1: the hook entry point is Claude Code's (hooks.json), never a Bash command: run by hand it could
@@ -522,6 +524,7 @@ const NEW_ALLOW = [
   ['@BIN@ verify T-AB-1'], ['@BIN@ secrets; echo $?'], ['@BIN@ heavy -- npm test'], ['@BIN@ status | head -5'], ['@BIN@ rule SEC-3 | cat'],
   // with --json the exit code is in the envelope: a pipe after the own command reads data (retro 2026-10 §3.9)
   ['@BIN@ --json verify T-AB-1 | jq .code'], ['@BIN@ secrets --json | jq .code'], ['@BIN@ verify T-AB-1 --json 2>&1 | head -c 300'],
+  ['@BIN@ close T-AB-1 --yes'], ['@BIN@ --json close T-AB-1 --yes | jq .code'], ['@BIN@ close T-AB-1 --json --yes | jq .code'], ['@BIN@ findings close B-AB-1 --task T-AB-1 | cat'],
   ['@BIN@ slot list | cat'], ['echo npm test | cat'], ['cat .workflow/bin/budget.sh | head'], ['git commit -m "budget"; echo $?'],
   // reading or unsetting a config key that runs commands; other keys
   ['git config core.pager'], ['git config --get core.editor'], ['git config --unset core.pager'], ['git config --get-regexp alias'],
@@ -1132,7 +1135,8 @@ test('guard: unknown state (branch, git, package.json) blocks a token and passes
 test('guard gates: one list; every gate piped is blocked, the same command without a pipe passes', async () => {
   const { GATES } = await lib('guard/tokens.mjs');
   const SAMPLES = { 'secrets scan': ['bash .workflow/bin/check-secrets.sh', '@BIN@ secrets', 'npm run check-secrets'], 'machine budget': ['bash .workflow/bin/budget.sh agent'],
-    'slot admission': ['@BIN@ slot acquire agent', '@BIN@ heavy -- npm test'], verify: ['@BIN@ verify T-AB-1'] };
+    'slot admission': ['@BIN@ slot acquire agent', '@BIN@ heavy -- npm test'], verify: ['@BIN@ verify T-AB-1'],
+    close: ['@BIN@ close T-AB-1 --yes', '@BIN@ close T-AB-1 T-AB-2 --yes'] }; // close: T-MG-178 fix round 1 (F1)
   assert.deepEqual(GATES.map((g) => g.id).sort(), Object.keys(SAMPLES).sort(), 'every gate has samples here');
   for (const g of GATES) {
     for (const s of SAMPLES[g.id].map(withBin)) {

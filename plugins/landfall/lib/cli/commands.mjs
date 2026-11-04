@@ -819,6 +819,21 @@ const ROWS = [
     mutating: true,
     load: () => import('../verify/command.mjs').then((m) => m.taskMerge),
   },
+  {
+    name: 'close',
+    summary: 'Close approved tasks in one call: verify, task done, task merge and commit, only the steps still due.',
+    details: [
+      'Run from the main checkout (verify reads the code in the task\'s worktree). A task not done gets verify, then task done; a task',
+      'without a recorded merge gets task merge (several IDs: one batch with one gate run, as task merge <ids…>); then commit.',
+      'The first failing step ends the call with that step\'s exit code and one line naming the step and the command that resumes;',
+      'the steps done stay done. A merge that records nothing (the branch is already in HEAD) fails the merge step. On success: one line.',
+    ],
+    args: [{ name: 'id', required: true, variadic: true, summary: 'task ID such as T-AB-1 (several: one merge batch)' }],
+    flags: [],
+    exits: ['OK', 'FAIL', 'USAGE', 'REFUSED', 'ENV'],
+    mutating: true,
+    load: () => import('./close.mjs').then((m) => m.close),
+  },
   // Team lanes (spec §7.9, SD-20): lib/lanes/command.mjs. A claim is a ref on origin; nothing is stored locally.
   {
     name: 'lane claim',

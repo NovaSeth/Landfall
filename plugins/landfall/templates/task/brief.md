@@ -41,5 +41,5 @@ Exit 0 prints `secrets: clean`. One commit per step; no push. A full suite or bu
 <agent → its disjoint file list>. Agents run no git; the orchestrator commits. Shared vocabulary: <the names, headings and contract terms that must agree between the agents, as a table>.
 
 ## Report
-<absolute path>/report.md (template: <absolute path of the report template>): the `Status:` line, decisions per acceptance point, files, RED/GREEN, gate, shared gaps, open issues. When your harness refuses that write, put the whole report in your reply: the orchestrator stores it with `{{bin}} report <id> --from <file>`.
+<absolute path>/report.md (template: <absolute path of the report template>): the `Status:` line, decisions per acceptance point, files, RED/GREEN, gate, shared gaps, open issues. Last step: store it with `{{bin}} report <id> --from <file> --yes` (a fix round: `--round <k>`), never with the Write tool into the state directory.
 Final reply: exactly 5 lines: status, commits, tests, concerns, report path.

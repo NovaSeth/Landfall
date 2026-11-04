@@ -7,7 +7,7 @@
 //   it as dispatched (the reviewer as executor), so the next tick waits ·
 //   implemented (round k) | fix-round (round k delivered, no open findings) → scoped re-review, or approved after a
 //   self-verified event of round k · fix-round with open findings → wait · round > rounds cap → decide (REV-7) ·
-//   verified → verify, merge, close · blocked after an implementer report → resolve it (ORC-7) · blocked with a reason
+//   verified → `close` (verify, task done, task merge, commit) · blocked after an implementer report → resolve it (ORC-7) · blocked with a reason
 //   "question: …" → an open question (information with its answer step, waits; SPC-5) · blocked otherwise →
 //   information (waits) · done | cancelled → nothing.
 // A live run (queued, starting, running) of an open task turns its row into a wait for that run, so a step is not
@@ -119,7 +119,7 @@ function taskRow(t, { now, bin, lanesOn, caps, budget = DEFAULT_BUDGET_MIN }) {
   };
   // a review dispatched to an in-session agent is visible only once recorded: the task then waits as dispatched
   const record = `record it: \`${bin} task set ${id} dispatched --executor <reviewer> --base <sha>\``;
-  const approved = (state) => action(id, state, `merge origin/main into its branch and verify it again: \`${bin} verify ${id}\`; then \`${bin} task done ${id}\`, then \`${bin} task merge ${id}\` (several ready: \`${bin} task merge --ready\`)`, ['REV-11', 'ORC-25', 'FLW-8']);
+  const approved = (state) => action(id, state, `merge origin/main into its branch, then close it: \`${bin} close ${id}\` (verify, task done, task merge, commit; several ready: \`${bin} close <ids…>\`, one batch)`, ['REV-11', 'ORC-25', 'FLW-8']);
   const decide = (k) => action(id, `fix round ${k} after the ${caps.rounds}-round limit`,
     'decide: escalate to the user or change the approach, and start no further fix round (`task set` refuses it; the remaining blocking findings close with a review-close decision)', ['REV-7']);
   // round k is delivered: approved when a self-verified event of round k follows the last fix-round event
