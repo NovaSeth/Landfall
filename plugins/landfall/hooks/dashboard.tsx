@@ -367,7 +367,8 @@ export function linesOf(snap: Snapshot, width: number, rows: number, now: number
   out.push({ text: `${snap.project} · ${snap.tier ?? '-'}${mode} · loop ${snap.loop ?? 'off'}`, style: 'head' })
   out.push({ text: `${c.open} open · ${c.active} active · ${c.byStatus.planned ?? 0} planned · ${c.byStatus.new ?? 0} new · ${c.byStatus.done ?? 0} done`, style: 'dim' })
   if (snap.error) out.push({ text: `! ${snap.error}: the rows are from the last answer`, style: 'bad' })
-  const room = Math.max(3, rows - 7 - (snap.error ? 1 : 0))
+  // the rows left after the fixed lines (head, counts, error, TASKS, SLOTS, NEXT, updated); no floor pushes the total past `rows`
+  const avail0 = rows - 6 - (snap.error ? 1 : 0)
 
   out.push({ text: 'TASKS', style: 'section' })
   // working: an active status, or a live agent or run names the task; every other open task waits
@@ -398,8 +399,14 @@ export function linesOf(snap: Snapshot, width: number, rows: number, now: number
     if (plainLive.some(a => !(a.task && ids.has(a.task)))) n += 2
     return n
   }
+  // the backlog and no-open-tasks summaries take a line each; they give way when the budget has nothing else left
+  let summaries = (folded > 0 ? 1 : 0) + (snap.tasks.length === 0 ? 1 : 0)
+  if (avail0 - summaries < 1 && (ordered.length > 0 || plainLive.length > 0)) summaries = 0
+  const room = Math.max(0, avail0 - summaries)
   let nShown = ordered.length
   while (nShown > 0 && minNeed(nShown) > room) nShown--
+  // too small even for the task fold plus the UNASSIGNED heading and a row: the agents become one counted line
+  const squeezed = nShown === 0 && minNeed(0) > room
   const placed = new Set(ordered.slice(0, nShown).map(t => t.id))
   let extra = room - minNeed(nShown)
   const rowsFor = (n: number): number => {
@@ -423,13 +430,15 @@ export function linesOf(snap: Snapshot, width: number, rows: number, now: number
     const mine = nestedLive.filter(a => a.task === t.id)
     if (mine.length > 0) agentRows(mine, rowsFor(mine.length))
   }
-  if (ordered.length > nShown) out.push({ text: `  … ${ordered.length - nShown} more (landfall task list)`, style: 'dim' })
-  if (folded > 0) out.push({ text: `⏸ ${folded} in backlog (landfall task list)`, style: 'dim' })
-  if (snap.tasks.length === 0) out.push({ text: '  no open tasks (landfall task new)', style: 'dim' })
+  if (ordered.length > nShown && (!squeezed || room >= 2)) out.push({ text: `  … ${ordered.length - nShown} more (landfall task list)`, style: 'dim' })
+  if (folded > 0 && summaries > 0) out.push({ text: `⏸ ${folded} in backlog (landfall task list)`, style: 'dim' })
+  if (snap.tasks.length === 0 && summaries > 0) out.push({ text: '  no open tasks (landfall task new)', style: 'dim' })
 
   // live agents and runs without a shown task keep their task column
   const loose = plainLive.filter(a => !(a.task && placed.has(a.task)))
-  if (loose.length > 0) {
+  if (squeezed && loose.length > 0) {
+    out.push({ text: `    ↳ … ${loose.length} agents`, style: 'dim' })
+  } else if (loose.length > 0) {
     out.push({ text: 'UNASSIGNED', style: 'section' })
     agentRows(loose, rowsFor(loose.length))
   }
