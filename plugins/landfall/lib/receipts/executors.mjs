@@ -28,18 +28,50 @@ function prng(seed) {
   };
 }
 
-// The 90 % percentile bootstrap interval of the first-pass rate of `passes` (0/1 each); lessons promotion reuses it.
-export function intervalOf(passes, seed = 1, resamples = RESAMPLES) {
-  const n = passes.length;
+export const mean = (values) => {
+  let s = 0;
+  for (const v of values) s += v;
+  return s / values.length;
+};
+
+// Nearest-rank percentile, p in [0, 100]; an empty array gives null.
+export function percentile(values, p) {
+  if (!values.length) return null;
+  const sorted = [...values].sort((x, y) => x - y);
+  return sorted[Math.min(sorted.length, Math.max(1, Math.ceil((p / 100) * sorted.length))) - 1];
+}
+
+export const median = (values) => percentile(values, 50);
+
+const resampleOf = (values, rand) => {
+  const n = values.length;
+  const out = new Array(n);
+  for (let i = 0; i < n; i++) out[i] = values[Math.floor(rand() * n)];
+  return out;
+};
+
+const boundsOf = (stats, resamples) => {
+  stats.sort((x, y) => x - y);
+  return { lo: stats[Math.floor(0.05 * (resamples - 1))], hi: stats[Math.ceil(0.95 * (resamples - 1))] };
+};
+
+// The 90 % percentile bootstrap interval of stat(values), the mean by default; lessons promotion reuses it.
+export function intervalOf(values, seed = 1, resamples = RESAMPLES, stat = mean) {
   const rand = prng(seed);
-  const rates = [];
+  const stats = [];
+  for (let r = 0; r < resamples; r++) stats.push(stat(resampleOf(values, rand)));
+  return boundsOf(stats, resamples);
+}
+
+// The 90 % interval of stat(b) - stat(a); a and b are resampled independently from one seeded generator.
+export function diffInterval(a, b, { stat = median, seed = 1, resamples = RESAMPLES } = {}) {
+  const rand = prng(seed);
+  const stats = [];
   for (let r = 0; r < resamples; r++) {
-    let k = 0;
-    for (let i = 0; i < n; i++) k += passes[Math.floor(rand() * n)];
-    rates.push(k / n);
+    const ra = resampleOf(a, rand);
+    stats.push(stat(resampleOf(b, rand)) - stat(ra));
   }
-  rates.sort((x, y) => x - y);
-  return { lo: rates[Math.floor(0.05 * (resamples - 1))], hi: rates[Math.ceil(0.95 * (resamples - 1))] };
+  return { delta: stat(b) - stat(a), ...boundsOf(stats, resamples) };
 }
 
 // records: [{ task, class, executor, firstPass, costMicroUsd }]. Cells by class, then executor.
