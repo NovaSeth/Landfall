@@ -57,6 +57,7 @@ import { baselineSha, compareInventory, excusable, fingerprint, referenceOf, spl
 import { cacheKey, lookup, machineKey, store as storeRuns, treeOf } from './gate-cache.mjs';
 import { logLines, requireTrustedGates } from './gates.mjs';
 import { runHeavy } from './heavy.mjs';
+import { cacheState, measure } from './measure.mjs';
 import { readProjectPatterns, runRedacted } from './redact.mjs';
 import { byCodeUnit, hashOf } from './inventory.mjs';
 import { VERIFY_KINDS } from './kinds.mjs';
@@ -316,6 +317,7 @@ export function evaluate({ where, names, env, id, mode, handle = null, at = now(
   const started = Date.now();
   const write = mode === 'write';
   const store = storeOf(where, names);
+  const cost = measure({ store, id, mode }); // load, cache, heavy-lease wait and gate time (measure.mjs, T-MG-121)
   const task = store.read('task', id);
   if (task === null) throw unknownTask(id, where, names);
   const profile = store.read('profile', null) ?? emptyProfile();
@@ -342,6 +344,7 @@ export function evaluate({ where, names, env, id, mode, handle = null, at = now(
   let reused = null;
   let renamed = [];
   let publish = null;
+  let cached = 'off';
   const baseOk = mode === 'merge' || commitExists(where, env, task.base);
   if (!baseOk) say('fail', 'base-missing', task.base ? `the base commit ${task.base.slice(0, 12)} of ${id} is not in this repository` : `${id} has no base commit`, `record it: ${names.bin} task set ${id} dispatched --executor <e> --base <sha> (fetch it first in a shallow clone)`);
   const anchorCommit = mode === 'merge' ? anchor : baseOk ? task.base : null;
@@ -369,7 +372,8 @@ export function evaluate({ where, names, env, id, mode, handle = null, at = now(
     const reuse = cache && (mode === 'merge' || task.class !== 'critical');
     const shared = memo?.runs ?? null;
     const hit = shared === null && key && reuse ? lookup(store, { key, tree, gatesSha: doc.gatesSha, version, patterns, gates: profile.gates, at, secret: machineKey(where.dataDir) }) : null;
-    const runs = shared ?? (hit ? hit.runs : runHeavy(profile.gates, { names, env, cwd: where.worktree, task: id }, (g) => runRedacted(g, { cwd: where.worktree, env, extra })));
+    const runs = shared ?? (hit ? hit.runs : cost.heavy(() => runHeavy(profile.gates, { names, env, cwd: where.worktree, task: id }, (g) => runRedacted(g, { cwd: where.worktree, env, extra }), cost.meter)));
+    cached = cacheState({ shared, hit, consulted: Boolean(key && reuse) });
     if (memo) memo.runs = runs;
     reused = hit?.at ?? null;
     doc.gates = runs.map((r) => r.gate);
@@ -405,7 +409,7 @@ export function evaluate({ where, names, env, id, mode, handle = null, at = now(
     if (anchored.problem) {
       say('fail', 'baseline-unanchored', `the baseline at ${anchorCommit.slice(0, 12)} is ${anchored.problem}, though its history has one: there is no accepted inventory to compare with`, 'restore the baseline on the target branch (git), or pin one with a decision');
     } else if (measure) {
-      const m = memo?.measured ?? measureAt({ where, env, names, task: id, commit: anchorCommit, gates: profile.gates, gitIn, inventory: (runs, dir) => inventoryOf(runs, context({ ...where, worktree: dir }, env, code.rel)) });
+      const m = memo?.measured ?? cost.heavy(() => measureAt({ where, env, names, task: id, commit: anchorCommit, gates: profile.gates, gitIn, meter: cost.meter, inventory: (runs, dir) => inventoryOf(runs, context({ ...where, worktree: dir }, env, code.rel)) }));
       if (memo) memo.measured = m;
       if (m.error) say('error', 'base-gate-error', `${m.error}: there is no reference to compare with`, 'make the gates run at the base (install what they run), or pin a baseline (' + names.bin + ' baseline pin --decision <D>), then verify again');
       measured = m.doc;
@@ -491,6 +495,7 @@ export function evaluate({ where, names, env, id, mode, handle = null, at = now(
   doc.result = LEVELS.find((l) => reasons.some((r) => r.level === l)) ?? 'pass';
   if (write && doc.result === 'pass' && inv) grow(store, { inv, preexisting: doc.failures.preexisting, head: code.head, at });
   doc.baselineSha = workingSha(store);
+  Object.assign(doc, cost.fields(cached));
   doc.durationMs = Date.now() - started;
   // Every run keeps its own log (local/verify/<id>-<n>.log, merge runs <id>-m<n>; machine-local) next to the latest
   // one, so a failed run never hides the output of the one before it; a write-mode run is also an event of the task
