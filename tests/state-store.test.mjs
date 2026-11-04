@@ -476,3 +476,173 @@ test('append: a line over the limit is a typed error and the file is unchanged',
   assert.throws(() => s.append('shadow', { at: AT, big: 'x'.repeat(5000) }), is('limit-exceeded', 'USAGE'));
   assert.equal(readFileSync(log, 'utf8'), before);
 });
+
+// ---- the waits and guard logs; the guard log is capped (T-MG-117, plan M1.2, P6, P7, RF1) ----
+
+const logLine = (n, pad = 200) => `${JSON.stringify({ at: AT, n, pad: 'p'.repeat(pad) })}\n`;
+const logLines = (file) => {
+  const text = readFileSync(file, 'utf8');
+  assert.ok(text.endsWith('\n'), `${file}: ends with a whole line`);
+  return text.slice(0, -1).split('\n').map((l) => JSON.parse(l));
+};
+// Whole lines with `pad` bytes of padding, as many as fit in `bytes` (the next one would not); returns their number.
+function fill(file, bytes, pad = 200) {
+  mkdirSync(dirname(file), { recursive: true });
+  let text = '';
+  let n = 0;
+  while (Buffer.byteLength(text + logLine(n, pad)) <= bytes) text += logLine(n++, pad);
+  writeFileSync(file, text);
+  return n;
+}
+
+test('append: the waits and guard logs take one line each; an unknown log still throws', (t) => {
+  const { dir } = scratch(t);
+  const s = active(dir);
+  assert.deepEqual(state.LOGS.waits, { file: 'local/waits.jsonl', entryBytes: state.LIMITS.logEntryBytes });
+  assert.deepEqual(state.LOGS.guard, { file: 'local/guard.jsonl', entryBytes: state.LIMITS.logEntryBytes, capBytes: 262144 });
+  const wait = { at: AT, until: AT, kind: 'usage-limit', task: null, source: 'loop' };
+  assert.deepEqual(s.append('waits', wait), wait);
+  const block = { at: AT, rule: 'SEC-3', code: 'blocked', readOnly: false, command: 'git push' };
+  assert.deepEqual(s.append('guard', block), block);
+  assert.deepEqual(logLines(join(dir, 'local', 'waits.jsonl')), [wait]);
+  assert.deepEqual(logLines(join(dir, 'local', 'guard.jsonl')), [block]);
+  assert.throws(() => s.append('nope', { at: AT }), /unknown log nope/);
+});
+
+test('append: the guard log past its cap keeps the newest half and the new line, at most capBytes, whole JSON lines', (t) => {
+  const { dir } = scratch(t);
+  const s = active(dir);
+  const cap = state.LOGS.guard.capBytes;
+  const file = join(dir, 'local', 'guard.jsonl');
+  const n = fill(file, cap);
+  const before = readFileSync(file, 'utf8');
+  assert.ok(Buffer.byteLength(before) <= cap && Buffer.byteLength(before) + Buffer.byteLength(logLine(n)) > cap, 'the next line crosses the cap');
+  s.append('guard', { at: AT, n, pad: 'p'.repeat(200) });
+  const size = readFileSync(file).length;
+  assert.ok(size <= cap, `${size} bytes, the cap is ${cap}`);
+  const lines = logLines(file);
+  assert.equal(lines.at(-1).n, n, 'ends with the new line');
+  const kept = lines.slice(0, -1).map((l) => l.n);
+  assert.deepEqual(kept, Array.from({ length: Math.floor(n / 2) }, (_, i) => n - Math.floor(n / 2) + i), 'the newest half, in order');
+  // Under the cap again: the next line is a plain append.
+  const after = readFileSync(file, 'utf8');
+  s.append('guard', { at: AT, n: n + 1 });
+  assert.equal(readFileSync(file, 'utf8'), `${after}${JSON.stringify({ at: AT, n: n + 1 })}\n`);
+});
+
+test('append: a capped rewrite drops the oldest lines until the new line fits, even when the newest half is large', (t) => {
+  const { dir } = scratch(t);
+  const s = active(dir);
+  const cap = state.LOGS.guard.capBytes;
+  const file = join(dir, 'local', 'guard.jsonl');
+  // 30 small old lines, then 30 large new ones holding nearly all the bytes: the newest half plus the new line is
+  // still over the cap, so some of the large lines go as well.
+  let text = '';
+  for (let i = 0; i < 30; i++) text += logLine(i, 1);
+  const pad = Math.floor((cap - 200 - Buffer.byteLength(text)) / 30) - Buffer.byteLength(logLine(59, 0));
+  for (let i = 30; i < 60; i++) text += logLine(i, pad);
+  assert.ok(Buffer.byteLength(text) <= cap && Buffer.byteLength(text) > cap - 300, 'the log is just under the cap');
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, text);
+  s.append('guard', { at: AT, n: 'new', pad: 'p'.repeat(4000) });
+  assert.ok(readFileSync(file).length <= cap, 'at most capBytes');
+  const lines = logLines(file);
+  assert.equal(lines.at(-1).n, 'new');
+  const kept = lines.slice(0, -1).map((l) => l.n);
+  assert.ok(kept.length > 0 && kept.length < 30, `fewer than the newest half: ${kept.length}`);
+  assert.deepEqual(kept, Array.from({ length: kept.length }, (_, k) => 60 - kept.length + k), 'a run of the newest lines');
+});
+
+test('append: a log without capBytes is never truncated, byte for byte as before', (t) => {
+  const { dir } = scratch(t);
+  const s = active(dir);
+  const file = join(dir, 'local', 'shadow.jsonl');
+  fill(file, state.LOGS.guard.capBytes + 1000);
+  const before = readFileSync(file, 'utf8');
+  s.append('shadow', { at: AT, n: 'last' });
+  assert.equal(readFileSync(file, 'utf8'), `${before}${JSON.stringify({ at: AT, n: 'last' })}\n`);
+});
+
+// RF1 (REV-3): every store writer of a log holds the store lock, so no store line lands between the read and the
+// rename. A line written outside the lock (by hand, or after a manual unlock of a live holder) during that window is
+// read again before the rename and kept.
+test('append: a line written outside the lock while a capped rewrite is paused is kept', { timeout: 60000 }, async (t) => {
+  const { base, dir } = scratch(t);
+  active(dir);
+  const file = join(dir, 'local', 'guard.jsonl');
+  const n = fill(file, state.LOGS.guard.capBytes);
+  const sig = join(base, 'sig');
+  mkdirSync(sig);
+  const code = `const state = await import(${JSON.stringify(STATE)});
+state.open(${JSON.stringify(dir)}, { names: ${JSON.stringify(names)} }).append('guard', { at: ${JSON.stringify(AT)}, n: 'child', pad: ${JSON.stringify('p'.repeat(200))} });`;
+  const child = spawn(process.execPath, ['--input-type=module', '-e', code], { stdio: ['ignore', 'ignore', 'pipe'], env: { ...process.env, [`${names.envPrefix}TEST_APPEND_PAUSE`]: sig } });
+  let err = '';
+  child.stderr.on('data', (d) => { err += d; });
+  t.after(() => child.kill('SIGKILL'));
+  const exited = new Promise((res) => child.on('exit', res));
+  const deadline = Date.now() + 10000;
+  while (!existsSync(join(sig, 'paused'))) {
+    assert.ok(Date.now() < deadline, `appender never reached the pause point: ${err}`);
+    await new Promise((r) => setTimeout(r, 5));
+  }
+  appendFileSync(file, `${JSON.stringify({ at: AT, n: 'outside' })}\n`);
+  writeFileSync(join(sig, 'go'), '');
+  assert.equal(await exited, 0, err);
+  const got = logLines(file).map((l) => l.n);
+  assert.ok(got.includes('outside'), 'the outside line survives the rewrite');
+  assert.equal(got.at(-1), 'child', 'the new line is last');
+  assert.ok(!got.includes(0), 'the rewrite happened');
+  assert.ok(got.includes(n - 1), 'the newest old line is kept');
+});
+
+// Fix round 1 (review r1, F1 and F2): the capped rewrite on a Store whose reads of the guard log are scripted. The
+// first read is the one append() decides on; the second is the re-read just before the rename, after other lines
+// arrived outside the lock. The rewrite is captured instead of written.
+function scripted(t, reads) {
+  const { dir } = scratch(t);
+  const s = active(dir);
+  const file = state.LOGS.guard.file;
+  const queue = [...reads];
+  const readText = s.readText.bind(s);
+  const writeText = s.writeText.bind(s);
+  let written = null;
+  s.readText = (rel) => (rel === file ? queue.shift() : readText(rel));
+  s.writeText = (rel, text) => { if (rel === file) written = text; else writeText(rel, text); };
+  return { s, written: () => written, left: () => queue.length };
+}
+const L = `${JSON.stringify({ p: 'p'.repeat(4000) })}\n`;
+const wholeRows = (text) => {
+  assert.ok(text.endsWith('\n'), 'ends with a whole line');
+  return text.slice(0, -1).split('\n').map((row) => JSON.parse(row));
+};
+
+test('append (r1 F1): lines that arrive outside the lock during a capped rewrite still leave at most capBytes', (t) => {
+  const first = `${'{}\n'.repeat(65)}${L.repeat(65)}`;
+  const h = scripted(t, [first, `${first}${L}`]);
+  h.s.append('guard', JSON.parse(L));
+  assert.equal(h.left(), 0, 'both reads happened');
+  const out = h.written();
+  assert.ok(Buffer.byteLength(out) <= state.LOGS.guard.capBytes, `${Buffer.byteLength(out)} bytes, the cap is ${state.LOGS.guard.capBytes}`);
+  const rows = wholeRows(out);
+  assert.equal(rows.length >= 2, true);
+  assert.deepEqual(rows.at(-1), JSON.parse(L), 'the new line is last');
+});
+
+test('append (r1 F2): a partial last line completed during a capped rewrite is kept whole, never as a fragment', (t) => {
+  const first = `${'{}\n'.repeat(65)}${L.repeat(65)}{"p":"par`;
+  const h = scripted(t, [first, `${first}tial"}\n`]);
+  h.s.append('guard', JSON.parse(L));
+  const out = h.written();
+  assert.ok(Buffer.byteLength(out) <= state.LOGS.guard.capBytes, 'at most capBytes');
+  const rows = wholeRows(out);
+  assert.deepEqual(rows.at(-2), { p: 'partial' }, 'the completed line, whole');
+  assert.deepEqual(rows.at(-1), JSON.parse(L), 'the new line is last');
+});
+
+test('append (r1 F2): a torn fragment that another line completes into invalid JSON is dropped, not kept', (t) => {
+  const first = `${'{}\n'.repeat(65)}${L.repeat(65)}{"p":"to`;
+  const h = scripted(t, [first, `${first}${L}`]);
+  h.s.append('guard', JSON.parse(L));
+  const rows = wholeRows(h.written());
+  assert.deepEqual(rows.at(-1), JSON.parse(L));
+});

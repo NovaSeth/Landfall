@@ -23,7 +23,7 @@ const { COMMANDS } = await lib('cli/commands.mjs');
 
 const TASK = 'T-AB-1';
 const finding = (id, severity) => ({ id, severity, path: 'a.mjs', line: 1, rule: 'COD-1', text: 'fix it' });
-const needsFixes = (findings) => ({ schema: 1, verdict: 'needs-fixes', reviewer: { kind: 'claude', id: 'claude:reviewer' }, findings });
+const needsFixes = (findings) => ({ schema: verify.VERIFY_KINDS.review.version, verdict: 'needs-fixes', reviewer: { kind: 'claude', id: 'claude:reviewer' }, findings });
 
 // A state directory with review rounds (a minimal store over it: list/read of the review kind, readText) and
 // decision record files written in the record format.

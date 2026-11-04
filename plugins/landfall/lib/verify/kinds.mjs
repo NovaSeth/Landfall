@@ -15,11 +15,14 @@ export const TAIL_CHARS = 4096; // spec §7.6 step 2: the last 4 KB of output
 export const RESULTS = Object.freeze(['pass', 'fail', 'baseline-shrunk', 'route-escalated', 'missing-artifact', 'error']);
 export const GATE_RESULTS = Object.freeze(['pass', 'fail', 'timeout', 'error']);
 export const REVIEW_VERDICTS = Object.freeze(['approved', 'needs-fixes']);
+export const REVIEW_FOCUS = Object.freeze(['security', 'general', 'data', 'concurrency']);
+export const CACHE_STATES = Object.freeze(['hit', 'miss', 'off']);
 
 const str = (max, extra = {}) => ({ t: 'str', max, ...extra });
 const bool = { t: 'enum', of: [true, false] };
 const time = { t: 'time' };
 const count = { t: 'int', min: 0, max: Number.MAX_SAFE_INTEGER };
+const load = { t: 'num', min: 0, null: true }; // a load average (os.loadavg()[0]); null where the platform has none
 const many = (of, max = 1000000) => ({ t: 'arr', max, of });
 const cls = { t: 'enum', of: ['trivial', 'standard', 'critical'], null: true };
 const sha = str(64, { re: PATTERNS.sha, null: true });
@@ -46,7 +49,7 @@ export const VERIFY_KINDS = Object.freeze({
     },
     opt: ['pinnedBy'],
   }),
-  verify: defineKind('verify', 1, {
+  verify: defineKind('verify', 2, {
     dir: 'tasks',
     keyPattern: PATTERNS.taskId,
     file: (id) => `tasks/${id}/verify.json`,
@@ -76,7 +79,15 @@ export const VERIFY_KINDS = Object.freeze({
       route: { t: 'obj', f: { declared: cls, actual: cls, escalated: bool, missingSteps: many(str(40, { re: PATTERNS.kebab }), 20) } },
       artifacts: { t: 'obj', f: { report: bool, review: { t: 'enum', of: ['approved', 'missing', 'not-required'] } } },
       result: { t: 'enum', of: RESULTS },
+      // Schema 2 (T-MG-117, plan M1.2): the machine the run saw (1-minute load at start and end, null where the
+      // platform reports none; logical cores), whether the gate cache served it, the wait for the heavy-command lease
+      // (outside the gates) and the time of the gates alone. All optional: a record written before them has none.
+      machine: { t: 'obj', f: { load1Start: load, load1End: load, cores: { t: 'int', min: 1, max: 100000 } } },
+      cache: { t: 'enum', of: CACHE_STATES },
+      heavyWaitMs: count,
+      gatesMs: count,
     },
+    opt: ['machine', 'cache', 'heavyWaitMs', 'gatesMs'],
   }),
   // The output tails of the latest verify of a task: machine-local (local/ is never committed), JSON text.
   verifyLog: defineKind('verifyLog', 1, {
@@ -129,7 +140,7 @@ export const VERIFY_KINDS = Object.freeze({
       }, 100),
     },
   }),
-  review: defineKind('review', 1, {
+  review: defineKind('review', 2, {
     dir: 'tasks',
     keyPattern: REVIEW_KEY,
     file: (key) => `tasks/${key}.json`,
@@ -147,8 +158,10 @@ export const VERIFY_KINDS = Object.freeze({
       // An external round is bound to its run (D4): the run ID and the sha256 of the run's out file.
       run: str(80, { re: REVIEWER_RUN }),
       sha256: str(64, { re: PATTERNS.sha256 }),
+      // Schema 2 (T-MG-117, plan M1.2, K13): what the round reviewed for; non-empty, each focus once (D-MG-44).
+      focus: { t: 'arr', min: 1, max: REVIEW_FOCUS.length, unique: true, of: { t: 'enum', of: REVIEW_FOCUS } },
     },
-    opt: ['run', 'sha256'],
+    opt: ['run', 'sha256', 'focus'],
   }),
 });
 

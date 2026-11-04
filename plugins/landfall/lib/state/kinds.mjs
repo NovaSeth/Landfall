@@ -248,7 +248,11 @@ export const MACHINE_KINDS = Object.freeze({
   }),
 });
 
-// Append-only logs of the store (spec §5.2): one JSON object per line, each at most entryBytes (store.append).
+// Append-only logs of the store (spec §5.2): one JSON object per line, each at most entryBytes (store.append). All are
+// machine-local. waits: wait intervals { at, until, kind, task, source } (plan P6). guard: the guard's blocks (plan P7),
+// written by a hook, so it is bounded: past capBytes, append keeps the newest half of the lines (store.append).
 export const LOGS = Object.freeze({
   shadow: Object.freeze({ file: 'local/shadow.jsonl', entryBytes: LIMITS.logEntryBytes }),
+  waits: Object.freeze({ file: 'local/waits.jsonl', entryBytes: LIMITS.logEntryBytes }),
+  guard: Object.freeze({ file: 'local/guard.jsonl', entryBytes: LIMITS.logEntryBytes, capBytes: 262144 }),
 });

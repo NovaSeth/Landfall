@@ -63,6 +63,15 @@ export function ensureIgnored(store) {
 const MOVE_LOCK = '.local-move.lock';
 // Hidden local/ states: what readers see as empty.
 const hidden = (status) => status === 'foreign' || status === 'unknown';
+// A log row is one JSON object; anything else (a torn write, or one completed by an unrelated line) is not kept.
+const isRow = (row) => {
+  try {
+    const v = JSON.parse(row);
+    return v !== null && typeof v === 'object' && !Array.isArray(v);
+  } catch {
+    return false;
+  }
+};
 
 // Test hook: creates <dir>/paused, then waits (at most 10 s) until <dir>/go exists.
 function pauseUntilSignalled(dir) {
@@ -598,8 +607,38 @@ export class Store {
       if (entry === undefined) return null;
       const errors = validate({ t: 'data', maxBytes: log.entryBytes }, entry);
       if (errors.length) throw new StateError(errors[0].code, 'USAGE', `${this.abs(log.file)}: ${errors[0].message}`, { hint: 'nothing was logged', details: errors });
-      this.appendLine(log.file, `${text && !text.endsWith('\n') ? '\n' : ''}${JSON.stringify(entry)}\n`);
+      const line = `${JSON.stringify(entry)}\n`;
+      const sep = text && !text.endsWith('\n') ? '\n' : '';
+      if (log.capBytes && Buffer.byteLength(text) + Buffer.byteLength(sep + line) > log.capBytes) this.rewriteCapped(log, text, line);
+      else this.appendLine(log.file, sep + line);
       return entry;
     });
+  }
+
+  // Internal, under the store lock: the log `log` (with capBytes) past its cap is rewritten once, atomically, as the
+  // newest half of its rows, the rows that arrived since, and `line` last; then the oldest rows go until the whole
+  // file fits in capBytes. Only complete rows that are JSON objects are kept: an unterminated tail is dropped, and so
+  // is a torn fragment that a later line completed into something that does not parse.
+  // RF1 (REV-3): every store writer of a log appends through append() under this same lock, so no store line can land
+  // between the reads and the rename. A line added outside the lock (by hand, or by a holder whose lock was removed
+  // with `state unlock --stale` while it still ran) is caught by the second read just before the rename: the rows
+  // come from that snapshot, so such a line is kept, and a partial last line it completed is kept whole (review r1,
+  // F1 and F2). Only a line written in the instant between that read and the rename can be lost, the same bound as
+  // any writer outside the lock.
+  rewriteCapped(log, text, line) {
+    const bytes = Buffer.byteLength(line);
+    if (bytes > APPEND_MAX) throw new StateError('limit-exceeded', 'USAGE', `${this.abs(log.file)}: a log line is ${bytes} bytes, the limit is ${APPEND_MAX}`, { hint: 'nothing was logged' });
+    const pause = process.env[`${this.names.envPrefix}TEST_APPEND_PAUSE`];
+    if (pause) pauseUntilSignalled(pause);
+    const now = this.readText(log.file) ?? '';
+    const source = now.length > text.length && now.startsWith(text) ? now : text;
+    const rows = source.split('\n').slice(0, -1);
+    const before = text.split('\n').length - 1; // the rows complete at the first read
+    let kept = rows.slice(before - Math.floor(before / 2)).filter(isRow);
+    let size = kept.reduce((n, row) => n + Buffer.byteLength(row) + 1, 0);
+    let drop = 0;
+    while (drop < kept.length && size + bytes > log.capBytes) size -= Buffer.byteLength(kept[drop++]) + 1;
+    kept = kept.slice(drop);
+    this.writeText(log.file, `${kept.map((row) => `${row}\n`).join('')}${line}`);
   }
 }

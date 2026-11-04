@@ -2,7 +2,8 @@
 // plain data; any spec may carry `null: true`:
 //   { t: 'int', min, max } · { t: 'str', max, min, re } · { t: 'enum', of } · { t: 'time' } (ISO 8601 with offset)
 //   { t: 'obj', f: { name: spec }, opt: [optional names] } · { t: 'map', key: { t: 'str', … }, v: spec, max }
-//   { t: 'arr', of: spec, max } · { t: 'data', maxBytes } (a plain JSON object, measured serialized in bytes)
+//   { t: 'arr', of: spec, max, min, unique } (unique: no item deep-equals an earlier one) · { t: 'num', min, max } (a finite
+//   number, D-MG-44) · { t: 'data', maxBytes } (a plain JSON object, measured serialized in bytes)
 // A document validates only when it also survives its own serialization unchanged (validate below).
 // validate() returns [{ path, code, message }]: code `limit-exceeded` for a length, count or size over its limit
 // (spec §5: such a write fails, never truncates), `invalid-value` for anything else. Strings are counted in
@@ -44,6 +45,10 @@ function check(spec, v, path, errors) {
       if (!Number.isInteger(v)) return err(errors, path, 'invalid-value', `expected an integer, got ${show(v)}`);
       if ((spec.min !== undefined && v < spec.min) || (spec.max !== undefined && v > spec.max)) return err(errors, path, 'invalid-value', `${v} is outside ${spec.min ?? '-∞'}..${spec.max ?? '∞'}`);
       return;
+    case 'num':
+      if (typeof v !== 'number' || !Number.isFinite(v)) return err(errors, path, 'invalid-value', `expected a finite number, got ${show(v)}`);
+      if ((spec.min !== undefined && v < spec.min) || (spec.max !== undefined && v > spec.max)) return err(errors, path, 'invalid-value', `${v} is outside ${spec.min ?? '-∞'}..${spec.max ?? '∞'}`);
+      return;
     case 'str':
       return checkStr(spec, v, path, errors);
     case 'enum':
@@ -62,7 +67,12 @@ function check(spec, v, path, errors) {
     case 'arr':
       if (!Array.isArray(v)) return err(errors, path, 'invalid-value', 'expected an array');
       if (spec.max !== undefined && v.length > spec.max) return err(errors, path, 'limit-exceeded', `${v.length} items, the limit is ${spec.max}`);
-      v.forEach((item, i) => check(spec.of, item, join(path, i), errors));
+      if (spec.min !== undefined && v.length < spec.min) return err(errors, path, 'invalid-value', `at least ${spec.min} items required, got ${v.length}`);
+      v.forEach((item, i) => {
+        const before = errors.length;
+        check(spec.of, item, join(path, i), errors);
+        if (spec.unique && errors.length === before && v.slice(0, i).some((prev) => isDeepStrictEqual(prev, item))) err(errors, join(path, i), 'invalid-value', `${show(item)} is a duplicate`);
+      });
       return;
     case 'map': {
       if (!isObject(v)) return err(errors, path, 'invalid-value', 'expected an object');
