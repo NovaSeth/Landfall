@@ -214,3 +214,25 @@ test('task outcome --adopt: a dry run writes nothing; --yes writes one update pe
   const again = await r.run(['task', 'outcome', '--adopt']);
   assert.deepEqual([again.out.data.proposals.length, again.out.data.applied.length, again.out.data.human.length], [0, 0, 2]);
 });
+
+// Fix round 1 (F1): a storage failure inside the adoption run propagates with its exit code; only an expected concurrent
+// change (no longer cancelled, already has an outcome) is a skip, and each skip names its reason.
+function fakeStore(task, updateImpl) {
+  return { list: () => [task.id], read: () => structuredClone(task), update: updateImpl };
+}
+const cancelledTask = { id: 'T-TU-1', owner: ME, status: 'cancelled', events: [{ at: 't', by: ME, event: 'cancelled', data: { reason: 'delivered in T-AB-2' } }] };
+
+test('adoptOutcomes: stale-lock and schema-newer from store.update propagate with their exit codes, they are not skips', () => {
+  for (const [code, exit] of [['stale-lock', 'REFUSED'], ['schema-newer', 'REFUSED'], ['store-busy', 'REFUSED'], ['write-failed', 'ENV']]) {
+    const store = fakeStore(cancelledTask, () => { throw new state.StateError(code, exit, `injected ${code}`); });
+    assert.throws(() => state.adoptOutcomes(store, { handle: ME, write: true }), (err) => err instanceof state.StateError && err.code === code && err.exit === exit, code);
+  }
+});
+
+test('adoptOutcomes: a task that changed meanwhile is skipped with its reason', () => {
+  const closed = (code) => () => { throw new state.StateError(code, 'FAIL', code); };
+  for (const code of ['outcome-needs-cancelled', 'outcome-set']) {
+    const run = state.adoptOutcomes(fakeStore(cancelledTask, closed(code)), { handle: ME, write: true });
+    assert.deepEqual([run.applied, run.skipped], [[], [{ id: 'T-TU-1', reason: code }]]);
+  }
+});
