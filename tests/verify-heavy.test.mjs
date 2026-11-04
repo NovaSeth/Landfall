@@ -3,16 +3,18 @@
 // verify.json, the log or the CLI output.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { isolatedEnv } from './helpers/isolated-env.mjs';
-import { lib, names } from './helpers/hook-fixture.mjs';
+import { lib, names, pluginDir } from './helpers/hook-fixture.mjs';
 import { trustWith } from './helpers/trust.mjs';
 
 const profile = await lib('profile/index.mjs');
 const state = await lib('state/index.mjs'); // trustWith (T-MG-83)
 const { main } = await lib('cli/main.mjs');
+const { VERIFY_KINDS } = await lib('verify/kinds.mjs');
 
 const IDENTITY = '[user]\n\tname = Test User\n\temail = test@example.com\n';
 const REPORT = '---\nred: {"command": "node --test", "exit": 1, "excerpt": "1 failing"}\ngreen: {"command": "node --test", "exit": 0, "excerpt": "1 passing"}\n---\n\n# Report\n';
@@ -56,7 +58,7 @@ async function setup(t, { timeoutS, cmd }) {
   git(repo, env, ['commit', '-q', '--allow-empty', '-m', 'work']);
   put(join(repo, 'README.md'), '# y\n');
   git(repo, env, ['commit', '-qam', 'change']);
-  return { run, id, stateDir, env, data, probe: join(iso.base, 'probe') };
+  return { run, id, stateDir, env, data, base: iso.base, probe: join(iso.base, 'probe') };
 }
 const heavyLeases = (data) => (existsSync(join(data, 'leases')) ? readdirSync(join(data, 'leases'), { recursive: true }).filter((f) => /heavy-\d/.test(f)) : []);
 // The lease entry as ls -R lists it: a line of its own. A path line such as /tmp/verify-heavy-1AB/data: never counts.
@@ -113,4 +115,100 @@ test('the base measurement runs its long gate under the heavy lease as well', as
   assert.ok(runs.length >= 2, `the gate ran at HEAD and at the base: ${runs.length} runs`);
   runs.forEach((r, k) => assert.match(r, LEASE_ENTRY, `run ${k + 1} held the lease`));
   assert.deepEqual(heavyLeases(s.data), [], 'released after');
+});
+
+// T-MG-121 (D-MG-38, plan M1.6): the wait for the heavy lease is measured apart from the gates. Another process holds
+// the lease (runHeavy blocks this process's event loop with Atomics.wait, so the holder cannot live here), from another
+// project directory, for `ms`, then releases it. Resolves once the lease is held, to a promise of the holder's exit.
+// admitAll: the isolated machine data admit any load and free memory, so a loaded test machine delays neither the
+// holder nor verify (only the lease itself makes verify wait).
+const SCHED = pathToFileURL(join(pluginDir, 'lib', 'sched', 'index.mjs')).href;
+const sched = await lib('sched/index.mjs');
+const admitAll = (env) => sched.calibrate({ names, env, loadMax: '99999', freeMin: 1 });
+async function holdHeavy(t, s, ms) {
+  const code = `const sched = await import(${JSON.stringify(SCHED)});
+const opts = { names: ${JSON.stringify(names)}, env: process.env, cwd: ${JSON.stringify(s.base)}, mode: 'on' };
+const got = sched.acquire('heavy', opts);
+if (!got.ok) { process.stdout.write('refused ' + JSON.stringify(got.reasons) + '\\n'); process.exit(1); }
+process.stdout.write('held\\n');
+Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ${ms});
+sched.release(got.lease, opts);`;
+  const holder = spawn(process.execPath, ['--input-type=module', '-e', code], { env: s.env, stdio: ['ignore', 'pipe', 'inherit'] });
+  t.after(() => holder.kill('SIGKILL'));
+  const exited = new Promise((res) => { holder.once('exit', res); });
+  await new Promise((res, rej) => {
+    let text = '';
+    holder.stdout.on('data', (d) => { text += d; if (text.includes('held')) res(); else if (text.includes('refused')) rej(new Error(text)); });
+    holder.once('exit', () => rej(new Error(`holder exited: ${text}`)));
+  });
+  return { released: exited };
+}
+const waitLines = (s) => {
+  const file = join(s.stateDir, 'local', 'waits.jsonl');
+  return existsSync(file) ? readFileSync(file, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)) : [];
+};
+const docOf = (v) => JSON.parse(v.text).data;
+// The verify doc inside the CLI's data (command.mjs adds its own fields next to the doc's) validates under v2.
+const valid = (d) => {
+  const { renamed: _r, written: _w, attempt: _a, closed: _c, candidates: _k, output: _o, reusedFrom: _f, ...doc } = d;
+  assert.deepEqual(state.check(VERIFY_KINDS.verify, doc), [], 'the doc validates under verify v2');
+};
+
+test('a verify behind a held heavy lease records the wait apart from the gates and logs it once, not in ci mode', { timeout: 120000 }, async (t) => {
+  const s = await setup(t, { timeoutS: 120, cmd: 'node --test' });
+  admitAll(s.env);
+  const first = await holdHeavy(t, s, 3000);
+  const v = await s.run(['verify', s.id, '--yes', '--json']);
+  assert.equal(v.code, 0, v.text.slice(0, 1500));
+  const d = docOf(v);
+  valid(d);
+  assert.ok(d.heavyWaitMs >= 2000, `heavyWaitMs ${d.heavyWaitMs}`);
+  assert.ok(d.gatesMs > 0 && d.gatesMs < d.durationMs, `gatesMs ${d.gatesMs}, durationMs ${d.durationMs}`);
+  assert.ok(d.gatesMs + d.heavyWaitMs <= d.durationMs, `${d.gatesMs} + ${d.heavyWaitMs} <= ${d.durationMs}`);
+  assert.ok(Number.isInteger(d.machine.cores) && d.machine.cores >= 1, JSON.stringify(d.machine));
+  for (const k of ['load1Start', 'load1End']) assert.equal(typeof d.machine[k], process.platform === 'win32' ? 'object' : 'number', k);
+  assert.equal(d.cache, 'miss');
+  await first.released;
+  const lines = waitLines(s);
+  assert.equal(lines.length, 1, JSON.stringify(lines));
+  const [w] = lines;
+  assert.deepEqual({ ...w, at: null, until: null }, { at: null, until: null, kind: 'heavy-queue', task: s.id, source: 'verify' });
+  const span = Date.parse(w.until) - Date.parse(w.at);
+  assert.ok(span >= 0 && Math.abs(span - d.heavyWaitMs) <= 100, `until - at ${span}, heavyWaitMs ${d.heavyWaitMs}`);
+  // ci mode measures the wait and writes no line
+  const second = await holdHeavy(t, s, 3000);
+  const ci = await s.run(['verify', s.id, '--ci', '--no-cache', '--json']);
+  assert.equal(ci.code, 0, ci.text.slice(0, 1500));
+  valid(docOf(ci));
+  assert.ok(docOf(ci).heavyWaitMs >= 2000, `ci heavyWaitMs ${docOf(ci).heavyWaitMs}`);
+  await second.released;
+  assert.equal(waitLines(s).length, 1, 'ci mode adds no line');
+  // a verify that waits for nothing adds none either
+  const free = await s.run(['verify', s.id, '--yes', '--no-cache', '--json']);
+  assert.equal(free.code, 0, free.text.slice(0, 1500));
+  assert.equal(docOf(free).heavyWaitMs, 0);
+  assert.equal(waitLines(s).length, 1, 'no wait, no line');
+});
+
+test('a wait of the base measurement counts in heavyWaitMs', { timeout: 120000 }, async (t) => {
+  const s = await setup(t, { timeoutS: 120, cmd: 'node --test' });
+  admitAll(s.env);
+  // A first verify without the report fails on the report alone: its passing gate runs are stored in the gate cache and
+  // no baseline grows, so the second verify reuses the runs at HEAD and measures the base again, behind the holder.
+  const report = join(s.stateDir, 'tasks', s.id, 'report.md');
+  writeFileSync(report, '# Report\n');
+  const first = await s.run(['verify', s.id, '--yes', '--json']);
+  assert.equal(docOf(first).result, 'missing-artifact', first.text.slice(0, 1500));
+  writeFileSync(report, REPORT);
+  const holder = await holdHeavy(t, s, 3000);
+  const v = await s.run(['verify', s.id, '--yes', '--json']);
+  assert.equal(v.code, 0, v.text.slice(0, 1500));
+  const d = docOf(v);
+  valid(d);
+  assert.equal(d.cache, 'hit', 'the runs at HEAD came from the gate cache');
+  assert.ok(d.heavyWaitMs >= 2000, `the base measurement waited: heavyWaitMs ${d.heavyWaitMs}`);
+  assert.ok(d.gatesMs > 0, 'the base gates ran');
+  assert.ok(d.gatesMs + d.heavyWaitMs <= d.durationMs, `${d.gatesMs} + ${d.heavyWaitMs} <= ${d.durationMs}`);
+  await holder.released;
+  assert.equal(waitLines(s).length, 1);
 });

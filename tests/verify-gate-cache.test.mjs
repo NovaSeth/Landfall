@@ -16,6 +16,7 @@ import { trustWith } from './helpers/trust.mjs';
 const profile = await lib('profile/index.mjs');
 const state = await lib('state/index.mjs'); // trustWith (T-MG-83)
 const { main } = await lib('cli/main.mjs');
+const sched = await lib('sched/index.mjs');
 
 const IDENTITY = '[user]\n\tname = Test User\n\temail = test@example.com\n';
 const REPORT = '---\nred: {"command": "node --test", "exit": 1, "excerpt": "1 failing"}\ngreen: {"command": "node --test", "exit": 0, "excerpt": "1 passing"}\n---\n\n# Report\n';
@@ -99,6 +100,32 @@ test('verify twice on the same clean commit: the second reuses the gate runs, re
   const text = [];
   await main(['verify', id, '--yes'], { io: { out: (s) => text.push(s), err: () => {}, stdinIsTTY: false, env: p.env, cwd: p.repo, stdin: null } });
   assert.match(text.join(''), /gates: reused from \d{4}-/);
+});
+
+// T-MG-121 (D-MG-38, plan M1.6): verify.json says whether the gate cache served the run, and a reused run counts no
+// gate time; --no-cache and a critical task's verify do not consult the cache.
+test('verify records the cache state: miss, then hit with no gate time; --no-cache and a critical task are off', async (t) => {
+  const p = await fresh(t);
+  sched.calibrate({ names, env: p.env, loadMax: '99999', freeMin: 1 }); // a loaded test machine delays no heavy lease
+  const id = await p.task();
+  p.commit('main', 'README.md', '# y\n');
+  const first = await p.run(['verify', id, '--yes']);
+  assert.equal(first.code, 0, show(first));
+  assert.equal(first.out.data.cache, 'miss', show(first));
+  assert.ok(first.out.data.gatesMs > 0, 'the gates ran');
+  const second = await p.run(['verify', id, '--yes']);
+  assert.equal(second.code, 0, show(second));
+  assert.deepEqual([second.out.data.cache, second.out.data.gatesMs, second.out.data.heavyWaitMs], ['hit', 0, 0], show(second));
+  const off = await p.run(['verify', id, '--yes', '--no-cache']);
+  assert.equal(off.code, 0, show(off));
+  assert.equal(off.out.data.cache, 'off');
+  const critical = (await p.run(['task', 'new', 'Critical', '--yes'])).out.data.id;
+  assert.equal((await p.run(['task', 'set', critical, 'dispatched', '--executor', 'claude', '--base', p.base, '--yes'])).code, 0);
+  assert.equal((await p.run(['route', critical, '--paths', 'README.md', '--loc', '1', '--flags', 'security', '--yes'])).code, 0);
+  put(join(p.stateDir, 'tasks', critical, 'report.md'), REPORT);
+  const c = await p.run(['verify', critical, '--yes']);
+  assert.equal(c.out.data.class, 'critical', show(c));
+  assert.equal(c.out.data.cache, 'off', show(c));
 });
 
 // A repository whose task passed verify once (the entry is stored): { p, id, again(what, flags) }, where `again`
