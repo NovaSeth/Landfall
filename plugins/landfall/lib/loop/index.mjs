@@ -18,13 +18,14 @@ import { isAbsolute, join, relative, sep } from 'node:path';
 import { git } from '../git/index.mjs';
 import { costSince, readRuns } from '../receipts/index.mjs';
 import { KINDS, StateError, emailHash, open, resolve } from '../state/index.mjs';
+import { billingMode } from './billing.mjs';
 import { cheapCap, decide, effectiveCaps, newLoop, parseCaps } from './decide.mjs';
 import { CAP_RANGE, CARRIED_PLAN, DEFAULT_CAPS, LOOP, LOOP_ID, STALL, TERMINAL, UNMEASURED, fixedPrompt } from './kind.mjs';
 import { DEFAULT_BUDGET_MIN, budgetOf, readBudgets } from './budget.mjs';
 import { OUTSIDE_MAX, STATUS_MIN, TABLE_RULES, WAIT_S, nextSteps, parsePlan, readWatch } from './table.mjs';
 
 export { DEFAULT_BUDGET_MIN, budgetOf, readBudgets };
-export { CAP_RANGE, CARRIED_PLAN, DEFAULT_CAPS, LOOP, LOOP_ID, STALL, STATUS_MIN, TABLE_RULES, TERMINAL, UNMEASURED, WAIT_S, cheapCap, decide, fixedPrompt, newLoop, nextSteps, parseCaps, parsePlan };
+export { billingMode, CAP_RANGE, CARRIED_PLAN, DEFAULT_CAPS, LOOP, LOOP_ID, STALL, STATUS_MIN, TABLE_RULES, TERMINAL, UNMEASURED, WAIT_S, cheapCap, decide, fixedPrompt, newLoop, nextSteps, parseCaps, parsePlan };
 export const STORE_KINDS = Object.freeze({ ...KINDS, [LOOP.name]: LOOP });
 
 const PLAN_MAX = 1024 * 1024;
@@ -170,7 +171,7 @@ function measure(probe, loop, now) {
 // One tick on an open store. probe: { heads() → text, email() → text | null, cost(startedAt) → { costMicroUsd, partial,
 // unmeasurable, problems }, dirty() → [path] }. Returns { result, reason, nextTickS, repeated, loop, steps, info,
 // costPartial, costProblems }.
-export function tickStore(store, { where, names, now, plan = null, probe, watch = [] }) {
+export function tickStore(store, { where, names, now, plan = null, probe, watch = [], billing = { mode: 'unknown', source: 'not checked' } }) {
   const pre = store.read(LOOP.name, null);
   const measured = pre && !pre.exit ? { id: pre.id, startedAt: pre.startedAt, cost: measure(probe, pre, now) } : null;
   const heads = probe.heads();
@@ -195,20 +196,20 @@ export function tickStore(store, { where, names, now, plan = null, probe, watch 
     });
     const d = decide(loop, {
       now, fingerprint: fingerprint(heads, snap.files, snap.runs), costMicroUsd: cost?.costMicroUsd ?? null, unmeasurable: cost?.unmeasurable === true,
-      liveRuns: table.liveRuns, outcome: table.outcome, nextTickS: table.nextTickS,
+      liveRuns: table.liveRuns, outcome: table.outcome, nextTickS: table.nextTickS, billing: billing.mode,
     });
     out = { ...d, loop: d.doc, steps: table.steps, info: table.info, costPartial: cost?.partial === true, costProblems: cost?.problems ?? [] };
     return d.doc;
   });
   const { doc, ...result } = out;
-  return result;
+  return { ...result, billing };
 }
 
 // plan: the plan's path as shown (relative to the repository root when inside it), or null.
 export function tick({ cwd, env, names, now = Date.now(), plan = null, readings = null }) {
   const { where, store } = activeStore({ cwd, env, names });
   const planDoc = plan === null ? null : readPlan(where.worktree, plan);
-  return { where, plan: planDoc?.path ?? null, ...tickStore(store, { where, names, now, plan: planDoc, probe: gitProbe(where, env, names), watch: readWatch({ names, env, now, readings }) }) };
+  return { where, plan: planDoc?.path ?? null, ...tickStore(store, { where, names, now, plan: planDoc, probe: gitProbe(where, env, names), watch: readWatch({ names, env, now, readings }), billing: billingMode({ env, names }) }) };
 }
 
 // A new loop with `caps` over the defaults. A running loop is never replaced; after an ended one (DONE, `loop stop`
@@ -225,7 +226,7 @@ export function startLoop({ cwd, env, names, now = Date.now(), caps = {}, byUser
     replaced = cur;
     return newLoop({ now, caps: { ...DEFAULT_CAPS, ...caps }, byUser });
   });
-  return { where, loop, replaced };
+  return { where, loop, replaced, billing: billingMode({ env, names }) };
 }
 
 // Ends a running loop: exit DONE with the reason "stopped"; no loop or an ended one is left as it is.
@@ -243,5 +244,5 @@ export function stopLoop({ cwd, env, names, now = Date.now() }) {
 // The loop document (null: none, or an inactive repository). Reads only.
 export function showLoop({ cwd, env, names }) {
   const where = resolve({ cwd, env, names });
-  return { where, loop: where.active ? open(where.dir, { names, kinds: STORE_KINDS }).read(LOOP.name, null) : null };
+  return { where, loop: where.active ? open(where.dir, { names, kinds: STORE_KINDS }).read(LOOP.name, null) : null, billing: billingMode({ env, names }) };
 }

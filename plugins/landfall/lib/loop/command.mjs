@@ -24,9 +24,12 @@ const summary = (l) => (l === null ? null : {
   costMicroUsd: l.costMicroUsd, unmeasured: l.unmeasured, exit: l.exit, exitAt: l.exitAt, reason: l.reason,
 });
 
-function usage(l, now) {
-  const unmeasured = l.unmeasured ? `; the cost not measurable for ${l.unmeasured} of ${UNMEASURED} ticks in a row` : '';
-  return `tick ${l.ticks} of ${l.caps.ticks}, ${minutes(l, now)} of ${l.caps.wallMin} min, ${usd(l.costMicroUsd)} of ${usd(l.caps.costMicroUsd)} spent (estimate)${unmeasured}`;
+const billingLine = (b) => `billing: ${b.mode} (${b.source})`;
+
+function usage(l, now, mode = 'unknown') {
+  const unmeasured = l.unmeasured && mode !== 'subscription' ? `; the cost not measurable for ${l.unmeasured} of ${UNMEASURED} ticks in a row` : '';
+  const cost = mode === 'subscription' ? `${usd(l.costMicroUsd)} at API prices (estimate, not billed: subscription)` : `${usd(l.costMicroUsd)} of ${usd(l.caps.costMicroUsd)} at API prices (estimate)`;
+  return `tick ${l.ticks} of ${l.caps.ticks}, ${minutes(l, now)} of ${l.caps.wallMin} min, ${cost}${unmeasured}`;
 }
 
 function table(rows, head) {
@@ -52,7 +55,8 @@ function render(r, rules, names, now, carried) {
   const ended = r.result === 'DONE' || r.result === 'STALLED' || r.result === 'BUDGET';
   const actions = r.steps.filter((s) => s.kind === 'action').length;
   const partial = r.costPartial ? ' · the cost is partial: a lower bound' : '';
-  const out = [`TICK ${new Date(now).toISOString().slice(0, 16)}Z — ${r.result}${!ended && actions ? ` (${actions})` : ''} · loop ${r.loop.id}: ${usage(r.loop, now)}${partial}`];
+  const out = [`TICK ${new Date(now).toISOString().slice(0, 16)}Z — ${r.result}${!ended && actions ? ` (${actions})` : ''} · loop ${r.loop.id}: ${usage(r.loop, now, r.billing.mode)}${partial}`];
+  out.push(billingLine(r.billing));
   if (ended) out.push(`The loop ended (${r.result}${r.repeated ? `, recorded ${r.loop.exitAt}` : ''}): ${r.reason}.`);
   if (r.steps.length || r.info.length) out.push(DATA_MARKER); // the rows carry titles and states from repository files
   const head = ended ? '| left open | state | next step | rules |' : '| task | state | next step | rules |';
@@ -82,7 +86,7 @@ export function tick({ flags, names, io }) {
   }
   return {
     code: CODE[r.result],
-    data: { result: r.result, repeated: r.repeated, reason: r.reason, nextTickS: r.nextTickS, steps: r.steps, info: r.info, rules, loop: summary(r.loop), partial: r.costPartial },
+    data: { result: r.result, repeated: r.repeated, reason: r.reason, nextTickS: r.nextTickS, steps: r.steps, info: r.info, rules, loop: summary(r.loop), partial: r.costPartial, billing: r.billing },
     errors: r.costProblems.slice(0, 5),
     text: render(r, rules, names, now, carried),
     warnings,
@@ -90,17 +94,17 @@ export function tick({ flags, names, io }) {
 }
 
 // Two lines on the loop document (the status view prints them too).
-export const describe = (l, now) => {
+export const describe = (l, now, billing = null) => {
   if (l === null) return null;
   const state = l.exit ? `ended ${l.exit} at ${l.exitAt}: ${l.reason}` : `running since ${l.startedAt}; unchanged for ${l.sameCount} tick${l.sameCount === 1 ? '' : 's'}`;
-  return `loop ${l.id}: ${state}\n${usage(l, now)}; fix rounds per task ${l.caps.rounds}\n`;
+  return `loop ${l.id}: ${state}\n${usage(l, now, billing?.mode)}; fix rounds per task ${l.caps.rounds}\n${billing ? `${billingLine(billing)}\n` : ""}`;
 };
 
 export function loopStart({ flags, names, io }) {
   const caps = flags.caps === undefined ? {} : parseCaps(flags.caps);
   const r = startLoop({ cwd: io.cwd, env: io.env, names, caps, byUser: io.stdinIsTTY === true });
   const was = r.replaced ? ` (replaces ${r.replaced.id}, ended ${r.replaced.exit})` : '';
-  return { data: { loop: summary(r.loop), replaced: r.replaced ? summary(r.replaced) : null }, text: `started${was}\n${describe(r.loop, Date.now())}` };
+  return { data: { loop: summary(r.loop), replaced: r.replaced ? summary(r.replaced) : null, billing: r.billing }, text: `started${was}\n${describe(r.loop, Date.now(), r.billing)}` };
 }
 
 export function loopStop({ names, io }) {
@@ -111,6 +115,6 @@ export function loopStop({ names, io }) {
 
 export function loopStatus({ names, io }) {
   const r = showLoop({ cwd: io.cwd, env: io.env, names });
-  const text = r.loop ? describe(r.loop, Date.now()) : `no loop${r.where.active ? '' : ' (the repository is not active)'}; the first \`${names.bin} tick\` starts one with the default caps\n`;
-  return { data: { loop: summary(r.loop) }, text };
+  const text = r.loop ? describe(r.loop, Date.now(), r.billing) : `no loop${r.where.active ? '' : ' (the repository is not active)'}; the first \`${names.bin} tick\` starts one with the default caps\n`;
+  return { data: { loop: summary(r.loop), billing: r.billing }, text: r.loop ? text : `${text}${billingLine(r.billing)}\n` };
 }

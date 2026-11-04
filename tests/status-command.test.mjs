@@ -165,7 +165,7 @@ test('status shows the loop record and the leases held for the project; other pr
   assert.equal(r.code, 0, show(r));
   const l = loop.showLoop({ cwd: p.repo, env: p.env, names }).loop;
   assert.match(r.out, new RegExp(`^Loop: loop ${l.id}: running since ${l.startedAt.replace(/[.]/g, '\\.')}; unchanged for 0 ticks$`, 'm'));
-  assert.match(r.out, /^ {6}tick 0 of 200, \d+ of 480 min, \$0\.00 of \$25\.00 spent \(estimate\); fix rounds per task 2$/m);
+  assert.match(r.out, /^ {6}tick 0 of 200, \d+ of 480 min, \$0\.00 of \$25\.00 at API prices \(estimate\); fix rounds per task 2$/m);
   const lease = mine.lease;
   assert.match(r.out, new RegExp(`^Leases: 1$`, 'm'));
   assert.match(r.out, new RegExp(`^  agent-${lease.slot}  live  T-TU-1  ports ${lease.ports[0]}-${lease.ports[1]}  db ${lease.db}$`, 'm'));
