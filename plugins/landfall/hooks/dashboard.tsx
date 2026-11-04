@@ -561,9 +561,12 @@ async function refresh($: EngineInterface): Promise<void> {
     await update($, agentsAtom, rs => (agents = mergeAgents(rs, listed, now)))
     const snap = active ? snapshotOf(data, runsEnv, agents, now) : inactiveSnapshot(baseName(str(data.repo) || live.cwd), now, null)
     let exits = 0
+    // the exit of a task that just closed starts when the snapshot is committed, after the CLI reads, however long they
+    // took (review r1 F1): taken at the start of the refresh, a slow read would eat the first frames or the whole exit
+    const committedAt = await $.clock.now()
     await update($, snapshotAtom, prev => {
       // only a placed pane shows a task leaving; a hidden one lets it go at once
-      const leaving = active && live.shown ? leavingOf(prev, data, now) : []
+      const leaving = active && live.shown ? leavingOf(prev, data, committedAt) : []
       exits = leaving.length
       return leaving.length > 0 ? ({ ...snap, leaving } as Snapshot) : snap
     })
