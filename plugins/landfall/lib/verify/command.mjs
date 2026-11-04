@@ -20,6 +20,8 @@ import { verifyTask } from './run.mjs';
 const exitOf = (result) => (result === 'pass' ? EXIT.OK : result === 'error' ? EXIT.ENV : EXIT.FAIL);
 const seconds = (ms) => `${(ms / 1000).toFixed(1)} s`;
 const some = (list, n = 10) => (list.length <= n ? list.join(', ') : `${list.slice(0, n).join(', ')} (+${list.length - n} more)`);
+const receiptWarnings = (problem, id, names) => problem
+  ? [`${problem.code}: ${problem.message}; hint: ${names.bin} receipt --task ${id}`] : [];
 
 const typed = (fn) => (ctx) => {
   try {
@@ -62,7 +64,7 @@ export const verify = typed(({ args, flags, names, version, io }) => {
 export const taskDone = typed(({ args, names, io }) => {
   const r = markDone({ cwd: io.cwd, env: io.env, names, id: args.id });
   const text = r.changed ? `${r.id}: done (verified at ${r.head.slice(0, 12)})` : `${r.id}: already done`;
-  return { data: { task: r.id, status: r.task.status, changed: r.changed, head: r.head, fixed: r.fixed }, text: `${text}\n${r.fixed.length ? `findings fixed: ${r.fixed.join(', ')}\n` : ''}` };
+  return { data: { task: r.id, status: r.task.status, changed: r.changed, head: r.head, fixed: r.fixed, receipt: r.receipt, receiptProblem: r.receiptProblem }, warnings: receiptWarnings(r.receiptProblem, r.id, names), text: `${text}\n${r.fixed.length ? `findings fixed: ${r.fixed.join(', ')}\n` : ''}` };
 });
 
 export const taskMerge = typed(({ args, flags, names, version, io }) => {
@@ -85,7 +87,7 @@ export const taskMerge = typed(({ args, flags, names, version, io }) => {
     const { exit, reasons, ...data } = b;
     const lines = b.tasks.length === 0 ? ['no task is ready to merge'] : b.tasks.map((t) => `${t.task}  ${t.outcome === 'merged' ? 'merged' : `${t.outcome}: ${t.why}`}`);
     if (b.tasks.length) lines.push(`gate runs: ${b.gateRuns} · batch ${b.batch}${b.commit ? ` · ${b.target} at ${b.commit.slice(0, 12)}` : ''}`);
-    return { code: EXIT[exit], data, errors: reasons, text: `${forTerminal(lines.join('\n'))}\n` };
+    return { code: EXIT[exit], data, errors: reasons, warnings: b.tasks.flatMap((t) => receiptWarnings(t.receiptProblem, t.task, names)), text: `${forTerminal(lines.join('\n'))}\n` };
   }
   const r = mergeTask({ cwd: io.cwd, env: io.env, names, id: ids[0], branch: flags.branch, version: version ?? null });
   const { exit, reasons, ...data } = r;
@@ -94,7 +96,7 @@ export const taskMerge = typed(({ args, flags, names, version, io }) => {
   else if (r.upToDate) lines = [`${r.branch} is already merged: nothing to do`];
   else if (r.verify) lines = [`merge of ${r.branch} aborted: the outcome gates are ${r.result}`, ...renderVerify(r.verify).slice(1)];
   else lines = [`merge of ${r.branch} aborted${r.conflicts.length ? `: conflicts in ${some(r.conflicts)}` : ''}`];
-  return { code: EXIT[exit], data, errors: reasons, text: `${forTerminal(lines.join('\n'))}\n` };
+  return { code: EXIT[exit], data, errors: reasons, warnings: receiptWarnings(r.receiptProblem, r.task, names), text: `${forTerminal(lines.join('\n'))}\n` };
 });
 
 export const reviewRecord = typed(({ args, flags, names, io }) => {

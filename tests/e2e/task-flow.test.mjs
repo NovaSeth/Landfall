@@ -127,7 +127,8 @@ test('task flow: task new → route → implement → report from the template �
   assert.deepEqual(p.git('rev-list', '--parents', '-n', '1', 'HEAD').split(' ').slice(1), [tip, p.git('rev-parse', task.branch)]);
   // T-MG-80 (intended change): the code is clean; the merge record is an uncommitted state write, like task done's.
   assert.equal(p.git('status', '--porcelain', '--', '.', `:(exclude)${names.stateDir}`), '');
-  assert.deepEqual(p.git('status', '--porcelain').split('\n').map((l) => l.replace(/^\s*\S+\s+/, '')), [`${names.stateDir}/tasks/${task.id}/task.json`]);
+  // T-MG-119: merge also refreshes the task receipt as an uncommitted state write.
+  assert.deepEqual(p.git('status', '--porcelain').split('\n').map((l) => l.replace(/^\s*\S+\s+/, '')), [`${names.stateDir}/receipts/${task.id}.json`, `${names.stateDir}/tasks/${task.id}/task.json`]);
   assert.equal(p.read(`tasks/${task.id}/task.json`).events.at(-1).event, 'merged');
   assert.equal(p.read(`tasks/${task.id}/task.json`).status, 'done');
   assert.deepEqual(p.read(`tasks/${task.id}/review-r1.json`).verdict, 'approved');
@@ -172,6 +173,7 @@ test('task flow with a removed test: verify, task done and task merge refuse it 
   assert.deepEqual([m.data.merged, m.data.verify.inventory.allowedBy], [true, [allow.data.id]]);
   // T-MG-80 (intended change): the code is clean; the merge record is an uncommitted state write, like task done's.
   assert.equal(p.git('status', '--porcelain', '--', '.', `:(exclude)${names.stateDir}`), '');
-  assert.deepEqual(p.git('status', '--porcelain').split('\n').map((l) => l.replace(/^\s*\S+\s+/, '')), [`${names.stateDir}/tasks/${task.id}/task.json`]);
+  // T-MG-119: merge also refreshes the task receipt as an uncommitted state write.
+  assert.deepEqual(p.git('status', '--porcelain').split('\n').map((l) => l.replace(/^\s*\S+\s+/, '')), [`${names.stateDir}/receipts/${task.id}.json`, `${names.stateDir}/tasks/${task.id}/task.json`]);
   assert.deepEqual(p.read('baseline/tests.json').tests.map((x) => x.id).filter((id) => id.includes('subtracts')), []);
 });

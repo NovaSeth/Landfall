@@ -10,7 +10,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -234,6 +234,55 @@ test('review record: the owner records, only on an open task, in an active repos
 
 // ---- the flow verify → review record → task done ----
 
+test('markDone returns receipt outcomes, including a nonfatal build failure', async (t) => {
+  for (const broken of [false, true]) {
+    const r = repo(t, { gates: [{ ...NODE_TEST, timeoutS: 30 }] });
+    assert.equal((await run(r)).code, 0);
+    if (broken) {
+      r.env.CLAUDE_PLUGIN_DATA = state.resolve({ cwd: r.dir, env: r.env, names }).dataDir;
+      r.env.CLAUDE_CONFIG_DIR = join(r.home, 'unreadable-transcripts');
+      mkdirSync(r.env.CLAUDE_CONFIG_DIR);
+      symlinkSync('projects', join(r.env.CLAUDE_CONFIG_DIR, 'projects'));
+    }
+    const result = verify.markDone({ cwd: r.dir, env: r.env, names, id: r.id });
+    assert.equal(result.task.status, 'done');
+    assert.equal(result.changed, true);
+    assert.equal(result.receipt, broken ? null : join(r.stateDir, 'receipts', `${r.id}.json`));
+    if (broken) {
+      assert.equal(result.receiptProblem?.code, 'receipt-not-saved');
+      assert.match(result.receiptProblem.message, /ELOOP/);
+    } else assert.equal(result.receiptProblem, null);
+    const again = verify.markDone({ cwd: r.dir, env: r.env, names, id: r.id });
+    assert.equal(again.changed, false);
+    assert.equal(again.receipt, null);
+    assert.equal(again.receiptProblem, null);
+  }
+});
+
+for (const json of [true, false]) {
+  test(`task done keeps success and exposes receipt build failures (${json ? 'JSON' : 'text'})`, async (t) => {
+    const r = repo(t, { gates: [{ ...NODE_TEST, timeoutS: 30 }] });
+    assert.equal((await run(r)).code, 0);
+    r.env.CLAUDE_PLUGIN_DATA = state.resolve({ cwd: r.dir, env: r.env, names }).dataDir;
+    r.env.CLAUDE_CONFIG_DIR = join(r.home, 'unreadable-transcripts');
+    mkdirSync(r.env.CLAUDE_CONFIG_DIR);
+    symlinkSync('projects', join(r.env.CLAUDE_CONFIG_DIR, 'projects'));
+    const result = await done({ ...r, json });
+    assert.equal(result.code, 0, show(result));
+    assert.equal(r.store.read('task', r.id).status, 'done');
+    if (json) {
+      assert.equal(result.env.data.receipt, null);
+      assert.equal(result.env.data.receiptProblem?.code, 'receipt-not-saved');
+      assert.match(result.env.data.receiptProblem.message, /ELOOP/);
+    } else {
+      const warnings = result.stderr.trim().split('\n');
+      assert.equal(warnings.length, 1);
+      assert.match(warnings[0], /^warning: .*receipt-not-saved/);
+      assert.ok(warnings[0].includes(`${names.bin} receipt --task ${r.id}`));
+    }
+  });
+}
+
 test('a review recorded after a passing verify is bound by value: task done closes; a later needs-fixes round keeps a standard task open', async (t) => {
   const r = repo(t);
   assert.equal((await run(r)).code, 0);
@@ -287,7 +336,7 @@ test('task merge merges a done task (done on its branch, then merged); a cancell
   assert.equal(r.store.read('task', r.id).status, 'done');
   // T-MG-80 (intended change): the code is clean; the merge record is an uncommitted state write, like task done's.
   assert.equal(r.git('status', '--porcelain', '--', '.', `:(exclude)${names.stateDir}`), '');
-  assert.deepEqual(r.git('status', '--porcelain').split('\n').map((l) => l.replace(/^\s*\S+\s+/, '')), [`${names.stateDir}/tasks/${r.id}/task.json`]);
+  assert.deepEqual(r.git('status', '--porcelain').split('\n').map((l) => l.replace(/^\s*\S+\s+/, '')), [`${names.stateDir}/receipts/${r.id}.json`, `${names.stateDir}/tasks/${r.id}/task.json`]);
   assert.equal(r.store.read('task', r.id).events.at(-1).event, 'merged');
 });
 
