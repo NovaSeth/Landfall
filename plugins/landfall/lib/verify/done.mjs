@@ -7,7 +7,8 @@
 //   gates-changed        the profile gates are not the ones verify ran (gatesSha)
 //   verify-stale         the task's class changed since verify (a passing verify for another route)
 //   review-missing       the route needs a review and the latest round is not approved
-//   verify-stale         the working baseline changed since verify (baselineSha)
+//   verify-stale         the working baseline changed since verify (baselineSha),
+//                        unless it only grew by added tests (grewOnly: the shared baseline another task's verify grows)
 //   uncommitted-changes  the code has uncommitted changes (everything but local/, verify.json, task.json, the baseline
 //                        and the typed review records, which review-missing above reads by value)
 //   verify-stale         the code changed since the verified commit
@@ -22,6 +23,7 @@ import { saveReceipt, taskReceipt } from '../receipts/index.mjs';
 import { recordedKeys, routeFor } from '../router/index.mjs';
 import { KINDS, StateError } from '../state/index.mjs';
 import { reviewState } from './artifacts.mjs';
+import { grewOnly } from './baseline.mjs';
 import { activeWhere, codeState, gatesSha, gitIn, storeOf, unknownTask, workingSha } from './run.mjs';
 
 const fail = (code, message, hint = '') => new StateError(code, 'FAIL', message, { hint });
@@ -37,7 +39,7 @@ function closingConditions({ store, task, id, where, env, names }) {
   if (task.class !== null && reviewState(store, id, routeFor(task.class, { flags: recordedKeys(task).flags }).steps) === 'missing') {
     throw fail('review-missing', `the ${task.class} route needs an approved review of ${id}, and its latest review is not approved`, 'address the review, record an approved round, then verify again');
   }
-  if (workingSha(store) !== v.baselineSha) throw fail('verify-stale', 'the working baseline changed since verify', again);
+  if (workingSha(store) !== v.baselineSha && !grewOnly(store.read('baseline', null), v)) throw fail('verify-stale', 'the working baseline changed since verify', again);
   const code = codeState(where, env);
   if (code.dirty) throw fail('uncommitted-changes', 'the working tree has uncommitted changes', 'commit them and verify again, or remove them');
   if (code.head !== v.head && gitIn(where, env, ['diff', '--quiet', v.head, code.head ?? 'HEAD', ...code.scope]).status !== 0) {
