@@ -3,6 +3,7 @@
 // local/shadow.jsonl; bind-agent (PostToolUse Agent) attaches tool_response.agentId to the lease keyed by tool_use_id;
 // release-agent (SubagentStop) frees the lease of agent_id. Malformed input, an inactive repository or a scheduler error:
 // allow, no output (GC8). The capability flag (off → pass-through) is applied by the registry.
+import { readFileSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
 import { modeOf, readConfig, rollout } from '../config/index.mjs';
 import { open } from '../state/index.mjs';
@@ -16,7 +17,24 @@ const LOCK_MS = 300;
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const cwdOf = (input, env) => [input.cwd, env.CLAUDE_PROJECT_DIR].find((d) => typeof d === 'string' && isAbsolute(d));
 
+// S4 (T-MG-180): the implementer keeps the model its agent file declares (front matter `model:`). An Agent call that names
+// another model is denied in every admission mode (registry `whenOff`); no tool_input, a non-string model or an unreadable
+// agent file allow (GC8).
+export function modelLock(input) {
+  const model = input.tool_input?.model;
+  if (typeof model !== 'string') return NONE;
+  const names = loadNames();
+  if (input.tool_input.subagent_type !== `${names.plugin}:implementer`) return NONE;
+  let declared;
+  try { declared = /^model:\s*(\S+)\s*$/m.exec(readFileSync(new URL('../../agents/implementer.md', import.meta.url), 'utf8'))?.[1]; } catch { return NONE; }
+  if (!declared || model === declared) return NONE;
+  const reason = `ORC-21: ${names.plugin}:implementer runs on ${declared}, not ${model}; hard work goes to ${names.plugin}:designer (ORC-1)`;
+  return { stdout: `${JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: reason } })}\n` };
+}
+
 export function admitHook(input, { env = process.env, deadline = Infinity } = {}) {
+  const locked = modelLock(input);
+  if (locked.stdout) return locked;
   const names = loadNames();
   const cwd = cwdOf(input, env);
   if (!cwd || !isObj(input.tool_input)) return NONE;

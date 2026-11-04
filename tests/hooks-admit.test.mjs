@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { isolateProcessEnv } from './helpers/isolated-env.mjs';
+import { isolateProcessEnv, relaxAdmission } from './helpers/isolated-env.mjs';
 import { MALFORMED, hook, lib, names, repo } from './helpers/hook-fixture.mjs';
 
 isolateProcessEnv();
@@ -65,8 +65,10 @@ test('malformed input allows and writes nothing', (t) => {
 for (const mode of ['off', 'shadow', 'on']) {
   test(`model lock (${mode}): an implementer launched with another model is denied, ORC-21 and the designer named`, (t) => {
     const f = repo(t);
+    relaxAdmission(f.env);
     f.store.write('config', null, { schema: 1, flags: { admission: mode } });
-    const call = (tool_input) => hook('admit-agent', { hook_event_name: 'PreToolUse', tool_name: 'Agent', session_id: 'sess-1', cwd: f.dir, tool_use_id: 'toolu_m', tool_input }, { env: f.env });
+    let n = 0;
+    const call = (tool_input) => hook('admit-agent', { hook_event_name: 'PreToolUse', tool_name: 'Agent', session_id: 'sess-1', cwd: f.dir, tool_use_id: `toolu_m${++n}`, tool_input }, { env: f.env });
     const v = call({ subagent_type: type, model: 'opus', prompt: 'x' });
     assert.equal(v.decision, 'deny');
     assert.match(v.reason, /ORC-21/); assert.match(v.reason, new RegExp(`hard work goes to ${names.plugin}:designer \\(ORC-1\\)`));
