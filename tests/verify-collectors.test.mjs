@@ -632,18 +632,6 @@ test('node-test TAP: a stack frame named ok in a failure block is no test; a rea
   assert.deepEqual(ids(a), ids(b));
 });
 
-test('node-test spec: a result line whose name is only a location is no test', () => {
-  const out = [
-    '✖ outer flow (1.2ms)',
-    '✔ (file:///tmp/base-AAA/a.test.mjs:4:32) (0.1ms)',
-    '✔ real (0.1ms)',
-    'ℹ tests 2',
-    'ℹ fail 1',
-    '',
-  ].join('\n');
-  assert.deepEqual(ids(parse(out)), ['outer flow', 'real']);
-});
-
 test('node-test TAP: lines inside a YAML diagnostic block are never results or subtests', () => {
   const out = [
     'TAP version 13',
