@@ -21,6 +21,7 @@ import { KINDS, StateError, emailHash, open, resolve } from '../state/index.mjs'
 import { billingMode } from './billing.mjs';
 import { readRunRecords, runsStore } from '../runs/index.mjs';
 import { usageLimit } from './limits.mjs';
+import { recordLoopWait } from './waits.mjs';
 import { cheapCap, clock, decide, effectiveCaps, newLoop, parseCaps } from './decide.mjs';
 import { CAP_RANGE, CARRIED_PLAN, DEFAULT_CAPS, LOOP, LOOP_ID, STALL, TERMINAL, UNMEASURED, fixedPrompt } from './kind.mjs';
 import { DEFAULT_BUDGET_MIN, budgetOf, readBudgets } from './budget.mjs';
@@ -199,6 +200,7 @@ export function tickStore(store, { where, names, now, plan = null, probe, watch 
   const email = probe.email();
   const hash = email ? emailHash(email) : null;
   let out = null;
+  let seenLimit = null; // the usage limit this tick's decision used, for its wait record
   store.update(LOOP.name, null, (cur) => {
     if (cur?.exit) {
       out = { ...decide(cur, {}), loop: cur, steps: [], info: [], costPartial: false, costProblems: [] };
@@ -225,6 +227,7 @@ export function tickStore(store, { where, names, now, plan = null, probe, watch 
     const plain = decide(loop, obs);
     const limit = plain.doc.exit === 'BUDGET' ? null : readLimit(probe, loop, snap.runs, now);
     const d = limit ? decide(loop, { ...obs, limit }) : plain;
+    seenLimit = limit;
     const info = limit?.kind === 'codex' && !d.doc.exit
       ? [...table.info, { task: limit.provider ?? 'codex', state: `${limit.provider ?? 'codex'} usage limit ${Number.isFinite(limit.resetAt) ? `until ${clock(limit.resetAt)}` : '(reset time unknown)'}: send reviews and implementations to Claude until then`, step: null, rules: [], kind: 'limit' }]
       : table.info;
@@ -232,6 +235,13 @@ export function tickStore(store, { where, names, now, plan = null, probe, watch 
     return d.doc;
   });
   const { doc, ...result } = out;
+  // the wait of a WAIT tick goes to local/waits.jsonl after the loop's own write and outside its lock section (append
+  // takes the lock itself; plan M1.7, D3); an exit records nothing (GC4)
+  try {
+    recordLoopWait(store, { result: result.result, nextTickS: result.nextTickS, limit: seenLimit, now });
+  } catch {
+    // any failure of the waits line (a busy or stale lock, a full disk, a refused store) never fails or changes the tick
+  }
   return { ...result, billing: result.loop.billing ?? NOT_RECORDED };
 }
 

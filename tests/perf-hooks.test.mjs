@@ -145,6 +145,24 @@ test('hook latency on a 10,000-file repository: p95 ≤ 300 ms, max < 1 s of CPU
       samples[h.name].push({ cpuMs: r.cpuMs, wallMs: r.wallMs });
     }
   }
+  // admit-agent in on mode with an implementer event (plan M1.7): the path of local/waits.jsonl. The first admits take
+  // the free slots and look for an open load wait to close; the denies after them open one, then find it open.
+  const state = await import(pathToFileURL(join(pluginDir, 'lib', 'state', 'index.mjs')).href);
+  state.open(join(dir, names.stateDir), { names }).write('config', null, { schema: 1, flags: { admission: 'on' } });
+  const sched = await import(pathToFileURL(join(pluginDir, 'lib', 'sched', 'index.mjs')).href);
+  sched.calibrate({ names, env: process.env, loadMax: '9999.0', freeMin: 1 }); // only the agent table denies, also on a loaded machine
+  const admitOn = (n) => JSON.stringify({ ...eventFor({ name: 'admit-agent', event: 'PreToolUse' }, dir), tool_use_id: `toolu_${n}` });
+  await runOnce('admit-agent', admitOn(0), dir); // warm
+  samples['admit-agent (on)'] = [];
+  let denies = 0;
+  for (let n = 1; n <= 10; n++) {
+    const r = await runOnce('admit-agent', admitOn(n), dir);
+    assert.equal(r.status, 0, `admit-agent (on) <- toolu_${n}`);
+    if (r.stdout.includes('"deny"')) denies++;
+    samples['admit-agent (on)'].push({ cpuMs: r.cpuMs, wallMs: r.wallMs });
+  }
+  assert.ok(denies > 0 && denies < 10, `admits and denies both measured: ${denies} denies of 10`);
+  assert.ok(existsSync(join(dir, names.stateDir, 'local', 'waits.jsonl')), 'a deny opened a load wait');
   const lines = Object.entries(samples).map(([n, xs]) => `${n}: CPU p95 ${p95(xs.map((x) => x.cpuMs)).toFixed(0)} ms, max ${Math.max(...xs.map((x) => x.cpuMs)).toFixed(0)} ms; wall max ${Math.max(...xs.map((x) => x.wallMs)).toFixed(0)} ms; n=${xs.length}`);
   for (const l of lines) t.diagnostic(l);
   assert.deepEqual(judgeBudget(samples), []);
