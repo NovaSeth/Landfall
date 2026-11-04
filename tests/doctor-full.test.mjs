@@ -39,7 +39,7 @@ const { HOOKS } = await lib('hooks/registry.mjs');
 const EVENTS = [...new Set(HOOKS.map((h) => h.event))];
 
 // T-MG-77 A2 (intended): the local row follows flags.
-const ROW_IDS = ['release', 'heartbeat', 'bin-path', 'git', 'state', 'profile', 'flags', 'local', 'providers', 'scheduler', 'guard', 'context', 'permissions', 'protection'];
+const ROW_IDS = ['release', 'heartbeat', 'bin-path', 'git', 'state', 'profile', 'flags', 'local', 'providers', 'scheduler', 'guard', 'context', 'permissions', 'security-review', 'protection'];
 const STATUSES = ['ok', 'warn', 'fail', 'skip'];
 const RULES = [`Bash(${names.bin} exec:*)`, `Bash(${names.bin} wait:*)`]; // U3
 const SYSTEM_DIRS = ['/usr/bin', '/bin'];
@@ -449,4 +449,48 @@ test('T-MG-85: the git row passes at 2.24 or later and warns below it', (t) => {
   fakeGit('2.24.0');
   d = doctor(s);
   assert.equal(d.row('git').status, 'ok', JSON.stringify(d.row('git')));
+});
+
+// T-MG-185: one security review per repository. The security-guidance plugin of claude-plugins-official reviews every
+// commit and push (and each turn) on its own; doctor names the one setting that turns its reviews off for this
+// repository, and never writes it (GC2).
+test('T-MG-185: a second automatic security review warns with the exact setting; the setting, the env or a disabled plugin is ok', (t) => {
+  const s = scratch(t);
+  const SG = 'security-guidance@claude-plugins-official';
+  const list = (enabled) => JSON.stringify([...JSON.parse(healthyList()), { id: SG, version: '2.0.17', scope: 'user', enabled }]);
+  const project = repo(s.base, 'project');
+  fakeClaude(s.bin);
+  let d = doctor(s, { cwd: project });
+  assert.equal(d.row('security-review').status, 'ok', JSON.stringify(d.row('security-review')));
+
+  fakeClaude(s.bin, { list: list(true) });
+  d = doctor(s, { cwd: project });
+  assert.equal(d.r.status, 0, out(d.r));
+  const w = d.row('security-review');
+  assert.equal(w.status, 'warn', JSON.stringify(w));
+  assert.ok(w.detail.includes(SG), w.detail);
+  assert.ok(w.hint.includes('"ENABLE_CODE_SECURITY_REVIEW": "0"') && w.hint.includes('.claude/settings.local.json'), w.hint);
+  assert.ok(w.hint.includes('SEC-13'), w.hint);
+
+  const before = snapshot(s.base);
+  d = doctor(s, { cwd: project, env: { ...s.env, ENABLE_CODE_SECURITY_REVIEW: '0' } });
+  assert.equal(d.row('security-review').status, 'ok', 'the variable in the session environment');
+  assert.deepEqual(changed(before, snapshot(s.base)), [], 'doctor wrote nothing');
+
+  mkdirSync(join(project, '.claude'));
+  writeFileSync(join(project, '.claude', 'settings.local.json'), JSON.stringify({ env: { ENABLE_CODE_SECURITY_REVIEW: '0' } }));
+  d = doctor(s, { cwd: project });
+  assert.equal(d.row('security-review').status, 'ok', 'the setting in the project settings');
+
+  writeFileSync(join(project, '.claude', 'settings.local.json'), JSON.stringify({ enabledPlugins: { [SG]: false } }));
+  d = doctor(s, { cwd: project });
+  assert.equal(d.row('security-review').status, 'ok', 'the plugin disabled for the project');
+
+  writeFileSync(join(project, '.claude', 'settings.local.json'), JSON.stringify({ env: { ENABLE_CODE_SECURITY_REVIEW: '1' } }));
+  d = doctor(s, { cwd: project });
+  assert.equal(d.row('security-review').status, 'warn', 'any other value keeps the reviews on');
+
+  fakeClaude(s.bin, { list: list(false) });
+  d = doctor(s, { cwd: project });
+  assert.equal(d.row('security-review').status, 'ok', 'installed but disabled');
 });
