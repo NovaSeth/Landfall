@@ -394,7 +394,23 @@ test('task done stays verify-stale when the baseline changed by a removed, newly
   }
 });
 
-test('task done stays verify-stale for a code change since verify even when the baseline only grew', async (t) => {
+test('task done stays verify-stale when another verify dropped a failure the verify tolerated (fix round 1)', async (t) => {
+  for (const extra of [[], [OTHER]]) {
+    const r = repo(t);
+    assert.equal((await run(r)).code, 0);
+    // The verify tolerated a pinned failure; the baseline it left carried it.
+    const v = r.vstore.read('verify', r.id);
+    const seen = { collector: v.inventory.collector, tests: v.inventory.tests, failing: ['adds@0123456789ab'] };
+    r.vstore.write('verify', r.id, { ...v, failures: { ...v.failures, preexisting: seen.failing }, baselineSha: verify.baselineSha(seen) });
+    const cur = { ...seen, failing: [] };
+    cur.tests = [...cur.tests, ...extra];
+    r.vstore.write('baseline', null, { ...r.vstore.read('baseline', null), ...cur, sha256: verify.baselineSha(cur) });
+    const d = await done(r);
+    assert.deepEqual([d.code, errorCodes(d)[0]], [1, 'verify-stale'], `${extra.length} added: ${show(d)}`);
+  }
+});
+
+test('task done stays verify-stale for a code change since verify even when the baseline only grew',async (t) => {
   const r = repo(t);
   assert.equal((await run(r)).code, 0);
   r.write('calc.js', 'export const x = 1;\n');
