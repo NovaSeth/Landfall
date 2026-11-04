@@ -1,7 +1,7 @@
 // npx channel (REV-55, GC10): the package built by `npm pack` runs its launcher the way npx exposes it, a
-// symlink in node_modules/.bin, under the Node running this test. CI also runs this file on Node 18.18: before
-// 18.19 an extensionless file under "type":"module" fails (ERR_UNKNOWN_FILE_EXTENSION), so the plugin ships its
-// own package.json declaring CommonJS for bin/ while lib/ stays .mjs. Offline: the package has no dependencies.
+// symlink in node_modules/.bin, under the Node running this test. CI also runs this file on Node 22.12.0, the lowest
+// release of the declared floor: an extensionless file under "type":"module" must not fail
+// (ERR_UNKNOWN_FILE_EXTENSION), so the plugin ships its own package.json declaring CommonJS for bin/ while lib/ stays .mjs. Offline: the package has no dependencies.
 // Run: node --test tests/e2e/npx.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -115,13 +115,13 @@ test('the launcher resolves its real location when run through a symlink, as npx
   assert.equal(help.status, 0, out(help));
 });
 
-test('CI runs this file on a Node 18 release older than 18.19, and npm test on Node 18 and 24', () => {
+test('CI runs this file on the lowest Node 22 LTS release, and npm test on Node 22 and 24', () => {
   const ci = readFileSync(join(root, '.github', 'workflows', 'tests.yml'), 'utf8');
   const jobs = ci.split(/\n(?= {2}[\w-]+:\n)/);
   const npxJob = jobs.find((j) => /tests\/e2e\/npx\.test\.mjs/.test(j));
   assert.ok(npxJob, 'a CI job runs tests/e2e/npx.test.mjs');
-  const pinned = /node-version:\s*['"]?18\.(\d+)\.\d+/.exec(npxJob);
-  assert.ok(pinned && Number(pinned[1]) < 19, `the npx job pins Node 18.x with x < 19\n${npxJob}`);
-  assert.match(ci, /node:\s*\[18,\s*24\]/, 'npm test runs on Node 18 and 24');
+  const pinned = /node-version:\s*['"]?22\.(\d+)\.\d+/.exec(npxJob);
+  assert.ok(pinned && Number(pinned[1]) >= 12, `the npx job pins Node 22.x with x >= 12\n${npxJob}`);
+  assert.match(ci, /node:\s*\[22,\s*24\]/, 'npm test runs on Node 22 and 24');
   assert.match(ci, /run:.*\bnpm test\b/);
 });
