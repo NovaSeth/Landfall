@@ -55,7 +55,7 @@ import { appliedTier, readReport, reportHasEvidence, reviewNeed, reviewProblem, 
 import { measureAt } from './base.mjs';
 import { baselineSha, compareInventory, excusable, fingerprint, referenceOf, splitFailures } from './baseline.mjs';
 import { cacheKey, lookup, machineKey, store as storeRuns, treeOf } from './gate-cache.mjs';
-import { requireTrustedGates, tailLines } from './gates.mjs';
+import { logLines, requireTrustedGates } from './gates.mjs';
 import { runHeavy } from './heavy.mjs';
 import { readProjectPatterns, runRedacted } from './redact.mjs';
 import { byCodeUnit, hashOf } from './inventory.mjs';
@@ -373,7 +373,7 @@ export function evaluate({ where, names, env, id, mode, handle = null, at = now(
     if (memo) memo.runs = runs;
     reused = hit?.at ?? null;
     doc.gates = runs.map((r) => r.gate);
-    output = runs.map((r) => ({ name: r.gate.name, lines: tailLines(r.output) }));
+    output = runs.map((r) => ({ name: r.gate.name, lines: logLines(r.output) }));
     ctx = context(where, env, code.rel);
     inv = inventoryOf(runs, ctx);
     if (key && !hit && shared === null && mode !== 'ci') {
