@@ -34,14 +34,19 @@ export function logLines(output) {
     const head = /^( *)not ok /.exec(lines[i]);
     if (!head) continue;
     const block = [lines[i]];
-    for (let j = i + 1; j < lines.length && indent(lines[j]) > head[1].length; j++) block.push(lines[j]);
+    let j = i + 1;
+    for (; j < lines.length && indent(lines[j]) > head[1].length; j++) block.push(lines[j]);
+    i = j - 1; // the block's lines, cut or not, are consumed: a `not ok` inside its error text is no failure
     let text = block.join('\n');
     if (text.length > FAIL_BLOCK_CHARS) text = `${text.slice(0, FAIL_BLOCK_CHARS)}\n  [cut]`;
     blocks.push(...text.split('\n'));
     count++;
   }
   const tail = tailLines(output);
-  return blocks.length ? [...blocks.slice(0, TAIL_CHARS - tail.length - 1), '--- output tail ---', ...tail] : tail;
+  if (!blocks.length) return tail;
+  // one budget of TAIL_CHARS lines for the whole log: at most half for the blocks, one for the separator, the rest for the tail
+  const kept = blocks.slice(0, TAIL_CHARS / 2);
+  return [...kept, '--- output tail ---', ...tail.slice(Math.max(0, tail.length - (TAIL_CHARS - kept.length - 1)))];
 }
 
 // The environment of a gate: the caller's, except node:test's marker for its own child processes (verify run by a
