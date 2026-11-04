@@ -14,6 +14,8 @@ import renameStateDir from './002-rename-state-dir.mjs';
 import profileSaidGlobs from './003-profile-said-globs.mjs';
 import taskMergedAt from './004-task-merged-at.mjs';
 import loopBilling from './005-loop-billing.mjs';
+import taskOutcome from './006-task-outcome.mjs';
+import findingRegression from './007-finding-regression.mjs';
 
-export const MIGRATIONS = Object.freeze([stateFlagsToConfig, profileSaidGlobs, taskMergedAt, loopBilling]);
+export const MIGRATIONS = Object.freeze([stateFlagsToConfig, profileSaidGlobs, taskMergedAt, loopBilling, taskOutcome, findingRegression]);
 export const LAYOUTS = Object.freeze([renameStateDir]);

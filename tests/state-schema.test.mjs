@@ -286,7 +286,7 @@ test('task schema 2: mergedAt is optional, a schema-1 task reads upgraded, and a
   const { tmpdir } = await import('node:os');
   const { defineKind } = await import(pathToFileURL(join(pluginDir, 'lib', 'state', 'kinds.mjs')).href);
   const names = JSON.parse(readFileSync(join(pluginDir, 'lib', 'name.json'), 'utf8'));
-  assert.equal(KINDS.task.version, 2);
+  assert.equal(KINDS.task.version, 3, 'T-MG-116 bumped schema 2 to 3 (outcome, regressionOf)');
   assert.deepEqual(errorsAt('task', { ...examples.task(), mergedAt: AT }), []);
   assert.deepEqual(errorsAt('task', examples.task()), [], 'mergedAt is optional');
   const dir = mkdtempSync(join(tmpdir(), 'task-schema-'));
@@ -296,8 +296,8 @@ test('task schema 2: mergedAt is optional, a schema-1 task reads upgraded, and a
     mkdirSync(join(dir, 'tasks', 'T-MG-1'), { recursive: true });
     const v1 = { ...examples.task(), schema: 1 };
     writeFileSync(join(dir, 'tasks', 'T-MG-1', 'task.json'), `${JSON.stringify(v1, null, 2)}\n`);
-    assert.equal(store.read('task', 'T-MG-1').schema, 2, 'a schema-1 task is read through the no-op migration');
-    writeFileSync(join(dir, 'tasks', 'T-MG-1', 'task.json'), `${JSON.stringify({ ...examples.task(), mergedAt: AT }, null, 2)}\n`);
+    assert.equal(store.read('task', 'T-MG-1').schema, KINDS.task.version, 'a schema-1 task is read through the no-op migration');
+    writeFileSync(join(dir, 'tasks', 'T-MG-1', 'task.json'), `${JSON.stringify({ ...examples.task(), schema: 2, mergedAt: AT }, null, 2)}\n`);
     // The plugin before the bump: task schema 1 and no step to 2.
     const { schema: _s, mergedAt: _m, ...fields } = KINDS.task.spec.f;
     const oldTask = defineKind('task', 1, { dir: 'tasks', keyPattern: KINDS.task.keyPattern, file: (id) => `tasks/${id}/task.json`, match: KINDS.task.match, key: 'id', fields });
