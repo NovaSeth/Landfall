@@ -818,3 +818,52 @@ test('T-MG-95: task done in the main checkout judges the task worktree recorded 
   assert.equal(res.code, 0, show(res));
   assert.equal(r.store.read('task', r.id).status, 'done');
 });
+
+async function worktreeTask(t) {
+  const r = repo(t);
+  const wt = join(r.base, 'wt');
+  r.git('worktree', 'add', '-q', wt, '-b', 'task/wt', r.head);
+  assert.equal((await cli(['task', 'set', r.id, 'started', '--branch', 'task/wt', '--base', r.head, '--worktree', wt, '--yes'], r)).code, 0);
+  writeFileSync(join(wt, 'task.txt'), 'the task code\n');
+  spawnSync('git', ['add', '-A'], { cwd: wt, env: r.env });
+  spawnSync('git', ['commit', '-q', '-m', 'task work'], { cwd: wt, env: r.env });
+  const wtHead = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: wt, env: r.env, encoding: 'utf8' }).stdout.trim();
+  return { r, wt, wtHead };
+}
+
+test('T-MG-146: verify in the main checkout judges the task worktree recorded by task start', async (t) => {
+  const { r, wtHead } = await worktreeTask(t);
+  assert.notEqual(wtHead, r.git('rev-parse', 'HEAD'));
+  const res = await run(r);
+  assert.equal(res.code, 0, show(res));
+  assert.equal(r.vstore.read('verify', r.id).head, wtHead);
+});
+
+test('T-MG-146: verify in the main checkout falls back to the checkout when the recorded worktree is missing', async (t) => {
+  const { r, wt } = await worktreeTask(t);
+  rmSync(wt, { recursive: true, force: true });
+  const res = await run(r);
+  assert.equal(res.code, 0, show(res));
+  assert.equal(r.vstore.read('verify', r.id).head, r.git('rev-parse', 'HEAD'));
+});
+
+test('T-MG-146: review brief --write in the main checkout pins base..worktree HEAD', async (t) => {
+  const { r, wtHead } = await worktreeTask(t);
+  const res = await cli(['review', 'brief', r.id, '--write', '--yes'], r);
+  assert.equal(res.code, 0, show(res));
+  const brief = readFileSync(join(r.stateDir, 'tasks', r.id, 'review-r1-brief.md'), 'utf8');
+  assert.match(brief, new RegExp(`^Range: ${r.head.slice(0, 7)}[0-9a-f]*\\.\\.${wtHead.slice(0, 7)}`, 'm'));
+});
+
+test('T-MG-146: review brief from the main checkout leaves committed in-repo state changes out of the diff', async (t) => {
+  const { r, wt } = await worktreeTask(t);
+  mkdirSync(join(wt, names.stateDir, 'tasks', r.id), { recursive: true });
+  writeFileSync(join(wt, names.stateDir, 'tasks', r.id, 'note.md'), 'committed state change\n');
+  spawnSync('git', ['add', '-A'], { cwd: wt, env: r.env });
+  spawnSync('git', ['commit', '-q', '-m', 'state change'], { cwd: wt, env: r.env });
+  const res = await cli(['review', 'brief', r.id, '--write', '--yes'], r);
+  assert.equal(res.code, 0, show(res));
+  const diff = readFileSync(join(r.stateDir, 'local', 'review', `${r.id}-r1.diff`), 'utf8');
+  assert.match(diff, /task\.txt/);
+  assert.doesNotMatch(diff, /note\.md/);
+});
