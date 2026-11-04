@@ -13,8 +13,6 @@
 //   verify-stale         the code changed since the verified commit
 // Done is an event { at, by, event: done, data: { head } } and status done. A done task stays done (exit 0,
 // nothing written); a cancelled one is closed (exit 1).
-import { existsSync } from 'node:fs';
-import { join } from 'node:path';
 import { authorHandle } from '../decisions/index.mjs';
 import { closeFindings, findingsForTask } from '../findings/index.mjs';
 import { emptyProfile } from '../profile/index.mjs';
@@ -22,6 +20,7 @@ import { saveReceipt, taskReceipt } from '../receipts/index.mjs';
 import { recordedKeys, routeFor } from '../router/index.mjs';
 import { KINDS, StateError } from '../state/index.mjs';
 import { reviewState } from './artifacts.mjs';
+import { taskWhere } from './where.mjs';
 import { activeWhere, codeState, gatesSha, gitIn, storeOf, unknownTask, workingSha } from './run.mjs';
 
 const fail = (code, message, hint = '') => new StateError(code, 'FAIL', message, { hint });
@@ -44,14 +43,6 @@ function closingConditions({ store, task, id, where, env, names }) {
     throw fail('verify-stale', `the code changed since verify ran at ${v.head.slice(0, 12)}`, again);
   }
   return v;
-}
-
-// Run in the main checkout, the task's code is in the worktree `task start` recorded, not at the checkout's HEAD.
-function taskWhere(where, store, id) {
-  if (where.worktree !== where.repo) return where;
-  const recorded = [...(store.read('task', id)?.events ?? [])].reverse().find((e) => e.event === 'started')?.data?.worktree;
-  if (typeof recorded !== 'string' || !existsSync(join(recorded, '.git'))) return where;
-  return { ...where, worktree: recorded };
 }
 
 export function markDone({ cwd, env, names, id, at = new Date().toISOString() }) {
