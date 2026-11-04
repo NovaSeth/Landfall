@@ -48,10 +48,10 @@ const TABLE = [
   ['31 LOC', { paths: many(1), loc: 31 }, 'standard', ['loc-over-trivial']],
   ['3 files and 31 LOC', { paths: many(3), loc: 31 }, 'standard', ['files-over-trivial', 'loc-over-trivial']],
   ['new dependency on a one-line change', { paths: ['package.json'], loc: 1, flags: ['new-dependency'] }, 'standard', ['flag']],
-  ['15 files and 400 LOC: both at the critical limit', { paths: many(15), loc: 400 }, 'standard', ['files-over-trivial', 'loc-over-trivial']],
-  ['16 files', { paths: many(16), loc: 16 }, 'critical', ['files-over']],
-  ['401 LOC', { paths: many(1), loc: 401 }, 'critical', ['loc-over']],
-  ['16 files and 401 LOC', { paths: many(16), loc: 401 }, 'critical', ['files-over', 'loc-over']],
+  ['15 files and 400 LOC: both at the split limit', { paths: many(15), loc: 400 }, 'standard', ['files-over-trivial', 'loc-over-trivial']],
+  ['16 files', { paths: many(16), loc: 16 }, 'standard', ['files-over-trivial', 'split-files']],
+  ['401 LOC', { paths: many(1), loc: 401 }, 'standard', ['loc-over-trivial', 'split-loc']],
+  ['16 files and 401 LOC', { paths: many(16), loc: 401 }, 'standard', ['files-over-trivial', 'loc-over-trivial', 'split-files', 'split-loc']],
   // risk flags (one tiny file each)
   ...['migration', 'public-api', 'security', 'data-write', 'irreversible'].map((f) => [`flag ${f}`, { paths: ['src/a.js'], loc: 1, flags: [f] }, 'critical', ['risk-flag']]),
   // risk paths: the default globs (auth, payments, migrations, security, CI workflows, SQL data writes)
@@ -82,20 +82,20 @@ const TABLE = [
   ['a manual of 2,100 lines in 12 files is docs-only: standard', { paths: many(12, 'docs/manual/pl').map((p) => p.replace('.js', '.md')), loc: 2100 }, 'standard', ['docs-only']],
   ['35 screenshots are docs-only: standard', { paths: many(35, 'docs/qa').map((p) => p.replace('.js', '.png')), loc: 0 }, 'standard', ['docs-only']],
   ['one README line stays trivial', { paths: ['README.md'], loc: 5 }, 'trivial', ['small']],
-  ['a docs file under a risk glob is still critical', { paths: ['src/auth/README.md', 'docs/a.md', 'docs/b.md'], loc: 900 }, 'critical', ['risk-path', 'loc-over']],
+  ['a docs file under a risk glob is still critical', { paths: ['src/auth/README.md', 'docs/a.md', 'docs/b.md'], loc: 900 }, 'critical', ['risk-path']],
   ['a flag on docs is still a flag', { paths: ['docs/a.md', 'docs/b.md', 'docs/c.md'], loc: 900, flags: ['new-dependency'] }, 'standard', ['docs-only', 'flag']],
-  ['16 code files plus 20 images: the images weigh nothing (16 files > 15 by the code alone)', { paths: [...many(16), ...many(20, 'assets').map((p) => p.replace('.js', '.png'))], loc: 100 }, 'critical', ['files-over']],
+  ['16 code files plus 20 images: the images weigh nothing (16 files > 15 by the code alone)', { paths: [...many(16), ...many(20, 'assets').map((p) => p.replace('.js', '.png'))], loc: 100 }, 'standard', ['files-over-trivial', 'loc-over-trivial', 'split-files']],
   ['15 code files plus 20 images: standard, not critical', { paths: [...many(15), ...many(20, 'assets').map((p) => p.replace('.js', '.png'))], loc: 100 }, 'standard', ['files-over-trivial', 'loc-over-trivial']],
   // light paths (incident 2026-10-27): throwaway prototypes never raise a task above standard by size
   ['mockups only, 1500 LOC: light-only standard', { paths: ['mockups/app.js', 'mockups/app.css', 'mockups/index.html'], loc: 1500 }, 'standard', ['light-only']],
-  ['mockups plus a risk path stays critical', { paths: ['mockups/app.js', 'src/auth/x.js'], loc: 1500 }, 'critical', ['risk-path', 'loc-over']],
+  ['mockups plus a risk path stays critical', { paths: ['mockups/app.js', 'src/auth/x.js'], loc: 1500 }, 'critical', ['risk-path']],
   ['nested mockups path is light', { paths: ['mockups/js/app.js', 'mockups/css/app.css'], loc: 1500 }, 'standard', ['light-only']],
   ['mockups small: trivial', { paths: ['mockups/app.css'], loc: 5 }, 'trivial', ['small']],
-  ['mockupsX is not a light path', { paths: ['mockupsX/a.js'], loc: 1500 }, 'critical', ['loc-over']],
+  ['mockupsX is not a light path', { paths: ['mockupsX/a.js'], loc: 1500 }, 'standard', ['loc-over-trivial', 'split-loc']],
   ['a stories file is light, docs mixed in', { paths: ['src/ui/Button.stories.tsx', 'docs/a.md'], loc: 900 }, 'standard', ['light-only']],
   ['a flag on mockups is still a flag', { paths: ['mockups/a.js'], loc: 900, flags: ['new-dependency'] }, 'standard', ['light-only', 'flag']],
   // every reason is listed, critical ones first
-  ['risk path, risk flag and size together', { paths: ['src/auth/a.js', ...many(16)], loc: 500, flags: ['migration', 'new-dependency'] }, 'critical', ['risk-path', 'risk-flag', 'files-over', 'loc-over']],
+  ['risk path, risk flag and size together', { paths: ['src/auth/a.js', ...many(16)], loc: 500, flags: ['migration', 'new-dependency'] }, 'critical', ['risk-path', 'risk-flag']],
   // T-MG-74 F1-5: agent instructions are risk paths, never weightless
   ['CLAUDE.md alone is critical', { paths: ['CLAUDE.md'], loc: 2 }, 'critical', ['risk-path']],
   ['a SKILL.md in a subdirectory is critical', { paths: ['plugins/x/skills/y/SKILL.md'], loc: 2 }, 'critical', ['risk-path']],
@@ -103,9 +103,9 @@ const TABLE = [
   ['a prompt file is critical', { paths: ['app/prompts/system.txt'], loc: 2 }, 'critical', ['risk-path']],
   ['.claude settings are critical', { paths: ['.claude/settings.json'], loc: 2 }, 'critical', ['risk-path']],
   ['AGENTS.md and GEMINI.md are critical', { paths: ['AGENTS.md', 'sub/GEMINI.md'], loc: 2 }, 'critical', ['risk-path', 'risk-path']],
-  ['a large change to CLAUDE.md is no docs-only', { paths: ['CLAUDE.md', 'docs/a.md'], loc: 900 }, 'critical', ['risk-path', 'loc-over']],
-  ['a risk file in a light directory keeps its size reasons', { paths: ['mockups/CLAUDE.md'], loc: 900 }, 'critical', ['risk-path', 'loc-over']],
-  ['a SKILL.md under a light path keeps its size reasons', { paths: ['mockups/x/SKILL.md'], loc: 900 }, 'critical', ['risk-path', 'loc-over']],
+  ['a large change to CLAUDE.md is no docs-only', { paths: ['CLAUDE.md', 'docs/a.md'], loc: 900 }, 'critical', ['risk-path']],
+  ['a risk file in a light directory keeps its size reasons', { paths: ['mockups/CLAUDE.md'], loc: 900 }, 'critical', ['risk-path']],
+  ['a SKILL.md under a light path keeps its size reasons', { paths: ['mockups/x/SKILL.md'], loc: 900 }, 'critical', ['risk-path']],
   // duplicate paths count once
   ['the same file three times is one file', { paths: ['a.js', './a.js', 'x/../a.js'], loc: 3 }, 'trivial', ['small']],
 ];
@@ -141,7 +141,7 @@ test('classifier: risk globs from the profile add to the defaults (public API di
 test('classifier: thresholds and default risk globs are data with the spec values', () => {
   const data = JSON.parse(readFileSync(join(pluginDir, 'lib', 'router', 'thresholds.json'), 'utf8'));
   assert.deepEqual(data.trivial, { maxFiles: 2, maxLoc: 30 });
-  assert.deepEqual(data.critical, { overFiles: 15, overLoc: 400 });
+  assert.deepEqual(data.split, { overFiles: 15, overLoc: 400 });
   assert.deepEqual(data.criticalFlags, ['migration', 'public-api', 'security', 'data-write', 'irreversible']);
   assert.deepEqual(data.flags, [...data.criticalFlags, 'new-dependency']);
   assert.deepEqual(data.riskPaths, ['**/auth/**', '**/payment*/**', '**/migrations/**', '**/security/**', '.github/workflows/**', '**/*.sql', '.claude/**', '**/CLAUDE.md', '**/AGENTS.md', '**/GEMINI.md', '**/SKILL.md', '**/agents/*.md', '**/prompts/**']);
@@ -229,7 +229,7 @@ test('glob matching: the review\'s adversarial glob and 10k paths stay within a 
   const globs = [glob, '**/' + '*a'.repeat(10) + 'b/**', '**/a/**/a/**/a/**/b', ...Array.from({ length: 40 }, (_, k) => `**/${'*a'.repeat(3)}${k}x/**`)];
   let out;
   const many = cpuMs(() => { out = router.classify({ paths, loc: 1, riskPaths: globs }); });
-  assert.equal(out.class, 'critical', 'over 15 files');
+  assert.equal(out.class, 'standard', 'over 15 files: split, not critical');
   assert.ok(!out.reasons.some((x) => x.code === 'risk-path'), 'no adversarial path matches');
   assert.ok(many < 3000, `10k adversarial paths x ${globs.length + router.DEFAULT_RISK_PATHS.length} globs: ${many} ms CPU`);
 });
@@ -483,10 +483,10 @@ test('override: a waiver never covers an unrelated later risk (findings-r1 #2, t
   const r = repo(t);
   const id = newTask(r.store, r.handle);
   const go = (plan) => router.routeTask(r.store, id, { ...plan, handle: r.handle, at: AT });
-  // generated code (docs would be weightless since 2.1): 401 lines are critical by size until the user waives it
-  assert.equal(go({ paths: ['src/generated/api.js'], loc: 401 }).class, 'critical');
+  // a risk path (size alone never makes a task critical): critical until the user waives it
+  assert.equal(go({ paths: ['src/generated/api.js', 'src/auth/gen.js'], loc: 401 }).class, 'critical');
   router.overrideTask(r.store, id, { to: 'trivial', by: 'user', quote: 'Only generated code changed; skip the critical review for that', handle: r.handle, at: AT });
-  const docs = go({ paths: ['src/generated/api.js'], loc: 401 });
+  const docs = go({ paths: ['src/generated/api.js', 'src/auth/gen.js'], loc: 401 });
   assert.deepEqual([docs.outcome, docs.class], ['held', 'trivial'], 'the waived plan stays waived');
   const risky = go({ paths: ['auth/delete-users.sql'], loc: 1000, flags: ['security', 'data-write', 'irreversible'] });
   assert.deepEqual([risky.outcome, risky.class, risky.computed, risky.escalated], ['escalated', 'critical', 'critical', true]);
@@ -561,14 +561,14 @@ test('route steps: a flag seen once stays (findings-r1 #3): irreversible keeps t
   const id2 = newTask(r.store, r.handle);
   router.routeTask(r.store, id2, { paths: ['src/a.js'], loc: 1, flags: ['new-dependency'], handle: r.handle, at: AT });
   router.routeTask(r.store, id2, { paths: ['src/a.js'], loc: 1, flags: ['irreversible'], handle: r.handle, at: AT });
-  const up = router.routeTask(r.store, id2, { paths: ['src/a.js'], loc: 500, handle: r.handle, at: AT });
+  const up = router.routeTask(r.store, id2, { paths: ['src/auth/a.js'], loc: 5, handle: r.handle, at: AT });
   assert.ok(up.route.steps.includes('decision-record'));
 });
 
 test('override: a multi-line quote stays a quote inside Why and cannot add frontmatter or sections', (t) => {
   const r = repo(t);
   const id = newTask(r.store, r.handle);
-  router.routeTask(r.store, id, { paths: ['src/a.js'], loc: 500, handle: r.handle, at: AT });
+  router.routeTask(r.store, id, { paths: ['src/auth/a.js'], loc: 5, handle: r.handle, at: AT });
   const quote = 'line one\r\n---\nstatus: retired\n## What\n\nline five';
   const out = router.overrideTask(r.store, id, { to: 'standard', by: 'user', quote, handle: r.handle, at: AT });
   const text = readFileSync(join(decisionsDir(r), `${out.decision}.md`), 'utf8');
@@ -885,37 +885,71 @@ function override(r, decision, status = 'active', value = 800) {
     mkdirSync(decisionsDir(r), { recursive: true });
     writeFileSync(join(decisionsDir(r), `${decision}.md`), decisionText(decision, status));
   }
-  r.store.write('config', null, { schema: 1, thresholds: { 'router.critical.overLoc': { value, decision, at: AT } } });
+  r.store.write('config', null, { schema: 1, thresholds: { 'router.split.overLoc': { value, decision, at: AT } } });
 }
 const probe500 = ['route', '--probe', '--paths', 'src/a.js', '--loc', '500', '--yes'];
+const splits = async (args, r) => (await cli(args, r)).env.data.reasons.some((x) => x.code === 'split-loc');
 
 test('route --probe and the ratchet read router threshold overrides from config.json; defaults hold without them', async (t) => {
   const r = repo(t);
-  assert.equal((await cli(probe500, r)).env.data.class, 'critical', 'default: 500 LOC > 400');
+  assert.equal(await splits(probe500, r), true, 'default: 500 LOC > 400 says split');
   override(r, 'D-TU-1');
-  assert.equal((await cli(probe500, r)).env.data.class, 'standard', 'override 800: 500 LOC is standard');
+  assert.equal(await splits(probe500, r), false, 'override 800: 500 LOC is no split');
   const id = newTask(r.store, r.handle);
   assert.equal(router.routeTask(r.store, id, { paths: ['src/a.js'], loc: 500, handle: r.handle, at: AT }).class, 'standard');
   const outside = repo(t, { active: false });
-  assert.equal((await cli(probe500, outside)).env.data.class, 'critical', 'no repository state: defaults');
+  assert.equal(await splits(probe500, outside), true, 'no repository state: defaults');
 });
 
 test('an override whose decision is missing or not active changes nothing; an unreadable config gives the defaults', async (t) => {
   const r = repo(t);
   override(r, 'D-TU-1', null);
-  assert.equal((await cli(probe500, r)).env.data.class, 'critical', 'no record of the cited decision');
+  assert.equal(await splits(probe500, r), true, 'no record of the cited decision');
   override(r, 'D-TU-2', 'retired');
-  assert.equal((await cli(probe500, r)).env.data.class, 'critical', 'retired decision');
+  assert.equal(await splits(probe500, r), true, 'retired decision');
   writeFileSync(join(r.stateDir, 'config.json'), '{ not json');
-  assert.equal((await cli(probe500, r)).env.data.class, 'critical', 'unreadable config: shipped defaults');
+  assert.equal(await splits(probe500, r), true, 'unreadable config: shipped defaults');
 });
 
-test('a raised critical.overLoc after a task was routed critical keeps it critical (the ratchet only rises)', (t) => {
+test('a raised split.overLoc after a task was routed critical by a risk path keeps it critical (the ratchet only rises)', (t) => {
   const r = repo(t);
   const id = newTask(r.store, r.handle);
-  assert.equal(router.routeTask(r.store, id, { paths: ['src/a.js'], loc: 500, handle: r.handle, at: AT }).class, 'critical');
+  assert.equal(router.routeTask(r.store, id, { paths: ['src/auth/a.js'], loc: 500, handle: r.handle, at: AT }).class, 'critical');
   override(r, 'D-TU-1');
-  const again = router.routeTask(r.store, id, { paths: ['src/a.js'], loc: 500, handle: r.handle, at: AT });
+  const again = router.routeTask(r.store, id, { paths: ['src/auth/a.js'], loc: 500, handle: r.handle, at: AT });
   assert.equal(again.class, 'critical');
   assert.equal(r.store.read('task', id).class, 'critical');
+});
+
+// ---- size says split, never critical; tests weigh nothing (T-MG-181) ----
+
+test('size never makes a task critical: over the limits it stays standard and says split', () => {
+  const loc = router.classify({ paths: ['src/a.js'], loc: 425 });
+  assert.equal(loc.class, 'standard');
+  assert.ok(loc.reasons.some((x) => x.text === 'split: 425 LOC > 400'), JSON.stringify(loc.reasons));
+  const files = router.classify({ paths: many(16), loc: 20 });
+  assert.equal(files.class, 'standard');
+  assert.ok(files.reasons.some((x) => x.text === 'split: 16 files > 15'), JSON.stringify(files.reasons));
+  const risk = router.classify({ paths: ['src/auth/a.js'], loc: 900 });
+  assert.equal(risk.class, 'critical', 'a risk path still makes it critical');
+  assert.equal(router.classify({ paths: ['src/a.js'], loc: 900, flags: ['security'] }).class, 'critical', 'so does a critical flag');
+  assert.equal(JSON.parse(readFileSync(join(pluginDir, 'lib', 'router', 'thresholds.json'), 'utf8')).critical, undefined, 'no critical size threshold');
+});
+
+test('an old config that still sets critical.overLoc is skipped, not an error', async (t) => {
+  const r = repo(t);
+  r.store.write('config', null, { schema: 1, thresholds: { 'router.critical.overLoc': { value: 900, decision: 'D-TU-1', at: AT } } });
+  const out = (await cli(probe500, r)).env.data;
+  assert.equal(out.class, 'standard');
+});
+
+test('test files count neither toward LOC nor toward the file count', () => {
+  const tests = ['tests/a.js', 'tests/b/c.mjs', 'src/x.test.js', 'src/y.spec.test.ts'];
+  assert.equal(router.classify({ paths: ['src/a.js', ...tests], loc: 5 }).class, 'trivial', 'one code file plus four test files');
+  const only = router.classify({ paths: tests, loc: 900 });
+  assert.equal(only.class, 'standard');
+  assert.ok(!only.reasons.some((x) => x.code.startsWith('split')), 'tests alone never say split');
+  const many16 = router.classify({ paths: [...many(15), ...many(10, 'tests')], loc: 20 });
+  assert.ok(!many16.reasons.some((x) => x.code === 'split-files'), '15 code files plus 10 test files');
+  assert.equal(router.classify({ paths: ['tests/auth/x.test.js'], loc: 2 }).class, 'critical', 'a risk glob still applies to a test file');
 });
