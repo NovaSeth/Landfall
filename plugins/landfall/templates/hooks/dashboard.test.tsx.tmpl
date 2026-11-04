@@ -699,3 +699,34 @@ test('every budgeted line counts: five tasks and one agent without a task never 
   expect(texts.some(t => /^UNASSIGNED$/.test(t))).toBe(true)
   expect(texts.some(t => /^ {4}↳ ● implementer/.test(t))).toBe(true)
 })
+
+// review r2 F3: for every pane height from the real minimum, the lines never pass the rows, and no live agent is silently dropped
+const shapes: [string, number, number][] = [['no agents', 0, 0], ['agents under tasks', 4, 0], ['unassigned agents', 0, 3], ['both', 3, 2]]
+for (const rows of [8, 9, 10, 11, 12, 13, 14]) {
+  for (const error of [false, true]) {
+    for (const [shape, under, loose] of shapes) {
+      for (const backlog of [false, true]) {
+        test(`the pane never has more lines than rows and counts every live agent (rows ${rows}, ${error ? 'error' : 'no error'}, ${shape}, ${backlog ? 'backlog' : 'no backlog'}) (review r2 F3)`, async ($, on) => {
+          const tasks = [7, 8, 9, 10, 11].map(taskRow) as any[]
+          if (backlog) tasks.push({ id: 'T-TU-20', kind: 'task', title: 'Raw', status: 'new', class: null, owner: 'TU', lane: null, round: 0 })
+          const status = { ...withTask({}, []), data: { ...withTask({}, []).data, tasks, steps: tasks.map(t => ({ task: t.id, state: 'planned', step: '', rules: [], kind: 'info' })) } }
+          const w = world(on, { status, runs: quiet })
+          w.agents.length = 0
+          for (let k = 0; k < under; k++) w.agents.push({ id: `a${k}`, description: `Work on T-TU-${7 + (k % 5)} part ${k}`, type: '{{plugin}}:implementer', status: 'running' })
+          for (let k = 0; k < loose; k++) w.agents.push({ id: `l${k}`, description: `Explore ${k}`, type: '{{plugin}}:reviewer', status: 'running' })
+          await $.session.start(SESSION)
+          await w.clock.settle()
+          if (error) {
+            w.cli.fails = true
+            await w.clock.advance(15_000)
+          }
+          const texts = await linesAt($, rows, 80)
+          expect(texts.length).toBeLessThanOrEqual(rows)
+          const shown = texts.filter(t => /^ {4}↳ ●/.test(t)).length
+          const folded = texts.map(t => /^ {4}↳ … (\d+)/.exec(t)).reduce((n, m) => n + (m ? Number(m[1]) : 0), 0)
+          expect(shown + folded).toBe(under + loose)
+        })
+      }
+    }
+  }
+}
