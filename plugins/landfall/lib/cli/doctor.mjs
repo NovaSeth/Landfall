@@ -374,7 +374,9 @@ function permissionsRow({ names, io, repo }) {
 export const SECURITY_GUIDANCE = 'security-guidance@claude-plugins-official';
 const LOG_TAIL_BYTES = 262144;
 const AUTH_FAILED = /API error: 401\b|\(HTTP 401\)|authentication_error/;
-const REVIEWED = /review: no (?:medium\+ )?(?:security issues|vulnerabilities) found|review found \d+/;
+// Every review outcome security-guidance 2.0.17 logs (hooks/security_reminder_hook.py, hooks/llm.py); skips, rate limits
+// and non-auth failures are no outcome. A commit or push review that delivers new findings logs no line of its own.
+const REVIEWED = /(?:Commit review|Push sweep|Stop hook|LLM code review|Concerns review):? (?:no (?:new findings|(?:medium\+ |high\/critical )?(?:security issues|vulnerabilities|concerns) found)|all findings already (?:known|delivered)|found \d+)/;
 const settingsOf = (file) => { try { const s = JSON.parse(readFileSync(file, 'utf8')); return s && typeof s === 'object' ? s : {}; } catch { return {}; } };
 function guidanceLog(env) {
   const abs = (p) => (isAbsolute(p ?? '') ? p : null);
@@ -393,9 +395,10 @@ function securityReviewRow({ names, io, repo, plugins }) {
   }
   if (!entry || !enabled) return row('security', 'ok', `${names.plugin}'s security reviewer (SEC-13); ${SECURITY_GUIDANCE} ${entry ? 'disabled here' : 'not installed'}`, hint);
   const log = guidanceLog(io.env ?? {});
-  let text = '';
-  try { text = log ? readFileSync(log, 'utf8').slice(-LOG_TAIL_BYTES) : ''; } catch { text = ''; }
-  const last = text.split('\n').reverse().find((l) => AUTH_FAILED.test(l) || REVIEWED.test(l));
+  // the current log first, then its rotated copy (<log>.1); the newest outcome line decides
+  const tail = (file) => { try { return readFileSync(file, 'utf8').slice(-LOG_TAIL_BYTES).split('\n').reverse(); } catch { return []; } };
+  const outcome = (l) => AUTH_FAILED.test(l) || REVIEWED.test(l);
+  const last = log ? tail(log).find(outcome) ?? tail(`${log}.1`).find(outcome) : undefined;
   if (last && AUTH_FAILED.test(last)) {
     const at = /^\[([^\]]{1,40})\]/.exec(last)?.[1] ?? 'unknown time';
     return row('security', 'warn', `${SECURITY_GUIDANCE} review is failing: HTTP 401 (sign-in rejected) at ${at}; log ${log}`, hint);
