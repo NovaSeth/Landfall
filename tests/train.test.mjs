@@ -1,0 +1,178 @@
+// Merge train (T-MG-186, D-MG-65): `train <id…> | --ready` merges the approved tasks (review approved or closed; done
+// not required) on a temporary integration branch in their --after order, leaves a conflicting task out, runs the gates
+// once, bisects a failing task out, fast-forwards the target only when it did not move, and records every task of the
+// train merged AND done in one step: the passing train gate is its verify (verify.json mode train). The fake gate is
+// `node --test` with the TAP reporter that logs where it ran (no sleep, no load). This file holds no plugin name or path.
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { isolateProcessEnv } from './helpers/isolated-env.mjs';
+
+const ISO = isolateProcessEnv();
+const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+const pluginDir = (() => {
+  const plugins = join(root, 'plugins');
+  const hits = readdirSync(plugins).filter((d) => existsSync(join(plugins, d, 'lib', 'name.json')));
+  assert.equal(hits.length, 1, 'exactly one plugins/*/lib/name.json');
+  return join(plugins, hits[0]);
+})();
+const lib = (rel) => import(pathToFileURL(join(pluginDir, 'lib', rel)).href);
+const state = await lib('state/index.mjs');
+const profile = await lib('profile/index.mjs');
+const verify = await lib('verify/kinds.mjs');
+const { main } = await lib('cli/main.mjs');
+const names = JSON.parse(readFileSync(join(pluginDir, 'lib', 'name.json'), 'utf8'));
+const AT = '2026-11-04T05:42:00.000Z';
+const BASE_TESTS = "import { test } from 'node:test';\ntest('adds', () => {});\n";
+const REPORT = '---\nred: {"command": "node --test", "exit": 1, "excerpt": "1 failing"}\ngreen: {"command": "node --test", "exit": 0, "excerpt": "2 passing"}\n---\n\n# Report\n';
+const APPROVED = { verdict: 'approved', reviewer: { kind: 'claude', id: 'claude:reviewer' }, findings: [] };
+
+function repo(t, { extra = '' } = {}) {
+  const base = realpathSync(mkdtempSync(join(tmpdir(), 'train-')));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  const dir = join(base, 'repo');
+  const home = join(base, 'home');
+  const log = join(base, 'runs.log');
+  mkdirSync(dir);
+  mkdirSync(home);
+  writeFileSync(log, '');
+  const env = { ...ISO.env, HOME: home };
+  const git = (...a) => {
+    const r = spawnSync('git', a, { cwd: dir, env, encoding: 'utf8' });
+    assert.equal(r.status, 0, `git ${a.join(' ')}: ${r.stderr}`);
+    return r.stdout.trim();
+  };
+  git('-c', 'init.defaultBranch=main', 'init', '-q');
+  git('config', 'user.name', 'Test User');
+  git('config', 'user.email', 'test@example.com');
+  const write = (rel, text) => { mkdirSync(dirname(join(dir, rel)), { recursive: true }); writeFileSync(join(dir, rel), text); };
+  write('calc.test.mjs', BASE_TESTS);
+  write('shared.txt', 'base\n');
+  git('add', '-A');
+  git('commit', '-q', '-m', 'base');
+  const head = git('rev-parse', 'HEAD');
+  const stateDir = join(dir, names.stateDir);
+  const store = verify.openStore(stateDir, names);
+  store.write('state', null, { codename: names.codename, createdWith: '2.0.0', activatedAt: AT });
+  writeFileSync(join(stateDir, '.gitignore'), 'local/\n');
+  const handle = state.registerHandle(store, { name: 'Test User', email: 'test@example.com', at: AT }).handle;
+  const gate = `node --test --test-reporter=tap; s=$?; pwd >> '${log}'; ${extra} exit $s`;
+  profile.openStore(stateDir, names).write('profile', null, { ...profile.emptyProfile(), gates: [{ name: 'test', cmd: gate, timeoutS: 60, kind: 'test' }] });
+  git('add', '-A');
+  git('commit', '-q', '-m', 'state');
+  // An approved critical task (review r1 approved, not done) on a branch from main. edit(): changes files on the branch.
+  const task = (name, edit, { review = true, after = [] } = {}) => {
+    git('checkout', '-q', '-b', name, 'main');
+    edit(write);
+    git('add', '-A', '--', '.', `:(exclude)${names.stateDir}`);
+    git('commit', '-q', '-m', name);
+    git('checkout', '-q', 'main');
+    const id = state.allocateId(store, {
+      prefix: 'T', handle,
+      build: (tid) => ({
+        id: tid, kind: 'task', title: `task ${name}`, lane: null, owner: handle, class: 'critical', classHistory: [], status: 'in-review', round: 1,
+        events: [{ at: AT, by: handle, event: 'created', data: after.length ? { after } : {} }], base: head, branch: name,
+      }),
+    });
+    writeFileSync(join(stateDir, 'tasks', id, 'report.md'), REPORT);
+    if (review) store.write('review', verify.reviewKey(id, 1), { schema: verify.VERIFY_KINDS.review.version, ...APPROVED });
+    git('add', '-A');
+    git('commit', '-q', '-m', `task ${id}`);
+    return id;
+  };
+  const runs = () => readFileSync(log, 'utf8').split('\n').filter((l) => l.includes(`${names.codename}-batch-`)).length;
+  return { dir, env, stateDir, store, handle, git, write, task, runs };
+}
+
+async function cli(args, { dir, env }) {
+  const out = [];
+  const err = [];
+  const io = { out: (s) => out.push(s), err: (s) => err.push(s), stdinIsTTY: false, env, cwd: dir, stdin: null };
+  const code = await main([...args, '--json'], { io });
+  return { code, env: JSON.parse(out.join('')), stderr: err.join('') };
+}
+const outcomes = (res) => res.env.data.tasks.map((x) => [x.task, x.outcome]);
+const events = (r, id, kind) => r.store.read('task', id).events.filter((e) => e.event === kind);
+const addTest = (file, body = "test('ok', () => {});") => (w) => w(file, `import { test } from 'node:test';\n${body}\n`);
+
+test('a train of 3: the conflicting task is left out, the failing one bisected out, the clean one merged and done (verify mode train)', async (t) => {
+  const r = repo(t);
+  const clean = r.task('feat/clean', (w) => { addTest('clean.test.mjs')(w); w('shared.txt', 'clean\n'); });
+  const conflict = r.task('feat/conflict', (w) => w('shared.txt', 'conflict\n'));
+  const failing = r.task('feat/failing', addTest('failing.test.mjs', "test('breaks', () => { throw new Error('boom'); });"));
+  const tip = r.git('rev-parse', 'HEAD');
+  const res = await cli(['train', clean, conflict, failing, '--yes'], r);
+  assert.equal(res.code, 1, JSON.stringify(res.env.errors));
+  assert.deepEqual(outcomes(res), [[clean, 'merged'], [conflict, 'conflict'], [failing, 'failed']]);
+  assert.deepEqual(res.env.data.tasks.find((x) => x.task === conflict).conflicts, ['shared.txt']);
+  assert.ok(res.env.data.tasks.find((x) => x.task === failing).tests.some((x) => x.includes('breaks')));
+  const head = r.git('rev-parse', 'HEAD');
+  assert.notEqual(head, tip);
+  r.git('merge-base', '--is-ancestor', tip, head);
+  r.git('merge-base', '--is-ancestor', 'feat/clean', head);
+  // merged and done in one step; the train gate is the verify
+  const task = r.store.read('task', clean);
+  assert.equal(task.status, 'done');
+  assert.equal(events(r, clean, 'merged').length, 1);
+  assert.equal(events(r, clean, 'done').length, 1);
+  assert.equal(events(r, clean, 'done')[0].data.head, head);
+  const v = r.store.read('verify', clean);
+  assert.equal(v.result, 'pass');
+  assert.equal(v.mode, 'train');
+  assert.deepEqual([v.head, v.train.head, v.train.commit, v.train.batch], [head, head, head, res.env.data.batch]);
+  for (const id of [conflict, failing]) {
+    assert.equal(r.store.read('task', id).status, 'in-review', `${id} keeps its status`);
+    assert.equal(events(r, id, 'merged').length + events(r, id, 'done').length, 0, `${id}: nothing recorded`);
+    assert.equal(r.store.read('verify', id), null);
+  }
+  assert.equal(r.git('branch', '--list', `${names.codename}/batch-*`), '', 'the integration branch is removed');
+});
+
+test('the train takes approved tasks only, in their --after order', async (t) => {
+  const r = repo(t);
+  const second = r.task('feat/second', addTest('second.test.mjs'));
+  const first = r.task('feat/first', addTest('first.test.mjs'));
+  const unreviewed = r.task('feat/unreviewed', addTest('unreviewed.test.mjs'), { review: false });
+  // second waits for first: record the dependency on second's created event
+  r.store.update('task', second, (cur) => ({ ...cur, events: [{ ...cur.events[0], data: { after: [first] } }, ...cur.events.slice(1)] }));
+  r.git('add', '-A');
+  r.git('commit', '-q', '-m', 'after');
+  const res = await cli(['train', '--ready', '--yes'], r);
+  assert.equal(res.code, 0, JSON.stringify(res.env.errors));
+  assert.deepEqual(outcomes(res), [[first, 'merged'], [second, 'merged']]);
+  assert.equal(r.runs(), 1, 'one gate run');
+  assert.equal(r.store.read('task', unreviewed).status, 'in-review', 'an unapproved task is not in the train');
+  const subjects = r.git('log', '--format=%s', '--merges', 'HEAD').split('\n');
+  assert.ok(subjects.findIndex((s) => s.includes(first)) > subjects.findIndex((s) => s.includes(second)), 'first merged before second');
+  const named = await cli(['train', unreviewed, '--yes'], r);
+  assert.equal(named.code, 1);
+  assert.match(named.env.data.tasks[0].why, /review/);
+});
+
+test('the target moving during the train gate: no fast-forward, nothing recorded', async (t) => {
+  const r = repo(t, { extra: 'git -C "$TARGET_DIR" commit -q --allow-empty -m moved;' });
+  const a = r.task('feat/a', addTest('a.test.mjs'));
+  r.env.TARGET_DIR = r.dir;
+  const res = await cli(['train', a, '--yes'], r);
+  assert.equal(res.code, 1);
+  assert.ok(res.env.errors.some((e) => e.code === 'target-moved'), JSON.stringify(res.env.errors));
+  assert.equal(r.git('log', '-1', '--format=%s'), 'moved');
+  assert.equal(events(r, a, 'merged').length + events(r, a, 'done').length, 0);
+  assert.equal(r.store.read('verify', a), null);
+  assert.equal(r.store.read('task', a).status, 'in-review');
+});
+
+test('a task that removes a test is refused by the train without a decision', async (t) => {
+  const r = repo(t);
+  const a = r.task('feat/remove', (w) => w('calc.test.mjs', "import { test } from 'node:test';\n"));
+  const res = await cli(['train', a, '--yes'], r);
+  assert.equal(res.code, 1);
+  assert.deepEqual(outcomes(res), [[a, 'failed']]);
+  assert.match(res.env.data.tasks[0].why, /removed or skipped without a decision/);
+  assert.equal(r.store.read('task', a).status, 'in-review');
+  assert.equal(events(r, a, 'merged').length, 0);
+});
