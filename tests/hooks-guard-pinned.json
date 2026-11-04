@@ -637,6 +637,8 @@
   ["cp x */tasks/T-AB-1/task.json","tracked"],
   ["cp x **/task.json","tracked"],
   ["echo x > @STATEQ@/tasks/T-AB-1/task.json","tracked"],
+  ["dir=@STATEHEAD@; cp /dev/null \"${dir}@STATETAIL@/config.json\"; echo read","tracked"],
+  ["dir=@STATEHEAD@; cp /dev/null \"${dir}@STATETAIL@/config.json\"; read x","tracked"],
   ["cp x @STATEBRACE@/tasks/T-AB-1/task.json","tracked"],
   ["X=@STATEHEAD@; cp x ${X}@STATETAIL@/tasks/T-AB-1/task.json","tracked"],
   ["cp x .$(echo c)aw/tasks/T-AB-1/task.json","tracked"],

@@ -482,6 +482,8 @@ const NEW_BLOCK = [
   // I3 / F7: globs, braces and expansions that reach the state directory
   ['cp x @STATEGLOB@/tasks/T-AB-1/task.json', 'FLW-7', 'tracked'], ['rm -f @STATEGLOB@/tasks/*/task.json', 'FLW-7', 'tracked'], ['rm -f @STATECLASS@/tasks/T-AB-1/task.json', 'FLW-7', 'tracked'],
   ['cp x */tasks/T-AB-1/task.json', 'FLW-7', 'tracked'], ['cp x **/task.json', 'FLW-7', 'tracked'], ['echo x > @STATEQ@/tasks/T-AB-1/task.json', 'FLW-7', 'tracked'],
+  // T-MG-132 review r3 F1: a variable setter elsewhere in the line must not hide a state path assembled from a literal variable
+  ['dir=@STATEHEAD@; cp /dev/null "${dir}@STATETAIL@/config.json"; echo read', 'FLW-7', 'tracked'], ['dir=@STATEHEAD@; cp /dev/null "${dir}@STATETAIL@/config.json"; read x', UNV, 'tracked'],
   ['cp x @STATEBRACE@/tasks/T-AB-1/task.json', UNV, 'tracked'], ['X=@STATEHEAD@; cp x ${X}@STATETAIL@/tasks/T-AB-1/task.json', 'FLW-7', 'tracked'], ['cp x .$(echo c)aw/tasks/T-AB-1/task.json', UNV, 'tracked'],
   ['cp x .c$(:)aw/tasks/T-AB-1/task.json', UNV, 'tracked'], ['echo x > @STATEBR@/tasks/T-AB-1/task.json', 'FLW-7', 'tracked'], ['echo x > @STATE@/tasks/T-AB-1/task.j*', 'FLW-7', 'tracked'],
   ['mv @STATEGLOB@ /tmp/', 'FLW-7', 'tracked'], ['mv @STATEBRACE@ /tmp/', UNV, 'tracked'],
