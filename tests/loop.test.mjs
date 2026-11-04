@@ -173,8 +173,9 @@ test('1.x self-verified round → approved: verify, merge, close (REV-11, FLW-8)
   const events = [ev('fix-round', 2, { round: 1, addressed: 1, open: 0 }), ev('self-verified', 3, { round: 1 })];
   let s = row(table([task('T-TU-1', 'fix-round', { round: 1, events })]), 'T-TU-1');
   assert.deepEqual(s.rules, ['REV-11', 'ORC-25', 'FLW-8']);
-  assert.match(s.step, new RegExp(`${BIN} task done T-TU-1\`, then \`${BIN} task merge T-TU-1\``));
-  assert.match(s.step, new RegExp(`${BIN} task merge --ready`));
+  // T-MG-178 (intended change): one `close` call replaces the verify → task done → task merge chain
+  assert.match(s.step, new RegExp(`\`${BIN} close T-TU-1\``));
+  assert.match(s.step, new RegExp(`${BIN} close <ids…>\`, one batch`));
   assert.doesNotMatch(s.step, /squash|by hand|locally/);
   s = row(table([task('T-TU-1', 'verified')]), 'T-TU-1');
   assert.deepEqual(s.rules, ['REV-11', 'ORC-25', 'FLW-8']);
