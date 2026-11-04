@@ -48,3 +48,4 @@
 ### Code health
 **REV-59.** Run the code-health check on the diff and reject a new or worse violation of COD-16…25, citing its ID; an improved one is noted, not required.
 **REV-60.** A review of a hook-path change checks COD-23 and COD-25 by reading the catches and the regular expressions it adds.
+**REV-61.** A corpus, benchmark or metric counts every case the system fails as a known gap in its denominator; a change that drops failing cases to raise a rate fails review.
