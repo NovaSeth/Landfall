@@ -505,3 +505,37 @@ test('T-MG-185: a failing security-guidance review (HTTP 401 last in its log) wa
   rmSync(join(project, '.claude'), { recursive: true });
   assert.equal(sec().status, 'ok', 'installed but disabled for the user');
 });
+
+// T-MG-185 fix round 2 (F3): any review outcome security-guidance 2.0.17 logs after the auth error clears the warning;
+// lines that are no review outcome (skips, a non-auth failure) do not; the rotated log.txt.1 counts when log.txt holds
+// no outcome. Messages as the plugin writes them (hooks/security_reminder_hook.py, hooks/llm.py).
+test('T-MG-185 r2: every logged review completion after a 401 clears the warning; skips and other failures do not', (t) => {
+  const s = scratch(t);
+  const SG = 'security-guidance@claude-plugins-official';
+  fakeClaude(s.bin, { list: JSON.stringify([...JSON.parse(healthyList()), { id: SG, version: '2.0.17', scope: 'user', enabled: true }]) });
+  const project = repo(s.base, 'project');
+  const dir = join(s.env.CLAUDE_CONFIG_DIR, 'security');
+  mkdirSync(dir, { recursive: true });
+  const stamp = (msg) => `[2026-11-04 23:30:00.000] ${msg}\n`;
+  const AUTH = stamp('API error: 401 - {"type":"error","error":{"type":"authentication_error","message":"OAuth access token has been revoked."}}')
+    + stamp("Commit review: got no verdict (the API rejected the plugin's credentials (HTTP 401)); not marked reviewed");
+  const sec = () => doctor(s, { cwd: project }).row('security');
+  const DONE = ['Commit review: no security issues found', 'Commit review: all findings already known, skipping', 'Push sweep: no new findings',
+    'Stop hook: no security issues found', 'Stop hook: all findings already delivered by commit-review', 'LLM code review: no vulnerabilities found',
+    'LLM code review: no medium+ vulnerabilities found', 'LLM code review found 2 high/critical vulnerabilities', 'Concerns review: no concerns found',
+    'Concerns review: no high/critical concerns found', 'Concerns review: found 1 high/critical areas of concern'];
+  for (const msg of DONE) {
+    writeFileSync(join(dir, 'log.txt'), AUTH + stamp(msg));
+    assert.equal(sec().status, 'ok', msg);
+  }
+  const NEUTRAL = ['Commit review: hourly rate limit reached, skipping', 'Push sweep: every pushed commit already reviewed',
+    'Push sweep: no push-success signal in bash output', 'Commit review: got no verdict (the API did not answer in time); not marked reviewed',
+    'API 401 on x-api-key; falling back to ANTHROPIC_AUTH_TOKEN'];
+  writeFileSync(join(dir, 'log.txt'), stamp(DONE[0]) + AUTH + NEUTRAL.map(stamp).join(''));
+  assert.equal(sec().status, 'warn', 'only lines that are no review outcome follow the 401');
+  writeFileSync(join(dir, 'log.txt.1'), stamp(DONE[0]) + AUTH);
+  writeFileSync(join(dir, 'log.txt'), NEUTRAL.map(stamp).join(''));
+  assert.equal(sec().status, 'warn', 'the rotated log holds the latest outcome');
+  writeFileSync(join(dir, 'log.txt'), stamp(DONE[2]));
+  assert.equal(sec().status, 'ok', 'the current log wins over the rotated one');
+});
