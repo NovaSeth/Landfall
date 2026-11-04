@@ -875,6 +875,9 @@ Start a loop with caps (defaults: wallMin=480,ticks=200,usd=25,rounds=2); a runn
 A cap above its default, and a new loop after an ended one (DONE, STALLED or BUDGET), are the user's decision: exit 7
 without a terminal.
 Caps never extend by themselves. Exit 1 while a loop runs (`loop stop` ends it).
+The billing mode is decided here and stored: <PREFIX>BILLING=api, an API variable (ANTHROPIC_API_KEY,
+ANTHROPIC_AUTH_TOKEN, CLAUDE_CODE_USE_BEDROCK|VERTEX|FOUNDRY) or the account file's subscription billing type;
+<PREFIX>BILLING=subscription counts only from a terminal. The usd cap applies in api or unknown billing only.
 
 Options:
   --caps <k=v,…>  caps to change: wallMin (minutes), ticks, usd (dollars, estimate), rounds (fix rounds per task)
@@ -889,7 +892,8 @@ Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
 usage: landfall loop status [--json]
 
 Print the loop: ticks, wall time and cost against the caps, the stall count, and the exit once it ended.
-The cost is the one measured at the last tick. Writes nothing.
+The cost is the one measured at the last tick; the billing line names the stored mode (no loop: the detected one).
+Writes nothing.
 
 Read-only.
 Exit codes: 0 OK · 1 FAIL · 7 REFUSED · 8 ENV
@@ -1456,7 +1460,10 @@ tree undoes the commit (the merge stays staged).
 Several IDs, or --ready (the done, unmerged tasks with a branch), merge as one batch: the branches merge with
 --no-ff in a temporary worktree, the gates run once on the integrated tree, a failure is bisected and only the
 passing tasks merge, a conflict leaves only that task out, the target is fast-forwarded only if it did not move,
-and a branch that changes the gates is skipped (merge it alone). One line per task, the gate runs, the batch id.
+and a branch that changes the gates since its merge-base is skipped with the gate or risk path named (merge it
+alone). The temporary worktree links the checkout's node_modules when the lockfile matches; without that link, or
+when the first gate cannot run, the tasks merge one by one in the checkout (fallback: sequential). One line per
+task, the gate runs, the batch id.
 
 Arguments:
   id  task ID such as T-AB-1 (several: one batch, or with --adopt)
@@ -1571,7 +1578,11 @@ The wakeup prompt is fixed and carries no task state (printed with WAIT). ACTION
 one wakeup after NEXT_TICK seconds. DONE, STALLED, BUDGET: the loop ended; schedule nothing, cancel a pending wakeup, report.
 The first tick starts a loop with the default caps (8 h, 200 ticks, $25 estimated cost, 2 fix rounds per task). A cap
 reached (wall time, ticks, cost since the start from the transcripts and run records) → BUDGET. A cost that is a lower
-bound is partial (data.partial, the reasons as errors); 3 ticks in a row whose cost cannot be measured → BUDGET. The same
+bound is partial (data.partial, the reasons as errors); 3 ticks in a row whose cost cannot be measured → BUDGET. The cost
+cap and that count apply only in api or unknown billing: in subscription billing the API-price estimate is shown, not
+capped. The billing mode is decided when the loop is created and stored (`billing: <mode> (<source>)`); a tick may only
+tighten it to api. A usage-limit message in the transcripts (session, weekly, Opus or Sonnet limit) → WAIT until its
+reset (60 to 3600 s), never STALLED; an external run's usage limit adds an informational row. The same
 state (git heads, the files under tasks/, run statuses) for 3 ticks over ≥ 30 min with no live run → STALLED. Every task
 done or cancelled and the state directory committed → DONE. The exit is written to local/loop.json before it is printed;
 every later tick returns it. Writes only that loop record (never committed), so it needs no --yes. Exit 7 in an inactive
