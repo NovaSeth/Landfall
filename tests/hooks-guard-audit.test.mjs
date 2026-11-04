@@ -1,6 +1,7 @@
 // The Bash guard against the 2.4.0 audit (T-MG-70): a linear prescan (A-1), a globbed or substituted git subcommand
 // (A-2), an empty substitution inside a state path (A-3), assignments after their use (SF-AB-2), an unreadable
 // guard-extra.txt next to the state (SF-AB-3) and a linear glob matcher (SF-AB-4).
+// Time limits here are CPU time; wall time only guards a hang (tests/helpers/cpu-time.mjs).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -10,6 +11,7 @@ import { dirname, join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { isolateProcessEnv } from './helpers/isolated-env.mjs';
+import { CALL_WALL_GUARD_MS, cpuTimed, measured, WALL_CEILING_MS } from './helpers/cpu-time.mjs';
 
 isolateProcessEnv({ identity: false });
 
@@ -36,7 +38,13 @@ const { repo, dir } = repoWithState();
 const opts = { cwd: repo, state: { dir, repo }, readProjectMode: () => 'solo', readGuardExtra: () => null };
 const verdict = (cmd, o = opts) => evaluate(cmd, o);
 const denied = (cmd, o) => verdict(cmd, o).deny ?? null;
-const timed = (fn) => { const t = performance.now(); fn(); return performance.now() - t; };
+// The CPU time of fn in ms; fails when its wall time reaches CALL_WALL_GUARD_MS (a hang), naming the case by its line.
+const timed = (fn) => {
+  const site = (new Error().stack.split('\n')[2] ?? '').replace(/^.*[/(]/, '').replace(/\)$/, '');
+  const r = cpuTimed(fn);
+  assert.ok(r.wallMs < CALL_WALL_GUARD_MS, `a call hung at ${site}: ${r.wallMs.toFixed(0)} ms wall`);
+  return r.cpuMs;
+};
 
 // ---------- A-1 ----------
 const TAIL = '; git push --force origin main';
@@ -166,12 +174,11 @@ test('F2: repeated unclosed parameter syntax is linear and the real hook denies 
   }
   const cmd = `echo '${'${['.repeat(21000)}'${TAIL}`;
   const input = JSON.stringify({ session_id: 's', hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: cmd }, cwd: repo });
-  const t = performance.now();
-  const r = spawnSync(process.execPath, [LAUNCHER, 'hook', 'guard-bash'], { input, encoding: 'utf8', timeout: 5000, env: { ...process.env, CLAUDE_PROJECT_DIR: repo } });
-  const ms = performance.now() - t;
+  const r = measured((probe) => spawnSync(process.execPath, [...probe.nodeArgs, LAUNCHER, 'hook', 'guard-bash'], { input, encoding: 'utf8', timeout: 5000, env: { ...process.env, ...probe.env, CLAUDE_PROJECT_DIR: repo } }));
   const deny = r.status === 2 || (r.stdout && JSON.parse(r.stdout).hookSpecificOutput.permissionDecision === 'deny');
   assert.ok(deny, `no deny: exit ${r.status} ${r.stdout} ${r.stderr}`);
-  assert.ok(ms < 1000, `${Math.round(ms)} ms`);
+  assert.ok(r.cpuMs < 1000, `${r.cpuMs} ms of CPU`);
+  assert.ok(r.ms < WALL_CEILING_MS, `${r.ms} ms`);
 });
 
 test('F2: the parameter scanner keeps the default-value semantics', () => {
