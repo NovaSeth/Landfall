@@ -1300,3 +1300,46 @@ test('billing (d) loop status --json carries billing.mode; start and status text
   const x = await cliText(['loop', 'status'], { cwd: p.cwd, env: p.env });
   assert.match(x.text, /billing: subscription \(/);
 });
+
+// ---- billing ratchet (review r2 F2): a tick's environment may only tighten the stored mode ----
+
+function storedLoop(t, mode, source = 'test') {
+  const s = storeDir(t);
+  s.store.write('task', 'T-TU-1', task('T-TU-1', 'new'));
+  s.store.write('loop', null, loop.newLoop({ now: T0, caps: { ...CAPS, costMicroUsd: 10000 }, billing: mode ? { mode, source } : null }));
+  const probe = { heads: () => 'main 1111111', email: () => 'test@example.com', cost: () => ({ costMicroUsd: 20000, partial: false }), dirty: () => [] };
+  // the way tick() calls it: `billing` for a loop created now, `signal` the environment-only reading of every tick
+  const tickWith = (env, min = 5) => loop.tickStore(s.store, {
+    where: s.where, names, now: T0 + min * MIN, plan: null, probe,
+    billing: loop.billingMode({ env, names, home: '/missing' }), signal: loop.billingMode({ env, names, home: '/missing', envOnly: true }),
+  });
+  return { s, tickWith, doc: () => JSON.parse(readFileSync(s.file, 'utf8')) };
+}
+
+test('billing (h) F2: a stored subscription loop whose tick sees an API key ends at the cap and stores api', (t) => {
+  const { tickWith, doc } = storedLoop(t, 'subscription');
+  const r = tickWith({ ANTHROPIC_API_KEY: 'x' });
+  assert.equal(r.result, 'BUDGET');
+  assert.equal(r.billing.mode, 'api');
+  assert.deepEqual([doc().billing.mode, doc().billing.source], ['api', 'ANTHROPIC_API_KEY (at tick 1)']);
+});
+
+test('billing (h2) F2: unknown stored + the api override on a tick → api; the file is not read by a tick', (t) => {
+  const { tickWith, doc } = storedLoop(t, 'unknown');
+  assert.equal(tickWith({ [BILL]: 'api' }).result, 'BUDGET');
+  assert.equal(doc().billing.mode, 'api');
+});
+
+test('billing (i) F2: a stored api loop stays api on a later tick without API variables', (t) => {
+  const { tickWith } = storedLoop(t, 'api');
+  const r = tickWith({ [BILL]: 'subscription' });
+  assert.equal(r.result, 'BUDGET');
+  assert.equal(r.billing.mode, 'api');
+});
+
+test('billing (j) F2: a stored subscription loop with the subscription override and no API variable stays subscription, billing not rewritten', (t) => {
+  const { tickWith, doc } = storedLoop(t, 'subscription', 'kept source');
+  const r = tickWith({ [BILL]: 'subscription' });
+  assert.notEqual(r.result, 'BUDGET');
+  assert.deepEqual(doc().billing, { mode: 'subscription', source: 'kept source' });
+});
