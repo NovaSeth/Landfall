@@ -384,3 +384,48 @@ test('006-task-outcome and 007-finding-regression: migrate changes only the sche
   assert.deepEqual(snapshot(dir, { skip: (r) => r in files || r.startsWith('local/backup') || r === 'local/.machine' }), untouched, 'nothing else changed');
   assert.deepEqual(state.migrate(state.open(dir, { names })).steps, [], 'a second run writes nothing');
 });
+
+// T-MG-117 (plan M1.2, RF2): verify 1 → 2 (008, machine, cache, heavyWaitMs, gatesMs) and review 1 → 2 (009, focus) are
+// no-op steps: a migrated file differs from its original only in the schema line.
+test('008-verify-machine and 009-review-focus: migrate changes only the schema of a v1 verify and a v1 review', async (t) => {
+  const { VERIFY_KINDS } = await import(pathToFileURL(join(pluginDir, 'lib', 'verify', 'kinds.mjs')).href);
+  const steps = MIGRATIONS.filter((m) => m.id === '008-verify-machine' || m.id === '009-review-focus');
+  assert.deepEqual(steps.map(({ id, kind, from, to }) => ({ id, kind, from, to })), [
+    { id: '008-verify-machine', kind: 'verify', from: 1, to: 2 },
+    { id: '009-review-focus', kind: 'review', from: 1, to: 2 },
+  ]);
+  assert.deepEqual(MIGRATIONS.slice(-2), steps, 'listed in NNN order after 007');
+  assert.deepEqual([VERIFY_KINDS.verify.version, VERIFY_KINDS.review.version], [2, 2]);
+  const dir = scratch(t);
+  untouchable(dir);
+  const files = {
+    'tasks/T-AB-1/verify.json': {
+      schema: 1, task: 'T-AB-1', head: 'a'.repeat(40), gatesSha: 'b'.repeat(64), baselineSha: null, class: 'standard', startedAt: AT, durationMs: 7,
+      gates: [{ name: 'test', cmd: 'npm test', exit: 0, durationMs: 5, result: 'pass' }],
+      inventory: { collector: 'none', total: 0, added: [], removed: [], newlySkipped: [], allowedBy: [], weak: false },
+      failures: { preexisting: [], new: [] }, route: { declared: 'standard', actual: 'standard', escalated: false, missingSteps: [] },
+      artifacts: { report: true, review: 'approved' }, result: 'pass',
+    },
+    'tasks/T-AB-1/review-r1.json': {
+      schema: 1, verdict: 'needs-fixes', reviewer: { kind: 'claude', id: 'claude:reviewer' },
+      findings: [{ id: 'B1', severity: 'blocking', path: 'src/é.mjs', line: 3, rule: 'REV-3', text: 'A lost event.' }],
+    },
+  };
+  for (const [rel, doc] of Object.entries(files)) put(dir, rel, doc);
+  const before = Object.fromEntries(Object.keys(files).map((rel) => [rel, readFileSync(join(dir, rel), 'utf8')]));
+  const untouched = snapshot(dir, { skip: (r) => r in files });
+  const kinds = { ...KINDS, ...VERIFY_KINDS };
+  const out = state.migrate(state.open(dir, { names, kinds }), { at: new Date(AT) });
+  assert.deepEqual(out.steps.map(({ rel, from, to, ids }) => ({ rel, from, to, ids })).sort((a, b) => a.rel.localeCompare(b.rel)), [
+    { rel: 'tasks/T-AB-1/review-r1.json', from: 1, to: 2, ids: ['009-review-focus'] },
+    { rel: 'tasks/T-AB-1/verify.json', from: 1, to: 2, ids: ['008-verify-machine'] },
+  ]);
+  for (const rel of Object.keys(files)) {
+    const want = before[rel].replace(/^ {2}"schema": 1,$/m, '  "schema": 2,');
+    assert.notEqual(want, before[rel], `${rel}: the schema line was found`);
+    assert.equal(readFileSync(join(dir, rel), 'utf8'), want, `${rel}: only the schema changed, byte for byte`);
+    assert.equal(readFileSync(join(dir, out.backup, rel), 'utf8'), before[rel], `${rel}: the original is backed up`);
+  }
+  assert.deepEqual(snapshot(dir, { skip: (r) => r in files || r.startsWith('local/backup') }), untouched, 'nothing else changed');
+  assert.deepEqual(state.migrate(state.open(dir, { names, kinds })).steps, [], 'a second run writes nothing');
+});
