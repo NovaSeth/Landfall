@@ -18,9 +18,20 @@ const plain = (e) => ({ code: e.code, message: e.message, hint: e.hint ?? '' });
 
 // The stop line: the step and its exit code first, the resuming command last and whole; the step's own error is
 // clipped to the room left within the envelope's message limit (fix round 1, F2), or left out when none is left.
+// A long task list becomes its count, a long retry command its first whole IDs and how many more (all of them are in
+// --json data.tasks), so head and tail together stay within 200 characters (fix round 2).
+const HEAD_IDS_MAX = 60;
+const NEXT_MAX = 120;
 export function stopMessage({ names, ids, tasks, step, code, why }) {
-  const head = `${tasks.join(', ')}: close stopped at ${step} (exit ${code})`;
-  const tail = `; next: ${names.bin} close ${ids.join(' ')}`;
+  const listed = tasks.join(', ');
+  const head = `${listed.length <= HEAD_IDS_MAX ? listed : `${tasks.length} tasks`}: close stopped at ${step} (exit ${code})`;
+  let next = `${names.bin} close ${ids.join(' ')}`;
+  if (next.length > NEXT_MAX) {
+    let shown = 0;
+    while (shown < ids.length && `${names.bin} close ${ids.slice(0, shown + 1).join(' ')}`.length <= NEXT_MAX) shown++;
+    next = `${names.bin} close ${ids.slice(0, shown).join(' ')} … (+${ids.length - shown} more; all ${ids.length} in --json data.tasks)`;
+  }
+  const tail = `; next: ${next}`;
   const room = LIMITS.message - head.length - tail.length - 2;
   return `${head}${why && room >= 10 ? `: ${clip(why, room)}` : ''}${tail}`;
 }
