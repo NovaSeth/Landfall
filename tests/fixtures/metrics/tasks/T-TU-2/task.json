@@ -1,0 +1,64 @@
+{
+  "schema": 3,
+  "id": "T-TU-2",
+  "kind": "task",
+  "title": "Metrics fixture 2",
+  "lane": null,
+  "owner": "TU",
+  "class": "standard",
+  "classHistory": [],
+  "status": "done",
+  "round": 0,
+  "base": null,
+  "branch": null,
+  "events": [
+    {
+      "at": "2026-11-04T00:00:00Z",
+      "by": "TU",
+      "event": "created",
+      "data": {}
+    },
+    {
+      "at": "2026-11-04T01:00:00Z",
+      "by": "TU",
+      "event": "started",
+      "data": {}
+    },
+    {
+      "at": "2026-11-04T01:10:00Z",
+      "by": "TU",
+      "event": "fix-round",
+      "data": {}
+    },
+    {
+      "at": "2026-11-04T01:20:00Z",
+      "by": "TU",
+      "event": "fix-round",
+      "data": {}
+    },
+    {
+      "at": "2026-11-04T01:30:00Z",
+      "by": "TU",
+      "event": "fix-round",
+      "data": {}
+    },
+    {
+      "at": "2026-11-04T01:40:00Z",
+      "by": "TU",
+      "event": "review",
+      "data": {}
+    },
+    {
+      "at": "2026-11-04T02:00:00Z",
+      "by": "TU",
+      "event": "implementer",
+      "data": {}
+    },
+    {
+      "at": "2026-11-04T02:30:00Z",
+      "by": "TU",
+      "event": "merged",
+      "data": {}
+    }
+  ]
+}

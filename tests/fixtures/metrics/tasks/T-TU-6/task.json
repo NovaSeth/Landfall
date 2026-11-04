@@ -1,0 +1,22 @@
+{
+  "schema": 3,
+  "id": "T-TU-6",
+  "kind": "task",
+  "title": "Metrics fixture 6",
+  "lane": null,
+  "owner": "TU",
+  "class": "standard",
+  "classHistory": [],
+  "status": "new",
+  "round": 0,
+  "base": null,
+  "branch": null,
+  "events": [
+    {
+      "at": "2026-11-04T00:00:00Z",
+      "by": "TU",
+      "event": "created",
+      "data": {}
+    }
+  ]
+}

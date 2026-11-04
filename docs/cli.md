@@ -85,6 +85,7 @@ Commands:
   loop status          Print the loop: ticks, wall time and cost against the caps, the stall count, and the exit once it ended.
   loop stop            End the running loop: exit DONE, so no wakeup is scheduled again; an ended loop is left as it is.
   method               Print one pack or one section of the method by name, or the names of every pack and section.
+  metrics              Print the seven KPI rows from task events and repository transcripts; writes nothing.
   migrate              Run the forward migrations on every state file of this repository; --dry-run lists the steps and writes nothing.
   mirror github        Mirror tasks to GitHub issues, one way: opt-in, prints its target repository, writes only with --yes or a terminal.
   profile gates apply  Replace the profile gates with the candidates the scan detects; only with an active gate-change decision.
@@ -930,6 +931,30 @@ Arguments:
 
 Read-only.
 Exit codes: 0 OK · 2 USAGE
+```
+
+### `landfall metrics [--day <YYYY-MM-DD>] [--since <YYYY-MM-DD>] [--json]`
+
+```text
+usage: landfall metrics [--day <YYYY-MM-DD>] [--since <YYYY-MM-DD>] [--json]
+
+Print the seven KPI rows from task events and repository transcripts; writes nothing.
+Default: today (UTC). --day and --since exclude each other; --since includes the named day onward.
+Tasks: any event in the period; closed means a merged event, falling back to done. Fix rounds count events
+over the whole history of those tasks. Backlog is all currently open tasks, including blocked tasks.
+Calls and context: main-checkout sessions. Cache reads: those sessions, worktree sessions and subagents.
+Only requests timestamped in the period count; resumed requests are deduplicated. Context is input plus
+cache writes plus cache reads. Start is the first started event; end is the last merged event, else done.
+Last review uses the last review or implementer event, falling back to start, matching the measurement scripts.
+Missing data prints n/a with a reason. --json: data.period and seven data.rows (id, label, value, unit, reason;
+the fix-round row also has total). Unavailable values are null; durations are minutes, without rounding.
+
+Options:
+  --day <YYYY-MM-DD>    one UTC calendar day (default: today)
+  --since <YYYY-MM-DD>  from this UTC calendar day onward, inclusive
+
+Read-only.
+Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
 ```
 
 ### `landfall migrate [--dry-run] [--yes] [--json]`
