@@ -380,7 +380,9 @@ export function removeShape(c, ctx) {
 // find … -delete, or -exec / -execdir / -ok rm …, removes from each start path (default `.`), whatever the filters:
 // each start path is a removal target. An option word with an unquoted glob may be -delete (review r2 F2): the same.
 const FIND_GLOBAL = /^-(H|L|P|E|X|s|x|d|O\d*|D)$/;
-// An unquoted glob in any word may expand to an action (-delete, [-]delete, ?delete, *, review r3 F2); -exec … of a
+// An unquoted glob in option position may expand to an action: a word that starts with -, *, ? or [ (-d[e]lete,
+// [-]delete, ?delete, *, review r3 F2); a fixed-prefix path glob (docs/*) cannot and is read as at the base (review r4
+// F2). -exec … of a
 // program that is no plain reader (a wrapper, a shell, xargs, a glob: D-MG-58) may remove; a guarded word in it is left
 // to the caller, which blocks it as code.
 const EXEC_READERS = new Set(['cat', 'head', 'tail', 'wc', 'ls', 'stat', 'file', 'grep', 'egrep', 'fgrep', 'echo', 'printf', 'test', '[',
@@ -389,7 +391,7 @@ export function findDeleteShape(c, ctx) {
   const w = c.words.map((x) => x.text);
   const k = w.findIndex((t) => /^-(exec|execdir|ok|okdir)$/.test(t));
   const runs = k > 0 && !EXEC_READERS.has(base(w[k + 1] ?? '')) && !(ctx.codeTok?.(w.slice(1).join(' ')) ?? true);
-  if (!w.includes('-delete') && !(k > 0 && base(w[k + 1] ?? '') === 'rm') && !runs && !c.words.some((x) => x.glob)) return null;
+  if (!w.includes('-delete') && !(k > 0 && base(w[k + 1] ?? '') === 'rm') && !runs && !c.words.some((x) => x.glob && /^[-*?[]/.test(x.text))) return null;
   const starts = [];
   for (const word of c.words.slice(1)) {
     if (FIND_GLOBAL.test(word.text)) continue;

@@ -142,45 +142,15 @@ function unquotedGlob(src) {
   }
   return false;
 }
-export const closedShapes = (src) => unquotedGlob(src) || src.replace(/['"]/g, '').split(/[\s;&|<>()]+/).some((t) => GATE_WORD.test(t) || ASSIGN_WORD.test(t));
+const gateWords = (src) => src.replace(/['"]/g, '').split(/[\s;&|<>()]+/);
+export const closedShapes = (src) => unquotedGlob(src) || gateWords(src).some((t) => GATE_WORD.test(t) || ASSIGN_WORD.test(t));
+// D-MG-58 fallback for literal substitution (review r4 F1): in a line with an assignment word, a setter or code-runner
+// word anywhere or an unquoted glob means a substituted value may not be the one the shell uses.
+const substUnsafe = (src) => gateWords(src).some((t) => ASSIGN_WORD.test(t)) && (unquotedGlob(src) || gateWords(src).some((t) => GATE_WORD.test(t)));
 // The last expansion (expandLiterals → parse of its result in one evaluate call): parse closes the shapes for a text
 // derived from a command that closes them (an assignment substituted away). Only ever makes parse stricter.
 let expansion = { out: null, closed: true };
 
-// A simple command (one top-level segment) that may set or unset a shell variable in the line's shell (review r3 F3:
-// the word as data, `echo read`, is none): its program, after redirections, assignments and the keywords before a
-// command, is a setting builtin or code run in this shell; a wrapper with such a word after it; printf or wait with an
-// option or an expansion as its first argument (-v / -p). Quotes are dropped first (`pr"in"tf` is printf), a
-// redirection glued to a word (`printf>/dev/null`) is cut off it.
-const SETTER_BUILTIN = /^(?:read|mapfile|readarray|getopts|declare|typeset|local|export|readonly|unset|let|eval|source|\.|set|shift|trap)$/;
-const OPT_SETTER = /^(?:printf|wait)$/;
-const PREFIX_WORD = /^(?:while|until|if|then|do|else|elif|!|time)$/;
-const WRAPPER_WORD = /^(?:command|builtin|exec|nohup|setsid|nice|ionice|timeout|stdbuf|sudo|doas|env|caffeinate|chronic|unbuffer)$/;
-const REDIR_WORD = /^\d*(?:[<>]|&>)/;
-const REDIR_ALONE = /^\d*(?:[<>]+|&>+)&?$/;
-const cut = (t) => t.split(/[<>]/)[0];
-// The words of ws from k on without the redirections (a separate target is skipped with its operator).
-function plainWords(ws, k) {
-  const out = [];
-  for (let i = k; i < ws.length; i++) {
-    if (REDIR_WORD.test(ws[i])) { if (REDIR_ALONE.test(ws[i])) i++; continue; }
-    out.push(ws[i]);
-  }
-  return out;
-}
-function segmentSets(text) {
-  const ws = plainWords(text.replace(/['"]/g, '').split(/\s+/).filter(Boolean), 0);
-  let k = 0;
-  while (k < ws.length && (ASSIGN_WORD.test(ws[k]) || PREFIX_WORD.test(ws[k]))) k++;
-  const cmd = cut(ws[k] ?? '');
-  if (SETTER_BUILTIN.test(cmd)) return true;
-  if (WRAPPER_WORD.test(cmd)) return ws.slice(k + 1).some((t) => SETTER_BUILTIN.test(cut(t)) || OPT_SETTER.test(cut(t)));
-  return OPT_SETTER.test(cmd) && /^[-$]/.test(ws[k + 1] ?? '');
-}
-function setterCommand(src) {
-  const segs = segments(src);
-  return segs === null || segs.some((x) => segmentSets(x.text));
-}
 // A loop body that may set or unset a variable, or skip the rest of a pass, is not unrolled (review r1 F2, F3): an
 // unrolled body runs unconditionally in the guard's reading, so a value it sets would reach later words. Any word (quotes
 // stripped) that is an assignment, a builtin that sets, unsets or reads a variable by name, code from text, or
@@ -236,13 +206,13 @@ function loopSegment(src) {
   return null;
 }
 
-// With a setter command in the line (setterCommand) a substituted value may not be the one the shell uses: the text as
-// written is appended to the expansion, so the parser still rejects the expansion while the prescan and the state
-// checks also read the substituted text (review r3 F1: a state path assembled from a literal variable stays visible).
+// Literal substitution reads the line as at the base; when substUnsafe holds, the text as written is appended to the
+// expansion, so the parser still rejects the line while the prescan and the state checks also read the substituted
+// text (review r3 F1: a state path assembled from a literal variable stays visible).
 export function expandLiterals(src) {
   const closed = closedShapes(src);
   let out = expandText(src, 0, closed);
-  if (out !== src && setterCommand(src)) out = `${out}\n${src}`;
+  if (out !== src && substUnsafe(src)) out = `${out}\n${src}`;
   expansion = { out, closed };
   return out;
 }
@@ -276,7 +246,7 @@ function expandText(src, depth, closed) {
   if (!vars.size) return src;
   const text = rest.map((s) => s.text + s.sep).join('').replace(/^\s+/, '');
   // a bare occurrence of the name (not $NAME, ${NAME}) sets or reads it another way: no proof of its value
-  for (const name of [...vars.keys()]) if (bareUse(name).test(text)) vars.delete(name);
+  for (const name of [...vars.keys()]) if (new RegExp(`(?<![\\w$\\{])${name}(?![\\w])`).test(text)) vars.delete(name);
   if (!vars.size) return src;
   return substitute(text, vars);
 }
