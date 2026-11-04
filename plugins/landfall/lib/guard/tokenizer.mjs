@@ -122,12 +122,21 @@ function substitute(text, vars) {
 // The body of `loop` ([, name, words, body]) once per literal word with $NAME substituted, or null (no proof of the
 // value: a word that is not a literal, a special NAME, the body naming NAME another way, a result over UNROLL_MAX).
 const UNROLL_MAX = 65536;
+// Before a bare occurrence of a name: not a word character, not `$` (a $NAME reference), not `${` (a ${NAME} reference);
+// the `{` of a brace list does count (review r1 F1: printf -v {dest,…} sets dest).
+const BARE_BEFORE = '(?<![\\w$])(?<!\\$\\{)';
+// A loop body that may set or unset a variable, or skip the rest of a pass, is not unrolled (review r1 F2, F3): an
+// unrolled body runs unconditionally in the guard's reading, so a value it sets would reach later words. Any word (quotes
+// stripped) that is an assignment, a builtin that sets, unsets or reads a variable by name, code from text, or
+// break / continue.
+const BODY_SETTER = /^(?:read|mapfile|readarray|printf|declare|export|local|readonly|typeset|getopts|unset|let|wait|eval|source|\.|break|continue|return|exit|set|shift)$/;
+const bodySets = (body) => body.split(/[\s;&|]+/).map((t) => t.replace(/['"]/g, '')).some((t) => BODY_SETTER.test(t) || /^[A-Za-z_]\w*(?:\[[^\]]*\])?\+?=/.test(t));
 const LOOPS = 8;
 function unroll(loop) {
   const [, name, list, body] = loop;
   const words = list.split(/\s+/).filter(Boolean).map(literal);
   if (!words.length || words.some((w) => w === null) || SPECIAL.test(name) || ENV_EXEC.test(name)) return null;
-  if (new RegExp(`(?<![\\w$\\{])${name}(?!\\w)`).test(body)) return null;
+  if (new RegExp(`${BARE_BEFORE}${name}(?!\\w)`).test(body) || bodySets(body)) return null;
   if (words.length * (body.length + Math.max(...words.map((w) => w.length))) > UNROLL_MAX) return null;
   return words.map((w) => substitute(body, new Map([[name, w]]))).join('; ');
 }
@@ -201,7 +210,7 @@ function expandText(src, depth) {
   if (!vars.size) return src;
   const text = rest.map((s) => s.text + s.sep).join('').replace(/^\s+/, '');
   // a bare occurrence of the name (not $NAME, ${NAME}) sets or reads it another way: no proof of its value
-  for (const name of [...vars.keys()]) if (new RegExp(`(?<![\\w$\\{])${name}(?![\\w])`).test(text)) vars.delete(name);
+  for (const name of [...vars.keys()]) if (new RegExp(`${BARE_BEFORE}${name}(?![\\w])`).test(text)) vars.delete(name);
   if (!vars.size) return src;
   return substitute(text, vars);
 }
