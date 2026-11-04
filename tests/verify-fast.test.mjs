@@ -185,3 +185,32 @@ test('a document-only change runs only the guards; a later full run is not refus
   assert.equal(full.doc.mode.kind, 'full');
   assert.ok(!full.reasons.some((x) => x.code === 'collector-changed'), JSON.stringify(full.reasons));
 });
+
+// Fix round 1 (review r1 F1): a path changeSince cannot pass on (control or bidi characters) or a change past the path
+// cap leaves the selection blind to it, so fast mode would decide on a partial list: such a change runs the full set.
+test('fastPlan: a change with a dropped or a truncated path list runs the full set', () => {
+  for (const extra of [{ dropped: true }, { truncated: true }]) {
+    const p = verify.fastPlan({ profile: { gates: GATES, facts }, change: { paths: ['lib/calc/add.mjs'], loc: 1, ...extra }, repoFiles: Object.keys(FILES), trusted: () => true });
+    assert.equal(p.kind, 'full', JSON.stringify(extra));
+    assert.match(p.why, /not every changed path/);
+  }
+});
+
+test('verify: a hidden path with a control character in the diff runs the full suite', (t) => {
+  const r = repo(t);
+  r.write('lib/calc/add.mjs', 'export const add = (a, b) => b + a;\n');
+  r.write('scripts/x\u0001.mjs', 'export {};\n');
+  r.git('add', '-A');
+  r.git('commit', '-q', '-m', 'hidden');
+  const out = r.run({ ci: true });
+  assert.equal(out.doc.mode.kind, 'full', out.doc.mode.why);
+  assert.deepEqual(out.doc.gates.map((g) => g.name), ['test']);
+});
+
+test('verify: a diff over the path cap runs the full suite', (t) => {
+  const r = repo(t);
+  // untracked files: changeSince caps them with the rest, and they skip git's pathspec matching (O(n²) at 10k paths)
+  for (let i = 0; i <= 10000; i++) r.write(`docs/n/f${i}.md`, 'x\n');
+  const out = r.run({ ci: true });
+  assert.equal(out.doc.mode.kind, 'full', out.doc.mode.why);
+});
