@@ -706,3 +706,18 @@ test('saveReceipt never erases saved details with null; a new value replaces the
   const newer = file({ ...first.receipt, gates: { ...gates, attempts: 2 } });
   assert.equal(newer.gates.attempts, 2);
 });
+
+test('saveReceipt keeps saved verify timings and cache when the new gates lack them (fix round 1)', async (t) => {
+  const p = await project(t);
+  const { taskReceipt, saveReceipt } = await lib('receipts/index.mjs');
+  const first = taskReceipt('T-TU-1', { cwd: p.repo, env: p.env, names });
+  const full = { attempts: 1, firstPass: true, gatesMs: 1200, heavyWaitMs: 30, cache: 'miss' };
+  const file = (r) => JSON.parse(readFileSync(saveReceipt(r, { where: first.where, names }).file, 'utf8'));
+  file({ ...first.receipt, gates: full });
+  // The verify events alone (no verify.json): attempts are new, the timings are unknown.
+  const again = file({ ...first.receipt, gates: { attempts: 2, firstPass: true, gatesMs: null, heavyWaitMs: null, cache: null } });
+  assert.deepEqual(again.gates, { ...full, attempts: 2 });
+  // A zero is a value, not a missing one.
+  const zero = file({ ...first.receipt, gates: { ...full, heavyWaitMs: 0 } });
+  assert.equal(zero.gates.heavyWaitMs, 0);
+});
