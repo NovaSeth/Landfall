@@ -485,12 +485,12 @@ const logLines = (file) => {
   assert.ok(text.endsWith('\n'), `${file}: ends with a whole line`);
   return text.slice(0, -1).split('\n').map((l) => JSON.parse(l));
 };
-// Whole lines of `pad` bytes each until the file reaches at least `bytes`; returns the number of lines.
+// Whole lines with `pad` bytes of padding, as many as fit in `bytes` (the next one would not); returns their number.
 function fill(file, bytes, pad = 200) {
   mkdirSync(dirname(file), { recursive: true });
   let text = '';
   let n = 0;
-  while (Buffer.byteLength(text) < bytes) text += logLine(n++, pad);
+  while (Buffer.byteLength(text + logLine(n, pad)) <= bytes) text += logLine(n++, pad);
   writeFileSync(file, text);
   return n;
 }
@@ -514,7 +514,7 @@ test('append: the guard log past its cap keeps the newest half and the new line,
   const s = active(dir);
   const cap = state.LOGS.guard.capBytes;
   const file = join(dir, 'local', 'guard.jsonl');
-  const n = fill(file, cap - 100);
+  const n = fill(file, cap);
   const before = readFileSync(file, 'utf8');
   assert.ok(Buffer.byteLength(before) <= cap && Buffer.byteLength(before) + Buffer.byteLength(logLine(n)) > cap, 'the next line crosses the cap');
   s.append('guard', { at: AT, n, pad: 'p'.repeat(200) });
@@ -535,19 +535,22 @@ test('append: a capped rewrite drops the oldest lines until the new line fits, e
   const s = active(dir);
   const cap = state.LOGS.guard.capBytes;
   const file = join(dir, 'local', 'guard.jsonl');
-  // Many small old lines, then a few large new ones holding nearly all the bytes: half the lines is still over the cap.
+  // 30 small old lines, then 30 large new ones holding nearly all the bytes: the newest half plus the new line is
+  // still over the cap, so some of the large lines go as well.
   let text = '';
-  for (let i = 0; i < 300; i++) text += logLine(i, 1);
-  let i = 300;
-  while (Buffer.byteLength(text) + 3100 < cap) text += logLine(i++, 3000);
+  for (let i = 0; i < 30; i++) text += logLine(i, 1);
+  const pad = Math.floor((cap - 200 - Buffer.byteLength(text)) / 30) - Buffer.byteLength(logLine(59, 0));
+  for (let i = 30; i < 60; i++) text += logLine(i, pad);
+  assert.ok(Buffer.byteLength(text) <= cap && Buffer.byteLength(text) > cap - 300, 'the log is just under the cap');
   mkdirSync(dirname(file), { recursive: true });
   writeFileSync(file, text);
-  s.append('guard', { at: AT, n: 'new', pad: 'p'.repeat(3000) });
+  s.append('guard', { at: AT, n: 'new', pad: 'p'.repeat(4000) });
   assert.ok(readFileSync(file).length <= cap, 'at most capBytes');
   const lines = logLines(file);
   assert.equal(lines.at(-1).n, 'new');
   const kept = lines.slice(0, -1).map((l) => l.n);
-  assert.deepEqual(kept, Array.from({ length: kept.length }, (_, k) => i - kept.length + k), 'a run of the newest lines');
+  assert.ok(kept.length > 0 && kept.length < 30, `fewer than the newest half: ${kept.length}`);
+  assert.deepEqual(kept, Array.from({ length: kept.length }, (_, k) => 60 - kept.length + k), 'a run of the newest lines');
 });
 
 test('append: a log without capBytes is never truncated, byte for byte as before', (t) => {
@@ -567,7 +570,7 @@ test('append: a line written outside the lock while a capped rewrite is paused i
   const { base, dir } = scratch(t);
   active(dir);
   const file = join(dir, 'local', 'guard.jsonl');
-  const n = fill(file, state.LOGS.guard.capBytes - 100);
+  const n = fill(file, state.LOGS.guard.capBytes);
   const sig = join(base, 'sig');
   mkdirSync(sig);
   const code = `const state = await import(${JSON.stringify(STATE)});

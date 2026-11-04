@@ -598,8 +598,35 @@ export class Store {
       if (entry === undefined) return null;
       const errors = validate({ t: 'data', maxBytes: log.entryBytes }, entry);
       if (errors.length) throw new StateError(errors[0].code, 'USAGE', `${this.abs(log.file)}: ${errors[0].message}`, { hint: 'nothing was logged', details: errors });
-      this.appendLine(log.file, `${text && !text.endsWith('\n') ? '\n' : ''}${JSON.stringify(entry)}\n`);
+      const line = `${JSON.stringify(entry)}\n`;
+      const sep = text && !text.endsWith('\n') ? '\n' : '';
+      if (log.capBytes && Buffer.byteLength(text) + Buffer.byteLength(sep + line) > log.capBytes) this.rewriteCapped(log, text, line);
+      else this.appendLine(log.file, sep + line);
       return entry;
     });
+  }
+
+  // Internal, under the store lock: the log `log` (with capBytes) past its cap becomes its newest half of whole lines,
+  // fewer if that is still over the cap with `line`, then `line`, in one atomic rewrite. An unterminated last line (a
+  // torn write) is dropped. RF1 (REV-3): every store writer of a log appends through append() under this same lock,
+  // so no store line can land between the read and the rename. A line added outside the lock (by hand, or by a
+  // holder whose lock was removed with `state unlock --stale` while it still ran) is read again just before the
+  // rename and kept when the file grew by whole lines; only one written in the instant between that read and the
+  // rename can be lost, the same bound as any writer outside the lock.
+  rewriteCapped(log, text, line) {
+    const bytes = Buffer.byteLength(line);
+    if (bytes > APPEND_MAX) throw new StateError('limit-exceeded', 'USAGE', `${this.abs(log.file)}: a log line is ${bytes} bytes, the limit is ${APPEND_MAX}`, { hint: 'nothing was logged' });
+    const lines = text.split('\n').slice(0, -1);
+    let kept = lines.slice(lines.length - Math.floor(lines.length / 2));
+    let size = kept.reduce((n, l) => n + Buffer.byteLength(l) + 1, 0);
+    let drop = 0;
+    while (drop < kept.length && size + bytes > log.capBytes) size -= Buffer.byteLength(kept[drop++]) + 1;
+    kept = kept.slice(drop);
+    const pause = process.env[`${this.names.envPrefix}TEST_APPEND_PAUSE`];
+    if (pause) pauseUntilSignalled(pause);
+    const now = this.readText(log.file) ?? '';
+    const grown = now.length > text.length && now.startsWith(text) ? now.slice(text.length) : '';
+    const extra = grown.slice(0, grown.lastIndexOf('\n') + 1);
+    this.writeText(log.file, `${kept.map((l) => `${l}\n`).join('')}${extra}${line}`);
   }
 }
