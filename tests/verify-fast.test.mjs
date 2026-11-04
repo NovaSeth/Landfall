@@ -207,10 +207,17 @@ test('verify: a hidden path with a control character in the diff runs the full s
   assert.deepEqual(out.doc.gates.map((g) => g.name), ['test']);
 });
 
-test('verify: a diff over the path cap runs the full suite', (t) => {
+test('changeSince: a change over the path cap is truncated, so fast verify fails closed', async (t) => {
   const r = repo(t);
-  // untracked files: changeSince caps them with the rest, and they skip git's pathspec matching (O(n²) at 10k paths)
-  for (let i = 0; i <= 10000; i++) r.write(`docs/n/f${i}.md`, 'x\n');
-  const out = r.run({ ci: true });
-  assert.equal(out.doc.mode.kind, 'full', out.doc.mode.why);
+  const run = await lib('verify/run.mjs');
+  for (let i = 0; i < 4; i++) r.write(`docs/n/f${i}.md`, 'x\n');
+  const where = { worktree: r.dir };
+  const head = r.git('rev-parse', 'HEAD');
+  const under = run.changeSince(where, r.env, head, [], () => false, () => false, 10);
+  assert.equal(under.truncated, false);
+  const over = run.changeSince(where, r.env, head, [], () => false, () => false, 3);
+  assert.equal(over.truncated, true);
+  assert.equal(over.paths.length, 3);
+  const p = verify.fastPlan({ profile: { gates: GATES, facts }, change: over, repoFiles: Object.keys(FILES), trusted: () => true });
+  assert.equal(p.kind, 'full', p.why);
 });

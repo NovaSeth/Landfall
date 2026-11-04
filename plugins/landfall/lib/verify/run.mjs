@@ -245,7 +245,7 @@ function integrationRefs(where, env) {
 // in the merge itself). Without an integration ref every commit of base..HEAD counts: a class may rise, never fall.
 // Plus the uncommitted and untracked changes; the LOC of those paths against the base. Weightless and light paths
 // (lib/router) count no LOC unless they match a risk glob.
-function changeSince(where, env, base, scope, light = () => false, risky = () => false) {
+export function changeSince(where, env, base, scope, light = () => false, risky = () => false, max = MAX_PATHS) {
   const counted = (path) => risky(path) || (!weightless(path) && !light(path));
   const wt = gitIn(where, env, ['diff', '--name-only', '-z', 'HEAD', ...scope]);
   if (wt.status !== 0) return null;
@@ -260,7 +260,7 @@ function changeSince(where, env, base, scope, light = () => false, risky = () =>
     if (own.status !== 0) return null;
     for (const p of own.stdout.split('\0').filter(Boolean)) if (!/^[0-9a-f]{40}$/.test(p)) paths.add(p);
   }
-  const tracked = [...paths].filter((p) => !UNSAFE_PATH.test(p)).slice(0, MAX_PATHS);
+  const tracked = [...paths].filter((p) => !UNSAFE_PATH.test(p)).slice(0, max);
   let loc = 0;
   if (tracked.length) {
     const d = gitIn(where, env, ['diff', '--numstat', '-z', '--no-renames', base, '--', ...tracked]);
@@ -280,7 +280,7 @@ function changeSince(where, env, base, scope, light = () => false, risky = () =>
   // dropped / truncated (T-MG-182 r1 F1): a path left out here is not seen by whoever decides from the list (fastPlan
   // then runs the full set, failing closed)
   const safe = [...paths].filter((p) => !UNSAFE_PATH.test(p));
-  return { paths: safe.slice(0, MAX_PATHS), loc, dropped: safe.length < paths.size, truncated: safe.length > MAX_PATHS };
+  return { paths: safe.slice(0, max), loc, dropped: safe.length < paths.size, truncated: safe.length > max };
 }
 
 // The paths a merge in progress brings onto the target tip (the index against the tip), the state directory left out.
