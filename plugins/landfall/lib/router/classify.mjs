@@ -174,8 +174,8 @@ const strip = ({ code, text, path }) => (path === undefined ? { code, text } : {
 // and its translation, one a batch of screenshots. A path is weightless by its extension alone (a script under docs/ is
 // code; archives, executable formats, .txt manifests such as requirements.txt and .svg, which may carry script, never
 // are: review r1 F4); a change made only of weightless paths is `docs-only`: size never raises it above standard.
-// Test files (under tests/, or named *.test.*) weigh nothing either: neither their lines nor their files count.
-const TEST_PATH = /(?:^|\/)tests\/|\.test\.[^/]*$/i;
+// Test files (the root tests/ directory, or a real *.test.<ext> suffix) never count toward the split thresholds; the trivial cut still counts every file.
+const TEST_PATH = /^tests\/|\.test\.(?:js|mjs|cjs|ts|tsx|py)$/i;
 const WEIGHTLESS_EXT = /\.(?:md|mdx|markdown|rst|adoc|asciidoc|png|jpe?g|gif|webp|avif|ico|bmp|tiff?|pdf|mp[34]|mov|webm|ogg|wav|woff2?|ttf|otf|eot)$/i;
 export const weightless = (path) => WEIGHTLESS_EXT.test(path) || TEST_PATH.test(path);
 
@@ -213,7 +213,7 @@ export function classify({ paths, loc, flags = [], riskPaths = [], thresholds = 
   const big = files.length > trivial.maxFiles || loc > trivial.maxLoc;
   if (lightOnly && big) add('standard', 'light-only', `${files.length} ${files.length === 1 ? 'file' : 'files'}, ${loc} LOC: size never raises prototype or mockup paths above standard`, 'light-only');
   else if (docsOnly && big) add('standard', 'docs-only', `${files.length} documentation, test or binary ${files.length === 1 ? 'file' : 'files'}, ${loc} LOC: size never raises docs above standard`, 'docs-only');
-  if (!docsOnly && sized.length > trivial.maxFiles) add('standard', 'files-over-trivial', `${sized.length} files > ${trivial.maxFiles}`, 'files-over-trivial');
+  if (!docsOnly && files.length > trivial.maxFiles) add('standard', 'files-over-trivial', `${files.length} files > ${trivial.maxFiles}`, 'files-over-trivial');
   if (!docsOnly && loc > trivial.maxLoc) add('standard', 'loc-over-trivial', `${loc} LOC > ${trivial.maxLoc}`, 'loc-over-trivial');
   if (sized.length > split.overFiles) add('standard', 'split-files', `split: ${sized.length} files > ${split.overFiles}`, 'split-files');
   if (!docsOnly && loc > split.overLoc) add('standard', 'split-loc', `split: ${loc} LOC > ${split.overLoc}`, 'split-loc');
