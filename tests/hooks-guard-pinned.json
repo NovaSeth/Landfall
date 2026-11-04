@@ -678,5 +678,8 @@
   ["git pull -- origin task/T-AB-3","main"],
   ["git pull origin +task/T-AB-3:x","main"],
   ["git merge -- task/T-AB-3","none"],
-  ["git pull -- origin task/T-AB-3","none"]
+  ["git pull -- origin task/T-AB-3","none"],
+  ["@BIN@ close T-AB-1 --yes | tail -1","none"],
+  ["@BIN@ close T-AB-1 T-AB-2 --yes 2>&1 | head","none"],
+  ["./bin/@BIN@ close T-AB-1 | cat","none"]
 ]

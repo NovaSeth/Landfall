@@ -366,6 +366,8 @@ const NEW_BLOCK = [
   // are no gate (ruling R60: verify re-runs the gates itself)
   ['bash .workflow/bin/budget.sh agent | tail -1', 'TRP-2'], ['.workflow/bin/budget.sh agent | tail -1', 'TRP-2'], ['env bash .workflow/bin/budget.sh e2e | cat', 'TRP-2'],
   ['@BIN@ verify T-AB-1 | tail -1', 'TRP-2'], ['@BIN@ secrets | tail -1', 'SEC-6'],
+  // T-MG-178 fix round 1 (F1): close runs verify and task merge, so a pipe after it hides their exit code too
+  ['@BIN@ close T-AB-1 --yes | tail -1', 'TRP-2'], ['@BIN@ close T-AB-1 T-AB-2 --yes 2>&1 | head', 'TRP-2'], ['./bin/@BIN@ close T-AB-1 | cat', 'TRP-2'],
   ['@BIN@ secrets --range main..HEAD 2>&1 | head', 'SEC-6'], ['@BIN@ slot acquire agent | cat', 'TRP-2'], ['@BIN@ heavy -- npm test | tail -1', 'TRP-2'],
   ['./bin/@BIN@ verify T-AB-1 | tail -1', 'TRP-2'],
   // a gate behind a wrapper (env, nice, timeout, command) is still the executed program
@@ -490,6 +492,7 @@ const NEW_ALLOW = [
   ['@BIN@ verify T-AB-1'], ['@BIN@ secrets; echo $?'], ['@BIN@ heavy -- npm test'], ['@BIN@ status | head -5'], ['@BIN@ rule SEC-3 | cat'],
   // with --json the exit code is in the envelope: a pipe after the own command reads data (retro 2026-10 §3.9)
   ['@BIN@ --json verify T-AB-1 | jq .code'], ['@BIN@ secrets --json | jq .code'], ['@BIN@ verify T-AB-1 --json 2>&1 | head -c 300'],
+  ['@BIN@ close T-AB-1 --yes'], ['@BIN@ --json close T-AB-1 --yes | jq .code'], ['@BIN@ close T-AB-1 --json --yes | jq .code'], ['@BIN@ findings close B-AB-1 --task T-AB-1 | cat'],
   ['@BIN@ slot list | cat'], ['echo npm test | cat'], ['cat .workflow/bin/budget.sh | head'], ['git commit -m "budget"; echo $?'],
   // reading or unsetting a config key that runs commands; other keys
   ['git config core.pager'], ['git config --get core.editor'], ['git config --unset core.pager'], ['git config --get-regexp alias'],

@@ -146,3 +146,18 @@ test('close <id…> closes several tasks as one batch: one merge step with one g
   for (const id of [a.id, b.id]) assert.ok(p.task(id).mergedAt, `${id} merged`);
   assert.equal(p.git(p.dir, 'status', '--porcelain'), '');
 });
+
+// Fix round 1 (F2): the envelope clips a message to LIMITS.message; a long step error must not cut off the next command.
+test('a stop line keeps the step and the whole next command within the message limit, whatever the step error', async () => {
+  const { stopMessage } = await import(join(pluginDir, 'lib', 'cli', 'close.mjs'));
+  const { LIMITS, normalizeError } = await import(join(pluginDir, 'lib', 'cli', 'envelope.mjs'));
+  const ids = ['T-AB-1', 'T-AB-2'];
+  const next = `next: ${names.bin} close T-AB-1 T-AB-2`;
+  for (const why of ['x'.repeat(260), 'y'.repeat(5000), 'short cause', undefined]) {
+    const message = normalizeError({ code: 'close-stopped', message: stopMessage({ names, ids, tasks: ids, step: 'verify', code: 1, why }) }).message;
+    assert.ok(message.length <= LIMITS.message, `${message.length}`);
+    assert.ok(message.startsWith('T-AB-1, T-AB-2: close stopped at verify (exit 1)'), message);
+    assert.ok(message.endsWith(`; ${next}`), message);
+    if (why === 'short cause') assert.ok(message.includes(': short cause;'), message);
+  }
+});
