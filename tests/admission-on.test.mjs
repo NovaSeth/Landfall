@@ -7,7 +7,7 @@ import { readFileSync, writeFileSync, readdirSync, mkdirSync, rmSync } from 'nod
 import { spawn } from 'node:child_process';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { isolateProcessEnv, isolatedEnv } from './helpers/isolated-env.mjs';
+import { isolateProcessEnv, isolatedEnv, relaxAdmission } from './helpers/isolated-env.mjs';
 import { CALL_WALL_GUARD_MS, cpuTimed } from './helpers/cpu-time.mjs';
 import { hook, lib, names, pluginDir, repo } from './helpers/hook-fixture.mjs';
 
@@ -20,7 +20,8 @@ const admit = (f, n) => hook('admit-agent', { hook_event_name: 'PreToolUse', too
 const bind = (f, n, agentId) => hook('bind-agent', { hook_event_name: 'PostToolUse', tool_name: 'Agent', session_id: 'sess-1', cwd: f.dir,
   tool_use_id: `toolu_${n}`, tool_input: { subagent_type: type }, tool_response: { agentId } }, { env: f.env });
 const leases = (f) => sched.snapshot({ names, env: f.env }).leases.filter((l) => l.kind === 'agent');
-const flagOn = (f) => f.store.write('config', null, { schema: 1, flags: { admission: 'on' } });
+// The fixture's CLAUDE_PLUGIN_DATA gets the relaxed calibration (T-MG-163): these tests check the agent table, not the load.
+const flagOn = (f) => { relaxAdmission(f.env); f.store.write('config', null, { schema: 1, flags: { admission: 'on' } }); };
 const bash = (f, extra = {}) => hook('guard-bash', { hook_event_name: 'PreToolUse', tool_name: 'Bash', session_id: 'sess-1', cwd: f.dir,
   tool_input: { command: 'git status' }, ...extra }, { env: f.env });
 const leaseFile = (f) => {
