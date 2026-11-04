@@ -72,10 +72,12 @@ function world(on: Parameters<Parameters<typeof test>[1]>[1], { status = STATUS,
   // the engine's agent list, which a test changes as agents start and end
   const agents: { id: string; description: string; type: string; status: string }[] = [{ id: 'a1', description: 'Review T-TU-1 round 2', type: 'landfall:reviewer', status: 'running' }]
   // set by a test to make the CLI fail (killed at its timeout, not found)
-  const cli = { fails: false }
-  on('process.run', ($, e) => {
+  // `runsMs`: how long `runs list` takes to answer, on the test's clock (review r1 F1: a slow refresh)
+  const cli = { fails: false, runsMs: 0 }
+  on('process.run', async ($, e) => {
     argvs.push([...e.argv])
     if (cli.fails) return { deny: 'the child was killed at 8000 ms' }
+    if (e.argv.includes('runs') && cli.runsMs > 0) await clock.sleep(cli.runsMs)
     return answer(e.argv.includes('runs') ? runs : status)
   })
   on('agent.list', () => ({ value: agents.map(a => ({ ...a })) }))
@@ -90,7 +92,8 @@ function world(on: Parameters<Parameters<typeof test>[1]>[1], { status = STATUS,
     const { Text } = $.ui.resolve(e)
     return <Text>engine</Text>
   })
-  return { statuses, argvs, agents, cli, clock: mock.clock(on, { now: Date.parse('2026-10-22T10:05:00.000Z') }) }
+  const clock = mock.clock(on, { now: Date.parse('2026-10-22T10:05:00.000Z') })
+  return { statuses, argvs, agents, cli, clock }
 }
 
 test('the pane says, from general to detail, the project, the tasks with their stage, the agents with role, task, round and time, the slots and the next step', async ($, on) => {
@@ -777,6 +780,23 @@ test('a task that goes from open to done stays for its celebration, frames 1…N
   expect(new Set(shown).size).toBe(8)
   expect(shown.slice(1).some(r => /[░▒▓]/.test(r))).toBe(true)
   // then the row is gone: the next line is the no-open-tasks hint
+  for (const r of rows.slice(8)) expect(r).toBe('  no open tasks (landfall task new)')
+})
+
+test('a slow refresh still celebrates from the first frame: the exit starts when the new snapshot is committed (review r1 F1)', async ($, on) => {
+  const status = withTask({ status: 'implemented' })
+  const w = world(on, { status, runs: quiet })
+  w.agents.length = 0
+  await $.session.start(SESSION)
+  await w.clock.settle()
+  status.data.tasks[0].status = 'done'
+  w.cli.runsMs = 2_100
+  // the poll fires at 15 s; `runs list` answers 2.1 s later, and the snapshot is committed then
+  await w.clock.advance(15_000)
+  await w.clock.advance(2_100)
+  const rows = await rowsAfter($, w, 10, 250)
+  expect(rows[0]).toMatch(/^✓ T-TU-7 std Pane rows/)
+  expect(new Set(rows.slice(0, 8)).size).toBe(8)
   for (const r of rows.slice(8)) expect(r).toBe('  no open tasks (landfall task new)')
 })
 
