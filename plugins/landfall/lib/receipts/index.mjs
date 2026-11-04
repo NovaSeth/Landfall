@@ -112,7 +112,11 @@ export function saveReceipt(receipt, { where, names }) {
   store.update(RECEIPT.name, receipt.task, (cur) => {
     // Null never erases: a receipt without verify or review data keeps the saved details.
     const keep = (k) => (receipt[k] === null && cur?.[k] != null ? { [k]: cur[k] } : {});
-    const next = cur ? { ...receipt, ...keep('gates'), ...keep('defectsBeforeMerge') } : receipt;
+    // The verify timings and cache come from verify.json: each one missing in the new gates keeps its saved value.
+    const gates = receipt.gates && cur?.gates
+      ? { gates: { ...receipt.gates, ...Object.fromEntries(['gatesMs', 'heavyWaitMs', 'cache'].filter((k) => receipt.gates[k] === null && cur.gates[k] != null).map((k) => [k, cur.gates[k]])) } }
+      : keep('gates');
+    const next = cur ? { ...receipt, ...gates, ...keep('defectsBeforeMerge') } : receipt;
     if (cur && isDeepStrictEqual(cur, next)) return undefined;
     if (cur && tokenSum(receipt.tokens) < tokenSum(cur.tokens)) { outcome = 'kept'; return undefined; }
     outcome = 'saved';
