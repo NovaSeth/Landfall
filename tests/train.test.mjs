@@ -65,17 +65,20 @@ function repo(t, { extra = '' } = {}) {
   git('add', '-A');
   git('commit', '-q', '-m', 'state');
   // An approved critical task (review r1 approved, not done) on a branch from main. edit(): changes files on the branch.
-  const task = (name, edit, { review = true, after = [] } = {}) => {
+  // The review event binds the reviewed commit (head: the branch tip), as `review record` writes it (fix round 1, F2).
+  const task = (name, edit, { review = true, after = [], cls = 'critical' } = {}) => {
     git('checkout', '-q', '-b', name, 'main');
     edit(write);
     git('add', '-A', '--', '.', `:(exclude)${names.stateDir}`);
     git('commit', '-q', '-m', name);
+    const tipSha = git('rev-parse', 'HEAD');
     git('checkout', '-q', 'main');
+    const reviewed = review ? [{ at: AT, by: handle, event: 'review', data: { round: 1, verdict: 'approved', reviewer: 'claude', head: tipSha } }] : [];
     const id = state.allocateId(store, {
       prefix: 'T', handle,
       build: (tid) => ({
-        id: tid, kind: 'task', title: `task ${name}`, lane: null, owner: handle, class: 'critical', classHistory: [], status: 'in-review', round: 1,
-        events: [{ at: AT, by: handle, event: 'created', data: after.length ? { after } : {} }], base: head, branch: name,
+        id: tid, kind: 'task', title: `task ${name}`, lane: null, owner: handle, class: cls, classHistory: [], status: 'in-review', round: 1,
+        events: [{ at: AT, by: handle, event: 'created', data: after.length ? { after } : {} }, ...reviewed], base: head, branch: name,
       }),
     });
     writeFileSync(join(stateDir, 'tasks', id, 'report.md'), REPORT);
@@ -175,4 +178,75 @@ test('a task that removes a test is refused by the train without a decision', as
   assert.match(res.env.data.tasks[0].why, /removed or skipped without a decision/);
   assert.equal(r.store.read('task', a).status, 'in-review');
   assert.equal(events(r, a, 'merged').length, 0);
+});
+
+// Fix round 1 (security review r1).
+test('F1: the train reroutes the real change: a trivial task whose branch adds a risk path needs the critical review', async (t) => {
+  const r = repo(t);
+  const id = r.task('feat/risky', (w) => { addTest('x.test.mjs')(w); w('plugins/x/lib/state/migrations/099.mjs', 'export default 1;\n'); }, { review: false, cls: 'trivial' });
+  const res = await cli(['train', id, '--yes'], r);
+  assert.equal(res.code, 1, JSON.stringify(res.env.data.tasks));
+  assert.deepEqual(outcomes(res), [[id, 'skipped']]);
+  assert.match(res.env.data.tasks[0].why, /the change is critical, not trivial/);
+  assert.equal(r.store.read('task', id).status, 'in-review');
+  assert.equal(r.store.read('verify', id), null);
+  assert.equal(r.runs(), 0, 'no gate runs for a train with no eligible task');
+});
+
+test('F2: a commit pushed after the approved review keeps the task out of the train', async (t) => {
+  const r = repo(t);
+  const id = r.task('feat/late', addTest('a.test.mjs'));
+  r.git('checkout', '-q', 'feat/late');
+  r.write('late.txt', 'unreviewed after approval\n');
+  r.git('add', '-A');
+  r.git('commit', '-q', '-m', 'late');
+  r.git('checkout', '-q', 'main');
+  const res = await cli(['train', id, '--yes'], r);
+  assert.equal(res.code, 1);
+  assert.deepEqual(outcomes(res), [[id, 'skipped']]);
+  assert.match(res.env.data.tasks[0].why, /branch changed since its review/);
+  assert.notEqual(spawnSync('git', ['cat-file', '-e', 'HEAD:late.txt'], { cwd: r.dir, env: r.env }).status, 0, 'late.txt is not on main');
+});
+
+test('F2: a review without a recorded commit does not bind the branch', async (t) => {
+  const r = repo(t);
+  const id = r.task('feat/old', addTest('a.test.mjs'));
+  r.store.update('task', id, (cur) => ({ ...cur, events: cur.events.map((e) => (e.event === 'review' ? { ...e, data: { round: 1, verdict: 'approved', reviewer: 'claude' } } : e)) }));
+  r.git('add', '-A');
+  r.git('commit', '-q', '-m', 'old review');
+  const res = await cli(['train', id, '--yes'], r);
+  assert.deepEqual(outcomes(res), [[id, 'skipped']]);
+  assert.match(res.env.data.tasks[0].why, /records no reviewed commit/);
+});
+
+test('F2: review record binds the reviewed commit: the tip of the task branch', async (t) => {
+  const r = repo(t);
+  const id = r.task('feat/rec', addTest('a.test.mjs'), { review: false });
+  const file = join(r.dir, '..', 'review.json');
+  writeFileSync(file, JSON.stringify(APPROVED));
+  const rec = await cli(['review', 'record', id, '--from', file, '--yes'], r);
+  assert.equal(rec.code, 0, JSON.stringify(rec.env.errors));
+  assert.equal(events(r, id, 'review').at(-1).data.head, r.git('rev-parse', 'feat/rec'));
+});
+
+test('F3: a train that died after moving the target is recovered by the next train: merged and done', async (t) => {
+  const r = repo(t);
+  const a = r.task('feat/a', addTest('a.test.mjs'));
+  const b = r.task('feat/b', addTest('b.test.mjs'));
+  // the target already holds both tips; a has done recorded (died before merged), b neither
+  r.git('merge', '-q', '--no-ff', '--no-edit', 'feat/a');
+  r.git('merge', '-q', '--no-ff', '--no-edit', 'feat/b');
+  const head = r.git('rev-parse', 'HEAD');
+  r.store.update('task', a, (cur) => ({ ...cur, status: 'done', events: [...cur.events, { at: AT, by: r.handle, event: 'done', data: { head } }] }));
+  r.git('add', '-A');
+  r.git('commit', '-q', '-m', 'done a');
+  const res = await cli(['train', a, b, '--yes'], r);
+  assert.equal(res.code, 0, JSON.stringify([res.env.errors, res.env.data.tasks]));
+  assert.deepEqual(outcomes(res), [[a, 'merged'], [b, 'merged']]);
+  for (const id of [a, b]) {
+    assert.equal(r.store.read('task', id).status, 'done', id);
+    assert.equal(events(r, id, 'merged').length, 1, id);
+    assert.equal(events(r, id, 'done').length, 1, id);
+  }
+  assert.equal(r.store.read('verify', b).mode, 'train');
 });
