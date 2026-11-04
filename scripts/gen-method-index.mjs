@@ -153,7 +153,7 @@ export function validate(topics, legacyRules = {}) {
       const nums = t.rules.filter((r) => r.prefix === p).map((r) => r.n).sort((a, b) => a - b);
       const missing = Array.from({ length: nums[nums.length - 1] }, (_, i) => i + 1).filter((n) => !nums.includes(n));
       const uncovered = missing.filter((n) => !Object.hasOwn(legacyRules, `${p}-${n}`));
-      if (uncovered.length || new Set(nums).size !== nums.length) errors.push(`${t.file}: ${p} IDs must be continuous from 1 (found ${nums.join(', ')}); a gap is allowed only for 1.x IDs in legacy-ids.json (uncovered: ${uncovered.map((n) => `${p}-${n}`).join(', ') || 'none'}); retire a rule with a tombstone, never delete it`);
+      if (uncovered.length || nums[0] < 1 || new Set(nums).size !== nums.length) errors.push(`${t.file}: ${p} IDs must be continuous from 1 (found ${nums.join(', ')}); a gap is allowed only for 1.x IDs in legacy-ids.json (uncovered: ${uncovered.map((n) => `${p}-${n}`).join(', ') || 'none'}); retire a rule with a tombstone, never delete it`);
     }
     for (const r of t.rules) if (r.always && r.pack !== 'core') errors.push(`${t.file}:${r.line}: ${r.id} is tagged [always] outside "## Core"`);
   }

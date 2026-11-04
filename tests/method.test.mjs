@@ -77,6 +77,7 @@ test('method: rule IDs use one v2 prefix per file, are unique and continuous fro
     owner.set(ids[0][1], f);
     const nums = ids.map((m) => Number(m[2])).sort((a, b) => a - b);
     assert.equal(new Set(nums).size, nums.length, `${f}: no duplicates`);
+    assert.ok(nums[0] >= 1, `${f}: IDs start at 1, no ID 0`);
     const missing = Array.from({ length: nums[nums.length - 1] }, (_, i) => i + 1).filter((n) => !nums.includes(n));
     assert.deepEqual(missing.filter((n) => !LEGACY_RULES[`${ids[0][1]}-${n}`]), [], `${f}: continuous from 1, a gap only for 1.x IDs in legacy-ids.json`);
     for (const m of ids) { assert.ok(!seen.has(m[0]), `${m[0]} in ${f} and ${seen.get(m[0])}`); seen.set(m[0], f); }
@@ -282,6 +283,12 @@ test('validate: a gap passes only when legacy-ids covers every missing ID, other
   assert.match(partial, /ALP-3/);
   assert.doesNotMatch(partial, /ALP-2\b/);
   assert.match(errorsOf(files).join('\n'), /continuous/);
+});
+
+test('validate: rule ID 0 is rejected as not continuous from 1', () => {
+  const files = { 'alpha.md': ALPHA(['**ALP-0.** Zero.', '**ALP-1.** One.']) };
+  assert.match(errorsOf(files).join('\n'), /continuous/);
+  assert.match(errorsOf(files, { 'ALP-0': { retired: 'x' } }).join('\n'), /continuous/);
 });
 
 test('validate: a pack file sits in packs/<pack>/ and holds only that pack; each file has its own prefix', () => {
