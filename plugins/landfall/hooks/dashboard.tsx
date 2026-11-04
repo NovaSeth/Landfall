@@ -367,7 +367,7 @@ export function linesOf(snap: Snapshot, width: number, rows: number, now: number
   out.push({ text: `${snap.project} · ${snap.tier ?? '-'}${mode} · loop ${snap.loop ?? 'off'}`, style: 'head' })
   out.push({ text: `${c.open} open · ${c.active} active · ${c.byStatus.planned ?? 0} planned · ${c.byStatus.new ?? 0} new · ${c.byStatus.done ?? 0} done`, style: 'dim' })
   if (snap.error) out.push({ text: `! ${snap.error}: the rows are from the last answer`, style: 'bad' })
-  const room = Math.max(2, rows - 7 - (snap.error ? 1 : 0))
+  const room = Math.max(3, rows - 7 - (snap.error ? 1 : 0))
 
   out.push({ text: 'TASKS', style: 'section' })
   // working: an active status, or a live agent or run names the task; every other open task waits
@@ -389,13 +389,30 @@ export function linesOf(snap: Snapshot, width: number, rows: number, now: number
   const live = (nested: boolean) => [...snap.agents.map(r => agentLine(r, now, nested)), ...snap.runs.map(r => runLine(r, taken, now, nested))].filter(a => a.live).sort((a, b) => b.since - a.since)
   const nestedLive = live(true)
   const plainLive = live(false)
-  const placed = new Set<string>()
-  let used = 0
-  let nShown = 0
-  for (let i = 0; i < ordered.length; i++) {
-    const left = room - used - (i < ordered.length - 1 ? 1 : 0)
-    if (left < 1) break
-    const t = ordered[i] as TaskView
+  // every line is budgeted (`room`): task rows, agent rows, the folds, the UNASSIGNED heading and its rows. A live agent is never
+  // invisible: a task is shown only when its first agent row (or fold) fits too, else the task folds and its agents go to UNASSIGNED.
+  const minNeed = (k: number): number => {
+    const ids = new Set(ordered.slice(0, k).map(t => t.id))
+    let n = k + (k < ordered.length ? 1 : 0)
+    for (const id of ids) if (nestedLive.some(a => a.task === id)) n++
+    if (plainLive.some(a => !(a.task && ids.has(a.task)))) n += 2
+    return n
+  }
+  let nShown = ordered.length
+  while (nShown > 0 && minNeed(nShown) > room) nShown--
+  const placed = new Set(ordered.slice(0, nShown).map(t => t.id))
+  let extra = room - minNeed(nShown)
+  const rowsFor = (n: number): number => {
+    const more = Math.min(extra, Math.max(0, n - 1))
+    extra -= more
+    return 1 + more
+  }
+  const agentRows = (list: AgentLine[], allot: number) => {
+    const fit = list.length <= allot ? list.length : Math.max(0, allot - 1)
+    for (const a of list.slice(0, fit)) out.push({ ...a.line, text: `    ↳ ${a.line.text}` })
+    if (list.length > fit) out.push({ text: `    ↳ … ${list.length - fit} more`, style: 'dim' })
+  }
+  for (const t of ordered.slice(0, nShown) as TaskView[]) {
     const w = working(t)
     const blocked = t.kind === 'blocked'
     const stage = blocked ? `blocked · ${t.state.replace(/^blocked:\s*/, '')}` : `${w ? 'working' : 'waiting'} · ${t.state}`
@@ -403,18 +420,8 @@ export function linesOf(snap: Snapshot, width: number, rows: number, now: number
     const atWork = named.has(t.id)
     const seen = atWork || touched(t)
     out.push({ text: taskText(t, atWork ? '▶' : seen ? '⏸' : '■', stage, now, width), style: blocked ? 'bad' : atWork ? (beat ? 'live' : 'row') : seen ? 'row' : 'dim' })
-    placed.add(t.id)
-    nShown++
-    used++
     const mine = nestedLive.filter(a => a.task === t.id)
-    const avail = left - 1
-    const fit = mine.length <= avail ? mine.length : Math.max(0, avail - 1)
-    for (const a of mine.slice(0, fit)) out.push({ ...a.line, text: `    ↳ ${a.line.text}` })
-    used += fit
-    if (mine.length > fit && avail >= 1) {
-      out.push({ text: `    ↳ … ${mine.length - fit} more`, style: 'dim' })
-      used++
-    }
+    if (mine.length > 0) agentRows(mine, rowsFor(mine.length))
   }
   if (ordered.length > nShown) out.push({ text: `  … ${ordered.length - nShown} more (landfall task list)`, style: 'dim' })
   if (folded > 0) out.push({ text: `⏸ ${folded} in backlog (landfall task list)`, style: 'dim' })
@@ -424,10 +431,7 @@ export function linesOf(snap: Snapshot, width: number, rows: number, now: number
   const loose = plainLive.filter(a => !(a.task && placed.has(a.task)))
   if (loose.length > 0) {
     out.push({ text: 'UNASSIGNED', style: 'section' })
-    const avail = Math.max(1, room - used)
-    const fit = loose.length <= avail ? loose.length : Math.max(0, avail - 1)
-    for (const a of loose.slice(0, fit)) out.push({ ...a.line, text: `    ↳ ${a.line.text}` })
-    if (loose.length > fit) out.push({ text: `    ↳ … ${loose.length - fit} more`, style: 'dim' })
+    agentRows(loose, rowsFor(loose.length))
   }
 
   const slots = Object.entries(snap.slots)
