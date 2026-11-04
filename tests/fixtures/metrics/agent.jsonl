@@ -1,0 +1,1 @@
+{"type": "assistant", "requestId": "agent", "timestamp": "2026-11-04T03:00:00Z", "message": {"id": "msg-agent", "model": "claude-opus-4-6", "content": [], "usage": {"input_tokens": 0, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 150, "output_tokens": 1}}}

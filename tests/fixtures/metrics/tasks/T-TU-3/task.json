@@ -1,0 +1,40 @@
+{
+  "schema": 3,
+  "id": "T-TU-3",
+  "kind": "task",
+  "title": "Metrics fixture 3",
+  "lane": null,
+  "owner": "TU",
+  "class": "standard",
+  "classHistory": [],
+  "status": "done",
+  "round": 0,
+  "base": null,
+  "branch": null,
+  "events": [
+    {
+      "at": "2026-11-05T00:00:00Z",
+      "by": "TU",
+      "event": "created",
+      "data": {}
+    },
+    {
+      "at": "2026-11-05T01:00:00Z",
+      "by": "TU",
+      "event": "started",
+      "data": {}
+    },
+    {
+      "at": "2026-11-05T02:00:00Z",
+      "by": "TU",
+      "event": "review",
+      "data": {}
+    },
+    {
+      "at": "2026-11-05T03:00:00Z",
+      "by": "TU",
+      "event": "done",
+      "data": {}
+    }
+  ]
+}

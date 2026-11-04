@@ -180,6 +180,28 @@ const ROWS = [
 
   // Views (spec §8.2, §12): lib/ui.
   {
+    name: 'metrics',
+    summary: 'Print the seven KPI rows from task events and repository transcripts; writes nothing.',
+    details: [
+      'Default: today (UTC). --day and --since exclude each other; --since includes the named day onward.',
+      'Tasks: any event in the period; closed means a merged event, falling back to done. Fix rounds count events',
+      'over the whole history of those tasks. Backlog is all currently open tasks, including blocked tasks.',
+      'Calls and context: main-checkout sessions. Cache reads: those sessions, worktree sessions and subagents.',
+      'Only requests timestamped in the period count; resumed requests are deduplicated. Context is input plus',
+      'cache writes plus cache reads. Start is the first started event; end is the last merged event, else done.',
+      'Last review uses the last review or implementer event, falling back to start, matching the measurement scripts.',
+      'Missing data prints n/a with a reason. --json: data.period and seven data.rows (id, label, value, unit, reason;',
+      'the fix-round row also has total). Unavailable values are null; durations are minutes, without rounding.',
+    ],
+    args: [],
+    flags: [
+      { flag: '--day', value: 'YYYY-MM-DD', summary: 'one UTC calendar day (default: today)' },
+      { flag: '--since', value: 'YYYY-MM-DD', summary: 'from this UTC calendar day onward, inclusive' },
+    ],
+    exits: ['OK', 'FAIL', 'USAGE', 'REFUSED', 'ENV'],
+    load: () => import('../metrics/index.mjs').then((m) => m.metrics),
+  },
+  {
     name: 'status',
     summary: 'Show this repository: activation, tier, open tasks with their next step, the loop and leases; the default command.',
     details: [

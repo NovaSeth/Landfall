@@ -1,0 +1,28 @@
+{
+  "schema": 3,
+  "id": "T-TU-4",
+  "kind": "task",
+  "title": "Metrics fixture 4",
+  "lane": null,
+  "owner": "TU",
+  "class": "standard",
+  "classHistory": [],
+  "status": "blocked",
+  "round": 0,
+  "base": null,
+  "branch": null,
+  "events": [
+    {
+      "at": "2026-11-01T00:00:00Z",
+      "by": "TU",
+      "event": "created",
+      "data": {}
+    },
+    {
+      "at": "2026-11-02T00:00:00Z",
+      "by": "TU",
+      "event": "blocked",
+      "data": {}
+    }
+  ]
+}
