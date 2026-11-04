@@ -200,6 +200,9 @@ test('acceptance 3: the phrase anywhere but the whole first line, other forms an
     JSON.stringify({ prompt: `${BIN} loop start`, cwd: p.cwd }),
     JSON.stringify({ prompt: `${BIN} loop start`, cwd: p.cwd, session_id: '../x' }),
     JSON.stringify({ prompt: `${BIN} loop start`, cwd: p.cwd, session_id: 's', hook_event_name: 'PreToolUse' }),
+    // fix round 1: the event name is required, exactly (a hand-made event without it is no UserPromptSubmit)
+    JSON.stringify({ prompt: `${BIN} loop start`, cwd: p.cwd, session_id: 's' }),
+    JSON.stringify({ prompt: `${BIN} loop start`, cwd: p.cwd, session_id: 's', hook_event_name: 'userpromptsubmit' }),
     JSON.stringify({ prompt: `${BIN} loop start`, cwd: join(p.base, 'nowhere'), session_id: 's' })];
   for (const text of malformed) {
     const r = runHook('prompt-consent', text, { env: p.env });

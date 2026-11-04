@@ -187,6 +187,19 @@ test('owned state files: every committed lib/state kind is owned, and an Edit na
   }
 });
 
+test('T-MG-149: the loop start consent is owned: a Write or Edit of it is denied, only the prompt hook writes it (FLW-7)', async (t) => {
+  const { CONSENT } = await lib('hooks/prompt-consent.mjs');
+  const rel = CONSENT.path();
+  assert.equal(ownedFile(rel)?.rule, 'FLW-7', rel);
+  const f = fixture(t);
+  for (const [tool, input] of [['Write', { content: '{"schema":1}\n' }], ['Edit', { old_string: '{', new_string: '{ ' }]]) {
+    const v = edit(f, f.s(rel), input, tool);
+    assert.equal(v.decision, 'deny', `${tool} ${rel}`);
+    assert.match(v.reason, /^FLW-7: blocked a direct edit of /);
+    assert.ok(v.reason.includes(`${names.bin} loop start`), v.reason);
+  }
+});
+
 test('owned state files: nothing the previous hand-written list protected is allowed now (T-MG-39)', (t) => {
   const f = fixture(t);
   const before = [['state.json', 'FLW-7'], ['config.json', 'FLW-7'], ['team/AB.json', 'FLW-7'], ['tasks/T-AB-1/task.json', 'FLW-7'], ['tasks/T-AB-1/verify.json', 'FLW-7'],

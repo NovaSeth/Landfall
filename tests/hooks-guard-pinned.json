@@ -678,5 +678,15 @@
   ["git pull -- origin task/T-AB-3","main"],
   ["git pull origin +task/T-AB-3:x","main"],
   ["git merge -- task/T-AB-3","none"],
-  ["git pull -- origin task/T-AB-3","none"]
+  ["git pull -- origin task/T-AB-3","none"],
+  ["@BIN@ hook prompt-consent","none"],
+  ["@BIN@ hook session-start","none"],
+  ["@BIN@ --json hook prompt-consent","none"],
+  ["node plugins/x/bin/@BIN@ hook prompt-consent","none"],
+  ["plugins/x/bin/@BIN@ hook prompt-consent < event.json","none"],
+  ["X=1 @BIN@ hook prompt-consent","none"],
+  ["env X=1 @BIN@ hook prompt-consent","none"],
+  ["echo {} | @BIN@ hook prompt-consent","none"],
+  ["nice node /opt/p/bin/@BIN@ hook prompt-consent","none"],
+  ["ls; @BIN@ hook guard-bash","none"]
 ]

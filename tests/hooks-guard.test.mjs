@@ -368,6 +368,12 @@ const NEW_BLOCK = [
   ['@BIN@ verify T-AB-1 | tail -1', 'TRP-2'], ['@BIN@ secrets | tail -1', 'SEC-6'],
   ['@BIN@ secrets --range main..HEAD 2>&1 | head', 'SEC-6'], ['@BIN@ slot acquire agent | cat', 'TRP-2'], ['@BIN@ heavy -- npm test | tail -1', 'TRP-2'],
   ['./bin/@BIN@ verify T-AB-1 | tail -1', 'TRP-2'],
+  // T-MG-149 fix round 1: the hook entry point is Claude Code's (hooks.json), never a Bash command: run by hand it could
+  // feed a forged event (a loop start consent) to a hook
+  ['@BIN@ hook prompt-consent', 'FLW-7'], ['@BIN@ hook session-start', 'FLW-7'], ['@BIN@ --json hook prompt-consent', 'FLW-7'],
+  ['node plugins/x/bin/@BIN@ hook prompt-consent', 'FLW-7'], ['plugins/x/bin/@BIN@ hook prompt-consent < event.json', 'FLW-7'],
+  ['X=1 @BIN@ hook prompt-consent', 'FLW-7'], ['env X=1 @BIN@ hook prompt-consent', 'FLW-7'], ['echo {} | @BIN@ hook prompt-consent', 'FLW-7'],
+  ['nice node /opt/p/bin/@BIN@ hook prompt-consent', 'FLW-7'], ['ls; @BIN@ hook guard-bash', 'FLW-7'],
   // a gate behind a wrapper (env, nice, timeout, command) is still the executed program
   ['command @BIN@ verify T-AB-1 | tail -1', 'TRP-2'], ['nice @BIN@ verify T-AB-1 | tail -1', 'TRP-2'], ['env FOO=1 @BIN@ secrets | tail -1', 'SEC-6'],
   ['timeout 600 bash .workflow/bin/budget.sh agent | tail -1', 'TRP-2'], ['env -i npm test | tail -1', UNV], ['npm run budget | tail -1', 'TRP-2', 'npm'],
@@ -484,6 +490,8 @@ const NEW_BLOCK = [
   ['echo x > @STATE@/tasks/T-AB-1/task.json', 'cannot be resolved', 'newer'], ['echo x > @STATE@/tasks/T-AB-1/task.json', 'cannot be resolved', 'nogit'], ['mv @STATEGLOB@ /tmp/', 'cannot be resolved', 'corrupt'],
 ];
 const NEW_ALLOW = [
+  // T-MG-149: the word hook elsewhere in the plugin's own command is data
+  ['@BIN@ task new "hook up the API"'], ['@BIN@ rule FLW-7 hook'], ['@BIN@ status hook'],
   ['git log --oneline task/T-AB-3'], ['git branch -d task/T-AB-3'], ['git merge --abort', null, 'main'],
   // gate commands without a pipe, or with the output in a file
   ['npm test > out.txt 2>&1; echo $?'], ['npm test; echo "exit $?"'], ['node --test tests/a.test.mjs'], ['bash .workflow/bin/budget.sh agent; echo $?'],
@@ -759,6 +767,14 @@ test('guard corpus self-check: no useless JS escapes in command literals (\\; â†
     for (const e of m[0].matchAll(/\\([\s\S])/g)) if (!/[\\nrtbfv0xu]/.test(e[1]) && e[1] !== q && !(q === '`' && e[1] === '$')) useless.push(`${m[0]} (\\${e[1]})`);
   }
   assert.deepEqual(useless, [], 'an escape without meaning in JS: write the backslash as \\\\');
+});
+
+test('T-MG-149: the running plugin\'s own launcher by its path with the hook subcommand is blocked (FLW-7), its other subcommands pass', () => {
+  for (const cmd of [`${LAUNCHER} hook prompt-consent`, `node ${LAUNCHER} hook prompt-consent`, `env X=1 node ${LAUNCHER} --json hook session-start`]) {
+    const v = judge(cmd);
+    assert.equal(v.decision, 'deny', cmd); assert.match(v.reason, /^FLW-7: /, cmd);
+  }
+  for (const cmd of [`${LAUNCHER} status`, `node ${LAUNCHER} rule FLW-7`]) assert.equal(judge(cmd).decision, 'allow', cmd);
 });
 
 test('guard corpus: allowed commands close to blocked ones pass (no false alarms)', () => {

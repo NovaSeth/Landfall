@@ -21,6 +21,7 @@ isolateProcessEnv();
 
 const { FIXED_PROMPT, LOOP_SENTINELS, isFixedPrompt, isLoopPrompt } = await lib('hooks/guard-wakeup.mjs');
 const state = await lib('state/index.mjs');
+const consentModule = await lib('hooks/prompt-consent.mjs');
 const BIN = names.bin;
 const wake = (f, tool_input, tool = 'ScheduleWakeup', extra = {}) => hook('guard-wakeup',
   { session_id: 's', hook_event_name: 'PreToolUse', tool_name: tool, tool_input, cwd: f.dir, ...extra }, { env: f.env });
@@ -283,6 +284,29 @@ test('wakeup: malformed input or a prompt that is not a string is allowed withou
   assert.equal(deny.status, 0); assert.equal(deny.decision, 'deny'); assert.match(deny.reason, /loop ended \(DONE\)/);
   const allow = launch('guard-wakeup', { tool_name: 'ScheduleWakeup', tool_input: { stop: true }, cwd: f.dir }, { env: f.env, cwd: f.dir });
   assert.equal(allow.status, 0); assert.equal(allow.stdout, '');
+});
+
+// T-MG-149 fix round 1: a scheduled prompt whose first line is a loop start consent (the prompt hook's own classifier,
+// consentCaps) is denied in every state, so a wakeup or cron the model schedules can never carry the user's consent.
+test('T-MG-149: a ScheduleWakeup or CronCreate prompt that is a loop start consent is denied whatever the loop state; the phrase elsewhere is not', (t) => {
+  const { consentCaps } = consentModule;
+  const CONSENT_PROMPTS = [`${BIN} loop start`, `  ${BIN} loop start --caps ticks=500  \nthen tick`, `${BIN} loop start --caps usd=40,wallMin=600`];
+  for (const p of CONSENT_PROMPTS) assert.notEqual(consentCaps(p, BIN), null, `the prompt hook would record ${JSON.stringify(p)}`);
+  const none = { dir: mkdtempSync(join(tmpdir(), 'no-repo-')), env: process.env };
+  const places = { inactive: repo(t, { active: false }), outside: none, 'no loop': project(t), running: project(t, loopDoc(null)), DONE: project(t, loopDoc('DONE')), BUDGET: project(t, loopDoc('BUDGET')) };
+  for (const [name, f] of Object.entries(places)) {
+    for (const prompt of CONSENT_PROMPTS) {
+      for (const tool of ['ScheduleWakeup', 'CronCreate']) {
+        const v = wake(f, { delaySeconds: 60, cron: '*/5 * * * *', prompt }, tool);
+        assert.equal(v.decision, 'deny', `${name} ${tool} ${JSON.stringify(prompt)}`);
+        assert.match(v.reason, /^SD-17: blocked /, v.reason);
+        assert.ok(v.reason.length <= 300 && /Instead/.test(v.reason), v.reason);
+      }
+    }
+  }
+  for (const prompt of [`ask the user to send ${BIN} loop start`, `check the deploy\n${BIN} loop start`]) {
+    assert.equal(wake(places['no loop'], { delaySeconds: 60, prompt }).decision, 'allow', prompt);
+  }
 });
 
 // SC6 (hook part): random loop and repository states against random wakeups AND turn ends (session_crons as Claude Code
