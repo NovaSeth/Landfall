@@ -20,7 +20,8 @@ test('an isolated env admits under a load and memory pressure far above the defa
   assert.deepEqual(admissionReasons(busy, calibration), []);
 });
 
-const heavy = (env, cwd) => acquire('heavy', { names, env, cwd, mode: 'on', owner: { pid: process.pid }, readings: busy });
+// The same reading with a memory method a saved calibration accepts: an acquire recalibrates for it (other cores, RAM).
+const heavy = (env, cwd) => acquire('heavy', { names, env, cwd, mode: 'on', owner: { pid: process.pid }, readings: { ...busy, memMethod: 'vm_stat' } });
 
 test('T-MG-163: a default isolated env admits a heavy lease at load 500; { admission: \'real\' } keeps the real calibration', (t) => {
   const relaxed = isolatedEnv({ prefix: 'relax-default-' });
