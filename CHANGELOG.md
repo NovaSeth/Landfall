@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Breaking: Node 22 or later is required** (decision D-MG-36). `engines.node` is now `>=22`, and CI runs `npm test` on Node 22 and 24 and the npx channel on 22.12.0. Node 18 reached end of life on 2025-03-27 and Node 20 on 2026-03-24, so neither receives security fixes any more.
+
 ## 2.6.0
 
 - **Loop billing mode:**

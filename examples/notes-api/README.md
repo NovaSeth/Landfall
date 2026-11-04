@@ -1,6 +1,6 @@
 # notes-api: an example project built with Landfall
 
-A small JSON notes service with zero dependencies (Node ≥ 18). It was built from start to finish with the [Landfall](https://github.com/NovaSeth/Landfall) plugin for Claude Code. Its Landfall state is committed next to the code in `.landfall/`, so you can read the whole process back from the files.
+A small JSON notes service with zero dependencies (Node ≥ 22). It was built from start to finish with the [Landfall](https://github.com/NovaSeth/Landfall) plugin for Claude Code. Its Landfall state is committed next to the code in `.landfall/`, so you can read the whole process back from the files.
 
 ## The service
 - `npm start` serves on port 3000, or on `PORT` if set, and stores notes in `data/notes.json`.

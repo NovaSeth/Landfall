@@ -3,7 +3,7 @@
 This repository is the `landfall` Claude Code plugin (`plugins/landfall/`), its marketplace (`.claude-plugin/`), its tests (`tests/`) and generators (`scripts/`).
 
 ## Gate
-- `npm test` — the whole suite (Node ≥ 18, zero dependencies). Run single files with `node --test --test-timeout=120000 <file>`.
+- `npm test` — the whole suite (Node ≥ 22, zero dependencies). Run single files with `node --test --test-timeout=120000 <file>`.
 - `node scripts/gen-names.mjs --check`, `node scripts/gen-docs.mjs --check`, `node scripts/gen-method-index.mjs --check` — generated files are up to date (regenerate without `--check`).
 - Never run artificial CPU load; run full suites one at a time.
 
@@ -17,7 +17,7 @@ This repository is the `landfall` Claude Code plugin (`plugins/landfall/`), its 
 - GC7 Always-on context ≤ 1.5k tokens.
 - GC8 Hooks: malformed input → allow; a guarded operation without proof → block; < 1 s of CPU.
 - GC9 Lossless upgrades: schema-versioned state, newer schema refused; generated files merged three-way.
-- GC10 bash 3.2 and Linux, Node ≥ 18, zero runtime dependencies.
+- GC10 bash 3.2 and Linux, Node ≥ 22, zero runtime dependencies.
 - GC11 The repository holds finished solutions only — no process artifacts or analyses.
 
 ## Changes

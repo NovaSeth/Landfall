@@ -176,7 +176,7 @@ test('publication is refused when a hidden result is not bound to its run or the
 });
 
 // The hidden post-pass runs candidate code only under Node's permission model (Node >= 22.13); without it publication is
-// refused by design, so this end-to-end case needs that Node. The plugin itself supports Node 18.
+// refused by design, so this end-to-end case needs that Node. The plugin itself supports Node 22 and later.
 const NODE_PERMISSION = process.allowedNodeEnvironmentFlags.has('--permission');
 test('end to end: hidden results are bound to kept runs; a changed workspace, a replaced trace or another results file is refused', { skip: !NODE_PERMISSION && 'needs Node\'s permission model (Node >= 22.13) for the confined post-pass' }, () => {
   const suite = probeSuite();
