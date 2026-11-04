@@ -358,9 +358,9 @@ test('1.x: self-verified accepts --round k (r<k> was the ledger spelling and is 
   assert.deepEqual(lastEvent(r.task(`T-${ME}-1`)).data, { round: 2, note: 'UI only' }, show(res));
   res = await set(`T-${ME}-2`, 'self-verified');
   assert.deepEqual(lastEvent(r.task(`T-${ME}-2`)).data, { round: 1 }, 'no round yet: 1');
-  await set(`T-${ME}-2`, 'fix-round', '--round', '3', '--addressed', '2', '--open', '0');
+  await set(`T-${ME}-2`, 'fix-round', '--round', '2', '--addressed', '2', '--open', '0');
   await set(`T-${ME}-2`, 'self-verified');
-  assert.deepEqual(lastEvent(r.task(`T-${ME}-2`)).data, { round: 3 }, 'the task\'s current round');
+  assert.deepEqual(lastEvent(r.task(`T-${ME}-2`)).data, { round: 2 }, 'the task\'s current round');
 });
 
 test('1.x: team mode needs --pas → with the lanes capability on, a task is dispatched only with a lane', async (t) => {
