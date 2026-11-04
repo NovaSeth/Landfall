@@ -121,6 +121,7 @@ function taskRow(t, { now, bin, lanesOn, caps, budget = DEFAULT_BUDGET_MIN }) {
   const rv = [...t.events.slice(since + 1)].reverse().find((e) => e.event === 'review');
   if (rv && ['dispatched', 'in-review', 'implemented', 'fix-round'].includes(t.status)) {
     const n = rv.data?.round ?? '?';
+    // `blocking` counts the blocking findings; an older event lacks it (unknown: the verdict decides)
     if (rv.data?.verdict === 'approved' || rv.data?.blocking === 0) return approved(`review r${n} approved`);
     const k = (t.round ?? 0) + 1;
     if (k > caps.rounds) return decide(k);
