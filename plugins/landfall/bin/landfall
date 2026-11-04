@@ -2,7 +2,7 @@
 // Launcher: on the Bash tool PATH while the plugin is enabled, the package.json bin (npx channel) and the hook
 // entry point of hooks/hooks.json. It resolves its real location (npx runs it through a node_modules/.bin
 // symlink) and hands argv to lib/cli/main.mjs. The plugin's package.json makes this extensionless file
-// CommonJS (Node 18 before 18.19 refuses extensionless ES modules); it still uses only syntax valid in both
+// CommonJS (a copy that loses it must still load: Node refuses extensionless ES modules without it); it still uses only syntax valid in both
 // module systems (dynamic import(); no require, import.meta or top-level await) in case a copy loses it.
 // Exit: the command's exit code (docs/cli.md) · 70 the CLI could not be loaded · for `hook`: 0 (hooks fail open,
 // GC8), except the error policy of lib/hooks/registry.mjs (onError): when the hook's code fails before it reads its

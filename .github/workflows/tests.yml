@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        node: [18, 24] # oldest declared (package.json engines) and current
+        node: [22, 24] # oldest declared (package.json engines) and current
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -42,12 +42,12 @@ jobs:
       - name: tests incl. e2e (plugin install in a temp HOME and CLAUDE_CONFIG_DIR, npx channel; YAML/TOML parsers and npm required)
         run: node --version && ruby --version && python3 --version && npm test
   npx-node18:
-    # Node before 18.19 refuses an extensionless ES module: the packed launcher must load as CommonJS.
+    # The packed launcher must load as CommonJS on the lowest supported release.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 18.18.2
-      - name: npx channel from npm pack on Node 18.18
+          node-version: 22.12.0
+      - name: npx channel from npm pack on Node 22.12
         run: node --version && npm --version && node --test tests/e2e/npx.test.mjs

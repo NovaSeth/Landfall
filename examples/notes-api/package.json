@@ -4,7 +4,7 @@
   "description": "A small JSON notes service, built end to end with the Landfall plugin for Claude Code",
   "type": "module",
   "private": true,
-  "engines": { "node": ">=18" },
+  "engines": { "node": ">=22" },
   "scripts": {
     "start": "node src/server.mjs",
     "test": "node --test --test-concurrency=1 test/*.test.mjs"
