@@ -325,7 +325,6 @@ export function batchMerge({ cwd, env, names, ids = null, ready = false, version
     result.reasons.push({ code: 'merge-tree-changed', message: 'HEAD, the index or the working tree of the integration worktree changed while the gates ran: they did not verify what would be merged; nothing was merged', hint: 'find what writes to tracked files or commits during the gates (a formatter, a build into the tree), then merge again' });
     return finish(result);
   } finally {
-    unlinkDependencies();
     if (created) gitIn(where, env, ['worktree', 'remove', '--force', wt]);
     rmSync(wt, { recursive: true, force: true });
     gitIn(where, env, ['worktree', 'prune']);
