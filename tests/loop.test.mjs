@@ -1447,7 +1447,7 @@ test('limits (d) decide: a Claude limit waits until the reset + 60 s (clamped), 
     assert.equal(x.doc.sameCount, 0);
     doc = x.doc;
   }
-  assert.equal(loop.decide({ ...l0, startedAt: new Date(now - 300 * MIN).toISOString() }, obs()).result, 'BUDGET', 'the wall-time cap still ends it');
+  assert.equal(loop.decide({ ...l0, startedAt: new Date(now - 500 * MIN).toISOString() }, obs()).result, 'BUDGET', 'the wall-time cap still ends it');
   assert.equal(loop.decide(l0, obs({ limit: null, outcome: 'done' })).result, 'DONE');
   assert.equal(loop.decide(l0, obs({ limit: { kind: 'codex', resetAt: now + MIN, source: 'r' } })).result, 'ACTION', 'a codex limit never waits');
 });

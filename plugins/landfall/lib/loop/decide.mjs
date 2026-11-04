@@ -15,6 +15,7 @@ import { CAP_RANGE, DEFAULT_CAPS, STALL, UNMEASURED } from './kind.mjs';
 
 const MIN_MS = 60000;
 const iso = (ms) => new Date(ms).toISOString();
+export const clock = (ms) => `${String(new Date(ms).getHours()).padStart(2, '0')}:${String(new Date(ms).getMinutes()).padStart(2, '0')}`; // local HH:MM
 const usd = (micro) => `$${(micro / 1e6).toFixed(2)}`;
 
 export const USER_START = 'caps raised at the loop start by the user';
@@ -55,8 +56,8 @@ export function cheapCap(loop, now) {
 
 // obs: { now (ms), fingerprint (sha256 hex), costMicroUsd (since startedAt; null: not measured, because a cheap cap
 // ends this tick), unmeasurable (the cost could not be measured at all), liveRuns, outcome: action|wait|done,
-// nextTickS, billing: subscription|api|unknown (default: the mode stored in the loop document, absent = unknown; the cost caps count unless subscription) }. Returns { doc, result: ACTION|WAIT|DONE|STALLED|BUDGET, reason, nextTickS, repeated }.
-export function decide(loop, { now, fingerprint, costMicroUsd = null, unmeasurable = false, liveRuns, outcome, nextTickS, billing = loop.billing?.mode ?? 'unknown' }) {
+// nextTickS, limit ({ kind, resetAt } of a usage limit of the plan, or null: a Claude kind makes the tick WAIT for the reset), billing: subscription|api|unknown (default: the mode stored in the loop document, absent = unknown; the cost caps count unless subscription) }. Returns { doc, result: ACTION|WAIT|DONE|STALLED|BUDGET, reason, nextTickS, repeated }.
+export function decide(loop, { now, fingerprint, costMicroUsd = null, unmeasurable = false, liveRuns, outcome, nextTickS, billing = loop.billing?.mode ?? 'unknown', limit = null }) {
   if (loop.exit) return { doc: loop, result: loop.exit, reason: loop.reason, nextTickS: null, repeated: true };
   const ticks = loop.ticks + 1;
   const same = loop.fingerprint !== null && loop.fingerprint === fingerprint;
@@ -78,6 +79,12 @@ export function decide(loop, { now, fingerprint, costMicroUsd = null, unmeasurab
     ?? (money && doc.costMicroUsd >= costCap ? `cost cap reached: ${usd(doc.costMicroUsd)} of ${usd(costCap)} (estimate at API prices)` : null)
     ?? (money && doc.unmeasured >= UNMEASURED ? `cost-unmeasurable: the cost since the start could not be measured for ${doc.unmeasured} ticks in a row` : null);
   if (cap) return end('BUDGET', cap);
+  // a usage limit of the plan (T-MG-107): wait for the reset; the wait is no stall, so the unchanged state does not count
+  if (limit && limit.kind !== 'codex') {
+    const nextTickS = Number.isFinite(limit.resetAt) ? Math.min(3600, Math.max(60, Math.ceil((limit.resetAt - now) / 1000) + 60)) : 1800;
+    const when = Number.isFinite(limit.resetAt) ? `resets ${clock(limit.resetAt)}` : 'reset time unknown';
+    return { doc: { ...doc, sameCount: 0, sameSince: iso(now) }, result: 'WAIT', reason: `usage limit: ${limit.kind}, ${when}`, nextTickS, repeated: false };
+  }
   const quietMin = Math.floor((now - Date.parse(doc.sameSince)) / MIN_MS);
   if (doc.sameCount >= STALL.ticks && quietMin >= STALL.minutes && liveRuns === 0) {
     return end('STALLED', `no progress: the same state for ${doc.sameCount + 1} ticks over ${quietMin} min with no live run`);
