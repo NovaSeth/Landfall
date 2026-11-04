@@ -2,9 +2,10 @@
 // error, stack, step output) next to the output tail, capped per failure and in count.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { lib } from './helpers/hook-fixture.mjs';
 
-const { logLines, tailLines } = await lib('verify/gates.mjs');
+const { logLines, tailLines, gateEnv } = await lib('verify/gates.mjs');
 const kinds = await lib('verify/kinds.mjs');
 
 const block = (n, extra = '') => [
@@ -82,4 +83,45 @@ test('F3: a failure followed by more than TAIL_CHARS of output keeps its error, 
   assert.match(head, /not ok 1 - failing 1/);
   assert.match(head, /error: .*signal SIGTERM ONLY/);
   assert.match(head, /at STACK_ONLY:1:1/);
+});
+
+test('F4: all six large failure blocks survive when they fit the combined log budget', () => {
+  const script = `
+    import { test } from 'node:test';
+    for (let i = 1; i <= 6; i++) {
+      test('failure ' + i, () => { throw Error('step verify FAILURE_' + i + '\\n' + 'x\\n'.repeat(400)); });
+    }
+    for (let i = 1; i <= 100; i++) test('pass ' + i, () => {});
+  `;
+  const run = spawnSync(process.execPath, ['--input-type=module', '--test-reporter=tap', '-e', script], {
+    env: gateEnv(process.env), encoding: 'utf8', timeout: 30000,
+  });
+  assert.equal(run.status, 1, run.stderr);
+  assert.match(run.stdout, /# fail 6\b/);
+  assert.ok(run.stdout.length - run.stdout.lastIndexOf('FAILURE_6') > kinds.TAIL_CHARS, 'the last failure is outside the tail');
+  const lines = logLines(run.stdout);
+  const head = lines.slice(0, lines.indexOf('--- output tail ---'));
+  for (let i = 1; i <= 6; i++) {
+    assert.ok(head.some((line) => line.includes(`step verify FAILURE_${i}`)), `FAILURE_${i} is retained`);
+  }
+  assert.deepEqual(lines.slice(head.length + 1), tailLines(run.stdout), 'the full tail also fits');
+  assert.ok(lines.length <= kinds.TAIL_CHARS, `${lines.length} lines`);
+  assert.deepEqual(store.check(kinds.VERIFY_KINDS.verifyLog, {
+    schema: 1, task: TASK, at: '2026-11-04T10:00:00Z', gates: [{ name: 'test', lines }],
+  }), []);
+});
+
+test('failure blocks use the remaining budget while reserving at least 200 tail lines', () => {
+  const failures = Array.from({ length: 12 }, (_, i) => [
+    `not ok ${i + 1} - failing ${i + 1}`, '  ---', '  error: |-', ...Array(400).fill('    x'), '  ...',
+  ]).flat();
+  const output = `${failures.join('\n')}\n${'\n'.repeat(4095)}END`;
+  const lines = logLines(output);
+  const separator = lines.indexOf('--- output tail ---');
+  assert.equal(lines.length, kinds.TAIL_CHARS, 'all available lines are used');
+  assert.equal(lines.length - separator - 1, 200, 'the minimum tail survives');
+  assert.equal(lines.at(-1), 'END');
+  assert.deepEqual(store.check(kinds.VERIFY_KINDS.verifyLog, {
+    schema: 1, task: TASK, at: '2026-11-04T10:00:00Z', gates: [{ name: 'test', lines }],
+  }), []);
 });
