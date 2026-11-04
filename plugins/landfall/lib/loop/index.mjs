@@ -13,10 +13,11 @@
 //   tick({ cwd, env, names, now, plan }) → { where, plan, ...result } · tickStore(store, { where, names, now, plan, probe }) (the core, with the
 //   probe of step 1 passed in) · startLoop · stopLoop · showLoop. Errors are StateErrors (the CLI maps their exit).
 import { createHash } from 'node:crypto';
-import { closeSync, fstatSync, lstatSync, openSync, readFileSync, readSync, readdirSync, statSync } from 'node:fs';
-import { isAbsolute, join, relative, sep } from 'node:path';
+import { closeSync, fstatSync, lstatSync, openSync, readFileSync, readSync, readdirSync, realpathSync, statSync } from 'node:fs';
+import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { git } from '../git/index.mjs';
 import { costSince, readRuns } from '../receipts/index.mjs';
+import { projectDirs, slug } from '../receipts/sessions.mjs';
 import { KINDS, StateError, emailHash, open, resolve } from '../state/index.mjs';
 import { billingMode } from './billing.mjs';
 import { readRunRecords, runsStore } from '../runs/index.mjs';
@@ -270,18 +271,48 @@ function promptText(line) {
   return typeof first?.text === 'string' ? { text: first.text, at: Date.parse(o.timestamp) } : null;
 }
 
-// { ok } when the last 256 KB of the consent's session transcript hold a human prompt whose first line is the consented
-// command (consentCaps, the same caps) stamped within the consent window; { ok: false, why } otherwise, also when the
-// file cannot be read (fail closed).
-function promptInTranscript(doc, bin, now) {
+const realOf = (p) => { try { return realpathSync(p); } catch { return null; } };
+const NOT_OWN = 'the transcript the consent names is not the session\'s own';
+// The session cwd a consent records (fix round 1), trusted only as a real path whose repository (lib/state resolve) is
+// this one: the repository or one of its worktrees, any subdirectory of them. The real path, or null.
+function sessionCwd(doc, repo, env, names) {
+  if (typeof doc.cwd !== 'string' || !isAbsolute(doc.cwd) || realOf(doc.cwd) !== doc.cwd) return null;
+  try { return resolve({ cwd: doc.cwd, env, names }).repo === repo ? doc.cwd : null; } catch { return null; }
+}
+// The consent session's own transcript (T-MG-154): the path the record names counts only when its real path is the real
+// path of <config>/projects/<slug of the session cwd>/<session>.jsonl (lib/receipts/sessions.mjs projectDirs and slug:
+// where Claude Code writes it) and lies inside the real projects directory. { path } (the real path) or { why }.
+function ownTranscript(doc, { repo, env, names }) {
+  if (typeof doc.session !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(doc.session)) return { why: NOT_OWN };
+  const cwd = sessionCwd(doc, repo, env, names);
+  if (cwd === null) return { why: 'the consent names no session directory inside this repository' };
+  const stored = typeof doc.transcript === 'string' && isAbsolute(doc.transcript) ? realOf(doc.transcript) : null;
+  if (stored === null) return { why: 'the session transcript cannot be read' };
+  const own = slug(cwd);
+  for (const dir of projectDirs({ repo: cwd, env })) { // the cwd's own project directory among them, when it exists
+    if (basename(dir) !== own) continue;
+    const projects = realOf(dirname(dir));
+    if (projects !== null && stored.startsWith(projects + sep) && realOf(join(dir, `${doc.session}.jsonl`)) === stored) return { path: stored };
+  }
+  return { why: NOT_OWN };
+}
+
+// { ok } when the last 256 KB of the consent's session transcript (ownTranscript) hold a human prompt whose first line
+// is the consented command (consentCaps, the same caps) stamped within the consent window; { ok: false, why } otherwise,
+// also when the file is not the session's own or cannot be read (fail closed).
+function promptInTranscript(doc, { bin, now, repo, env, names }) {
+  const own = ownTranscript(doc, { repo, env, names });
+  if (!own.path) return { ok: false, why: own.why };
   const from = Date.parse(doc.at) - TRANSCRIPT_SKEW_MS;
   const to = Math.min(Date.parse(doc.expiresAt), now + TRANSCRIPT_SKEW_MS);
   let fd;
   let text;
   try {
-    fd = openSync(doc.transcript, 'r');
+    fd = openSync(own.path, 'r');
     const st = fstatSync(fd);
     if (!st.isFile()) return { ok: false, why: 'the session transcript is not a regular file' };
+    const checked = lstatSync(own.path); // the file opened is the one checked: no swap (a link too) between the check and the open
+    if (checked.dev !== st.dev || checked.ino !== st.ino) return { ok: false, why: NOT_OWN };
     const start = Math.max(0, st.size - TRANSCRIPT_TAIL);
     const buf = Buffer.alloc(st.size - start);
     let got = 0;
@@ -310,13 +341,13 @@ function promptInTranscript(doc, bin, now) {
 // consented ones. A consent is consumed only when the start needs it, after the running-loop check; a refused start
 // leaves it unused. Session: the Bash environment carries no session id, so the consent matches the repository.
 // Human channel (fix round 2): the consent counts only when the session transcript it names holds the consented command
-// as the first line of a user prompt written in its window (promptInTranscript); an unreadable or missing transcript
-// refuses. The consent authorizes the restart and the caps only: the billing override stays a terminal's (byUser).
+// as the first line of a user prompt written in its window (promptInTranscript); an unreadable or missing transcript,
+// or one that is not the session's own (ownTranscript, T-MG-154), refuses. The consent authorizes the restart and the caps only: the billing override stays a terminal's (byUser).
 export function startLoop({ cwd, env, names, now = Date.now(), caps = {}, byUser = false }) {
   const raised = Object.keys(caps).filter((k) => caps[k] > DEFAULT_CAPS[k]);
   const where = resolve({ cwd, env, names });
   const store = where.active ? open(where.dir, { names, kinds: { ...STORE_KINDS, [CONSENT.name]: CONSENT } }) : null;
-  const ask = { repo: where.repo, caps, now, proof: (doc) => promptInTranscript(doc, names.bin, now) };
+  const ask = { repo: where.repo, caps, now, proof: (doc) => promptInTranscript(doc, { bin: names.bin, now, repo: where.repo, env, names }) };
   const because = (why) => (why && why !== 'no consent' ? ` (consent: ${why})` : '');
   const raiseRefused = (why) => userDecision(`raising ${raised.join(', ')} above the default is the user's decision${because(why)}`, names);
   if (raised.length && !byUser && !(store && consentAllows(store.read(CONSENT.name, null), ask).ok)) throw raiseRefused();

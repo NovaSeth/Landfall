@@ -6,7 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { isolatedEnv, isolateProcessEnv } from './helpers/isolated-env.mjs';
@@ -51,12 +51,15 @@ async function repo(t, prefix = 'consent-') {
   git(dir, iso.env, ['commit', '-q', '--allow-empty', '-m', 'start']);
   for (const k of [`${names.envPrefix}BILLING`, 'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN']) delete iso.env[k];
   const r = { cwd: dir, env: iso.env, base: iso.base, store: join(dir, names.stateDir) };
-  mkdirSync(join(iso.env.CLAUDE_CONFIG_DIR, 'projects', realpathSync(dir).replace(/[^A-Za-z0-9]/g, '-')), { recursive: true });
+  r.projects = join(iso.env.CLAUDE_CONFIG_DIR, 'projects');
+  r.sessions = join(r.projects, realpathSync(dir).replace(/[^A-Za-z0-9]/g, '-'));
+  mkdirSync(r.sessions, { recursive: true });
   r.run = (args, opts = {}) => cli([...args, '--yes'], { ...r, ...opts });
   r.loopFile = join(r.store, 'local', 'loop.json');
   r.consentFile = join(r.store, 'local', 'loop-consent.json');
   r.consent = () => (existsSync(r.consentFile) ? JSON.parse(readFileSync(r.consentFile, 'utf8')) : null);
-  r.transcript = join(iso.base, 't.jsonl');
+  // the session's own transcript, where Claude Code writes it: <config>/projects/<slug of the repository>/<session>.jsonl
+  r.transcript = join(r.sessions, 'sess-1.jsonl');
   // as Claude Code: the hook runs on the submitted prompt, and the prompt is in the session transcript as a user message
   r.say = (line) => appendFileSync(r.transcript, `${JSON.stringify(line)}\n`);
   r.userLine = (content, ms = Date.now()) => ({ type: 'user', sessionId: 'sess-1', timestamp: new Date(ms).toISOString(), message: { role: 'user', content } });
@@ -278,6 +281,76 @@ test('fix round 2: the consent is bound to the human channel: the session transc
   const ok = await p.run(['loop', 'start']);
   assert.equal(ok.code, 0, show(ok));
   assert.ok(p.consent().usedAt);
+});
+
+test('T-MG-154: the transcript the consent names must be the session\'s own (<config>/projects/<slug>/<session>.jsonl by real path); any other is refused (exit 7) and the consent stays unused', async (t) => {
+  const p = await ended(t, 'consent-path-');
+  const line = (file) => appendFileSync(file, `${JSON.stringify(p.userLine(`${BIN} loop start`))}\n`);
+  const refusedWith = async (transcript, why) => {
+    p.prompt(`${BIN} loop start`, { transcript_path: transcript }, { noTranscript: true });
+    assert.equal(p.consent().transcript, transcript, `${why}: recorded as given`);
+    line(transcript); // the prompt is there, so only the path decides
+    const r = await p.run(['loop', 'start']);
+    assert.equal(r.code, 7, `${why}: ${show(r)}`);
+    assert.equal(r.out.errors[0].code, 'user-decision', why);
+    assert.match(r.out.errors[0].message, /transcript/, why);
+    assert.equal(p.consent().usedAt, null, `${why}: the consent stays unused`);
+  };
+  // outside the projects directory
+  await refusedWith(join(p.base, 'elsewhere.jsonl'), 'outside the projects directory');
+  // inside the projects directory, but another session's file, or the session's name under another project
+  await refusedWith(join(p.sessions, 'sess-2.jsonl'), 'another session');
+  const other = join(p.projects, '-somewhere-else'); mkdirSync(other);
+  await refusedWith(join(other, 'sess-1.jsonl'), 'another project');
+  // the derived name, a link to a file outside the projects directory
+  const outside = join(p.base, 'linked.jsonl'); line(outside);
+  symlinkSync(outside, p.transcript);
+  await refusedWith(p.transcript, 'a link out of the projects directory');
+  rmSync(p.transcript);
+  // the session's own transcript: accepted (the cases above differ from it only in the path)
+  p.prompt(`${BIN} loop start`);
+  const ok = await p.run(['loop', 'start']);
+  assert.equal(ok.code, 0, show(ok));
+  assert.ok(p.consent().usedAt);
+});
+
+test('T-MG-154 fix round 1: a session started in a repository subdirectory restarts the loop: the slug comes from the session cwd the consent records; a cwd outside the repository, or none, is refused', async (t) => {
+  const p = await ended(t, 'consent-sub-');
+  const sub = join(p.cwd, 'src', 'app'); mkdirSync(sub, { recursive: true });
+  const sessions = join(p.projects, realpathSync(sub).replace(/[^A-Za-z0-9]/g, '-')); mkdirSync(sessions);
+  const transcript = join(sessions, 'sess-1.jsonl');
+  const say = () => appendFileSync(transcript, `${JSON.stringify(p.userLine(`${BIN} loop start`))}\n`);
+  const { CONSENT } = await lib('hooks/prompt-consent.mjs');
+  const state = await lib('state/index.mjs');
+  const store = state.open(p.store, { names, kinds: { ...state.KINDS, [CONSENT.name]: CONSENT } });
+  const forge = (fields) => { const now = Date.now(); const doc = { at: new Date(now).toISOString(), expiresAt: new Date(now + 5 * MIN).toISOString(), repo: realpathSync(p.cwd), session: 'sess-1', transcript, caps: {}, usedAt: null, ...fields }; for (const k of Object.keys(doc)) if (doc[k] === undefined) delete doc[k]; store.write(CONSENT.name, null, doc); };
+  const refused = async (why) => {
+    const r = await p.run(['loop', 'start']);
+    assert.equal(r.code, 7, `${why}: ${show(r)}`);
+    assert.equal(r.out.errors[0].code, 'user-decision', why);
+    assert.equal(p.consent().usedAt, null, `${why}: the consent stays unused`);
+  };
+  say();
+  // the hook's record from the subdirectory session: accepted
+  const h = runHook('prompt-consent', JSON.stringify({ session_id: 'sess-1', transcript_path: transcript, cwd: sub, hook_event_name: 'UserPromptSubmit', prompt: `${BIN} loop start` }), { env: p.env });
+  assert.equal(h.code ?? 0, 0);
+  const r = await p.run(['loop', 'start']);
+  assert.equal(r.code, 0, `restarted from the subdirectory session's consent: ${show(r)}`);
+  assert.equal(p.consent().cwd, realpathSync(sub), 'the session cwd is recorded as its real path');
+  assert.ok(p.consent().usedAt);
+  assert.equal((await p.run(['loop', 'stop'])).out.data.stopped, true);
+  // a record (not the hook's) naming a cwd outside the repository whose slug directory holds the transcript
+  const away = join(p.base, 'away'); mkdirSync(away);
+  const awaySessions = join(p.projects, realpathSync(away).replace(/[^A-Za-z0-9]/g, '-')); mkdirSync(awaySessions);
+  appendFileSync(join(awaySessions, 'sess-1.jsonl'), `${JSON.stringify(p.userLine(`${BIN} loop start`))}\n`);
+  forge({ cwd: away, transcript: join(awaySessions, 'sess-1.jsonl') });
+  await refused('a cwd outside the repository');
+  // a record without a cwd (written before fix round 1): fail closed
+  forge({ cwd: undefined });
+  await refused('no cwd');
+  // the subdirectory's slug, but the record names the repository root as the cwd
+  forge({ cwd: realpathSync(p.cwd) });
+  await refused('the transcript is not under the slug of the recorded cwd');
 });
 
 test('SEC-14: the model cannot write the consent through Bash (the guard blocks the state directory)', async (t) => {

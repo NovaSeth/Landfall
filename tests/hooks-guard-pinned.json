@@ -691,5 +691,14 @@
   ["ls; @BIN@ hook guard-bash","none"],
   ["cat event.json | @BIN@ hook prompt-consent","none"],
   ["node -- ./plugins/x/bin/@BIN@ hook prompt-consent < event.json","none"],
-  ["node -m plugins/x/bin/@BIN@ hook prompt-consent","none"]
+  ["node -m plugins/x/bin/@BIN@ hook prompt-consent","none"],
+  ["node -- \"@RENAMED@\" hook prompt-consent","none"],
+  ["\"@RENAMED@\" hook prompt-consent","none"],
+  ["node \"@RENAMED@\" --json hook session-start","none"],
+  ["cd ~ && @LFLINK@ hook prompt-consent","none"],
+  ["cd - && node -- @LFLINK@ hook prompt-consent","none"],
+  ["cd ~ && ./lf hook prompt-consent","none"],
+  ["cd - && node -- bin/lf hook prompt-consent","none"],
+  ["~/lf hook prompt-consent","none"],
+  ["printf x > @STATE@/local/loop-consent.json","tracked"]
 ]

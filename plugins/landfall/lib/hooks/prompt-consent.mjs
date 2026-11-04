@@ -5,10 +5,12 @@
 // own form), the hook writes local/loop-consent.json of the repository's state directory through lib/state (machine-local,
 // never committed; the Bash guard blocks every non-read command on the state directory): { at, expiresAt (at + 10 min),
 // repo (the project's real path, lib/state resolve), session (the hook input's session_id), transcript (its
-// transcript_path, an absolute .jsonl path, required), caps (parsed; {} for none), usedAt (null) }. A later prompt replaces it. The prompt is allowed unchanged, with one context line. `loop start`
+// transcript_path, an absolute .jsonl path, required), cwd (the real path of its cwd, inside the repository or a
+// worktree), caps (parsed; {} for none), usedAt (null) }. A later prompt replaces it. The prompt is allowed unchanged, with one context line. `loop start`
 // without a terminal consumes it once (consumeConsent, lib/loop). Anything else (another first line, input that is not a
 // UserPromptSubmit event, no active repository) writes nothing and allows (GC8).
-import { isAbsolute } from 'node:path';
+import { realpathSync } from 'node:fs';
+import { isAbsolute, sep } from 'node:path';
 import { KINDS, defineKind, open } from '../state/index.mjs';
 import { parseCaps } from '../loop/decide.mjs';
 import { CAP_RANGE, DEFAULT_CAPS } from '../loop/kind.mjs';
@@ -32,9 +34,13 @@ export const CONSENT = defineKind('loopConsent', 1, {
     repo: { t: 'str', min: 1, max: 4096 },
     session: { t: 'str', min: 1, max: 128, re: SESSION_ID },
     transcript: { t: 'str', min: 1, max: 4096 }, // the session transcript (hook input transcript_path): the start checks the prompt there
+    // the session's working directory (hook input cwd) as its real path: the transcript's project slug comes from it
+    // (T-MG-154 fix round 1); optional, so a record written before it still reads (and the start refuses it)
+    cwd: { t: 'str', min: 1, max: 4096 },
     caps: { t: 'data', maxBytes: 512 },
     usedAt: { t: 'time', null: true },
   },
+  opt: ['cwd'],
 });
 
 // The caps of the first line, {} for none, or null when the first line is not the command.
@@ -98,8 +104,12 @@ function record(input, env, deadline, now) {
   if (caps === null) return NONE;
   const s = stateOf(cwd, env, deadline);
   if (!s.where?.active) return NONE;
+  let real;
+  try { real = realpathSync(cwd); } catch { return NONE; }
+  // the real cwd inside the resolved repository or one of its worktrees (the worktree's top level, lib/state resolve)
+  if (real.length > 4096 || !(real === s.where.worktree || real.startsWith(s.where.worktree + sep))) return NONE;
   const store = open(s.where.dir, { names, kinds: { ...KINDS, [CONSENT.name]: CONSENT }, lockTimeoutMs: LOCK_WAIT_MS });
-  store.write(CONSENT.name, null, { at: iso(now), expiresAt: iso(now + CONSENT_TTL_MS), repo: s.where.repo, session, transcript, caps, usedAt: null });
+  store.write(CONSENT.name, null, { at: iso(now), expiresAt: iso(now + CONSENT_TTL_MS), repo: s.where.repo, session, transcript, cwd: real, caps, usedAt: null });
   if (store.skipped) return NONE;
   const flag = capsFlag(caps);
   const line = `${names.bin}: the user's consent to one \`${names.bin} loop start\` in this repository was recorded (${flag ? `caps ${flag}` : 'default caps'}, valid ${CONSENT_TTL_MS / 60000} min); run \`${names.bin} loop start${flag ? ` --caps ${flag}` : ''} --yes\` to use it.`;
