@@ -25,9 +25,9 @@ import { defectsOf, gatesOf } from './details.mjs';
 import { RECEIPT } from './kind.mjs';
 import { PRICES, priceOf, requestMicroUsd } from './prices.mjs';
 import { RUN_ID, readRuns } from './runs.mjs';
-import { MAIN, label, readLedger, slug } from './sessions.mjs';
+import { MAIN, label, readLedger, sessionContext, slug } from './sessions.mjs';
 
-export { PRICES, RECEIPT, RUN_ID, priceOf, readRuns, requestMicroUsd, slug };
+export { PRICES, RECEIPT, RUN_ID, priceOf, readRuns, requestMicroUsd, sessionContext, slug };
 
 const STORE_KINDS = Object.freeze({ ...KINDS, [RECEIPT.name]: RECEIPT });
 const zero = () => ({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
