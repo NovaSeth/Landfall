@@ -612,3 +612,59 @@ test('a live run clock never moves backwards after a failed refresh', async ($, 
   expect((await ui.find({ type: 'Text', text: /codex reviewer/ }))?.text).toContain('05:30')
   await ui.unmount()
 })
+
+const agentsFor = (task: string, n: number) => Array.from({ length: n }, (_, k) => ({ id: `n${k}`, description: `Work on ${task} part ${k}`, type: 'landfall:implementer', status: 'running' }))
+
+test('an agent and a run sit indented under their task, without the task column', async ($, on) => {
+  const w = world(on)
+  await $.session.start(SESSION)
+  await w.clock.settle()
+  const ui = await $.ui.mount(PANE)
+  const agent = (await ui.find({ type: 'Text', text: /● reviewer/ }))?.text ?? ''
+  const run = (await ui.find({ type: 'Text', text: /codex reviewer/ }))?.text ?? ''
+  expect(agent).toMatch(/^ {4}↳ ● reviewer\s+r2\s+00:00\s+running$/)
+  expect(agent).not.toContain('T-TU-1')
+  expect(run).toMatch(/^ {4}↳ ● codex reviewer\s+05:00\s+running  → T-TU-1-r1\.json/)
+  expect(run).not.toContain('T-TU-1  ')
+  await ui.unmount()
+})
+
+test('an agent without a task and an agent of a task that is not shown go under UNASSIGNED with the task column', async ($, on) => {
+  const w = world(on, { runs: quiet })
+  w.agents.length = 0
+  w.agents.push({ id: 'u1', description: 'Explore the code', type: 'landfall:implementer', status: 'running' }, { id: 'u2', description: 'Docs for T-TU-3', type: 'landfall:reviewer', status: 'running' })
+  await $.session.start(SESSION)
+  await w.clock.settle()
+  const ui = await $.ui.mount(PANE)
+  const head = await ui.find({ type: 'Text', text: /^UNASSIGNED$/ })
+  expect(head).toBeDefined()
+  expect((await ui.find({ type: 'Text', text: /● implementer/ }))?.text).toMatch(/^ {4}↳ ● implementer\s+-\s+00:00\s+running$/)
+  expect((await ui.find({ type: 'Text', text: /● reviewer/ }))?.text).toMatch(/^ {4}↳ ● reviewer\s+T-TU-3\s+00:00\s+running$/)
+  expect(await ui.find({ type: 'Text', text: /^AGENTS/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /none active/ })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('with every live agent under a shown task there is no UNASSIGNED heading', async ($, on) => {
+  const w = world(on)
+  await $.session.start(SESSION)
+  await w.clock.settle()
+  const ui = await $.ui.mount(PANE)
+  expect(await ui.find({ type: 'Text', text: /UNASSIGNED/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /^AGENTS/ })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('a small pane with one task and five agents folds the extra agents into one more line and no line passes the width', async ($, on) => {
+  const w = world(on, { runs: quiet })
+  w.agents.length = 0
+  w.agents.push(...agentsFor('T-TU-1', 5))
+  await $.session.start(SESSION)
+  await w.clock.settle()
+  const ui = await $.ui.mount({ ...PANE, props: { ...PANE.props, bodyColumns: 60, scroll: { offset: 0, bodyRows: 11 } } })
+  const texts = (await ui.findAll({ type: 'Text' })).map((n: any) => n.text as string)
+  expect(texts.filter(t => /^ {4}↳ ● implementer/.test(t)).length).toBe(2)
+  expect(texts.filter(t => /^ {4}↳ … 3 more$/.test(t)).length).toBe(1)
+  for (const t of texts) expect([...t].length).toBeLessThanOrEqual(60)
+  await ui.unmount()
+})
