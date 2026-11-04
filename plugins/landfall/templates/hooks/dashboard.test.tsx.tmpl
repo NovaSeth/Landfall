@@ -800,7 +800,7 @@ test('a cancelled task is not celebrated: it fades as one dim row and then leave
 
 test('the frame timer runs only while a row animates: none before a task closes, none once the row is gone', async ($, on) => {
   let ticks = 0
-  on('clock.every', ($, e, next) => {
+  on('clock.every', { ms: 250 }, ($, e, next) => {
     if (e.ms === 250) ticks++
     return next(e)
   })
@@ -822,7 +822,7 @@ test('the frame timer runs only while a row animates: none before a task closes,
 
 test('a pane that is not placed starts no frame timer when a task closes', async ($, on) => {
   let ticks = 0
-  on('clock.every', ($, e, next) => {
+  on('clock.every', { ms: 250 }, ($, e, next) => {
     if (e.ms === 250) ticks++
     return next(e)
   })
