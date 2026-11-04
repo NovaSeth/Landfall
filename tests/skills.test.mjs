@@ -279,8 +279,8 @@ test('work: trivial requests are classed from the request (no command first); wo
   for (const name of ['work', 'dispatch']) assert.match(read(skillFile(name)), /`landfall secrets` \(exit 0\) before/, name);
 });
 
-test('dispatch step 8 merges ready tasks as one batch (ORC-25)', () => {
+test('dispatch step 8 merges approved tasks through the train (ORC-25)', () => {
   const step = read(skillFile('dispatch')).split('\n').find((l) => l.startsWith('8. '));
-  // T-MG-83 (intended change): two command forms, no `|` that reads as a shell pipe
-  assert.ok(step && step.includes('task merge <ids…> --yes') && step.includes('task merge --ready --yes') && !step.includes('| --ready'), step);
+  // T-MG-83 (intended change): two command forms, no `|` that reads as a shell pipe; T-MG-186: the train
+  assert.ok(step && step.includes('train <ids…> --yes') && step.includes('train --ready --yes') && !step.includes('| --ready'), step);
 });

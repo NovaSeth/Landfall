@@ -5,7 +5,7 @@
 //     lib/state, which validates it again (atomic, locked). Invalid input: exit 2, one error per failing field.
 //   - Only the task's owner records, only while the task is open (done and cancelled tasks take no further state).
 //   - The round is the next free number, created exclusively (two records never share a round); the task gets the
-//     event `review` { round, verdict, reviewer: kind }.
+//     event `review` { round, verdict, reviewer: kind, head } (head: the tip of the task branch, the reviewed commit).
 // The validator knows exactly the JSON Schema keywords the schema uses; any other keyword is an error, never ignored.
 // An external review comes from its run (D4): `--kind external --run <runId>` reads the out file of a done reviewer
 // run of the task (lib/runs record; a regular file, no link followed, capped) and stores the run ID and the sha256 of
@@ -20,7 +20,7 @@ import { readRegularFile } from '../fsx/index.mjs';
 import { RUN_ID, ownOutDir, runsStore } from '../runs/index.mjs';
 import { KINDS, StateError } from '../state/index.mjs';
 import { VERIFY_KINDS, reviewKey } from './kinds.mjs';
-import { activeWhere, storeOf, unknownTask } from './run.mjs';
+import { activeWhere, gitIn, storeOf, unknownTask } from './run.mjs';
 
 const INPUT_MAX = 1024 * 1024;
 const ROUND_MAX = 999; // review-r<k>: k has at most three digits (the review kind's key)
@@ -133,9 +133,13 @@ export function recordReview({ cwd, env, names, id, from, run, at = new Date().t
   let round = Math.max(0, ...taken) + 1;
   while (round <= ROUND_MAX && !store.create('review', reviewKey(id, round), doc)) round++;
   if (round > ROUND_MAX) throw usage('limit-exceeded', `${id} has ${ROUND_MAX} review rounds, the limit`, 'start a new task');
+  // The reviewed commit (T-MG-186 fix round 1, F2): the tip of the task branch now, so the train takes the task only
+  // while its branch still holds what was reviewed. None when the branch is unknown or unsafe to pass to git.
+  const tipOf = (b) => (typeof b === 'string' && b !== '' && !b.startsWith('-') ? gitIn(where, env, ['rev-parse', '--verify', '-q', `${b}^{commit}`]).stdout.trim() : '');
+  const head = tipOf(task.branch);
   store.update('task', id, (cur) => {
     open(cur);
-    return { ...cur, events: [...cur.events, { at, by: handle, event: 'review', data: { round, verdict: doc.verdict, reviewer: doc.reviewer.kind } }] };
+    return { ...cur, events: [...cur.events, { at, by: handle, event: 'review', data: { round, verdict: doc.verdict, reviewer: doc.reviewer.kind, ...(/^[0-9a-f]{40,64}$/.test(head) ? { head } : {}) } }] };
   });
   const rel = stateRel(where.worktree, where.dir); // shown from the worktree, absolute outside it
   const path = `tasks/${reviewKey(id, round)}.json`;

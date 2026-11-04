@@ -17,6 +17,6 @@ Rules: `landfall rule PRI-3 PRI-4 PRI-18 ORC-1 ORC-2 ORC-3 ORC-4 ORC-7 ORC-8 ORC
 5. Check: commits, scope, red/green (ORC-8, FLW-6); `landfall verify <id> --yes`; fail: back to it.
 6. Review per `landfall brief <id>` (none, `landfall:reviewer`, `landfall:security-reviewer` or `landfall:external`): `landfall review brief <id> --write --yes`, record as in 3 (`--executor <reviewer>`), `landfall review record <id> --from <file> --yes`, external: `--kind external --run <run ID>`.
 7. Needs fixes: a fix brief; past 2 rounds `landfall decide --kind review-close --task <id> --remaining <open finding IDs> --yes`.
-8. Finish: `landfall task done <id> --yes`, `landfall task merge <ids…> --yes` (all ready: `landfall task merge --ready --yes`), `landfall commit --yes`. Compacted: `task show <id>` (MEM-11).
+8. Finish through the train (verifies, merges, closes; ORC-25): `landfall train <ids…> --yes` (all approved: `landfall train --ready --yes`), `landfall commit --yes`. Compacted: `task show <id>` (MEM-11).
 9. Background work: check it every ~10 min, unblock (ORC-24).
 10. `task-mirror` on: TaskCreate `<id> <title>`; complete it after `task done`.

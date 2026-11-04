@@ -50,8 +50,8 @@ test('the dispatch skill: verify failure goes back before any fix-round record, 
   const d = read(plugin, 'skills', 'dispatch', 'SKILL.md');
   assert.doesNotMatch(step(d, 5), /Fail: `?task set <id> fix-round/, step(d, 5));
   assert.doesNotMatch(step(d, 8), /\| --ready/, step(d, 8));
-  assert.match(step(d, 8), /task merge <ids…> --yes/);
-  assert.match(step(d, 8), /task merge --ready --yes/);
+  assert.match(step(d, 8), /train <ids…> --yes/);
+  assert.match(step(d, 8), /train --ready --yes/);
   assert.match(step(d, 6), /record as in 3 \(`--executor <reviewer>`\)/, step(d, 6));
   assert.match(step(d, 7), /--remaining <open finding IDs>/, step(d, 7));
 });
