@@ -277,7 +277,10 @@ function changeSince(where, env, base, scope, light = () => false, risky = () =>
     paths.add(p);
     if (counted(p)) loc += lineCount(join(where.worktree, p));
   }
-  return { paths: [...paths].filter((p) => !UNSAFE_PATH.test(p)).slice(0, MAX_PATHS), loc };
+  // dropped / truncated (T-MG-182 r1 F1): a path left out here is not seen by whoever decides from the list (fastPlan
+  // then runs the full set, failing closed)
+  const safe = [...paths].filter((p) => !UNSAFE_PATH.test(p));
+  return { paths: safe.slice(0, MAX_PATHS), loc, dropped: safe.length < paths.size, truncated: safe.length > MAX_PATHS };
 }
 
 // The paths a merge in progress brings onto the target tip (the index against the tip), the state directory left out.

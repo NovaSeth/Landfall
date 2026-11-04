@@ -51,6 +51,7 @@ export function fastPlan({ profile, change, full = false, critical = false, risk
   if (full) return fullBecause('--full');
   if (critical) return fullBecause('a critical task runs the full suite');
   if (!change) return fullBecause('no change against the base to select tests from');
+  if (change.dropped || change.truncated) return fullBecause(`not every changed path could be read (${change.dropped ? 'a path with control or bidi characters' : 'over the path cap'})`);
   const tests = profile.gates.filter((g) => g.kind === 'test');
   if (tests.length !== 1 || !tests[0].cmd.includes('--test-reporter=tap')) return fullBecause('no single node:test gate with the tap reporter to narrow');
   const risky = riskMatcher(riskPaths);
