@@ -14,7 +14,7 @@ import { fileURLToPath } from 'node:url';
 import { gitShape } from './git-shape.mjs';
 import { GIT_ARG } from './git-options.mjs';
 import { MSG, short } from './messages.mjs';
-import { findDeleteShape, removeShape, stateWrite, writeRedir } from './protect.mjs';
+import { braceShape, findDeleteShape, removeShape, stateWrite, writeRedir } from './protect.mjs';
 import { why } from './tokenizer.mjs';
 import { BIN, CODE_RUNNERS, ENV_EXEC, ENV_PREFIX, GATES, KEYWORDS, SHELLS, base, gateById, variants, wordTok } from './tokens.mjs';
 
@@ -211,6 +211,7 @@ const SED_EXEC = /(^|[;{}\n]\s*|[0-9$/]\s*)e(\s|$)|\/[gpiImM0-9]*e[gpiImM0-9]*\s
 // The shape of a simple command: null — allowed; text — a broken rule; NotPlain — no recognized simple form.
 export function shape(c, ctx) {
   const w = c.words.map((x) => x.text);
+  braceShape(c, w); // brace-list words only in an exact reader's arguments (T-MG-132)
   if (hookFileWrite(c, w, ctx)) return MSG.hookFiles; // also a redirection alone (review r1 #5)
   // a command-owned state file (FLW-7); a wrapper's command is checked as its own simple command below
   const owned = stateWrite(c, w, ctx, { args: !WRAPPERS.has(base(w[0] ?? '')) });

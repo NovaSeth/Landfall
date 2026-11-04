@@ -1,12 +1,17 @@
 // Tokenizer-light of the Bash guard (spec SD-29, SEC-3): reads a command only as a sequence of PLAIN simple commands —
 // connectors && || ; and newline, pipe | — made of plain words: a bare word, or '…' / "…" without $ and ` (a backslash
 // in "…" gives only the literal character). Any other syntax throws NotPlain with the reason: $, `, ( ), { } (except
-// ref@{n}), <( ) >( ), |&, &, a here-string, a backslash outside quotes, an assignment before the command. A heredoc is
+// ref@{n} and one brace list per word, below), <( ) >( ), |&, &, a here-string, a backslash outside quotes, an assignment
+// before the command. A heredoc is
 // data only: a quoted delimiter or a body without $ ` \. Two fixed forms are kept: `$?` (also as "$?") and the commit
 // message "$(cat <<'EOF' … EOF\n)" as a word of its own.
 // Result: simple commands { words: [{ text, q, glob }], redirs: [{ op, target, glob }], heredoc: body | null, pipeIn, pipeOut,
 // before, after } — before / after: the connector on that side (';', '&&', '||', '|', '\n' or null at either end).
-// q: '' plain · '?' holds $? · 'msg' the message substitution (its body as one word).
+// q: '' plain · '?' holds $? · 'msg' the message substitution (its body as one word) · '{' one alternative of a brace list.
+// A brace list (T-MG-132): one unquoted `{a,b,…}` group in a word, two or more non-empty alternatives of letters, digits
+// and . _ / - (no nesting, no `..` range, no $), becomes one word per alternative (prefix + alternative + suffix), as
+// bash expands it; anything else with { } still throws. Its words carry q '{': lib/guard/protect.mjs braceShape lets
+// them through only as the arguments of an exact reader, and a redirection target with one throws.
 import { ENV_EXEC } from './tokens.mjs';
 
 export class NotPlain extends Error {}
@@ -140,6 +145,7 @@ export function expandLiterals(src) {
   return substitute(text, vars);
 }
 
+const BRACE_CHAR = /[A-Za-z0-9._/,-]/;
 const MSG_SUB = /^"\$\(cat <<(-?)(['"])([A-Za-z_]\w*)\2\n([\s\S]*?)\n(\t*)\3\n\)"/;
 // tick() throws when the analysis is over its deadline; limit is the longest text read at once.
 export function parse(src, { tick = () => {}, limit = 65536 } = {}) {
@@ -157,9 +163,21 @@ export function parse(src, { tick = () => {}, limit = 65536 } = {}) {
     if (word === null) return;
     const w = word; word = null;
     if (w.at) why('unclosed ref@{…}');
-    if (redir) { if (w.q) why('redirection to an expansion'); cur.redirs.push({ op: redir, target: w.text, glob: w.glob }); redir = null; return; }
+    if (redir) { if (w.q || w.brace) why('redirection to an expansion'); cur.redirs.push({ op: redir, target: w.text, glob: w.glob }); redir = null; return; }
     if (!cur.words.length && /^[A-Za-z_]\w*(\[[^\]]*\])?\+?=/.test(w.text)) why('assignment before the command');
-    cur.words.push(w);
+    if (!w.brace) { cur.words.push(w); return; }
+    const { at, alts } = w.brace;
+    for (const a of alts) cur.words.push({ text: w.text.slice(0, at) + a + w.text.slice(at), q: '{', glob: w.glob, at: false });
+  }
+  // A brace list at src[i] === '{': its alternatives become the word's (one list per word); any other { } throws.
+  // One scan to the first character outside the list alphabet (linear, A-1).
+  function braceList() {
+    let j = i + 1;
+    while (j < n && BRACE_CHAR.test(src[j])) j++;
+    const body = src.slice(i + 1, j);
+    const alts = body.split(',');
+    if (src[j] !== '}' || alts.length < 2 || alts.includes('') || body.includes('..') || word?.brace) why('group or { } expansion');
+    add(''); word.brace = { at: word.text.length, alts }; i = j + 1;
   }
   function endCmd(kind = null) {
     endWord();
@@ -241,6 +259,7 @@ export function parse(src, { tick = () => {}, limit = 65536 } = {}) {
     if (c === '(' || c === ')') why('subshell, group or ( ) substitution');
     if (c === '{' && word?.text.endsWith('@') && !word.at) { add(c); word.at = true; i++; continue; } // ref@{n}
     if (c === '}' && word?.at) { add(c); word.at = false; i++; continue; }
+    if (c === '{' && !word?.at) { braceList(); continue; }
     if (c === '{' || c === '}' || (word?.at && (c === ',' || src.startsWith('..', i)))) why('group or { } expansion');
     if (c === ';') { if (src[i + 1] === ';' || src[i + 1] === '&') why('case syntax ;;'); endCmd(';'); i++; continue; }
     if (c === '&') {

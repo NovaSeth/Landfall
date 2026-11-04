@@ -202,6 +202,16 @@ function readShape(c, w) {
   const deny = READ_ONLY.get(b);
   return !deny || !w.slice(1).some((t) => deny.test(t));
 }
+// Brace-list words (tokenizer q '{', T-MG-132) only as the arguments of an exact reader program without an option that
+// writes or runs (its redirections are checked as for any command): never the program, never cd (its directory) or [[
+// (bash does not expand braces inside it). Throws NotPlain otherwise.
+const BRACE_PROGRAM_NO = new Set(['cd', 'pushd', 'popd', '[[']);
+export function braceShape(c, w) {
+  if (!c.words.some((x) => x.q === '{')) return;
+  const b = base(w[0] ?? '');
+  const deny = READ_ONLY.get(b);
+  if (c.words[0].q === '{' || !READ_ONLY.has(b) || BRACE_PROGRAM_NO.has(b) || (deny && w.slice(1).some((t) => deny.test(t)))) why('group or { } expansion');
+}
 // Words a path can hide in: the word, the value of name=value / --option=value, a glued short option value (-Xpath).
 const candidates = (t) => [...(t.startsWith('-') ? [] : [t]), ...(t.includes('=') ? [t.slice(t.indexOf('=') + 1)] : []), ...(/^-[A-Za-z][^-=]/.test(t) ? [t.slice(2)] : [])];
 
