@@ -943,13 +943,25 @@ test('an old config that still sets critical.overLoc is skipped, not an error', 
   assert.equal(out.class, 'standard');
 });
 
-test('test files count neither toward LOC nor toward the file count', () => {
+test('test files count toward neither split threshold; the trivial cut counts every file', () => {
   const tests = ['tests/a.js', 'tests/b/c.mjs', 'src/x.test.js', 'src/y.spec.test.ts'];
-  assert.equal(router.classify({ paths: ['src/a.js', ...tests], loc: 5 }).class, 'trivial', 'one code file plus four test files');
+  assert.equal(router.classify({ paths: ['src/a.js', ...tests], loc: 5 }).class, 'standard', 'one code file plus four test files is more than trivial');
+  assert.equal(router.classify({ paths: ['src/a.js', ...many(30, 'tests')], loc: 5 }).class, 'standard', 'F2: 30 test files do not keep a change trivial');
   const only = router.classify({ paths: tests, loc: 900 });
   assert.equal(only.class, 'standard');
   assert.ok(!only.reasons.some((x) => x.code.startsWith('split')), 'tests alone never say split');
   const many16 = router.classify({ paths: [...many(15), ...many(10, 'tests')], loc: 20 });
   assert.ok(!many16.reasons.some((x) => x.code === 'split-files'), '15 code files plus 10 test files');
   assert.equal(router.classify({ paths: ['tests/auth/x.test.js'], loc: 2 }).class, 'critical', 'a risk glob still applies to a test file');
+});
+
+test('F1: only the root tests/ directory and a real test suffix are weightless', () => {
+  for (const path of ['lib/x.test.config.mjs', 'src/tests/runtime/server.js', 'src/app.test.sh']) {
+    const r = router.classify({ paths: [path], loc: 900 });
+    assert.ok(r.reasons.some((x) => x.code === 'split-loc'), `${path} carries weight: ${JSON.stringify(r.reasons)}`);
+  }
+  for (const path of ['tests/x/y.sh', 'src/a.test.js', 'src/a.test.mjs', 'src/a.test.cjs', 'src/a.test.ts', 'src/a.test.tsx', 'tests/a.test.py']) {
+    assert.ok(!router.classify({ paths: [path], loc: 900 }).reasons.some((x) => x.code === 'split-loc'), path);
+  }
+  assert.equal(router.classify({ paths: ['src/tests/auth/x.js'], loc: 2 }).class, 'critical');
 });

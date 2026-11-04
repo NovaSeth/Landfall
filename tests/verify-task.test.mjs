@@ -281,14 +281,14 @@ for (const tracked of [true, false]) {
   }
 }
 
-test('verify measured change: test files count neither LOC nor files (T-MG-181)', async (t) => {
+test('verify measured change: test lines never say split (T-MG-181)', async (t) => {
   const r = repo(t);
   r.write('src/a.js', 'export const a = 1;\n');
   for (let i = 0; i < 5; i++) r.write(`tests/t${i}.js`, '// test line\n'.repeat(200));
   r.write('src/b.test.js', '// test line\n'.repeat(200));
   const res = await run(r);
-  assert.equal(res.env.data.route.actual, 'trivial', show(res));
-  assert.equal(res.env.data.route.escalated, false);
+  assert.equal(res.env.data.route.actual, 'standard', show(res));
+  assert.ok(!/split/.test(r.store.read('task', r.id).classHistory.at(-1).reason), 'test lines are no split');
 });
 
 // ---- --ci, owner, inactive, unknown ----
