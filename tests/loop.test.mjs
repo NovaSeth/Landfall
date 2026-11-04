@@ -1240,6 +1240,12 @@ test('billing (f) S1: the subscription override at loop start counts only from a
   assert.equal(r.out.data.billing.mode, 'api');
 });
 
+test('billing (k) an unrecognized override on a tick of a stored subscription loop is ignored: BUDGET at the cap', async (t) => {
+  const { r } = await overCap(t, { [BILL]: 'subscription' }, { tty: true, tickEnv: { ANTHROPIC_API_KEY: 'x', [BILL]: 'garbage' } });
+  assert.equal(r.code, 6, show(r));
+  assert.equal(r.out.data.billing.mode, 'api');
+});
+
 test('billing (g) S1: a schema-1 loop document without billing still reads, is treated as unknown and ends at the cap', async (t) => {
   const p = await repo(t);
   let r = await p.run(['loop', 'start', '--caps', 'usd=0.01'], { env: p.env });
@@ -1278,8 +1284,13 @@ test('billing (c) billingMode: the account file, API signals and the override; n
   const byUser = (env) => billingMode({ env: { CLAUDE_CONFIG_DIR: dir, ...env }, names, home: join(dir, 'nohome'), byUser: true });
   assert.equal(byUser({ [BILL]: 'subscription', ANTHROPIC_API_KEY: 'k' }).mode, 'subscription', 'a user start: the override beats the key');
   const odd = mode({ [BILL]: 'free' });
-  assert.equal(odd.mode, 'unknown');
-  assert.match(odd.source, /not recognized/);
+  assert.equal(odd.mode, 'subscription', 'an unrecognized value is ignored; the account file decides');
+  const bare = (env, extra = {}) => billingMode({ env: { CLAUDE_CONFIG_DIR: join(dir, 'none'), ...env }, names, home: join(dir, 'nohome'), ...extra });
+  assert.equal(bare({ [BILL]: 'free' }).mode, 'unknown');
+  assert.match(bare({ [BILL]: 'free' }).source, /not recognized/);
+  assert.match(bare({ [BILL]: 'free' }).source, /free/, 'the unrecognized value is named');
+  assert.equal(bare({ ANTHROPIC_API_KEY: 'x', [BILL]: 'garbage' }, { envOnly: true }).mode, 'api', 'an unrecognized value does not hide an API key');
+  assert.equal(bare({ [BILL]: 'garbage' }, { envOnly: true }).mode, 'unknown');
   const home = join(dir, 'home');
   mkdirSync(home);
   writeFileSync(join(home, '.claude.json'), JSON.stringify({ oauthAccount: { billingType: 'max_subscription' } }));
