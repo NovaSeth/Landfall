@@ -20,7 +20,10 @@ const int = ([min, max], extra = {}) => ({ t: 'int', min, max, ...extra });
 const time = { t: 'time' };
 const COUNT = [0, 1000000];
 
-export const LOOP = defineKind('loop', 1, {
+// Schema 2 (T-MG-104): the optional billing { mode, source }, decided once when the loop is created (never re-read by a
+// tick: an agent in the loop must not switch its own cost cap off, SD-17). Migration 005 is a no-op upgrade; a schema-1
+// loop reads as billing absent = unknown (the cap stays).
+export const LOOP = defineKind('loop', 2, {
   dir: 'local',
   file: () => 'local/loop.json',
   match: /^local\/loop\.json$/,
@@ -37,8 +40,10 @@ export const LOOP = defineKind('loop', 1, {
     exit: { t: 'enum', of: TERMINAL, null: true },
     exitAt: { ...time, null: true },
     reason: { t: 'str', max: LIMITS.reason, null: true },
+    billing: { t: 'obj', f: { mode: { t: 'enum', of: ['subscription', 'api', 'unknown'] }, source: { t: 'str', min: 1, max: 120 } } },
     extensions: { t: 'arr', max: 100, of: { t: 'obj', f: { at: time, caps: { t: 'data', maxBytes: 512 }, reason: { t: 'str', min: 1, max: LIMITS.reason } } } },
   },
+  opt: ['billing'],
 });
 
 // The fixed wakeup prompt (PRC-15 port, SD-18): it carries no task state, so a wakeup never goes stale. A plan travels

@@ -115,6 +115,7 @@ export function loopStop({ names, io }) {
 
 export function loopStatus({ names, io }) {
   const r = showLoop({ cwd: io.cwd, env: io.env, names });
-  const text = r.loop ? describe(r.loop, Date.now(), r.billing) : `no loop${r.where.active ? '' : ' (the repository is not active)'}; the first \`${names.bin} tick\` starts one with the default caps\n`;
-  return { data: { loop: summary(r.loop), billing: r.billing }, text: r.loop ? text : `${text}${billingLine(r.billing)}\n` };
+  const billing = r.loop ? r.loop.billing ?? { mode: 'unknown', source: 'not recorded in the loop' } : r.billing;
+  const text = r.loop ? describe(r.loop, Date.now(), billing) : `no loop${r.where.active ? '' : ' (the repository is not active)'}; the first \`${names.bin} tick\` starts one with the default caps\n`;
+  return { data: { loop: summary(r.loop), billing }, text: r.loop ? text : `${text}${billingLine(billing)}\n` };
 }

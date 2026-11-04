@@ -2,7 +2,7 @@
 // token-times-API-price cost of a loop is an estimate that must not end it. billingMode is pure apart from one file
 // read and never throws. Order: the override env <PREFIX>BILLING, API signals in the environment, the account file
 // of Claude Code (only oauthAccount.billingType is read; the file also holds the e-mail address, which never leaves
-// this function), otherwise unknown (real money is assumed: the cost cap stays on).
+// this function; it is the config directory Claude Code itself uses), otherwise unknown (real money is assumed: the cost cap stays on).
 import { closeSync, fstatSync, openSync, readSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -33,14 +33,16 @@ function billingType(file) {
   }
 }
 
-export function billingMode({ env, names, home } = {}) {
+// byUser: the loop is started from a terminal. Only then does the override `subscription` count (it switches the cost cap
+// off); `api` always counts (it only tightens). Without byUser the override `subscription` is ignored and the steps 2-4 decide.
+export function billingMode({ env, names, home, byUser = false } = {}) {
   try {
     const e = env && typeof env === 'object' ? env : {};
     const name = `${names?.envPrefix ?? ''}BILLING`;
     const forced = e[name];
     if (typeof forced === 'string' && forced !== '') {
-      if (forced === 'api' || forced === 'subscription') return { mode: forced, source: name };
-      return { mode: 'unknown', source: `${name} is not recognized (api or subscription)` };
+      if (forced === 'api' || (forced === 'subscription' && byUser)) return { mode: forced, source: name };
+      if (forced !== 'subscription') return { mode: 'unknown', source: `${name} is not recognized (api or subscription)` };
     }
     for (const k of KEYS) if (typeof e[k] === 'string' && e[k] !== '') return { mode: 'api', source: k };
     for (const k of FLAGS) if (e[k] === '1' || e[k] === 'true') return { mode: 'api', source: k };

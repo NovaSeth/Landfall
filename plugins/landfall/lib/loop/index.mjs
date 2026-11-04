@@ -168,10 +168,12 @@ function measure(probe, loop, now) {
   }
 }
 
+const NOT_RECORDED = Object.freeze({ mode: 'unknown', source: 'not recorded in the loop' });
+
 // One tick on an open store. probe: { heads() → text, email() → text | null, cost(startedAt) → { costMicroUsd, partial,
 // unmeasurable, problems }, dirty() → [path] }. Returns { result, reason, nextTickS, repeated, loop, steps, info,
 // costPartial, costProblems }.
-export function tickStore(store, { where, names, now, plan = null, probe, watch = [], billing = { mode: 'unknown', source: 'not checked' } }) {
+export function tickStore(store, { where, names, now, plan = null, probe, watch = [], billing = null }) {
   const pre = store.read(LOOP.name, null);
   const measured = pre && !pre.exit ? { id: pre.id, startedAt: pre.startedAt, cost: measure(probe, pre, now) } : null;
   const heads = probe.heads();
@@ -183,7 +185,7 @@ export function tickStore(store, { where, names, now, plan = null, probe, watch 
       out = { ...decide(cur, {}), loop: cur, steps: [], info: [], costPartial: false, costProblems: [] };
       return undefined;
     }
-    const loop = cur ?? newLoop({ now });
+    const loop = cur ?? newLoop({ now, billing }); // the mode is decided here, once; later ticks use the stored one
     // a loop started by this tick has spent nothing; a loop replaced since the measurement is measured again
     const cost = cur === null ? { costMicroUsd: 0, partial: false }
       : measured && measured.id === cur.id && measured.startedAt === cur.startedAt ? measured.cost : measure(probe, cur, now);
@@ -196,20 +198,20 @@ export function tickStore(store, { where, names, now, plan = null, probe, watch 
     });
     const d = decide(loop, {
       now, fingerprint: fingerprint(heads, snap.files, snap.runs), costMicroUsd: cost?.costMicroUsd ?? null, unmeasurable: cost?.unmeasurable === true,
-      liveRuns: table.liveRuns, outcome: table.outcome, nextTickS: table.nextTickS, billing: billing.mode,
+      liveRuns: table.liveRuns, outcome: table.outcome, nextTickS: table.nextTickS,
     });
     out = { ...d, loop: d.doc, steps: table.steps, info: table.info, costPartial: cost?.partial === true, costProblems: cost?.problems ?? [] };
     return d.doc;
   });
   const { doc, ...result } = out;
-  return { ...result, billing };
+  return { ...result, billing: result.loop.billing ?? NOT_RECORDED };
 }
 
 // plan: the plan's path as shown (relative to the repository root when inside it), or null.
 export function tick({ cwd, env, names, now = Date.now(), plan = null, readings = null }) {
   const { where, store } = activeStore({ cwd, env, names });
   const planDoc = plan === null ? null : readPlan(where.worktree, plan);
-  return { where, plan: planDoc?.path ?? null, ...tickStore(store, { where, names, now, plan: planDoc, probe: gitProbe(where, env, names), watch: readWatch({ names, env, now, readings }), billing: billingMode({ env, names }) }) };
+  return { where, plan: planDoc?.path ?? null, ...tickStore(store, { where, names, now, plan: planDoc, probe: gitProbe(where, env, names), watch: readWatch({ names, env, now, readings }), billing: billingMode({ env, names }) }) }; // only a loop this tick creates stores it
 }
 
 // A new loop with `caps` over the defaults. A running loop is never replaced; after an ended one (DONE, `loop stop`
@@ -220,13 +222,14 @@ export function startLoop({ cwd, env, names, now = Date.now(), caps = {}, byUser
   if (raised.length && !byUser) throw userDecision(`raising ${raised.join(', ')} above the default is the user's decision`);
   const { where, store } = activeStore({ cwd, env, names });
   let replaced = null;
+  const billing = billingMode({ env, names, byUser });
   const loop = store.update(LOOP.name, null, (cur) => {
     if (cur && !cur.exit) throw new StateError('loop-running', 'FAIL', `loop ${cur.id} is running (tick ${cur.ticks} of ${cur.caps.ticks})`, { hint: `'${names.bin} loop stop' ends it first` });
     if (cur && !byUser) throw userDecision(`the last loop ended with ${cur.exit}: a new loop after an ended one is the user's decision`);
     replaced = cur;
-    return newLoop({ now, caps: { ...DEFAULT_CAPS, ...caps }, byUser });
+    return newLoop({ now, caps: { ...DEFAULT_CAPS, ...caps }, byUser, billing });
   });
-  return { where, loop, replaced, billing: billingMode({ env, names }) };
+  return { where, loop, replaced, billing: loop.billing };
 }
 
 // Ends a running loop: exit DONE with the reason "stopped"; no loop or an ended one is left as it is.
@@ -244,5 +247,5 @@ export function stopLoop({ cwd, env, names, now = Date.now() }) {
 // The loop document (null: none, or an inactive repository). Reads only.
 export function showLoop({ cwd, env, names }) {
   const where = resolve({ cwd, env, names });
-  return { where, loop: where.active ? open(where.dir, { names, kinds: STORE_KINDS }).read(LOOP.name, null) : null, billing: billingMode({ env, names }) };
+  return { where, loop: where.active ? open(where.dir, { names, kinds: STORE_KINDS }).read(LOOP.name, null) : null, billing: billingMode({ env, names }) }; // billing: the detected mode, shown when no loop exists; a loop shows its stored one
 }
