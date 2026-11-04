@@ -354,3 +354,16 @@ test('fix round 2 (F1): a passing adoption still publishes its gate-cache entry'
   assert.equal(res.code, 0, JSON.stringify(res.env.errors));
   assert.equal(cacheEntries(r), 1);
 });
+
+test('task merge saves gates from the verify events of the task (T-MG-120)', async (t) => {
+  const r = repo(t, { timeoutS: 30 });
+  r.branch('feat/gates', 'gates.test.mjs');
+  const id = r.task('feat/gates');
+  r.store.update('task', id, (task) => ({ ...task, events: [{ at: AT, by: r.handle, event: 'verify', data: { result: 'fail' } }, { at: AT, by: r.handle, event: 'verify', data: { result: 'pass' } }] }));
+  r.git('add', '-A');
+  r.git('commit', '-q', '-m', 'task');
+  const res = await cli(['task', 'merge', id, '--yes'], r);
+  assert.equal(res.code, 0, JSON.stringify(res.env.errors));
+  const receipt = JSON.parse(readFileSync(join(r.stateDir, 'receipts', `${id}.json`), 'utf8'));
+  assert.deepEqual(receipt.gates, { attempts: 2, firstPass: false, gatesMs: null, heavyWaitMs: null, cache: null });
+});

@@ -655,3 +655,69 @@ test('receipt without a selector in an active repository means --since the activ
   assert.equal(none.code, 2, show(none));
   assert.equal(none.out.errors[0].code, 'missing-flag');
 });
+
+// ---- gates and defectsBeforeMerge (T-MG-120, plan M1.5) ----
+
+const emptyInput = () => ({ ledger: { problems: [], requests: [], versions: [], found: true }, runs: { runs: [], problems: [] } });
+const vEvents = (...results) => results.map((result, i) => ({ at: `2026-11-04T10:0${i}:00.000Z`, by: 'tu', event: 'verify', data: { result } }));
+const finding = (severity, rule) => ({ id: 'f', severity, path: null, line: null, rule, text: 'x' });
+const review = (...findings) => ({ verdict: 'changes', reviewer: { kind: 'claude', id: 'r' }, findings });
+const detailInput = (extra) => ({ task: { id: 'T-TU-1', class: 'standard', round: 1, events: vEvents('pass', 'fail') }, ...emptyInput(), names, ...extra });
+
+test('buildReceipt fills gates and defectsBeforeMerge from verify, events and review records', async () => {
+  const { buildReceipt, RECEIPT } = await lib('receipts/index.mjs');
+  const { defineKind } = await lib('state/index.mjs');
+  const verify = { schema: 2, result: 'pass', gatesMs: 1200, heavyWaitMs: 30, cache: 'miss', gates: [] };
+  const reviews = [review(finding('blocking', 'SEC-1'), finding('blocking', 'SEC-7')), review(finding('blocking', null), finding('minor', 'COD-3'))];
+  const { receipt } = buildReceipt(detailInput({ verify, reviews }));
+  assert.deepEqual(receipt.gates, { attempts: 2, firstPass: true, gatesMs: 1200, heavyWaitMs: 30, cache: 'miss' });
+  assert.deepEqual(receipt.defectsBeforeMerge, { blocking: 3, minor: 1, byFamily: { SEC: 2, unruled: 1 }, rounds: 2 });
+  assert.ok(defineKind && RECEIPT);
+  // No sources: null. A v1 verify: gates with null timings.
+  const none = buildReceipt(detailInput({ task: { id: 'T-TU-1', class: null, round: null, events: [] } })).receipt;
+  assert.deepEqual([none.gates, none.defectsBeforeMerge], [null, null]);
+  const v1 = buildReceipt(detailInput({ verify: { schema: 1, result: 'pass', gates: [] } })).receipt;
+  assert.deepEqual(v1.gates, { attempts: 2, firstPass: true, gatesMs: null, heavyWaitMs: null, cache: null });
+});
+
+test('defects cap families at 20 plus other and stay under 4096 bytes', async () => {
+  const { buildReceipt } = await lib('receipts/index.mjs');
+  const findings = Array.from({ length: 1000 }, (_, i) => finding('blocking', `${String.fromCharCode(65 + (i % 26))}${String.fromCharCode(65 + (Math.floor(i / 26) % 3))}-${i}`));
+  const { receipt } = buildReceipt(detailInput({ reviews: [review(...findings)] }));
+  const keys = Object.keys(receipt.defectsBeforeMerge.byFamily);
+  assert.ok(keys.length <= 21 && keys.includes('other'), keys.join());
+  assert.ok(Buffer.byteLength(JSON.stringify(receipt.defectsBeforeMerge)) <= 4096);
+  assert.equal(Object.values(receipt.defectsBeforeMerge.byFamily).reduce((a, b) => a + b, 0), 1000);
+  const { RECEIPT } = await lib('receipts/kind.mjs');
+  assert.equal(RECEIPT.name, 'receipt');
+});
+
+test('saveReceipt never erases saved details with null; a new value replaces them', async (t) => {
+  const p = await project(t);
+  const { taskReceipt, saveReceipt } = await lib('receipts/index.mjs');
+  const ctx = { cwd: p.repo, env: p.env, names };
+  const first = taskReceipt('T-TU-1', ctx);
+  const gates = { attempts: 1, firstPass: true, gatesMs: 5, heavyWaitMs: 0, cache: 'hit' };
+  const defects = { blocking: 1, minor: 0, byFamily: { SEC: 1 }, rounds: 1 };
+  const file = (r) => JSON.parse(readFileSync(saveReceipt(r, { where: first.where, names }).file, 'utf8'));
+  file({ ...first.receipt, gates, defectsBeforeMerge: defects });
+  const again = file({ ...first.receipt, gates: null, defectsBeforeMerge: null });
+  assert.deepEqual([again.gates, again.defectsBeforeMerge], [gates, defects]);
+  const newer = file({ ...first.receipt, gates: { ...gates, attempts: 2 } });
+  assert.equal(newer.gates.attempts, 2);
+});
+
+test('saveReceipt keeps saved verify timings and cache when the new gates lack them (fix round 1)', async (t) => {
+  const p = await project(t);
+  const { taskReceipt, saveReceipt } = await lib('receipts/index.mjs');
+  const first = taskReceipt('T-TU-1', { cwd: p.repo, env: p.env, names });
+  const full = { attempts: 1, firstPass: true, gatesMs: 1200, heavyWaitMs: 30, cache: 'miss' };
+  const file = (r) => JSON.parse(readFileSync(saveReceipt(r, { where: first.where, names }).file, 'utf8'));
+  file({ ...first.receipt, gates: full });
+  // The verify events alone (no verify.json): attempts are new, the timings are unknown.
+  const again = file({ ...first.receipt, gates: { attempts: 2, firstPass: true, gatesMs: null, heavyWaitMs: null, cache: null } });
+  assert.deepEqual(again.gates, { ...full, attempts: 2 });
+  // A zero is a value, not a missing one.
+  const zero = file({ ...first.receipt, gates: { ...full, heavyWaitMs: 0 } });
+  assert.equal(zero.gates.heavyWaitMs, 0);
+});

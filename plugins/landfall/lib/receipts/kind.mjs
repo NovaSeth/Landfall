@@ -9,7 +9,7 @@ import { LABEL } from './sessions.mjs';
 const whole = (extra = {}) => ({ t: 'int', min: 0, ...extra });
 const TOKENS = { t: 'obj', f: { input: whole(), output: whole(), cacheRead: whole(), cacheWrite: whole() } };
 const label = (extra = {}) => ({ t: 'str', min: 1, max: 80, re: LABEL, ...extra });
-const DETAIL = { t: 'data', maxBytes: 4096, null: true }; // gates, defectsBeforeMerge: units not built yet (null)
+const DETAIL = { t: 'data', maxBytes: 4096, null: true }; // gates, defectsBeforeMerge: built in details.mjs, null without sources
 
 export const RECEIPT = defineKind('receipt', 1, {
   dir: 'receipts',

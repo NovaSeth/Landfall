@@ -73,11 +73,20 @@ export function markDone({ cwd, env, names, id, at = new Date().toISOString() })
   return { id, task, changed, head, ...result, fixed };
 }
 
+// The receipt's detail sources (plan M1.5): verify.json and every review record of the task, in round order. The
+// receipts unit takes them as data and never imports this unit (COD-20).
+function receiptDetails({ cwd, env, names, id }) {
+  const store = storeOf(activeWhere({ cwd, env, names }), names);
+  const round = (key) => Number(key.slice(key.lastIndexOf('-r') + 2));
+  const keys = store.list('review').filter((k) => k.startsWith(`${id}/`)).sort((a, b) => round(a) - round(b));
+  return { verify: store.read('verify', id), reviews: keys.map((k) => store.read('review', k)).filter(Boolean) };
+}
+
 // Refresh after closing or recording a merge, through the receipt unit's state writer. Merge-time gates may
 // have no transcript timestamp, so the receipt's duration must also include the recorded merge and this refresh.
 export function refreshReceipt({ cwd, env, names, id, mergedAt = null }) {
   try {
-    const r = taskReceipt(id, { cwd, env, names });
+    const r = taskReceipt(id, { cwd, env, names, details: receiptDetails({ cwd, env, names, id }) });
     const throughMerge = (receipt) => {
       if (mergedAt === null) return receipt;
       const endedAt = new Date(Math.max(Date.now(), Date.parse(mergedAt), Date.parse(receipt.endedAt) || 0)).toISOString();
