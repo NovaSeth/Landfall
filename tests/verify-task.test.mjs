@@ -854,3 +854,16 @@ test('T-MG-146: review brief --write in the main checkout pins base..worktree HE
   const brief = readFileSync(join(r.stateDir, 'tasks', r.id, 'review-r1-brief.md'), 'utf8');
   assert.match(brief, new RegExp(`^Range: ${r.head.slice(0, 7)}[0-9a-f]*\\.\\.${wtHead.slice(0, 7)}`, 'm'));
 });
+
+test('T-MG-146: review brief from the main checkout leaves committed in-repo state changes out of the diff', async (t) => {
+  const { r, wt } = await worktreeTask(t);
+  mkdirSync(join(wt, names.stateDir, 'tasks', r.id), { recursive: true });
+  writeFileSync(join(wt, names.stateDir, 'tasks', r.id, 'note.md'), 'committed state change\n');
+  spawnSync('git', ['add', '-A'], { cwd: wt, env: r.env });
+  spawnSync('git', ['commit', '-q', '-m', 'state change'], { cwd: wt, env: r.env });
+  const res = await cli(['review', 'brief', r.id, '--write', '--yes'], r);
+  assert.equal(res.code, 0, show(res));
+  const diff = readFileSync(join(r.stateDir, 'local', 'review', `${r.id}-r1.diff`), 'utf8');
+  assert.match(diff, /task\.txt/);
+  assert.doesNotMatch(diff, /note\.md/);
+});
