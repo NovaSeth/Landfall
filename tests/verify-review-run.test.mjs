@@ -52,7 +52,7 @@ function repo(t) {
   const handle = state.registerHandle(store, { name: 'Test User', email: 'test@example.com', at: AT }).handle;
   const task = () => state.allocateId(store, {
     prefix: 'T', handle,
-    build: (tid) => ({ id: tid, kind: 'task', title: 'a task', lane: null, owner: handle, class: 'critical', classHistory: [{ class: 'critical', reason: 'critical: test', at: AT }], status: 'dispatched', round: 0, events: [], base: null, branch: null }),
+    build: (tid) => ({ id: tid, kind: 'task', title: 'a task', lane: null, owner: handle, class: 'critical', classHistory: [{ class: 'critical', reason: 'critical: test', at: AT }], status: 'dispatched', round: 0, events: [{ at: AT, by: handle, event: 'dispatched', data: { executor: 'claude:reviewer', base: '0'.repeat(40) } }], base: null, branch: null }),
   });
   const id = task();
   const other = task();

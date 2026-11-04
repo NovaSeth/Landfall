@@ -138,6 +138,7 @@ test('review brief: round 2 starts at the HEAD round 1 pinned and lists the prev
       { id: 'F2', severity: 'minor', path: 'src/auth/login.js', line: null, rule: null, text: 'naming' },
     ],
   }));
+  await p.run(['task', 'set', 'T-TU-1', 'dispatched', '--executor', 'claude:reviewer', '--base', p.head1]);
   await p.run(['review', 'record', 'T-TU-1', '--from', review]);
   writeFileSync(join(p.repo, 'src', 'auth', 'login.js'), 'export const login = () => 403;\n');
   const head2 = p.commit('fix: login');
