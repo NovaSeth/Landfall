@@ -43,19 +43,11 @@ const GATE_NAME = /(^|[\s/])(check-secrets|budget\.sh|npm|pnpm|yarn|bun)(\s|$|\.
 const BIN_WORD = new RegExp(`(^|[\\s/])${binRe}\\s`);
 const GATE_SUB = /\s(secrets|verify|slot|heavy)(\s|$)/;
 const HOOK_SUB = /\shook(\s|$)/;
-// A path word, then options, then `hook`: maybe the launcher renamed (a link or a copy; shapes.mjs sameLauncher). Linear.
-function pathThenHook(s) {
-  if (!s.includes('hook')) return false;
-  const ws = s.split(' ');
-  for (let k = 0; k < ws.length; k++) {
-    if (!ws[k].includes('/')) continue;
-    let j = k + 1;
-    while (j < ws.length && ws[j].startsWith('-')) j++;
-    if (ws[j] === 'hook') return true;
-    k = j - 1;
-  }
-  return false;
-}
+// A path word anywhere before a `hook` word, on the whole text: maybe the launcher renamed (a link or a copy; shapes.mjs
+// sameLauncher). Conservative: the variants have lost quotes and escapes, so a quoted or escaped path with a space, ; or &
+// in it is several words there (B-MG-11, T-MG-154). Linear: the first /, then one search after it.
+const HOOK_WORD = /(^|[\s;&|(])hook($|[\s;&|)<>])/;
+const pathBeforeHook = (s) => { const k = s.indexOf('/'); return k >= 0 && HOOK_WORD.test(s.slice(k)); };
 const after = (s, head, tail) => { const m = head.exec(s); return m !== null && tail.test(s.slice(m.index + m[0].length - 1)); };
 const GATE_LINE = { test: (s) => GATE_NAME.test(s) || after(s, BIN_WORD, GATE_SUB) };
 
@@ -138,7 +130,7 @@ export const GUARDED = Object.freeze([
   // directory or the repository itself (spec §7.13, lib/guard/protect.mjs)
   { id: 'recursive remove', line: (s) => RM_RECURSIVE.test(s) || FIND_DELETE.test(s) },
   // the plugin's hook entry point (`<bin> … hook`): only Claude Code runs it, from hooks.json (T-MG-149, shapes.mjs hookCli)
-  { id: 'hook entry point', line: (s) => after(s, BIN_WORD, HOOK_SUB) || pathThenHook(s) },
+  { id: 'hook entry point', line: (s) => after(s, BIN_WORD, HOOK_SUB), text: pathBeforeHook },
 ]);
 
 // ---------- normalization ----------
@@ -306,7 +298,7 @@ function coarse(text, literals) {
   const cs = [c1, c2]; const hits = new Set();
   if (d.uncertain) hits.add(UNCERTAIN);
   for (const g of GUARDED) if ((g.word && vs.some((v) => g.word.test(v))) || (g.cased && cs.some((v) => g.cased.test(v)))) hits.add(g.id);
-  if (vs.some((v) => ROUGH.test(v))) hits.add('a line-token trigger in a long text');
+  if (vs.some((v) => ROUGH.test(v) || HOOK_WORD.test(v))) hits.add('a line-token trigger in a long text'); // hook: T-MG-154
   for (const l of literals) if (vs.some((v) => v.includes(l))) hits.add(`project rule literal "${l}"`);
   return hits;
 }

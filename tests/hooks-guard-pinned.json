@@ -699,5 +699,6 @@
   ["cd - && node -- @LFLINK@ hook prompt-consent","none"],
   ["cd ~ && ./lf hook prompt-consent","none"],
   ["cd - && node -- bin/lf hook prompt-consent","none"],
+  ["~/lf hook prompt-consent","none"],
   ["printf x > @STATE@/local/loop-consent.json","tracked"]
 ]

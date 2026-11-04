@@ -9,7 +9,7 @@
 // analysis of code in bash -c. Every simple command is also checked for writes to hook files (SEC-4) and to command-owned
 // state files (FLW-7, protect.mjs); rm -r and find -delete for a tracked top-level directory or the repository (PRI-17).
 import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gitShape } from './git-shape.mjs';
 import { GIT_ARG } from './git-options.mjs';
@@ -129,11 +129,14 @@ const binWords = (w) => { let k = 1; while (k < w.length && w[k].startsWith('-')
 // in every form that reaches the launcher (bare, by any path, behind node or a wrapper).
 const hookCli = (w) => binWords(w).words[0] === 'hook';
 // A path that is this plugin's launcher under another name (fix round 2): a link (its real path) or a copy (the same
-// bytes). Asked only when `hook` follows the word, so a command pays one realpath per such word at most.
+// bytes). Asked only when `hook` follows the word, so a command pays one realpath per such word at most. An absolute
+// word needs no directory; a relative one where the directory is unknown (after `cd ~`, `cd -`, …), or one the shell
+// expands from ~, may be the launcher and is taken as one: fail closed (T-MG-154).
 let launcherBytes = null;
 function sameLauncher(t, ctx) {
-  if (!t.includes('/') || OWN_LAUNCHER === null || typeof ctx.cwd !== 'string') return false;
-  const p = real(resolve(ctx.cwd, t));
+  if (!t.includes('/') || OWN_LAUNCHER === null) return false;
+  if (!isAbsolute(t) && (typeof ctx.cwd !== 'string' || t.startsWith('~'))) return true;
+  const p = real(isAbsolute(t) ? t : resolve(ctx.cwd, t));
   if (p === null) return false;
   if (p === OWN_LAUNCHER) return true;
   try {

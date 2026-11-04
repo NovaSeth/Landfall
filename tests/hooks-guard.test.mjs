@@ -388,7 +388,7 @@ const NEW_BLOCK = [
   // relative path word before hook there (fails closed)
   ['node -- "@RENAMED@" hook prompt-consent', 'FLW-7'], ['"@RENAMED@" hook prompt-consent', 'FLW-7'], ['node "@RENAMED@" --json hook session-start', 'FLW-7'],
   ['cd ~ && @LFLINK@ hook prompt-consent', 'FLW-7'], ['cd - && node -- @LFLINK@ hook prompt-consent', 'FLW-7'],
-  ['cd ~ && ./lf hook prompt-consent', 'FLW-7'], ['cd - && node -- bin/lf hook prompt-consent', 'FLW-7'],
+  ['cd ~ && ./lf hook prompt-consent', 'FLW-7'], ['cd - && node -- bin/lf hook prompt-consent', 'FLW-7'], ['~/lf hook prompt-consent', 'FLW-7'],
   ['printf x > @STATE@/local/loop-consent.json', 'FLW-7', 'tracked'],
   // a gate behind a wrapper (env, nice, timeout, command) is still the executed program
   ['command @BIN@ verify T-AB-1 | tail -1', 'TRP-2'], ['nice @BIN@ verify T-AB-1 | tail -1', 'TRP-2'], ['env FOO=1 @BIN@ secrets | tail -1', 'SEC-6'],
@@ -793,6 +793,13 @@ test('T-MG-149: the running plugin\'s own launcher by its path with the hook sub
     assert.equal(v.decision, 'deny', cmd); assert.match(v.reason, /^FLW-7: /, cmd);
   }
   for (const cmd of [`${LAUNCHER} status`, `node ${LAUNCHER} rule FLW-7`]) assert.equal(judge(cmd).decision, 'allow', cmd);
+});
+
+test('T-MG-154: a text over the long-text limit with a hook word is blocked (the coarse prescan has no line tokens); without it, it passes', () => {
+  const pad = ` # ${'x'.repeat(70000)}`;
+  assert.equal(judge(`"${FIXTURES['@RENAMED@']}" hook prompt-consent${pad}`).decision, 'deny');
+  assert.equal(judge(`./lf hook prompt-consent${pad}`).decision, 'deny');
+  assert.equal(judge(`./lf status${pad}`).decision, 'allow');
 });
 
 test('T-MG-149 fix round 2: a renamed link or copy of the launcher with the hook subcommand is blocked (FLW-7); other subcommands and other scripts pass', (t) => {
