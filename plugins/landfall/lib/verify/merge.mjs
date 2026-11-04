@@ -22,6 +22,7 @@
 import { authorHandle, readRecords } from '../decisions/index.mjs';
 import { emptyProfile, riskGlobsOf } from '../profile/index.mjs';
 import { KINDS, StateError, recordMerged } from '../state/index.mjs';
+import { refreshReceipt } from './done.mjs';
 import { activeWhere, codeState, evaluate, gatesSha, gitIn, stateAt, storeOf } from './run.mjs';
 
 const usage = (code, message, hint = '') => new StateError(code, 'USAGE', message, { hint });
@@ -88,7 +89,7 @@ export function mergeTask({ cwd, env, names, id, branch, version = null, at = ne
     if (!conflicted) gitIn(where, env, ['checkout', '-q', ...scope]);
     gitIn(where, env, ['merge', '--abort']);
   };
-  const base = { task: id, branch: ref, merged: false, upToDate: false, commit: null, conflicts: [], result: null, verify: null, output: [] };
+  const base = { task: id, branch: ref, merged: false, upToDate: false, commit: null, conflicts: [], result: null, verify: null, output: [], receipt: null, receiptProblem: null };
   const refused = (code, message, hint, extra = {}) => { undo(); return { ...base, ...extra, reasons: [{ code, message, hint }], exit: 'FAIL' }; };
 
   const m = gitIn(where, env, ['merge', '--no-ff', '--no-commit', ref]);
@@ -153,7 +154,8 @@ export function mergeTask({ cwd, env, names, id, branch, version = null, at = ne
     return { ...base, result: out.doc.result, verify: out.doc, output: out.output, reasons: [{ code: 'hook-modified-tree', message: 'a commit hook changed the merged tree after the gates ran; the commit was undone and the merge is left staged', hint: 'review the staged changes, clear them (git restore --staged --worktree .), then run task merge again' }], exit: 'FAIL' };
   }
   const record = recordMerged({ cwd, env, names, at, entries: [{ id, data: { commit, target: targetOf(where, env), batch: null, adopted: false, verify: tree } }] })[0];
-  return { ...base, merged: true, commit, result: 'pass', verify: out.doc, output: out.output, event: record.event, reasons: [], exit: 'OK' };
+  const receipt = refreshReceipt({ cwd, env, names, id, mergedAt: record.event.at });
+  return { ...base, ...receipt, merged: true, commit, result: 'pass', verify: out.doc, output: out.output, event: record.event, reasons: [], exit: 'OK' };
 }
 
 // Whether the worktree still holds `commit` exactly: HEAD is it, the index and the working tree match it in `scope`, and

@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -21,13 +21,14 @@ const pluginDir = (() => {
 const lib = (rel) => import(pathToFileURL(join(pluginDir, 'lib', rel)).href);
 const state = await lib('state/index.mjs');
 const profile = await lib('profile/index.mjs');
+const { saveReceipt, taskReceipt } = await lib('receipts/index.mjs');
 const { main } = await lib('cli/main.mjs');
 const names = JSON.parse(readFileSync(join(pluginDir, 'lib', 'name.json'), 'utf8'));
 const AT = '2026-10-15T05:42:00.000Z';
 const TESTS = "import { test } from 'node:test';\ntest('adds', () => {});\n";
 const REPORT = '---\nred: {"command": "node --test", "exit": 1, "excerpt": "1 failing"}\ngreen: {"command": "node --test", "exit": 0, "excerpt": "2 passing"}\n---\n\n# Report\n';
 
-function repo(t, { gate = 'node --test' } = {}) {
+function repo(t, { gate = 'node --test', timeoutS = 120 } = {}) {
   const base = realpathSync(mkdtempSync(join(tmpdir(), 'merge-record-')));
   t.after(() => rmSync(base, { recursive: true, force: true }));
   const dir = join(base, 'repo');
@@ -53,7 +54,7 @@ function repo(t, { gate = 'node --test' } = {}) {
   store.write('state', null, { codename: names.codename, createdWith: '2.0.0', activatedAt: AT });
   writeFileSync(join(stateDir, '.gitignore'), 'local/\n');
   const handle = state.registerHandle(store, { name: 'Test User', email: 'test@example.com', at: AT }).handle;
-  profile.openStore(stateDir, names).write('profile', null, { ...profile.emptyProfile(), gates: [{ name: 'test', cmd: gate, timeoutS: 120, kind: 'test' }] });
+  profile.openStore(stateDir, names).write('profile', null, { ...profile.emptyProfile(), gates: [{ name: 'test', cmd: gate, timeoutS, kind: 'test' }] });
   const task = (branch) => {
     const id = state.allocateId(store, {
       prefix: 'T', handle,
@@ -76,14 +77,90 @@ function repo(t, { gate = 'node --test' } = {}) {
   return { dir, env, stateDir, store, handle, git, write, task, branch };
 }
 
-async function cli(args, { dir, env }) {
+async function cli(args, { dir, env, json = true }) {
   const out = [];
   const err = [];
   const io = { out: (s) => out.push(s), err: (s) => err.push(s), stdinIsTTY: false, env, cwd: dir, stdin: null };
-  const code = await main([...args, '--json'], { io });
-  return { code, env: JSON.parse(out.join('')), stderr: err.join('') };
+  const code = await main(json ? [...args, '--json'] : args, { io });
+  return { code, env: json ? JSON.parse(out.join('')) : null, stderr: err.join('') };
 }
 const merges = (r, id) => r.store.read('task', id).events.filter((e) => e.event === 'merged');
+
+for (const existing of [false, true]) {
+  test(`task merge ${existing ? 'refreshes an existing' : 'creates a missing'} receipt through the merged event`, async (t) => {
+    const r = repo(t, { timeoutS: 30 });
+    r.branch('feat/receipt', 'receipt.test.mjs');
+    const id = r.task('feat/receipt');
+    const file = join(r.stateDir, 'receipts', `${id}.json`);
+    if (existing) {
+      const built = taskReceipt(id, { cwd: r.dir, env: r.env, names });
+      saveReceipt({ ...built.receipt, startedAt: AT, endedAt: AT, wallMs: 0, tokens: { ...built.receipt.tokens, input: 100 } }, { where: built.where, names });
+    }
+    r.git('add', '-A');
+    r.git('commit', '-q', '-m', 'task');
+    const res = await cli(['task', 'merge', id, '--yes'], r);
+    assert.equal(res.code, 0, JSON.stringify(res.env.errors));
+    assert.ok(existsSync(file), 'merge saves receipts/<id>.json');
+    const receipt = JSON.parse(readFileSync(file, 'utf8'));
+    assert.ok(Date.parse(receipt.endedAt) >= Date.parse(merges(r, id)[0].at), 'receipt includes the merged event');
+    assert.equal(res.env.data.receipt, file);
+    assert.equal(res.env.data.receiptProblem, null);
+    if (existing) assert.equal(receipt.tokens.input, 100, 'usage remains when transcripts are no longer available');
+    if (receipt.startedAt) assert.equal(receipt.wallMs, Date.parse(receipt.endedAt) - Date.parse(receipt.startedAt));
+  });
+}
+
+for (const json of [true, false]) {
+  test(`task merge keeps success and exposes receipt build failures (${json ? 'JSON' : 'text'})`, async (t) => {
+    const r = repo(t, { timeoutS: 30 });
+    r.branch('feat/receipt', 'receipt.test.mjs');
+    const id = r.task('feat/receipt');
+    r.git('add', '-A');
+    r.git('commit', '-q', '-m', 'task');
+    // A directory lookup that reliably throws ELOOP, even when tests run as root.
+    r.env.CLAUDE_PLUGIN_DATA = state.resolve({ cwd: r.dir, env: r.env, names }).dataDir;
+    r.env.CLAUDE_CONFIG_DIR = join(r.env.HOME, 'unreadable-transcripts');
+    mkdirSync(r.env.CLAUDE_CONFIG_DIR);
+    symlinkSync('projects', join(r.env.CLAUDE_CONFIG_DIR, 'projects'));
+    const res = await cli(['task', 'merge', id, '--yes'], { ...r, json });
+    assert.equal(res.code, 0, JSON.stringify(res.env ?? res.stderr));
+    assert.equal(merges(r, id).length, 1, 'receipt failure does not undo the merge');
+    if (json) {
+      assert.equal(res.env.data.receipt, null);
+      assert.equal(res.env.data.receiptProblem?.code, 'receipt-not-saved');
+      assert.match(res.env.data.receiptProblem.message, /ELOOP/);
+    } else {
+      const warnings = res.stderr.trim().split('\n');
+      assert.equal(warnings.length, 1);
+      assert.match(warnings[0], /^warning: .*receipt-not-saved/);
+      assert.ok(warnings[0].includes(`${names.bin} receipt --task ${id}`));
+    }
+  });
+}
+
+test('batch merge saves a receipt for every merged task after recording its event', async (t) => {
+  const r = repo(t, { timeoutS: 30 });
+  const heads = ['a', 'b'].map((name) => r.branch(`feat/${name}`, `${name}.test.mjs`));
+  const ids = ['a', 'b'].map((name, i) => {
+    const id = r.task(`feat/${name}`);
+    r.store.update('task', id, (task) => ({ ...task, events: [{ at: AT, by: r.handle, event: 'done', data: { head: heads[i] } }] }));
+    return id;
+  });
+  r.git('add', '-A');
+  r.git('commit', '-q', '-m', 'tasks');
+  const res = await cli(['task', 'merge', ...ids, '--yes'], r);
+  assert.equal(res.code, 0, JSON.stringify(res.env.errors));
+  assert.equal(res.env.data.fallback, undefined, 'exercises batch integration');
+  for (const id of ids) {
+    const file = join(r.stateDir, 'receipts', `${id}.json`);
+    assert.ok(existsSync(file), `${id} has a receipt`);
+    const receipt = JSON.parse(readFileSync(file, 'utf8'));
+    assert.ok(Date.parse(receipt.endedAt) >= Date.parse(merges(r, id)[0].at));
+    const result = res.env.data.tasks.find((task) => task.task === id);
+    assert.equal(result.receipt, file);
+    assert.equal(result.receiptProblem, null);
+  }
+});
 
 test('a single task merge writes the merged event and mergedAt through lib/state', async (t) => {
   const r = repo(t);
