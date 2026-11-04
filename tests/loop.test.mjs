@@ -177,6 +177,7 @@ test('1.x self-verified round → approved: verify, merge, close (REV-11, FLW-8)
   assert.match(s.step, new RegExp(`\`${BIN} close T-TU-1\``));
   assert.match(s.step, new RegExp(`${BIN} close <ids…>\`, one batch`));
   assert.doesNotMatch(s.step, /squash|by hand|locally/);
+  assert.match(s.step, /at once, not held for a batch/);
   s = row(table([task('T-TU-1', 'verified')]), 'T-TU-1');
   assert.deepEqual(s.rules, ['REV-11', 'ORC-25', 'FLW-8']);
   // a self-check of round 1 does not approve round 2
