@@ -48,6 +48,7 @@ import { join } from 'node:path';
 import { authorHandle, readRecords, stateRel } from '../decisions/index.mjs';
 import { git } from '../git/index.mjs';
 import { PROFILE_KINDS, emptyProfile, listFiles, observe, riskGlobsOf } from '../profile/index.mjs';
+import { DEFAULT_RISK_PATHS, globMatch, lightMatcher } from '../router/classify.mjs';
 import { MAX_PATHS, addedSteps, applyClass, classify, rank, recordedKeys, routeFor, routeTask, routerThresholds, weightless } from '../router/index.mjs';
 import { KINDS, StateError, check, gatesShaOf, open, resolve } from '../state/index.mjs';
 import { appliedTier, readReport, reportHasEvidence, reviewNeed, reviewProblem, reviewState } from './artifacts.mjs';
@@ -239,9 +240,10 @@ function integrationRefs(where, env) {
 // review r1 F3), so a `git merge main` into the branch brings none of main's work into the class (retro 2026-10
 // D-MG-13); a merge commit counts what it changes beyond every parent (`--cc`: a conflict resolution or an edit made
 // in the merge itself). Without an integration ref every commit of base..HEAD counts: a class may rise, never fall.
-// Plus the uncommitted and untracked changes; the LOC of those paths against the base. Weightless paths (docs, images:
-// lib/router) count no LOC.
-function changeSince(where, env, base, scope) {
+// Plus the uncommitted and untracked changes; the LOC of those paths against the base. Weightless and light paths
+// (lib/router) count no LOC unless they match a risk glob.
+function changeSince(where, env, base, scope, light = () => false, risky = () => false) {
+  const counted = (path) => risky(path) || (!weightless(path) && !light(path));
   const wt = gitIn(where, env, ['diff', '--name-only', '-z', 'HEAD', ...scope]);
   if (wt.status !== 0) return null;
   const paths = new Set(wt.stdout.split('\0').filter(Boolean));
@@ -262,7 +264,7 @@ function changeSince(where, env, base, scope) {
     if (d.status !== 0) return null;
     for (const rec of d.stdout.split('\0')) {
       const m = /^(\d+|-)\t(\d+|-)\t([\s\S]+)$/.exec(rec);
-      if (!m || m[1] === '-' || weightless(m[3])) continue;
+      if (!m || m[1] === '-' || !counted(m[3])) continue;
       loc += Number(m[1]) + Number(m[2]);
     }
   }
@@ -270,7 +272,7 @@ function changeSince(where, env, base, scope) {
   for (const p of u.status === 0 ? u.stdout.split('\0').filter(Boolean) : []) {
     if (paths.has(p)) continue;
     paths.add(p);
-    if (!weightless(p)) loc += lineCount(join(where.worktree, p));
+    if (counted(p)) loc += lineCount(join(where.worktree, p));
   }
   return { paths: [...paths].filter((p) => !UNSAFE_PATH.test(p)).slice(0, MAX_PATHS), loc };
 }
@@ -343,7 +345,10 @@ export function evaluate({ where, names, env, id, mode, handle = null, at = now(
   if (!baseOk) say('fail', 'base-missing', task.base ? `the base commit ${task.base.slice(0, 12)} of ${id} is not in this repository` : `${id} has no base commit`, `record it: ${names.bin} task set ${id} dispatched --executor <e> --base <sha> (fetch it first in a shallow clone)`);
   const anchorCommit = mode === 'merge' ? anchor : baseOk ? task.base : null;
   // The change under verification: since the base (verify), or what the merge brings onto the target tip.
-  const change = mode === 'merge' ? mergeChange(where, env, anchor, code.routeScope) : baseOk ? changeSince(where, env, task.base, code.routeScope) : null;
+  const riskPaths = riskGlobsOf(profile);
+  const riskGlobs = [...new Set([...DEFAULT_RISK_PATHS, ...riskPaths])];
+  const risky = (path) => riskGlobs.some((glob) => globMatch(glob, path));
+  const change = mode === 'merge' ? mergeChange(where, env, anchor, code.routeScope) : baseOk ? changeSince(where, env, task.base, code.routeScope, lightMatcher(routerThresholds(store)), risky) : null;
   if (baseOk && change === null && mode !== 'merge') say('fail', 'base-missing', `git cannot compare the work with the base ${task.base.slice(0, 12)}`, 'fetch the base commit, then verify again');
 
   if (profile.gates.length === 0) {
@@ -459,7 +464,7 @@ export function evaluate({ where, names, env, id, mode, handle = null, at = now(
 
   if (mode !== 'merge') {
     if (change) {
-      const { route, flags } = reroute({ store, task, id, write, handle, riskPaths: riskGlobsOf(profile), change, at });
+      const { route, flags } = reroute({ store, task, id, write, handle, riskPaths, change, at });
       doc.route = route;
       doc.class = route.actual;
       if (route.escalated) say('route-escalated', 'route-escalated', `the change is ${route.actual}, not ${route.declared}: the route adds ${route.missingSteps.join(', ')}`, 'do the added steps, then verify again');
