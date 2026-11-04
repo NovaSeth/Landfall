@@ -131,3 +131,25 @@ export function taskSet({ args, flags, names, io }) {
   const r = state.setTask({ ...target(io, names), id: args.id, state: args.state, options: flags });
   return { data: r, text: `${r.id}: ${args.state} recorded; status ${r.task.status}\n` };
 }
+
+// `task outcome <id> <kind> [--by <ref>]` records the outcome of a cancelled task; `task outcome --adopt [--yes]` proposes
+// one from each reason (dry run) and, with --yes, writes it, one update per task (lib/state/outcome.mjs).
+export function taskOutcome({ args, flags, names, io, yes }) {
+  const usage = (message) => ({ code: EXIT.USAGE, errors: [{ code: 'missing-argument', message, hint: `${names.bin} task outcome <id> <delivered|superseded|dropped> [--by <ref>] | --adopt [--yes]` }] });
+  if (!flags.adopt) {
+    if (!args.id || !args.kind) return usage('task outcome needs <id> and <kind>, or --adopt');
+    const r = state.recordOutcome({ ...target(io, names), id: args.id, kind: args.kind, by: flags.by ?? null });
+    const o = r.task.outcome;
+    return { data: r, text: `${r.id}: outcome ${o.kind}${o.by ? ` ${o.by}` : ''} recorded\n` };
+  }
+  if (args.id || args.kind || flags.by) return usage('--adopt takes no <id>, <kind> or --by');
+  const r = state.adoptTaskOutcomes({ ...target(io, names), write: Boolean(yes) });
+  const data = { dryRun: !yes, proposals: r.proposals, human: r.human, applied: r.applied, skipped: r.skipped };
+  const lines = [
+    ...r.proposals.map((p) => `${p.id} ${p.kind} ${p.by ?? '-'}${r.applied.includes(p.id) ? ' (written)' : ''}`),
+    ...r.human.map((h) => `${h.id}: ${h.reason}`),
+    ...r.skipped.map((s) => `${s.id}: skipped, ${s.reason}`),
+    yes ? `${r.applied.length} adopted, ${r.human.length} left for a human` : `dry run: ${r.proposals.length} proposals, ${r.human.length} left for a human; --yes writes them`,
+  ];
+  return { data, text: `${lines.join('\n')}\n` };
+}

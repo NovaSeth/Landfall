@@ -114,6 +114,7 @@ Commands:
   task list            List the tasks of this repository: ID, status, class, round, kind, lane, branch, title.
   task merge           Merge a task branch with --no-ff --no-commit, run the outcome gates on the merged tree, commit only on pass.
   task new             Create a task with the next ID of your handle (T-<H>-<n>); area gates and releases are --kind gate.
+  task outcome         Record what a cancelled task delivered or was replaced by; --adopt proposes it from the cancel reasons.
   task set             Record a state of your task as an event with author and time; it moves the task's status.
   task show            Print one task as its resume card: class, branch, base, worktree, verify, reviews, open findings, next step, events.
   task start           Create the task's worktree and branch from a base commit and record them (started); the brief carries both.
@@ -1498,15 +1499,41 @@ Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
 Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
 ```
 
-### `landfall task set <id> <state> [--executor <name>] [--base <sha>] [--branch <branch>] [--worktree <path>] [--lane <lane>] [--report <status>] [--reason <text>] [--round <k>] [--addressed <n>] [--open <n>] [--note <text>] [--yes] [--json]`
+### `landfall task outcome [<id>] [<kind>] [--by <ref>] [--adopt] [--yes] [--json]`
 
 ```text
-usage: landfall task set <id> <state> [--executor <name>] [--base <sha>] [--branch <branch>] [--worktree <path>] [--lane <lane>] [--report <status>] [--reason <text>] [--round <k>] [--addressed <n>] [--open <n>] [--note <text>] [--yes] [--json]
+usage: landfall task outcome [<id>] [<kind>] [--by <ref>] [--adopt] [--yes] [--json]
+
+Record what a cancelled task delivered or was replaced by; --adopt proposes it from the cancel reasons.
+<kind> is delivered, superseded or dropped; --by names what delivered or replaced the task: a task ID (T-AB-12), a commit SHA
+(7-40 hex) or a release (v2.5.0); without it the outcome has no reference. Only the owner, only a cancelled task; the outcome is
+recorded once (an equal second call changes nothing, a different one is refused: exit 1) and adds one outcome event.
+--adopt: for each of your cancelled tasks without an outcome, read the reason of its cancelled event: "delivered in <T>",
+"superseded by <T>", "stale record: shipped in <vX.Y.Z>", "merged as <sha>", "split into …", "deferred …" give a proposal
+(<id> <kind> <by>); the others are listed as <id>: <reason> for a human, who records them with task outcome <id> <kind>.
+Without --yes it is a dry run and writes nothing; with --yes each task is written in its own update.
+
+Arguments:
+  id    task ID such as T-AB-1 (not with --adopt)
+  kind  delivered, superseded or dropped (not with --adopt)
+
+Options:
+  --by <ref>  what delivered or replaced it: a task ID, a commit SHA (7-40 hex) or vX.Y.Z
+  --adopt     propose outcomes for the cancelled tasks without one; with --yes write them
+
+Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED. Read-only with --adopt: no consent needed.
+Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
+```
+
+### `landfall task set <id> <state> [--executor <name>] [--base <sha>] [--branch <branch>] [--worktree <path>] [--lane <lane>] [--report <status>] [--reason <text>] [--round <k>] [--addressed <n>] [--open <n>] [--note <text>] [--outcome <kind>] [--by <ref>] [--yes] [--json]`
+
+```text
+usage: landfall task set <id> <state> [--executor <name>] [--base <sha>] [--branch <branch>] [--worktree <path>] [--lane <lane>] [--report <status>] [--reason <text>] [--round <k>] [--addressed <n>] [--open <n>] [--note <text>] [--outcome <kind>] [--by <ref>] [--yes] [--json]
 
 Record a state of your task as an event with author and time; it moves the task's status.
 States: started --branch <b> --base <sha> [--worktree <path>] (status unchanged; task start records it) · dispatched --executor <e>
 --base <sha> [--lane <l>] · implementer --report done|done-with-concerns|needs-context|blocked [--round <k>] · blocked --reason <t>
-· cancelled --reason <t> · fix-round --round <k> --addressed <n> --open <n> · self-verified [--round <k>] · status-request.
+· cancelled --reason <t> [--outcome <k> [--by <ref>]] · fix-round --round <k> --addressed <n> --open <n> · self-verified [--round <k>] · status-request.
 --note <t> fits every state. Only the owner records a state; a done or cancelled task is closed.
 done is never set here: a task is done only after a passing verify (GC3). With the lanes capability on, dispatched needs a lane.
 
@@ -1526,6 +1553,8 @@ Options:
   --addressed <n>    fix-round: findings addressed
   --open <n>         fix-round: findings still open
   --note <text>      any state: a note (at most 200 characters)
+  --outcome <kind>   cancelled: delivered, superseded or dropped, recorded in the same update
+  --by <ref>         cancelled with --outcome: what delivered or replaced it (task ID, commit SHA or vX.Y.Z)
 
 Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
 Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
