@@ -1,4 +1,4 @@
-# Known limitations (2.5.1)
+# Known limitations (2.6.0)
 
 ## Not in this release
 - The adaptive engine runs in shadow mode. `landfall tier` explains the recommended tier. Nothing applies tier changes automatically.
@@ -41,6 +41,8 @@
   - A push without an explicit `<src>:<dst>` refspec is blocked when an earlier command on the same line may change the branch (for example `npm test && git push origin feat/x`). Push in a separate command.
   - The CLI run from a checkout by its path (`plugins/landfall/bin/landfall commit`) is a script with a guarded argument, unless the session's environment names that launcher in `LANDFALL_LAUNCHERS`. Set it in the shell before starting Claude Code. The installed plugin's launcher and `landfall` on PATH need nothing.
     - A checkout launcher is not trusted by its location or by a `name.json` in its plugin root. An agent can write both files, so only the operator's `LANDFALL_LAUNCHERS` makes it the own command (T-MG-95).
+- Loop billing: subscription mode is read from `oauthAccount.billingType` in `.claude.json`, a field Claude Code does not document. When it is missing or unknown, the loop keeps the $25 cap.
+- Loop usage limit: reset times in a usage-limit message are read in the machine's local time. The 5-hour and weekly utilization percentages are not read, because Claude Code exposes them only to a status line. An external provider's usage limit (Codex) is shown as information and does not make `tick` wait.
 - Loop: an agent that runs `landfall deactivate` and then `landfall init` starts a new loop with default caps.
 - State: every reader ignores a `local/` shipped in a repository. That means one with an unchanged file tracked by git, one marked by another machine, or one whose marker is not a regular file. The next command's state write moves it aside to the gitignored `local.foreign-<time>/`.
   - A `local/` whose owner git cannot tell (an error or a timeout) is ignored too, and commands refuse to write instead of moving it.

@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.6.0
+
+- **Loop billing mode:**
+  - The loop detects at creation whether Claude Code bills by subscription or by API and stores it (loop schema 2, migration 005). The `<PREFIX>BILLING` override `subscription` counts only from a terminal start, while `api` counts anywhere and can only tighten a running loop; otherwise API environment variables (`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_USE_BEDROCK`, `_VERTEX`, `_FOUNDRY`) and `oauthAccount.billingType` in `.claude.json` decide. A tick may only tighten the mode to api.
+  - In subscription mode the API-price dollar estimate does not end the loop; API and unknown billing keep the $25 cap. `loop start`, `loop status` and `tick` print `billing: <mode> (<source>)`. Caps are still raised only from a terminal.
+- **Usage limit:** a message such as `You've hit your session limit · resets …` (session, weekly, Opus or Sonnet) in the repository's transcripts makes `tick` wait until the reset, between 60 s and 3600 s, and never report STALLED. An external run's usage limit (Codex) adds an informational row.
+- **Dashboard:** live agents and runs show as `↳` rows under their task, with an UNASSIGNED group for the rest. The AGENTS section is gone, and every line fits the pane.
+- **Batch merge:**
+  - It links the main checkout's `node_modules` into the integration worktree when the lockfile matches. Otherwise, or when the first gate cannot run, it merges the tasks one by one.
+  - "Changes the gates" is judged against the merge-base and names the gate or risk path.
+- **Verify:** the measured lines of code skip owner-set light paths (the router's `lightPaths`), and a risk path always counts. Classify and verify now share one risk predicate, with no change in behaviour.
+- **Test baseline:** the TAP parser skips lines inside YAML diagnostic blocks, so a stack frame is never a test and no phantom removal appears.
+- **Docs:** README, getting started and known limitations describe the above. The new limits cover the undocumented billing field, local-time reset parsing, unread utilization percentages and the informational external limit.
+
 ## 2.5.1
 
 - **Dashboard task rows:**
