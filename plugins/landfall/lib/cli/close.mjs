@@ -11,9 +11,19 @@ import { taskDone, taskMerge, verify } from '../verify/command.mjs';
 import { activeWhere, storeOf } from '../verify/run.mjs';
 import { EXIT } from './commands.mjs';
 import { commit } from './commit.mjs';
+import { LIMITS, clip } from './envelope.mjs';
 
 const codeOf = (r) => r?.code ?? (r?.errors?.length ? EXIT.FAIL : EXIT.OK);
 const plain = (e) => ({ code: e.code, message: e.message, hint: e.hint ?? '' });
+
+// The stop line: the step and its exit code first, the resuming command last and whole; the step's own error is
+// clipped to the room left within the envelope's message limit (fix round 1, F2), or left out when none is left.
+export function stopMessage({ names, ids, tasks, step, code, why }) {
+  const head = `${tasks.join(', ')}: close stopped at ${step} (exit ${code})`;
+  const tail = `; next: ${names.bin} close ${ids.join(' ')}`;
+  const room = LIMITS.message - head.length - tail.length - 2;
+  return `${head}${why && room >= 10 ? `: ${clip(why, room)}` : ''}${tail}`;
+}
 
 // A step's command function; a typed state error becomes its result, as main.mjs does for a command.
 async function run(fn, ctx) {
@@ -31,7 +41,6 @@ export async function close(ctx) {
   const where = activeWhere({ cwd: io.cwd, env: io.env, names });
   const task = (id) => storeOf(where, names).read('task', id);
   const steps = [];
-  const resume = `${names.bin} close ${ids.join(' ')}`;
 
   // Runs one step; returns the result of the call (a failure) or null when the step passed.
   const step = async (name, tasks, fn, id) => {
@@ -43,7 +52,7 @@ export async function close(ctx) {
   const stopped = (name, tasks, code, why) => ({
     code,
     data: { tasks: ids, steps, stoppedAt: name },
-    errors: [{ code: 'close-stopped', message: `${tasks.join(', ')}: close stopped at ${name} (exit ${code})${why ? `: ${why}` : ''}; next: ${resume}`, hint: '' }],
+    errors: [{ code: 'close-stopped', message: stopMessage({ names, ids, tasks, step: name, code, why }), hint: '' }],
   });
 
   for (const id of ids) {

@@ -1074,7 +1074,8 @@ test('guard: unknown state (branch, git, package.json) blocks a token and passes
 test('guard gates: one list; every gate piped is blocked, the same command without a pipe passes', async () => {
   const { GATES } = await lib('guard/tokens.mjs');
   const SAMPLES = { 'secrets scan': ['bash .workflow/bin/check-secrets.sh', '@BIN@ secrets', 'npm run check-secrets'], 'machine budget': ['bash .workflow/bin/budget.sh agent'],
-    'slot admission': ['@BIN@ slot acquire agent', '@BIN@ heavy -- npm test'], verify: ['@BIN@ verify T-AB-1'] };
+    'slot admission': ['@BIN@ slot acquire agent', '@BIN@ heavy -- npm test'], verify: ['@BIN@ verify T-AB-1'],
+    close: ['@BIN@ close T-AB-1 --yes', '@BIN@ close T-AB-1 T-AB-2 --yes'] }; // close: T-MG-178 fix round 1 (F1)
   assert.deepEqual(GATES.map((g) => g.id).sort(), Object.keys(SAMPLES).sort(), 'every gate has samples here');
   for (const g of GATES) {
     for (const s of SAMPLES[g.id].map(withBin)) {

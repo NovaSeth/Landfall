@@ -35,13 +35,15 @@ export const GATES = Object.freeze([
   { id: 'machine budget', rule: 'TRP-2', script: /(^|\/)budget\.sh$/, text: /budget\.sh/ },
   { id: 'slot admission', rule: 'TRP-2', sub: ['slot acquire', 'heavy'], text: new RegExp(`(^|[\\s/])${binRe}\\s+(slot\\s+acquire|heavy)(\\s|$)`) },
   { id: 'verify', rule: 'TRP-2', sub: ['verify'], text: new RegExp(`(^|[\\s/])${binRe}\\s+verify(\\s|$)`) },
+  // close runs verify and task merge (T-MG-178, fix round 1 F1)
+  { id: 'close', rule: 'TRP-2', sub: ['close'], text: new RegExp(`(^|[\\s/])${binRe}\\s+close(\\s|$)`) },
 ]);
 export const gateById = (id) => GATES.find((g) => g.id === id);
 // A segment with a pipe that names a gate command, a package manager or the plugin's gate subcommands.
 // Linear (A-1): the first occurrence of the plugin's command, then a gate subcommand word anywhere after it.
 const GATE_NAME = /(^|[\s/])(check-secrets|budget\.sh|npm|pnpm|yarn|bun)(\s|$|\.|:)/;
 const BIN_WORD = new RegExp(`(^|[\\s/])${binRe}\\s`);
-const GATE_SUB = /\s(secrets|verify|slot|heavy)(\s|$)/;
+const GATE_SUB = /\s(secrets|verify|close|slot|heavy)(\s|$)/;
 const after = (s, head, tail) => { const m = head.exec(s); return m !== null && tail.test(s.slice(m.index + m[0].length - 1)); };
 const GATE_LINE = { test: (s) => GATE_NAME.test(s) || after(s, BIN_WORD, GATE_SUB) };
 
