@@ -63,6 +63,7 @@ import { VERIFY_KINDS } from './kinds.mjs';
 import { detectRenames, idFiles } from './rename.mjs';
 import { parseReport } from './reporters.mjs';
 import { SKIP_DIRS, scanRepo, scannerOf } from './scan.mjs';
+import { taskWhere } from './where.mjs';
 
 const SOURCE_MAX = 1024 * 1024;
 const COUNT_MAX = 8 * 1024 * 1024;
@@ -528,8 +529,9 @@ function grow(store, { inv, preexisting, head, at }) {
 // writes nothing (`closed` in the result), so a later run on another HEAD never replaces the record that closed it.
 const CLOSED = new Set(['done', 'cancelled']);
 export function verifyTask({ cwd, env, names, id, ci = false, cache = true, version = null, at = now() }) {
-  const where = activeWhere({ cwd, env, names });
+  const main = activeWhere({ cwd, env, names });
   KINDS.task.path(id);
+  const where = taskWhere(main, storeOf(main, names), id);
   let handle = null;
   let closed = null;
   if (!ci) {
