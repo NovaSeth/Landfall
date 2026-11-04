@@ -598,3 +598,48 @@ test('r1 #6: profile observe writes node:test gates with the TAP reporter and Je
     assert.equal(profile.observeFiles(dir, files).gates[0].cmd, cmd, script);
   });
 });
+
+// A stack frame of a failing test's YAML block ("ok (file:///tmp/base-x/t.test.mjs:4:32)") reads like a TAP result line
+// `ok (<location>)`; a name that is only a location is no test, and a real name that holds a path stays one.
+test('node-test TAP: a stack frame named ok in a failure block is no test; a real name holding a path stays', () => {
+  const out = (dir) => [
+    'TAP version 13',
+    '# Subtest: outer flow',
+    'not ok 1 - outer flow',
+    '  ---',
+    '  duration_ms: 1.4',
+    "  location: '" + dir + "/a.test.mjs:3:1'",
+    '  error: |-',
+    '    step failed',
+    '  stack: |-',
+    '    ok (file://' + dir + '/a.test.mjs:4:32)',
+    '    TestContext.<anonymous> (file://' + dir + '/a.test.mjs:5:3)',
+    '    ok ' + dir + '/a.test.mjs:4:32',
+    '  ...',
+    '# Subtest: reads /etc/hosts:1:2 text',
+    'ok 2 - reads /etc/hosts:1:2 text',
+    '  ---',
+    '  duration_ms: 0.1',
+    '  ...',
+    '1..2',
+    '# tests 2',
+    '# fail 1',
+    '',
+  ].join('\n');
+  const a = parse(out('/tmp/base-AAA'));
+  const b = parse(out('/tmp/base-BBB'));
+  assert.deepEqual(ids(a), ['outer flow', 'reads /etc/hosts:1:2 text']);
+  assert.deepEqual(ids(a), ids(b));
+});
+
+test('node-test spec: a result line whose name is only a location is no test', () => {
+  const out = [
+    '✖ outer flow (1.2ms)',
+    '✔ (file:///tmp/base-AAA/a.test.mjs:4:32) (0.1ms)',
+    '✔ real (0.1ms)',
+    'ℹ tests 2',
+    'ℹ fail 1',
+    '',
+  ].join('\n');
+  assert.deepEqual(ids(parse(out)), ['outer flow', 'real']);
+});

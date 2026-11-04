@@ -24,6 +24,10 @@ import { pythonTests, rustTests } from './scan.mjs';
 const SPEC_RESULT = /^( *)([\u2714\u2716\uFE63]) (.*) \((\d+(?:\.\d+)?)ms\)(?: # (.*))?$/u;
 const SPEC_OPEN = /^( *)\u25B6 (.*)$/u;
 const SPEC_SUMMARY = /^\u2139 tests \d+\s*$/u;
+// A name that is only a source location, "(file:///dir/t.mjs:4:32)" or "/dir/t.mjs:4:32": a stack frame ("ok (file://...)"
+// inside a failure's YAML block) read as a result line, never a test. A real name that merely contains a path stays.
+const LOCATION_ONLY = /^(?:\((?:file:\/\/)?[^()\s]*:\d+:\d+\)|(?:file:\/\/)?(?:\/|[A-Za-z]:[\\/])[^()\s]*:\d+:\d+)$/;
+const isLocation = (name) => LOCATION_ONLY.test(name.trim());
 const FAIL = '\u2716';
 const SKIP = '\uFE63';
 
@@ -65,7 +69,7 @@ function nodeSpec(text, ctx) {
       continue;
     }
     const m = SPEC_RESULT.exec(line);
-    if (!m) continue;
+    if (!m || isLocation(m[3])) continue;
     const indent = m[1].length;
     const top = stack[stack.length - 1];
     const todo = /^TODO\b/i.test(m[5] ?? '');
@@ -141,6 +145,7 @@ function tap(text, ctx) {
     const m = TAP_RESULT.exec(lines[i]);
     if (!m) continue;
     const level = Math.floor(m[1].length / 4);
+    if (isLocation(splitDirective(m[3] ?? '').desc)) continue;
     const { desc, directive } = splitDirective(m[3] ?? '');
     const title = [...open.slice(0, level).filter(Boolean).map((n) => n.name), desc].join(' > ');
     const todo = /^TODO\b/i.test(directive);
