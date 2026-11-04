@@ -148,6 +148,7 @@ export function taskOutcome({ args, flags, names, io, yes }) {
   const lines = [
     ...r.proposals.map((p) => `${p.id} ${p.kind} ${p.by ?? '-'}${r.applied.includes(p.id) ? ' (written)' : ''}`),
     ...r.human.map((h) => `${h.id}: ${h.reason}`),
+    ...r.skipped.map((s) => `${s.id}: skipped, ${s.reason}`),
     yes ? `${r.applied.length} adopted, ${r.human.length} left for a human` : `dry run: ${r.proposals.length} proposals, ${r.human.length} left for a human; --yes writes them`,
   ];
   return { data, text: `${lines.join('\n')}\n` };

@@ -57,10 +57,11 @@ export function setOutcome(store, id, { kind, by = null, at = new Date().toISOSt
   });
 }
 
+const CONCURRENT = new Set(['outcome-needs-cancelled', 'outcome-set']);
 const reasonOf = (task) => [...task.events].reverse().find((e) => e.event === 'cancelled')?.data?.reason ?? '';
 
 // The adoption run over the cancelled tasks of `handle` without an outcome: { proposals: [{ id, kind, by }],
-// human: [{ id, reason }], applied: [id], skipped: [id] }. Without `write` nothing is written; with it each task is
+// human: [{ id, reason }], applied: [id], skipped: [{ id, reason }] }. Without `write` nothing is written; with it each task is
 // its own update.
 export function adoptOutcomes(store, { handle, at = new Date().toISOString(), write = false } = {}) {
   const run = { proposals: [], human: [], applied: [], skipped: [] };
@@ -79,8 +80,9 @@ export function adoptOutcomes(store, { handle, at = new Date().toISOString(), wr
       setOutcome(store, id, { ...proposal, at, handle });
       run.applied.push(id);
     } catch (err) {
-      if (!(err instanceof StateError)) throw err;
-      run.skipped.push(id);
+      // Only an expected concurrent change is a skip; locks, newer schemas and write failures propagate with their exit.
+      if (!(err instanceof StateError) || !CONCURRENT.has(err.code)) throw err;
+      run.skipped.push({ id, reason: err.code });
     }
   }
   return run;
