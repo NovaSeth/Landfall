@@ -21,6 +21,7 @@ export function tailLines(output, max = TAIL_CHARS) {
 
 const FAIL_BLOCK_CHARS = 4096;
 const FAIL_BLOCKS = 20;
+const MIN_TAIL_LINES = 200;
 
 // T-MG-153: the lines of the verify log: each failing test's TAP block (its `not ok` line and the deeper-indented YAML
 // block with error, stack and step output; at most 4 KB each, 20 blocks) followed by the output tail. Output with no
@@ -44,8 +45,9 @@ export function logLines(output) {
   }
   const tail = tailLines(output);
   if (!blocks.length) return tail;
-  // one budget of TAIL_CHARS lines for the whole log: at most half for the blocks, one for the separator, the rest for the tail
-  const kept = blocks.slice(0, TAIL_CHARS / 2);
+  // Reserve one separator and up to 200 tail lines, then give failures priority within the combined line budget.
+  // Any space left after the failure blocks goes to the rest of the tail.
+  const kept = blocks.slice(0, TAIL_CHARS - 1 - Math.min(MIN_TAIL_LINES, tail.length));
   return [...kept, '--- output tail ---', ...tail.slice(Math.max(0, tail.length - (TAIL_CHARS - kept.length - 1)))];
 }
 
