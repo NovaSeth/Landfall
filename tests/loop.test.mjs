@@ -1196,7 +1196,7 @@ async function overCap(t, startEnv = {}, { tty = false, tickEnv = {} } = {}) {
   return { p, r };
 }
 
-test('billing (a) CLI: LANDFALL_BILLING=subscription at a terminal start, a loop over the cost cap is not ended; billing is shown in text and data', async (t) => {
+test('billing (a) CLI: the <PREFIX>BILLING=subscription override at a terminal start, a loop over the cost cap is not ended; billing is shown in text and data', async (t) => {
   const { p, r } = await overCap(t, { [BILL]: 'subscription' }, { tty: true });
   assert.ok([0, 3].includes(r.code), show(r));
   assert.ok(r.out.data.loop.costMicroUsd > 10000);
