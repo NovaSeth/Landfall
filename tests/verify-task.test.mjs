@@ -116,7 +116,8 @@ test('verify re-runs every profile gate and writes verify.json in the §8.4 shap
   assert.equal(res.code, 0, show(res));
   assert.deepEqual([res.env.command, res.env.ok, res.env.exit], ['verify', true, 'OK']);
   const doc = r.vstore.read('verify', r.id);
-  assert.deepEqual(Object.keys(doc), ['schema', 'task', 'head', 'gatesSha', 'baselineSha', 'class', 'startedAt', 'durationMs', 'gates', 'inventory', 'failures', 'route', 'artifacts', 'result']);
+  assert.deepEqual(Object.keys(doc), ['schema', 'task', 'head', 'gatesSha', 'baselineSha', 'class', 'startedAt', 'durationMs', 'gates', 'inventory', 'failures', 'route', 'artifacts', 'result', 'machine', 'cache', 'heavyWaitMs', 'gatesMs']);
+  assert.deepEqual(Object.keys(doc.machine), ['load1Start', 'load1End', 'cores'], 'the v2 cost fields (T-MG-121)');
   assert.equal(doc.gatesSha, verify.gatesSha(GATES));
   assert.equal(doc.baselineSha, verify.baselineSha(r.vstore.read('baseline', null)));
   assert.deepEqual([doc.schema, doc.task, doc.head, doc.class, doc.result], [verify.VERIFY_KINDS.verify.version, r.id, r.git('rev-parse', 'HEAD'), 'trivial', 'pass']);

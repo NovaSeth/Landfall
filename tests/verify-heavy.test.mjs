@@ -177,7 +177,7 @@ test('a verify behind a held heavy lease records the wait apart from the gates a
   assert.ok(span >= 0 && Math.abs(span - d.heavyWaitMs) <= 100, `until - at ${span}, heavyWaitMs ${d.heavyWaitMs}`);
   // ci mode measures the wait and writes no line
   const second = await holdHeavy(t, s, 3000);
-  const ci = await s.run(['verify', s.id, '--ci', '--no-cache', '--json']);
+  const ci = await s.run(['verify', s.id, '--ci', '--no-cache', '--yes', '--json']);
   assert.equal(ci.code, 0, ci.text.slice(0, 1500));
   valid(docOf(ci));
   assert.ok(docOf(ci).heavyWaitMs >= 2000, `ci heavyWaitMs ${docOf(ci).heavyWaitMs}`);
