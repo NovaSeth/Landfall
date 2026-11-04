@@ -3,6 +3,8 @@
 // engine lists and an external run; nothing beneath the plugin but these hooks (`claude plugin test`).
 import { expect, mock, test } from 'claude-code/testing'
 
+import { celebrationFrame } from './dashboard'
+
 const PLUGIN = 'landfall'
 const SESSION = { cwd: '/work', surface: 'terminal', isInteractive: true } as const
 const PANE = {
@@ -731,3 +733,106 @@ for (const rows of [8, 9, 10, 11, 12, 13, 14]) {
     }
   }
 }
+
+// ---- T-MG-165: a closed task leaves the pane with a short animation ------------------------------------------------
+
+test('the celebration frame is deterministic: frame 0 is the text, a middle frame dissolves it, the last frame is blank', () => {
+  expect(celebrationFrame('abcdef', 0, 8)).toBe('abcdef')
+  expect(celebrationFrame('abcdef', 2, 8)).toBe('a▒c▓▒f')
+  expect(celebrationFrame('abcdef', 4, 8)).toBe('▒ ▓░ ▓')
+  expect(celebrationFrame('abcdef', 7, 8)).toBe('      ')
+  // the same call gives the same frame, and every frame keeps the width and the spaces of the text
+  const text = '✓ T-TU-7 std Pane rows  done'
+  expect(celebrationFrame(text, 3, 8)).toBe(celebrationFrame(text, 3, 8))
+  for (let f = 0; f < 8; f++) {
+    const frame = celebrationFrame(text, f, 8)
+    expect([...frame].length).toBe([...text].length)
+    expect([...frame].every((ch, i) => [...text][i] !== ' ' || ch === ' ')).toBe(true)
+  }
+})
+
+// the task row under the TASKS heading, after each step of the clock
+const rowsAfter = async ($: any, w: { clock: { advance: (ms: number) => Promise<void> } }, steps: number, ms: number) => {
+  const rows: string[] = []
+  for (let i = 0; i < steps; i++) {
+    const texts = await linesAt($, 30, 96)
+    rows.push(texts[texts.indexOf('TASKS') + 1])
+    await w.clock.advance(ms)
+  }
+  return rows
+}
+
+test('a task that goes from open to done stays for its celebration, frames 1…N each with a different text, then it is gone', async ($, on) => {
+  const status = withTask({ status: 'implemented' })
+  const w = world(on, { status, runs: quiet })
+  w.agents.length = 0
+  await $.session.start(SESSION)
+  await w.clock.settle()
+  expect((await linesAt($, 30, 96)).some(t => /T-TU-7/.test(t))).toBe(true)
+  status.data.tasks[0].status = 'done'
+  await w.clock.advance(15_000)
+  const rows = await rowsAfter($, w, 12, 250)
+  const shown = rows.slice(0, 8)
+  expect(shown[0]).toMatch(/^✓ T-TU-7 std Pane rows/)
+  expect(new Set(shown).size).toBe(8)
+  expect(shown.slice(1).some(r => /[░▒▓]/.test(r))).toBe(true)
+  // then the row is gone: the next line is the no-open-tasks hint
+  for (const r of rows.slice(8)) expect(r).toBe('  no open tasks (landfall task new)')
+})
+
+test('a cancelled task is not celebrated: it fades as one dim row and then leaves', async ($, on) => {
+  const status = withTask({ status: 'planned' })
+  const w = world(on, { status, runs: quiet })
+  w.agents.length = 0
+  await $.session.start(SESSION)
+  await w.clock.settle()
+  status.data.tasks[0].status = 'cancelled'
+  await w.clock.advance(15_000)
+  const ui = await $.ui.mount(PANE)
+  const row = await ui.find({ type: 'Text', text: /T-TU-7/ })
+  await ui.unmount()
+  expect(row?.text).toMatch(/^✗ T-TU-7 .*cancelled$/)
+  expect(row?.props?.dimColor).toBe(true)
+  const rows = await rowsAfter($, w, 8, 250)
+  for (const r of rows) expect(r).not.toMatch(/[░▒▓]/)
+  expect(rows[0]).toBe(row?.text)
+  expect(rows[rows.length - 1]).toBe('  no open tasks (landfall task new)')
+})
+
+test('the frame timer runs only while a row animates: none before a task closes, none once the row is gone', async ($, on) => {
+  let ticks = 0
+  on('clock.every', ($, e, next) => {
+    if (e.ms === 250) ticks++
+    return next(e)
+  })
+  const status = withTask({ status: 'implemented' })
+  const w = world(on, { status, runs: quiet })
+  w.agents.length = 0
+  await $.session.start(SESSION)
+  await w.clock.settle()
+  await w.clock.advance(10_000)
+  expect(ticks).toBe(0)
+  status.data.tasks[0].status = 'done'
+  await w.clock.advance(5_000)
+  await w.clock.advance(3_000)
+  expect(ticks).toBeGreaterThan(5)
+  const after = ticks
+  await w.clock.advance(30_000)
+  expect(ticks).toBe(after)
+})
+
+test('a pane that is not placed starts no frame timer when a task closes', async ($, on) => {
+  let ticks = 0
+  on('clock.every', ($, e, next) => {
+    if (e.ms === 250) ticks++
+    return next(e)
+  })
+  const status = withTask({ status: 'implemented' })
+  const w = world(on, { status, runs: quiet, placed: false })
+  w.agents.length = 0
+  await $.session.start(SESSION)
+  await w.clock.settle()
+  status.data.tasks[0].status = 'done'
+  await w.clock.advance(65_000)
+  expect(ticks).toBe(0)
+})
