@@ -1546,3 +1546,13 @@ test('limits (g) F2: no cap of any kind lets the tick read the limit probe; the 
   assert.equal(x.run().result, 'WAIT');
   assert.equal(x.calls(), 1, 'subscription: the cost caps do not apply');
 });
+
+test('a needs-fixes review with no blocking finding asks for no fix round: it is treated as approved (REV-7, REV-11)', () => {
+  const rev = (blocking) => ev('review', 3, { round: 1, verdict: 'needs-fixes', reviewer: 'claude', blocking });
+  const t = (blocking) => task('T-TU-1', 'implemented', { events: [ev('implementer', 2, { report: 'done' }), rev(blocking)] });
+  let s = row(table([t(0)]), 'T-TU-1');
+  assert.deepEqual(s.rules, ['REV-11', 'ORC-25', 'FLW-8']);
+  assert.match(s.state, /review r1 approved/);
+  s = row(table([t(1)]), 'T-TU-1');
+  assert.deepEqual(s.rules, ['REV-5', 'PRI-6']);
+});

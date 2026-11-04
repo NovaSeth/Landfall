@@ -480,3 +480,25 @@ test('concurrent processes: task new gives distinct consecutive IDs; task set lo
   const events = r.task(id).events.filter((e) => e.event === 'status-request').map((e) => e.data.note).sort();
   assert.deepEqual(events, Array.from({ length: N }, (_, i) => `n${i}`).sort(), 'every concurrent event kept exactly once');
 });
+
+// ---- REV-7 in code: no fix round past the loop's rounds cap ----
+
+test('task set fix-round: round 2 is accepted, round 3 is refused (REV-7, exit 7) with the review-close hint; the loop cap moves the line', async (t) => {
+  const r = await active(t);
+  const id = (await r.run(['task', 'new', 'Capped'])).out.data.id;
+  const fix = (k) => r.run(['task', 'set', id, 'fix-round', '--round', String(k), '--addressed', '0', '--open', '1']);
+  let res = await fix(2);
+  assert.deepEqual([res.code, r.task(id).round], [0, 2], show(res));
+  const before = r.raw(id);
+  res = await fix(3);
+  assert.equal(res.code, 7, show(res));
+  assert.equal(res.out.errors[0].code, 'review-cap');
+  assert.match(res.out.errors[0].message, /REV-7/);
+  assert.match(res.out.errors[0].hint, new RegExp(`${names.bin} decide --kind review-close --task ${id} --remaining <ids>`));
+  assert.equal(r.raw(id), before, 'nothing written');
+  // the rounds cap of the loop decides: one round allowed → round 2 is refused
+  const loop = await r.run(['loop', 'start', '--caps', 'rounds=1']);
+  assert.equal(loop.code, 0, show(loop));
+  res = await fix(2);
+  assert.deepEqual([res.code, res.out.errors[0].code], [7, 'review-cap'], show(res));
+});
