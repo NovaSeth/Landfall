@@ -43,6 +43,7 @@ Commands:
   baseline pin         Repair the test baseline: replace it with the inventory collected now, with a gate-change or test-removal decision.
   baseline show        Print the pinned test baseline: every test with its skip flag, pinned failures, collector and last pin.
   brief                Render the brief of a routed task from the brief template and the state; --write saves tasks/<id>/brief.md.
+  close                Close approved tasks in one call: verify, task done, task merge and commit, only the steps still due.
   commit               Commit the changes under the state directory as one chore commit; the code and the index outside it stay as they are.
   config set           Set one config value: a threshold override (only with an active decision) or the providers of an executor role.
   config show          Show the configuration: threshold overrides with their default and decision, executor preferences, changed flags.
@@ -187,6 +188,24 @@ Options:
   --force        with --write: replace a brief written or edited by hand
 
 Read-only. Changes files with --write: needs a terminal or --yes, otherwise exit 7 REFUSED.
+Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
+```
+
+### `landfall close <id…> [--yes] [--json]`
+
+```text
+usage: landfall close <id…> [--yes] [--json]
+
+Close approved tasks in one call: verify, task done, task merge and commit, only the steps still due.
+Run from the main checkout (verify reads the code in the task's worktree). A task not done gets verify, then task done; a task
+without a recorded merge gets task merge (several IDs: one batch with one gate run, as task merge <ids…>); then commit.
+The first failing step ends the call with that step's exit code and one line naming the step and the command that resumes;
+the steps done stay done. A merge that records nothing (the branch is already in HEAD) fails the merge step. On success: one line.
+
+Arguments:
+  id  task ID such as T-AB-1 (several: one merge batch)
+
+Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
 Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
 ```
 
