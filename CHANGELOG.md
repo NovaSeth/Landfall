@@ -1,8 +1,23 @@
 # Changelog
 
-## Unreleased
+## 2.7.0
+
+Simplification week (decision D-MG-60): fewer orchestrator calls, shorter sessions, one gate per batch.
 
 - **Breaking: Node 22 or later is required** (decision D-MG-36). `engines.node` is now `>=22`, and CI runs `npm test` on Node 22 and 24 and the npx channel on 22.12.0. Node 18 reached end of life on 2025-03-27 and Node 20 on 2026-03-24, so neither receives security fixes any more.
+- **`landfall close <id…>`:** verify, `task done`, `task merge` and `commit` in one call; it stops at the first failing step with that step's exit code and the next command. Implementer and reviewer agents now store their own report and review with `landfall report` and `landfall review record`.
+- **`landfall metrics [--day|--since] [--json]`:** the KPI table only (orchestrator calls and median context per closed task, cache reads, tasks over 2 fix rounds, start→merge and last review→merge medians, open backlog), read from task records and Claude Code transcripts; `n/a` with a reason, never a fabricated zero. Writes nothing.
+- **Short orchestrator sessions:** `tick` prints a HANDOFF step when the session's context passes a threshold (default 200k tokens) or after a merge: commit the state, end the session, resume in a new one with `landfall status` (rule FLW-10).
+- **Fix-round cap in code (REV-7):** `task set fix-round` past the cap is refused without a `review-close` decision; a needs-fixes review with only minor findings counts as approved and its minors go to the backlog.
+- **Size never makes a task critical:** class critical comes only from critical flags and risk paths; size over the threshold says `split`; test files under `tests/` with a real test suffix are left out of the split rule only (the trivial cut still counts every file and line).
+- **Implementer model lock:** the Agent hook denies launching `landfall:implementer` with a model other than the one its agent file declares, in every admission mode.
+- **Loop questions do not block:** while a loop runs, AskUserQuestion is denied and the question is recorded as a blocked task (`question: …`) listed by `tick`; other work goes on. `doctor` warns when the security-guidance review has stopped working (sign-in rejected) and says how to sign in again; Landfall keeps both security reviews (SEC-13).
+- **Verify, review v2 and logs:** verify records machine load, gate-cache state, heavy-queue wait and gate time; review records carry their focus; wait events for usage limits, load admission and ticks go to `local/waits.jsonl`; receipts are refreshed at merge and their failures are visible; receipt gates and defects before merge are filled from verify and review records.
+- **`task outcome`:** records what a cancelled task delivered or was replaced by (`delivered`, `superseded`, `dropped`, `--by`), with `--adopt` proposals from cancel reasons.
+- **Guard:** fewer false blocks of read-only commands (a measured corpus; new allow shapes fail closed on any unquoted glob, assignment or setter); the hook-path launcher checks are hardened.
+- **Loop restart consent:** a one-time human consent recorded by a UserPromptSubmit hook lets `loop start` raise caps from a session; the transcript path is derived from the session.
+- **Gate reliability:** timing tests judge CPU time, not wall time; isolated test environments relax scheduler admission; a baseline grown only by another task's tests does not make a verified task stale; the gate log keeps diagnostics within its budget.
+- **Briefs** append the profile's fast cross-cutting guards; **tick** lists unrecorded finished external runs first; the **dashboard** marks a closed task before it leaves the panel.
 
 ## 2.6.0
 
