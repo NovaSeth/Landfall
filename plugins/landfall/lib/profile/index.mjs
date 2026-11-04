@@ -26,6 +26,7 @@ export { factValues } from './values.mjs';
 export const riskGlobsOf = (profile) => [...new Set([...(profile?.riskPaths ?? []), ...(Array.isArray(profile?.facts?.riskGlobs?.value) ? profile.facts.riskGlobs.value : [])])];
 // What every review of the project checks (the said fact reviewFocus), or [].
 export const reviewFocusOf = (profile) => (Array.isArray(profile?.facts?.reviewFocus?.value) ? profile.facts.reviewFocus.value : []);
+export const fastGuardsOf = (profile) => (Array.isArray(profile?.facts?.fastGuards?.value) ? profile.facts.fastGuards.value : []);
 
 const nowIso = () => new Date().toISOString();
 

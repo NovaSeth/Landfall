@@ -36,6 +36,7 @@ export const FACT_KEYS = Object.freeze({
   // what every review of this project checks (injected into the task brief and the review brief).
   riskGlobs: { type: 'globs', summary: 'path globs the project treats as risky, added to the scanned risk paths' },
   reviewFocus: { type: 'notes', summary: 'what every review of this project checks, one note per item' },
+  fastGuards: { type: 'notes', summary: 'fast checks every task gate runs (seconds), e.g. naming and architecture tests' },
 });
 export const STRUCTURED_KEYS = Object.freeze(['gates', 'riskPaths']);
 export const KEYS = Object.freeze([...Object.keys(FACT_KEYS), ...STRUCTURED_KEYS]);
