@@ -7,7 +7,8 @@
 //   it as dispatched (the reviewer as executor), so the next tick waits ·
 //   implemented (round k) | fix-round (round k delivered, no open findings) → scoped re-review, or approved after a
 //   self-verified event of round k · fix-round with open findings → wait · round > rounds cap → decide (REV-7) ·
-//   verified → verify, merge, close · blocked after an implementer report → resolve it (ORC-7) · blocked otherwise →
+//   verified → verify, merge, close · blocked after an implementer report → resolve it (ORC-7) · blocked with a reason
+//   "question: …" → an open question (information with its answer step, waits; SPC-5) · blocked otherwise →
 //   information (waits) · done | cancelled → nothing.
 // A live run (queued, starting, running) of an open task turns its row into a wait for that run, so a step is not
 // started twice; a live run of a closed task is a wait row of its own. A finished run whose end is newer than every
@@ -31,12 +32,14 @@ const LIVE = new Set(['queued', 'starting', 'running']);
 const FINISHED = new Set(['done', 'failed', 'timeout', 'stopped']);
 const CLOSED = new Set(['done', 'cancelled']);
 const BLOCKING_REPORTS = new Set(['needs-context', 'blocked']);
+const QUESTION = /^\s*question:/i; // the reason of a `blocked` event that records an open question for the user
+const INFO = new Set(['blocked', 'question']); // task rows that are information and keep the loop waiting
 const MIN_MS = 60000;
 const LIVE_GRACE_S = 120; // a live-status run past capS + this is not live: its supervisor ends it at capS plus a grace
 
 // Every rule ID this table cites (tests check that each resolves in the method).
 export const TABLE_RULES = Object.freeze(['FLW-3', 'ORC-4', 'FLW-4', 'ORC-9', 'FLW-6', 'PRI-6', 'ORC-5', 'REV-6', 'REV-20', 'REV-7', 'REV-5',
-  'REV-11', 'FLW-8', 'ORC-7', 'ORC-11', 'SPC-1', 'SPC-2', 'SPC-11', 'FLW-9', 'PRI-1', 'COL-24', 'FLW-7', 'ORC-24', 'ORC-25']);
+  'REV-11', 'FLW-8', 'ORC-7', 'ORC-11', 'SPC-1', 'SPC-2', 'SPC-11', 'FLW-9', 'PRI-1', 'COL-24', 'FLW-7', 'ORC-24', 'ORC-25', 'SPC-5', 'PRI-17']);
 
 const HEAVY_WAIT_MIN = 10;
 
@@ -151,6 +154,11 @@ function taskRow(t, { now, bin, lanesOn, caps, budget = DEFAULT_BUDGET_MIN }) {
       if (e?.event === 'implementer' && BLOCKING_REPORTS.has(e.data?.report)) {
         return action(id, `report: ${e.data.report}`, `resolve the gap or the obstacle, no review; then dispatch again: \`${bin} task set ${id} dispatched --executor <executor> --base <sha>\``, ['ORC-7']);
       }
+      // an open question for the user (SPC-5, T-MG-185): recorded as `blocked --reason "question: …"`; information,
+      // listed apart, so the loop goes on with the other tasks instead of waiting on an AskUserQuestion answer
+      if (QUESTION.test(e?.data?.reason ?? '')) {
+        return { task: id, state: cell(e.data.reason), step: `put it to the user in your report; on the answer: \`${bin} task set ${id} dispatched --executor <executor> --base <sha>\` or \`${bin} task set ${id} cancelled --reason <why>\``, rules: ['SPC-5', 'PRI-17'], kind: 'question' };
+      }
       return { task: id, state: `blocked: ${cell(e?.data?.reason ?? 'no reason recorded')}`, kind: 'blocked' };
     }
     default: return { task: id, state: `unknown status ${cell(t.status)}`, kind: 'blocked' };
@@ -214,8 +222,8 @@ export function nextSteps({ tasks = [], runs = [], handles = [], me = null, plan
         : taskRow(t, { now, bin, lanesOn, caps, budget: budgets[t.id] ?? DEFAULT_BUDGET_MIN });
       const run = liveOf.get(t.id);
       // a live run of the task is its work in progress: wait for it instead of starting the step again
-      if (run && r.kind !== 'blocked') steps.push(wait(t.id, `${r.state}; run ${run.runId} ${run.status}`, 'wait for the run; its record changes when it ends', ['FLW-4']));
-      else (r.kind === 'blocked' ? info : steps).push(r);
+      if (run && !INFO.has(r.kind)) steps.push(wait(t.id, `${r.state}; run ${run.runId} ${run.status}`, 'wait for the run; its record changes when it ends', ['FLW-4']));
+      else (INFO.has(r.kind) ? info : steps).push(r);
     }
     for (const r of [...runs].sort((a, b) => natural(a.runId, b.runId))) {
       const t = byId.get(r.task);
@@ -247,7 +255,7 @@ export function nextSteps({ tasks = [], runs = [], handles = [], me = null, plan
   }
   for (const w of watch) info.push({ task: w.code, state: w.message, step: null, rules: ['ORC-24'], kind: 'watch' }); // notes: never a step, never an exit
   const acting = steps.some((s) => s.kind === 'action');
-  const waiting = steps.some((s) => s.kind === 'wait') || info.some((i) => i.kind === 'blocked' || i.kind === 'others') || liveRuns > 0;
+  const waiting = steps.some((s) => s.kind === 'wait') || info.some((i) => INFO.has(i.kind) || i.kind === 'others') || liveRuns > 0;
   if (!acting && !waiting) {
     const files = dirty();
     if (files.length) {

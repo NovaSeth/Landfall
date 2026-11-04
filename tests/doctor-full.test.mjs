@@ -39,7 +39,7 @@ const { HOOKS } = await lib('hooks/registry.mjs');
 const EVENTS = [...new Set(HOOKS.map((h) => h.event))];
 
 // T-MG-77 A2 (intended): the local row follows flags.
-const ROW_IDS = ['release', 'heartbeat', 'bin-path', 'git', 'state', 'profile', 'flags', 'local', 'providers', 'scheduler', 'guard', 'context', 'permissions', 'security-review', 'protection'];
+const ROW_IDS = ['release', 'heartbeat', 'bin-path', 'git', 'state', 'profile', 'flags', 'local', 'providers', 'scheduler', 'guard', 'context', 'permissions', 'security', 'protection'];
 const STATUSES = ['ok', 'warn', 'fail', 'skip'];
 const RULES = [`Bash(${names.bin} exec:*)`, `Bash(${names.bin} wait:*)`]; // U3
 const SYSTEM_DIRS = ['/usr/bin', '/bin'];
@@ -461,12 +461,12 @@ test('T-MG-185: a second automatic security review warns with the exact setting;
   const project = repo(s.base, 'project');
   fakeClaude(s.bin);
   let d = doctor(s, { cwd: project });
-  assert.equal(d.row('security-review').status, 'ok', JSON.stringify(d.row('security-review')));
+  assert.equal(d.row('security').status, 'ok', JSON.stringify(d.row('security')));
 
   fakeClaude(s.bin, { list: list(true) });
   d = doctor(s, { cwd: project });
   assert.equal(d.r.status, 0, out(d.r));
-  const w = d.row('security-review');
+  const w = d.row('security');
   assert.equal(w.status, 'warn', JSON.stringify(w));
   assert.ok(w.detail.includes(SG), w.detail);
   assert.ok(w.hint.includes('"ENABLE_CODE_SECURITY_REVIEW": "0"') && w.hint.includes('.claude/settings.local.json'), w.hint);
@@ -474,23 +474,23 @@ test('T-MG-185: a second automatic security review warns with the exact setting;
 
   const before = snapshot(s.base);
   d = doctor(s, { cwd: project, env: { ...s.env, ENABLE_CODE_SECURITY_REVIEW: '0' } });
-  assert.equal(d.row('security-review').status, 'ok', 'the variable in the session environment');
+  assert.equal(d.row('security').status, 'ok', 'the variable in the session environment');
   assert.deepEqual(changed(before, snapshot(s.base)), [], 'doctor wrote nothing');
 
   mkdirSync(join(project, '.claude'));
   writeFileSync(join(project, '.claude', 'settings.local.json'), JSON.stringify({ env: { ENABLE_CODE_SECURITY_REVIEW: '0' } }));
   d = doctor(s, { cwd: project });
-  assert.equal(d.row('security-review').status, 'ok', 'the setting in the project settings');
+  assert.equal(d.row('security').status, 'ok', 'the setting in the project settings');
 
   writeFileSync(join(project, '.claude', 'settings.local.json'), JSON.stringify({ enabledPlugins: { [SG]: false } }));
   d = doctor(s, { cwd: project });
-  assert.equal(d.row('security-review').status, 'ok', 'the plugin disabled for the project');
+  assert.equal(d.row('security').status, 'ok', 'the plugin disabled for the project');
 
   writeFileSync(join(project, '.claude', 'settings.local.json'), JSON.stringify({ env: { ENABLE_CODE_SECURITY_REVIEW: '1' } }));
   d = doctor(s, { cwd: project });
-  assert.equal(d.row('security-review').status, 'warn', 'any other value keeps the reviews on');
+  assert.equal(d.row('security').status, 'warn', 'any other value keeps the reviews on');
 
   fakeClaude(s.bin, { list: list(false) });
   d = doctor(s, { cwd: project });
-  assert.equal(d.row('security-review').status, 'ok', 'installed but disabled');
+  assert.equal(d.row('security').status, 'ok', 'installed but disabled');
 });

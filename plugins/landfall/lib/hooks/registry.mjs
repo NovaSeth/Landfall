@@ -24,6 +24,7 @@ import { admitHook, bindHook, releaseHook } from './admit.mjs';
 import { decisionsContext } from './edit-decisions.mjs';
 import { editProtect } from './edit-protect.mjs';
 import { guardBash } from './guard-bash.mjs';
+import { guardQuestion } from './guard-question.mjs';
 import { guardWakeup } from './guard-wakeup.mjs';
 import { headroomHook } from './headroom.mjs';
 import { loadNames, stateOf } from './loop-state.mjs';
@@ -51,6 +52,7 @@ export const HOOKS = [
   { name: 'subagent-start', event: 'SubagentStart', timeout: TIMEOUT_S, budgetMs: BUDGET_MS, handler: subagentStart, onError: 'allow' },
   { name: 'guard-bash', event: 'PreToolUse', matcher: 'Bash', timeout: TIMEOUT_S, budgetMs: GUARD_BUDGET_MS, handler: guardBash, onError: 'block-if-guarded', capability: 'guard-bash' },
   { name: 'guard-wakeup', event: 'PreToolUse', matcher: 'ScheduleWakeup|CronCreate', timeout: TIMEOUT_S, budgetMs: BUDGET_MS, handler: guardWakeup, onError: 'allow' },
+  { name: 'guard-question', event: 'PreToolUse', matcher: 'AskUserQuestion', timeout: TIMEOUT_S, budgetMs: BUDGET_MS, handler: guardQuestion, onError: 'allow' },
   { name: 'decisions-context', event: 'PreToolUse', matcher: 'Edit|Write|MultiEdit', timeout: TIMEOUT_S, budgetMs: BUDGET_MS, handler: editHook, onError: 'allow', capability: 'edit-retrieval', whenOff: editProtect },
   { name: 'admit-agent', event: 'PreToolUse', matcher: 'Agent', timeout: TIMEOUT_S, budgetMs: BUDGET_MS, handler: admitHook, onError: 'allow', capability: 'admission' },
   { name: 'bind-agent', event: 'PostToolUse', matcher: 'Agent', timeout: TIMEOUT_S, budgetMs: BUDGET_MS, handler: bindHook, onError: 'allow', capability: 'admission' },
