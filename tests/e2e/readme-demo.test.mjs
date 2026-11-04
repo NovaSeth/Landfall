@@ -10,7 +10,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { isolatedEnv, isolateProcessEnv } from '../helpers/isolated-env.mjs';
+import { isolatedEnv, isolateProcessEnv, relaxAdmission } from '../helpers/isolated-env.mjs';
 
 isolateProcessEnv();
 
@@ -76,6 +76,7 @@ test('the README demo flow: init, observe, task, route, test-first change, verif
   };
 
   git('init', '-q');
+  relaxAdmission(env); // verify takes the heavy lease; admission must not wait on the machine's load (T-MG-156)
   write('package.json', '{"name":"app","type":"module","scripts":{"test":"node --test"}}\n');
   write('src/math.js', 'export const add = (a, b) => a + b;\n');
   write('test/math.test.js', "import { test } from 'node:test';\nimport assert from 'node:assert/strict';\nimport { add } from '../src/math.js';\ntest('adds', () => assert.equal(add(1, 2), 3));\n");
