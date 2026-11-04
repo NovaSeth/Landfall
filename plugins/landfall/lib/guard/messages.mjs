@@ -34,6 +34,10 @@ export const MSG = {
     + 'Instead retry the command.',
   unverifiable: (why) => fit((w) => `SEC-3: blocked: unverifiable (${w}): the guard could not check this command. Instead use a simpler, `
     + 'shorter form; if this repeats, repair the plugin installation.', why),
+  // T-MG-149: the hook entry point run from Bash would feed a hand-made event to a hook that writes state
+  hookCli: (bin) => `FLW-7: blocked \`${bin} hook\` from Bash: hooks run only from Claude Code's own events (hooks.json), and an event `
+    + 'made by hand would write state (such as a loop start consent) no command or user gave. Instead use the commands; the user starts '
+    + `a loop by sending \`${bin} loop start\`.`,
   // spec §7.13: the state directory (owned: an entry of lib/guard/protect.mjs OWNED, or null for another state path)
   stateFile: (path, owned, bin) => {
     if (owned?.edit) {

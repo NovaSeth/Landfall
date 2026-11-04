@@ -372,7 +372,8 @@ const NEW_BLOCK = [
   // feed a forged event (a loop start consent) to a hook
   ['@BIN@ hook prompt-consent', 'FLW-7'], ['@BIN@ hook session-start', 'FLW-7'], ['@BIN@ --json hook prompt-consent', 'FLW-7'],
   ['node plugins/x/bin/@BIN@ hook prompt-consent', 'FLW-7'], ['plugins/x/bin/@BIN@ hook prompt-consent < event.json', 'FLW-7'],
-  ['X=1 @BIN@ hook prompt-consent', 'FLW-7'], ['env X=1 @BIN@ hook prompt-consent', 'FLW-7'], ['echo {} | @BIN@ hook prompt-consent', 'FLW-7'],
+  ['X=1 @BIN@ hook prompt-consent', 'SEC-3'], ['env X=1 @BIN@ hook prompt-consent', 'FLW-7'], ['echo {} | @BIN@ hook prompt-consent', 'SEC-3'],
+  ['cat event.json | @BIN@ hook prompt-consent', 'FLW-7'],
   ['nice node /opt/p/bin/@BIN@ hook prompt-consent', 'FLW-7'], ['ls; @BIN@ hook guard-bash', 'FLW-7'],
   // a gate behind a wrapper (env, nice, timeout, command) is still the executed program
   ['command @BIN@ verify T-AB-1 | tail -1', 'TRP-2'], ['nice @BIN@ verify T-AB-1 | tail -1', 'TRP-2'], ['env FOO=1 @BIN@ secrets | tail -1', 'SEC-6'],
@@ -1209,7 +1210,8 @@ test('own-command auto-allow (SD-33) in shadow: an allowlisted single simple com
   for (const cmd of NOT_OWN) {
     const log = [];
     judge(cmd, 'none', { shadowLog: (e) => log.push(e) });
-    assert.deepEqual(log, [], cmd);
+    // T-MG-149: `hook` from Bash is now blocked, and a block is logged as one: still never a would-allow
+    assert.deepEqual(log.filter((e) => !(e.event === 'block' && cmd.includes(' hook '))), [], cmd);
   }
 });
 

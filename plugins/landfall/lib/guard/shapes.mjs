@@ -124,6 +124,10 @@ function pmGate(w, ctx, depth = 0) {
 // The plugin's own command: global flags, then the subcommand words. Gates by subcommand path; `heavy` runs the command
 // after "--".
 const binWords = (w) => { let k = 1; while (k < w.length && w[k].startsWith('-')) k++; return { k, words: w.slice(k) }; };
+// The hook entry point (`<bin> [global flags] hook …`): Claude Code runs it from hooks.json, never through the Bash tool;
+// run by hand it feeds a hand-made event to a hook that writes state (T-MG-149: a loop start consent), so it is blocked
+// in every form that reaches the launcher (bare, by any path, behind node or a wrapper).
+const hookCli = (w) => binWords(w).words[0] === 'hook';
 const binGate = (w) => {
   const { words } = binWords(w);
   return GATES.find((g) => g.sub?.some((s) => s.split(' ').every((x, j) => words[j] === x))) ?? null;
@@ -239,6 +243,7 @@ export function shape(c, ctx) {
     for (const t of w) if (wordTok(t) && !isPath(t)) why(`"${short(t)}" in the command ${short(b)} outside the list`);
     return null;
   }
+  if (base(name) === BIN && hookCli(w)) return MSG.hookCli(BIN); // any path to the launcher (T-MG-149)
   if (isLauncher(name, ctx)) return shape(asBin(c, 0), ctx); // the launcher by its path: the own command
   if (base(name) === BIN && name !== BIN) { const gate = pipeAfter(binGate(w), true); if (gate) return gate; } // another path: gates only
   if (isBin(name)) {
@@ -279,7 +284,10 @@ export function shape(c, ctx) {
       if (f) return codeShape(b, t === f ? w[k + 1] ?? '' : t.slice(f.length), w.slice(t === f ? k + 2 : k + 1), ctx);
       if (t === '-m' || t === '--') return scriptShape(w, k + 1 < w.length ? k + 1 : k);
       if (t === '-') why(`${b} reads code from its input`);
-      if (!t.startsWith('-')) return isLauncher(t, ctx) ? shape(asBin(c, k), ctx) : scriptShape(w, k);
+      if (!t.startsWith('-')) {
+        if (base(t) === BIN && hookCli(w.slice(k))) return MSG.hookCli(BIN); // `node <any>/bin/<bin> hook …` (T-MG-149)
+        return isLauncher(t, ctx) ? shape(asBin(c, k), ctx) : scriptShape(w, k);
+      }
       if (wordTok(t) || (INTERP_VAL.includes(t) && wordTok(w[k + 1] ?? ''))) why(`an option of ${b} with a guarded word`);
       if (INTERP_VAL.includes(t)) k++;
     }

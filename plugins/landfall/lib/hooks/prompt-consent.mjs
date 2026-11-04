@@ -86,7 +86,7 @@ export function consumeConsent(store, { repo, caps, now }) {
 }
 
 function record(input, env, deadline, now) {
-  if (input.hook_event_name !== undefined && input.hook_event_name !== 'UserPromptSubmit') return NONE;
+  if (input.hook_event_name !== 'UserPromptSubmit') return NONE; // exactly; an event without its name is none
   const { prompt, cwd, session_id: session } = input;
   if (typeof prompt !== 'string' || typeof cwd !== 'string' || !isAbsolute(cwd) || typeof session !== 'string' || !SESSION_ID.test(session)) return NONE;
   const names = loadNames();

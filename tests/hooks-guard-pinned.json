@@ -688,5 +688,6 @@
   ["env X=1 @BIN@ hook prompt-consent","none"],
   ["echo {} | @BIN@ hook prompt-consent","none"],
   ["nice node /opt/p/bin/@BIN@ hook prompt-consent","none"],
-  ["ls; @BIN@ hook guard-bash","none"]
+  ["ls; @BIN@ hook guard-bash","none"],
+  ["cat event.json | @BIN@ hook prompt-consent","none"]
 ]

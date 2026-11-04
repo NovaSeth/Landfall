@@ -299,7 +299,7 @@ test('T-MG-149: a ScheduleWakeup or CronCreate prompt that is a loop start conse
       for (const tool of ['ScheduleWakeup', 'CronCreate']) {
         const v = wake(f, { delaySeconds: 60, cron: '*/5 * * * *', prompt }, tool);
         assert.equal(v.decision, 'deny', `${name} ${tool} ${JSON.stringify(prompt)}`);
-        assert.match(v.reason, /^SD-17: blocked /, v.reason);
+        assert.match(v.reason, /^FLW-5: blocked the wakeup: .*consent/, v.reason);
         assert.ok(v.reason.length <= 300 && /Instead/.test(v.reason), v.reason);
       }
     }
