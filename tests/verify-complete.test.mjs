@@ -563,3 +563,25 @@ test('review record, baseline show and baseline pin are command rows; show is re
   const help = await cli(['--help'], { ...r, json: false });
   for (const n of ['review record', 'baseline show', 'baseline pin']) assert.match(help.text, new RegExp(`${n}\\s`));
 });
+
+test('task done saves gates and defectsBeforeMerge; receipt --task keeps them; a later refresh replaces them (T-MG-120)', async (t) => {
+  const r = repo(t);
+  assert.equal((await run(r)).code, 0);
+  r.vstore.write('review', verify.reviewKey(r.id, 1), { ...REVIEW, findings: [{ ...FINDING, severity: 'minor' }] });
+  assert.equal((await done(r)).code, 0);
+  const file = join(r.stateDir, 'receipts', `${r.id}.json`);
+  const saved = () => JSON.parse(readFileSync(file, 'utf8'));
+  const first = saved();
+  assert.equal(first.gates.attempts, 1);
+  assert.equal(first.gates.firstPass, true);
+  assert.deepEqual(first.defectsBeforeMerge, { blocking: 0, minor: 1, byFamily: {}, rounds: 1 });
+  // `receipt --task` has no verify data: the saved details stay.
+  const res = await cli(['receipt', '--task', r.id, '--yes'], r);
+  assert.equal(res.code, 0, show(res));
+  assert.deepEqual([saved().gates, saved().defectsBeforeMerge], [first.gates, first.defectsBeforeMerge]);
+  // A later refresh with new review data replaces them.
+  r.vstore.write('review', verify.reviewKey(r.id, 2), { ...REVIEW, verdict: 'needs-fixes', findings: [FINDING] });
+  const { refreshReceipt } = await import(pathToFileURL(join(pluginDir, 'lib', 'verify', 'done.mjs')).href);
+  assert.equal(refreshReceipt({ cwd: r.dir, env: r.env, names, id: r.id }).receiptProblem, null);
+  assert.deepEqual(saved().defectsBeforeMerge, { blocking: 1, minor: 1, byFamily: { COD: 1 }, rounds: 2 });
+});

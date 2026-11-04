@@ -14,12 +14,14 @@
 // cost: each request priced by prices.json (rounded to a whole micro-dollar) plus the runs' own costs. `partial` is
 // true when something could not be read or priced: the numbers are then a lower bound, `problems` says what is
 // missing. In an inactive repository there is no task document and no run record: the receipt comes from the
-// transcripts alone (class and rounds null). Fields whose source unit does not exist yet are null: tier (engine),
-// gates (verify), defectsBeforeMerge (review records), processOverhead.hookInjectedChars.
+// transcripts alone (class and rounds null). gates and defectsBeforeMerge come from the details the caller passes in
+// (verify.json and the review records, see details.mjs; null without them; a save never erases a saved value with
+// null). Fields whose source unit does not exist yet are null: tier (engine), processOverhead.hookInjectedChars.
 import { join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { KINDS, PATTERNS, StateError, open, resolve } from '../state/index.mjs';
 import { RESAMPLES, cellStats, suggestExecutors } from './executors.mjs';
+import { defectsOf, gatesOf } from './details.mjs';
 import { RECEIPT } from './kind.mjs';
 import { PRICES, priceOf, requestMicroUsd } from './prices.mjs';
 import { RUN_ID, readRuns } from './runs.mjs';
@@ -38,7 +40,7 @@ const newer = (a, b) => { const [x, y] = [semver(a), semver(b)]; for (let i = 0;
 const rank = (g) => (g.agentType === MAIN ? 0 : 1); // the main session first
 
 // The receipt of `task` ({ id, class, round } of its task.json) from a ledger (sessions.mjs readLedger) and run records.
-export function buildReceipt({ task, ledger, runs, names }) {
+export function buildReceipt({ task, ledger, runs, names, verify = null, reviews = [] }) {
   const wrapper = `${names.plugin}:external`;
   const problems = [...ledger.problems, ...runs.problems];
   const mine = ledger.requests.filter((r) => r.task === task.id);
@@ -78,7 +80,7 @@ export function buildReceipt({ task, ledger, runs, names }) {
     wallMs: startedAt ? Date.parse(endedAt) - Date.parse(startedAt) : null,
     tokens, costMicroUsd: cost, byAgent,
     external: external.map((e) => ({ provider: e.provider, runId: e.runId, model: e.model, tokens: e.tokens, tokensReason: e.tokensReason, costMicroUsd: e.costMicroUsd, wallMs: e.wallMs, exit: e.exit })),
-    rounds: task.round, gates: null, defectsBeforeMerge: null,
+    rounds: task.round, gates: gatesOf({ events: task.events ?? [], verify }), defectsBeforeMerge: defectsOf(reviews),
     processOverhead: { wrapperTokens, hookInjectedChars: null },
     priceTable: PRICES.date, source: versions.length ? `transcripts@${versions[versions.length - 1]}` : 'transcripts',
     partial: problems.length > 0,
@@ -87,10 +89,11 @@ export function buildReceipt({ task, ledger, runs, names }) {
   return { receipt, problems, warnings };
 }
 
-export function taskReceipt(id, { cwd, env, names }) {
+// details = { verify, reviews }: verify.json and the review records of the task, read by the caller (lib/verify).
+export function taskReceipt(id, { cwd, env, names, details = null }) {
   if (typeof id !== 'string' || !PATTERNS.taskId.test(id)) throw usage('invalid-value', `not a task ID: ${String(id).slice(0, 60)}`, 'a task ID is T-<handle>-<number>');
   const where = resolve({ cwd, env, names });
-  let task = { id, class: null, round: null };
+  let task = { id, class: null, round: null, events: [] };
   let runs = { runs: [], problems: [] };
   if (where.active) {
     task = open(where.dir, { names }).read('task', id);
@@ -98,7 +101,7 @@ export function taskReceipt(id, { cwd, env, names }) {
     runs = readRuns(join(where.local, 'runs'));
   }
   const ledger = readLedger({ repo: where.repo, env, bin: names.bin });
-  return { ...buildReceipt({ task, ledger, runs, names }), where };
+  return { ...buildReceipt({ task, ledger, runs, names, verify: details?.verify ?? null, reviews: details?.reviews ?? [] }), where };
 }
 
 // Writes the receipt of an active repository through lib/state under the store lock. Unchanged → no write. Fewer
@@ -107,10 +110,13 @@ export function saveReceipt(receipt, { where, names }) {
   const store = open(where.dir, { names, kinds: STORE_KINDS });
   let outcome = 'unchanged';
   store.update(RECEIPT.name, receipt.task, (cur) => {
-    if (cur && isDeepStrictEqual(cur, receipt)) return undefined;
+    // Null never erases: a receipt without verify or review data keeps the saved details.
+    const keep = (k) => (receipt[k] === null && cur?.[k] != null ? { [k]: cur[k] } : {});
+    const next = cur ? { ...receipt, ...keep('gates'), ...keep('defectsBeforeMerge') } : receipt;
+    if (cur && isDeepStrictEqual(cur, next)) return undefined;
     if (cur && tokenSum(receipt.tokens) < tokenSum(cur.tokens)) { outcome = 'kept'; return undefined; }
     outcome = 'saved';
-    return receipt;
+    return next;
   });
   return { saved: outcome === 'saved', kept: outcome === 'kept', file: join(where.dir, RECEIPT.path(receipt.task)) };
 }
