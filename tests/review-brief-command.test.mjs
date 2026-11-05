@@ -133,6 +133,7 @@ test('review brief: round 2 starts at the HEAD round 1 pinned and lists the prev
   const review = join(p.base, 'review.json');
   writeFileSync(review, JSON.stringify({
     verdict: 'needs-fixes',
+    head: p.git('rev-parse', 'HEAD'), // T-MG-192: the review names the commit the reviewer read (the branch tip, after the brief commit)
     reviewer: { kind: 'claude', id: 'claude:reviewer' },
     findings: [
       { id: 'F1', severity: 'blocking', path: 'src/auth/login.js', line: 2, rule: null, text: 'fails open' },
