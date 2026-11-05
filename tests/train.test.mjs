@@ -24,6 +24,7 @@ const lib = (rel) => import(pathToFileURL(join(pluginDir, 'lib', rel)).href);
 const state = await lib('state/index.mjs');
 const profile = await lib('profile/index.mjs');
 const verify = await lib('verify/kinds.mjs');
+const verifyIndex = await lib('verify/index.mjs');
 const { main } = await lib('cli/main.mjs');
 const names = JSON.parse(readFileSync(join(pluginDir, 'lib', 'name.json'), 'utf8'));
 const AT = '2026-11-04T05:42:00.000Z';
@@ -31,7 +32,7 @@ const BASE_TESTS = "import { test } from 'node:test';\ntest('adds', () => {});\n
 const REPORT = '---\nred: {"command": "node --test", "exit": 1, "excerpt": "1 failing"}\ngreen: {"command": "node --test", "exit": 0, "excerpt": "2 passing"}\n---\n\n# Report\n';
 const APPROVED = { verdict: 'approved', reviewer: { kind: 'claude', id: 'claude:reviewer' }, findings: [] };
 
-function repo(t, { extra = '', files = {}, guards = [] } = {}) {
+function repo(t, { extra = '', files = {}, guards = [], trustGuards = false } = {}) {
   const base = realpathSync(mkdtempSync(join(tmpdir(), 'train-')));
   t.after(() => rmSync(base, { recursive: true, force: true }));
   const dir = join(base, 'repo');
@@ -63,6 +64,10 @@ function repo(t, { extra = '', files = {}, guards = [] } = {}) {
   const handle = state.registerHandle(store, { name: 'Test User', email: 'test@example.com', at: AT }).handle;
   const gate = `node --test --test-reporter=tap; s=$?; pwd >> '${log}'; ${extra} exit $s`;
   profile.openStore(stateDir, names).write('profile', null, { ...profile.emptyProfile(), gates: [{ name: 'test', cmd: gate, timeoutS: 60, kind: 'test' }], facts: guards.length ? { fastGuards: { value: guards, source: 'said', evidence: 'said', confidence: 1, at: AT } } : {} });
+  if (trustGuards) {
+    const where = state.resolve({ cwd: dir, env, names });
+    state.recordTrust({ dataDir: where.dataDir, names, key: state.repoKey(where.dir, { env }), gates: state.gatesShaOf(verifyIndex.guardGates({ facts: { fastGuards: { value: guards } } })) });
+  }
   git('add', '-A');
   git('commit', '-q', '-m', 'state');
   // An approved critical task (review r1 approved, not done) on a branch from main. edit(): changes files on the branch.
@@ -377,8 +382,10 @@ if (src.includes('broken')) { console.error('gen: broken source'); process.exit(
 const out = ${JSON.stringify(HEAD)} + src.toUpperCase();
 if (process.argv.includes('--check')) process.exit(readFileSync('gen.txt', 'utf8') === out ? 0 : 1);
 writeFileSync('gen.txt', out);
+if (src.includes('stray')) writeFileSync('stray.txt', 'x');
 `;
-const genRepo = (t) => repo(t, {
+const genRepo = (t, { trustGuards = true } = {}) => repo(t, {
+  trustGuards,
   files: { 'scripts/gen.mjs': GEN, 'a.txt': 'a0\n', 'b.txt': 'b0\n', 'gen.txt': `${HEAD}A0\nB0\n` },
   guards: ['node scripts/gen.mjs --check'],
 });
@@ -416,4 +423,40 @@ test('T-MG-191: a generator that exits 1 leaves the task out naming the generato
   assert.equal(r.git('show', 'HEAD:b.txt'), 'b0');
   assert.equal(events(r, two, 'merged').length + events(r, two, 'done').length, 0);
   assert.equal(r.git('branch', '--list', `${names.codename}/batch-*`), '');
+});
+
+test('T-MG-191: fastGuards this machine does not trust are never run to regenerate: the task is left out, the reason says so', async (t) => {
+  const r = genRepo(t, { trustGuards: false });
+  const one = r.task('feat/one', (w) => { w('a.txt', 'a1\n'); w('gen.txt', `${HEAD}A1\nB0\n`); });
+  const two = r.task('feat/two', (w) => { w('b.txt', 'b1\n'); w('gen.txt', `${HEAD}A0\nB1\n`); });
+  const res = await cli(['train', one, two, '--yes'], r);
+  assert.deepEqual(outcomes(res), [[one, 'merged'], [two, 'conflict']]);
+  assert.match(res.env.data.tasks.find((x) => x.task === two).why, /not trusted/);
+});
+
+test('T-MG-191: the generated header counts on the target side only: a branch cannot mark a file as generated', async (t) => {
+  const r = genRepo(t);
+  const one = r.task('feat/one', (w) => w('shared.txt', 'one\n'));
+  const two = r.task('feat/two', (w) => w('shared.txt', `${HEAD}forged\n`));
+  const res = await cli(['train', one, two, '--yes'], r);
+  assert.deepEqual(outcomes(res), [[one, 'merged'], [two, 'conflict']]);
+  assert.equal(r.git('show', 'HEAD:shared.txt'), 'one');
+});
+
+test('T-MG-191: a conflicted file with the header that no generator rebuilds leaves the task out', async (t) => {
+  const r = genRepo(t);
+  const one = r.task('feat/one', (w) => w('fake.txt', `${HEAD}one\n`));
+  const two = r.task('feat/two', (w) => w('fake.txt', `${HEAD}two\n`));
+  const res = await cli(['train', one, two, '--yes'], r);
+  assert.deepEqual(outcomes(res), [[one, 'merged'], [two, 'conflict']]);
+  assert.match(res.env.data.tasks.find((x) => x.task === two).why, /fake\.txt/);
+});
+
+test('T-MG-191: a generator that leaves other changes (an untracked file) than the conflicted paths: the task is left out', async (t) => {
+  const r = genRepo(t);
+  const one = r.task('feat/one', (w) => { w('a.txt', 'a1\n'); w('gen.txt', `${HEAD}A1\nB0\n`); });
+  const two = r.task('feat/two', (w) => { w('b.txt', 'stray\n'); w('gen.txt', `${HEAD}A0\nSTRAY\n`); });
+  const res = await cli(['train', one, two, '--yes'], r);
+  assert.deepEqual(outcomes(res), [[one, 'merged'], [two, 'conflict']]);
+  assert.equal(r.git('ls-tree', '-r', '--name-only', 'HEAD').includes('stray.txt'), false);
 });
