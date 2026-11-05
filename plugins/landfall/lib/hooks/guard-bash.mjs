@@ -116,7 +116,7 @@ export function roleDeny(input, command, plugin, bin = plugin) {
   if (typeof t !== 'string' || !t) return null;
   const argvs = [];
   if (command.length > LIMIT.cmd || !calls(command, bin, 0, argvs)) {
-    return command.includes(bin) ? 'SEC-13: blocked: a subagent cannot run this line, it cannot be read as plain words. Instead write the landfall call as plain words.' : null;
+    return command.includes(bin) ? `SEC-13: blocked: a subagent cannot run this line, it cannot be read as plain words. Instead write the ${bin} call as plain words.` : null;
   }
   for (const a of argvs) {
     const i = a.indexOf('task');

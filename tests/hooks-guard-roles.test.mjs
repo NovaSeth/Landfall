@@ -74,7 +74,7 @@ const RECORD_BYPASS = [`${B} 'review' record T-X --from f`, `bash -c "${B} revie
 
 test('quoting, wrappers and unresolvable lines naming the binary are denied for a subagent', () => {
   for (const c of [...BYPASS, ...RECORD_BYPASS]) assert.ok(denied(run(c, IMPL)), c);
-  assert.match(run('l=$(echo landfall); $l x', IMPL).stdout, /write the landfall call as plain words/);
+  assert.match(run(`l=$(echo ${B}); $l x`, IMPL).stdout, new RegExp(`write the ${B} call as plain words`));
 });
 
 test('the reviewer keeps the plain record; other lines keep the guard decision', () => {
