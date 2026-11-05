@@ -74,11 +74,11 @@ test('migrate --dry-run lists the steps and writes nothing; migrate applies them
   assert.equal(dry.code, 0, show(dry));
   assert.deepEqual(dry.out.data.steps.map((s) => [s.rel, s.kind, s.from, s.to, s.ids]), [
     ['config.json', 'config', null, 1, ['001-state-flags-to-config']],
-    ['state.json', 'state', 1, 2, ['001-state-flags-to-config']],
+    ['state.json', 'state', 1, 3, ['001-state-flags-to-config', '013-state-role-tokens']], // T-MG-194: store schema 3
   ]);
   assert.equal(dry.out.data.dryRun, true);
   const text = await cli(['migrate', '--dry-run'], { ...p, json: false });
-  assert.match(text.out, /^ {2}state\.json: state schema 1 → 2 \(001-state-flags-to-config\)$/m);
+  assert.match(text.out, /^ {2}state\.json: state schema 1 → 3 \(001-state-flags-to-config, 013-state-role-tokens\)$/m);
   assert.match(text.out, /^ {2}config\.json: config new → 1 \(001-state-flags-to-config\)$/m);
   assert.deepEqual(snapshot(p.state), before, 'the dry run wrote nothing');
   // The flags are read as before meanwhile: the engine is off.
@@ -91,7 +91,7 @@ test('migrate --dry-run lists the steps and writes nothing; migrate applies them
   assert.equal(r.code, 0, show(r));
   assert.equal(r.out.data.steps.length, 2);
   assert.match(r.out.data.backup, /^local\/backup\//);
-  assert.equal(JSON.parse(readFileSync(join(p.state, 'state.json'), 'utf8')).schema, 2);
+  assert.equal(JSON.parse(readFileSync(join(p.state, 'state.json'), 'utf8')).schema, 3);
   assert.deepEqual(JSON.parse(readFileSync(join(p.state, 'config.json'), 'utf8')).flags, { engine: 'off', lanes: 'on' });
   assert.equal((await cli(['tier'], p)).code, 7, 'nothing lost: the engine is still off');
 
