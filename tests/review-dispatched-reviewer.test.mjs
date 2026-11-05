@@ -203,7 +203,7 @@ test('token matrix, review record: a failed review write keeps the reviewer toke
   const token = mint(r, 'reviewer');
   const taskDir = join(r.dir, names.stateDir, 'tasks', r.id);
   chmodSync(taskDir, 0o555);
-  t.after(() => chmodSync(taskDir, 0o755));
+  t.after(() => existsSync(taskDir) && chmodSync(taskDir, 0o755));
   const failed = await cli(r, rec(r, ['--token', '-']), { token });
   assert.notEqual(failed.code, 0);
   assert.deepEqual(reviews(r), []);

@@ -4,7 +4,8 @@
 // `review record` by what stdin brings (`--token -`). A token is never stored, logged or printed; every change is one
 // locked read-modify-write. Unreadable, corrupt or newer store: `token-store`, refused (fail closed).
 import { createHash, randomBytes } from 'node:crypto';
-import { basename } from 'node:path';
+import { readdirSync, statSync } from 'node:fs';
+import { basename, join } from 'node:path';
 import { isAlive } from '../fsx/index.mjs';
 import { run } from '../proc/index.mjs';
 import { identify, identityIn, processTable } from '../sched/machine.mjs';
@@ -36,7 +37,8 @@ function prune(doc, now, table) {
 }
 function read(dir, names, now) {
   try {
-    return prune(open_(dir, names).read('token', null) ?? empty, now, processTable());
+    const raw = open_(dir, names).read('token', null);
+    return { ...prune(raw ?? empty, now, processTable()), raw };
   } catch (e) {
     throw refused('token-store', `${dir}/local/token.json cannot be read (${e.code ?? 'error'}): a call is refused while the role tokens are unknown`, 'repair or remove local/token.json, or update the plugin when its schema is newer');
   }
@@ -69,11 +71,15 @@ export function mint({ dir, names, role, session, agent, host, now = new Date(),
 // The live orchestrator entry, or null.
 export const live = ({ dir, names, now = new Date() }) => read(dir, names, now).orchestrator;
 
+// A session hook wrote local/session/<id>.json within 24 hours: a missing token store is then not a fresh repository.
+const seenSession = (dir, now) => { try { return readdirSync(join(dir, 'local', 'session')).some((f) => +now - statSync(join(dir, 'local', 'session', f)).mtimeMs < DAY); } catch { return false; } };
+
 // What the call may do: { hash, role } for a valid token of the role needed ('orchestrator', or 'reviewer' for either
 // reviewer role), { warn: true } for no token while nothing is live. Otherwise REFUSED: token-required (an orchestrator
 // is live), token-unknown, token-expired, token-role, token-store.
 export function authorize({ dir, names, token, need, now = new Date() }) {
   const doc = read(dir, names, now);
+  if (doc.raw === null && seenSession(dir, now)) throw refused('token-store-missing', `${dir}/local/token.json is missing although a session ran here: a call is refused while the role tokens are unknown`, 'the session token store is gone: compact or resume the session so its hook mints it again');
   if (token === undefined) {
     const o = doc.orchestrator;
     if (!o) return { warn: true };
@@ -82,7 +88,7 @@ export function authorize({ dir, names, token, need, now = new Date() }) {
   const hash = hashOf(token);
   const found = doc.orchestrator?.hash === hash ? { role: 'orchestrator' } : doc.agents.find((a) => a.hash === hash);
   if (!found) {
-    const was = open_(dir, names).read('token', null);
+    const was = doc.raw; // the one read of this call: a failure of it is token-store above
     const old = was?.orchestrator?.hash === hash || was?.agents.some((a) => a.hash === hash);
     throw refused(old ? 'token-expired' : 'token-unknown', old ? 'the token has expired or its session ended' : 'the token is not known here (spent, released or never minted)', 'a reviewer asks the orchestrator to dispatch again');
   }
@@ -90,16 +96,18 @@ export function authorize({ dir, names, token, need, now = new Date() }) {
   return { hash, role: found.role };
 }
 
-// Spends the one-use token `hash` under the lock (token-unknown when it is gone).
+// Spends the one-use token `hash` under the lock and returns its entry (token-unknown when it is gone).
 export function consume({ dir, names, hash }) {
-  let spent = false;
+  let spent = null;
   open_(dir, names).update('token', null, (cur) => {
-    const agents = cur?.agents.filter((a) => a.hash !== hash) ?? [];
-    spent = agents.length !== cur?.agents.length;
-    return spent ? { ...cur, agents } : undefined;
+    spent = cur?.agents.find((a) => a.hash === hash) ?? null;
+    return spent ? { ...cur, agents: cur.agents.filter((a) => a !== spent) } : undefined;
   });
   if (!spent) throw refused('token-unknown', 'the token was spent meanwhile', 'a reviewer reports to the orchestrator, who dispatches again');
+  return spent;
 }
+// Gives a spent entry back when the write it paid for failed (the reviewer retries).
+export const restore = ({ dir, names, entry }) => open_(dir, names).update('token', null, (cur) => (cur ? { ...cur, agents: [...cur.agents, entry] } : undefined));
 
 // SubagentStop: the entries of agent `agent` go.
 export function revoke({ dir, names, agent, lockMs = 300 }) {
