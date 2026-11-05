@@ -22,6 +22,7 @@ const lib = (rel) => import(pathToFileURL(join(pluginDir, 'lib', rel)).href);
 const state = await lib('state/index.mjs');
 const { main } = await lib('cli/main.mjs');
 const T = await lib('state/tokens.mjs');
+const { openStore } = await lib('verify/index.mjs');
 const names = JSON.parse(readFileSync(join(pluginDir, 'lib', 'name.json'), 'utf8'));
 const AT = '2026-11-05T05:42:00.000Z';
 const REVIEW = { verdict: 'approved', reviewer: { kind: 'claude', id: 'claude:reviewer' }, findings: [] };
@@ -106,7 +107,7 @@ async function cli(r, argv, { token, tty = false, json = true } = {}) {
   return { code, err: err.join(''), env: json ? JSON.parse(out.join('')) : null };
 }
 const rec = (r, extra = []) => ['review', 'record', r.id, '--from', r.file, ...extra];
-const reviews = (r) => state.open(join(r.dir, names.stateDir), { names }).list('review');
+const reviews = (r) => openStore(join(r.dir, names.stateDir), names).list('review');
 const codeOf = (res) => res.env.errors[0].code;
 const dispatched = (r) => r.set('dispatched', { executor: 'claude:reviewer', base: r.head });
 
@@ -148,7 +149,7 @@ test('token matrix, review record: the orchestrator token is the wrong role for 
   const rev = mint(r, 'reviewer');
   const wrong = await cli(r, rec(r, ['--token', '-']), { token: orch });
   assert.deepEqual([wrong.code, codeOf(wrong)], [7, 'token-role']);
-  const ext = ['review', 'record', r.id, '--kind', 'external', '--run', 'run-none', '--token', '-'];
+  const ext = ['review', 'record', r.id, '--kind', 'external', '--run', 'codex-T-AB-1-reviewer-1', '--token', '-'];
   assert.equal(codeOf(await cli(r, ext, { token: rev })), 'token-role');
   assert.equal(codeOf(await cli(r, ext, { token: orch })), 'run-unknown', 'the orchestrator token passes the role check');
 });

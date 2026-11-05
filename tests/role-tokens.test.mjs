@@ -125,10 +125,11 @@ test('a newer, corrupt or unreadable token store fails closed (token-store), als
 });
 
 test('holderOf skips at most two shells between the hook and the host', () => {
-  const chain = { 900: { ppid: 901, comm: '-zsh' }, 901: { ppid: 902, comm: '/bin/sh' }, 902: { ppid: process.pid, comm: 'bash' } };
+  const [a, b, c] = [2147483001, 2147483002, 2147483003]; // pids no process has
+  const chain = { [a]: { ppid: b, comm: 'zsh' }, [b]: { ppid: c, comm: 'sh' }, [c]: { ppid: process.pid, comm: 'bash' } };
   const info = (pid) => chain[pid] ?? null;
-  assert.equal(T.holderOf(901, info).pid, process.pid, 'sh then bash: the host');
-  assert.equal(T.holderOf(900, info), null, 'two levels at most: 902 is not a live host');
+  assert.equal(T.holderOf(b, info).pid, process.pid, 'sh then bash: the host');
+  assert.equal(T.holderOf(a, info), null, 'two levels at most: the third shell is not the host');
   assert.equal(T.holderOf(process.pid, () => ({ ppid: 1, comm: 'claude' })).pid, process.pid, 'not a shell: itself');
   assert.equal(T.holderOf(2147483000, () => null), null, 'a dead process has no holder');
 });
