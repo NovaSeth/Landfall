@@ -30,9 +30,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { authorHandle } from '../decisions/index.mjs';
 import { emptyProfile } from '../profile/index.mjs';
-import { KINDS, StateError, mergedOf, recordMerged } from '../state/index.mjs';
+import { KINDS, StateError, gatesShaOf, isTrusted, mergedOf, recordMerged } from '../state/index.mjs';
 import { refreshReceipt } from './done.mjs';
-import { requireTrustedGates } from './gates.mjs';
+import { guardGates } from './fast.mjs';
+import { requireTrustedGates, runGate } from './gates.mjs';
 import { gateChanges, mergeTask, profileOf, targetOf, treeHeld } from './merge.mjs';
 import { activeWhere, codeState, evaluate, gatesSha, gitIn, stateAt, storeOf } from './run.mjs';
 
@@ -43,6 +44,8 @@ const order = (a, b) => {
   const [pb, nb] = [b.replace(/-\d+$/, ''), Number(b.match(/(\d+)$/)?.[1] ?? 0)];
   return pa === pb ? na - nb : pa < pb ? -1 : 1;
 };
+// A conflicted file a generator rebuilds (T-MG-191): its first lines say so on either side, or it is docs/cli.md.
+const GENERATED = /Generated from .* by scripts\/\S+; do not edit/;
 const OBJECT_ID = /^[0-9a-f]{40,64}$/;
 // A gate run that changed HEAD, the index or the working tree of the integration worktree (F1): nothing merges.
 class TreeChanged extends Error {}
@@ -217,6 +220,29 @@ export function batchMerge({ cwd, env, names, ids = null, ready = false, version
     created = true;
     // The set merged onto the target tip, in order; a conflicting task is aborted and left out.
     let built = null;
+    // A conflict in generated files only (T-MG-191): marked so on the target side (a branch cannot mark a file), the fastGuards
+    // trusted on this machine; the branch side taken and removed, every fastGuard run without its --check (the file must come
+    // back), the check forms again, only the conflicted paths staged and nothing else changed, then the merge commit. null when merged; else why not (the caller aborts the merge).
+    const regenerate = (paths) => {
+      const generated = (p) => p === 'docs/cli.md' || GENERATED.test(gitIn(here, env, ['show', `:2:${p}`]).stdout.split('\n', 5).join('\n'));
+      if (!paths.every(generated)) return 'not generated';
+      const guards = guardGates(store.read('profile', null) ?? emptyProfile());
+      if (!guards.length) return 'no fastGuards to regenerate with';
+      if (!isTrusted({ dir: where.dir, dataDir: where.dataDir, names, env, kind: 'gates', sha: gatesShaOf(guards) }).trusted) return 'the fastGuards are not trusted on this machine (trust records them)';
+      if (gitIn(here, env, ['checkout', '--theirs', '--', ...paths]).status !== 0) return 'cannot take the branch side';
+      for (const p of paths) rmSync(join(wt, p), { force: true });
+      for (const form of [(c) => c.replace(/\s+--check\s*$/, ''), (c) => c]) {
+        for (const g of guards) {
+          const r = runGate({ ...g, cmd: form(g.cmd) }, { cwd: wt, env });
+          if (r.gate.result !== 'pass') return `generator failed: ${r.gate.cmd}`;
+        }
+      }
+      const lost = paths.find((p) => !existsSync(join(wt, p)));
+      if (lost) return `no generator rebuilds ${lost}`;
+      gitIn(here, env, ['add', '--', ...paths]);
+      const stray = gitIn(here, env, ['diff', '--quiet', '--', '.', ...paths.map((p) => `:(exclude,literal)${p}`)]).status !== 0 || gitIn(here, env, ['ls-files', '--others', '--exclude-standard']).stdout.trim() !== '';
+      return stray ? 'the generators changed other files' : gitIn(here, env, ['commit', '-q', '--no-edit']).status === 0 ? null : 'cannot commit the regenerated merge';
+    };
     const build = (set) => {
       const key = set.map((t) => t.task).join(' ');
       if (built?.key === key) return built.ok;
@@ -228,10 +254,13 @@ export function batchMerge({ cwd, env, names, ids = null, ready = false, version
         const m = gitIn(here, env, ['merge', '--no-ff', '--no-edit', '-q', '-m', `Merge branch '${t.branch}' (${t.task}, ${batch})`, '--end-of-options', t.sha]);
         if (m.status === 0) { ok.push(t); continue; }
         t.conflicts = gitIn(here, env, ['diff', '--name-only', '-z', '--diff-filter=U']).stdout.split('\0').filter(Boolean).sort();
+        const bad = t.conflicts.length ? regenerate(t.conflicts) : 'no conflicted file';
+        if (bad === null) { ok.push(t); t.regenerated = t.conflicts; t.conflicts = []; continue; }
+        gitIn(here, env, ['reset', '-q', '--hard', 'HEAD']);
         gitIn(here, env, ['merge', '--abort']);
         gitIn(here, env, ['checkout', '-q', '-f', '-B', branch, 'HEAD']);
         t.outcome = 'conflict';
-        t.why = t.conflicts.length ? `conflicts in ${t.conflicts.join(', ')}` : `git merge failed: ${(m.stderr || m.stdout).trim().split('\n')[0] ?? ''}`.slice(0, 300);
+        t.why = t.conflicts.length ? `conflicts in ${t.conflicts.join(', ')}${bad && bad !== 'not generated' ? `; ${bad}` : ''}` : `git merge failed: ${(m.stderr || m.stdout).trim().split('\n')[0] ?? ''}`.slice(0, 300);
       }
       built = { key: ok.map((t) => t.task).join(' '), ok };
       return ok;
@@ -372,6 +401,7 @@ export function batchMerge({ cwd, env, names, ids = null, ready = false, version
     if (set.length) recordMerged({ cwd, env, names, at, entries: set.map((t) => ({ id: t.task, data: { commit: integrated, target, batch, adopted: false, verify: tree } })) });
     for (const t of set) {
       t.outcome = 'merged'; t.why = null;
+      if (t.regenerated) result.reasons.push({ code: 'regenerated', level: 'warn', message: `${t.task}: merged (generated files regenerated: ${t.regenerated.join(', ')})`, hint: '' });
       Object.assign(t, refreshReceipt({ cwd, env, names, id: t.task, mergedAt: at }));
     }
     if (!result.verify) { result.verify = out.doc; result.output = out.output; }
