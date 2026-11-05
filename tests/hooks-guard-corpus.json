@@ -131,5 +131,8 @@
 ["until false; do rm -rf <STATE>; done","deny","rm -rf of the state in a wait loop body"],
 ["until test -f <REPO>/state.json; do sleep 1 > <STATE>/tasks/T-AB-1/report.md; done","deny","state write: a redirection in a wait loop body"],
 ["while cat <STATE>/tasks/T-AB-1/report.md; do cp /tmp/x <STATE>/tasks/T-AB-1/task.json; done","deny","state write: cp in a while loop body"],
-["while cp /tmp/x <STATE>/tasks/T-AB-1/task.json; do sleep 1; done","deny","state write: cp as a while condition"]
+["while cp /tmp/x <STATE>/tasks/T-AB-1/task.json; do sleep 1; done","deny","state write: cp as a while condition"],
+["git commit -m \"chore(state): task.json for <PLUGIN>\"","allow","a commit message is text, not a state path"],
+["git commit --message=\"tasks/ decisions/ task.json\"","allow","a commit message is text (--message=)"],
+["git commit <STATE>/tasks/T-AB-1/task.json","deny","a path argument of git commit inside the state is guarded"]
 ]

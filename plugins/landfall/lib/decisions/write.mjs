@@ -17,7 +17,7 @@
 import { join, relative, sep } from 'node:path';
 import { fileSelection, reviewSelection } from '../findings/index.mjs';
 import { git } from '../git/index.mjs';
-import { PATTERNS, StateError, allocateId, check, emailHash, gitIdentity, readProjects, retireId } from '../state/index.mjs';
+import { PATTERNS, StateError, allocateId, check, createTaskInStore, emailHash, gitIdentity, readProjects, retireId } from '../state/index.mjs';
 import { codePointName, hidden } from '../text/clean.mjs';
 import { DECISION, formatRecord, parseRecord, recordErrors, setFields } from './record.mjs';
 import { stateRel } from './check.mjs';
@@ -127,7 +127,13 @@ function createDecisionLocked({ store, where, names, env, handle, input, today =
   const id = allocateId(store, { prefix: 'D', handle, build: (next) => formatRecord({ ...doc, id: next }, body) });
   const filed = selection ? fileSelection(store, selection, handle) : null;
   for (const old of supersedes) rewrite(store, old, { status: 'superseded', supersededBy: id }, { active: true, by: id });
-  return { id, file: relative(where.worktree, join(where.dir, DECISION.path(id))).split(sep).join('/'), supersedes, warnings, ...(filed === null ? {} : { filed }) };
+  let followUp; // a test-removal decision opens the task that restores or confirms the coverage (T-MG-189)
+  if (doc.kind === 'test-removal' && allows.length && input.followUp !== false) {
+    const list = allows.join('; ');
+    followUp = createTaskInStore({ store, handle, title: `Restore or confirm the coverage of ${allows.length} removed tests (${id})`, note: list.length <= 300 ? list : id }).id;
+    store.writeText(DECISION.path(id), `${store.readText(DECISION.path(id)).trimEnd()}\n\nFollow-up: ${followUp}\n`);
+  }
+  return { id, file: relative(where.worktree, join(where.dir, DECISION.path(id))).split(sep).join('/'), supersedes, warnings, ...(filed === null ? {} : { filed }), ...(followUp ? { followUp } : {}) };
 }
 
 // Retires a decision: tombstone, then status retired. Returns { id, tombstone (created now), changed (record) }.

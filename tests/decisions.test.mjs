@@ -676,3 +676,32 @@ test('T-MG-85: lib/decisions has no import cycle between its modules', () => {
   };
   for (const f of edges.keys()) walk(f);
 });
+
+// ---- test-removal follow-up (T-MG-189) ----
+
+test('decide --kind test-removal opens a follow-up task that names the decision, and the decision names the task', async (t) => {
+  const f = fixture(t);
+  const r = await f.cli(['decide', '--title', 'Drop two tests', '--why', 'They test removed behaviour.', '--cost', 'low', '--allows-test-removal', 'a > one,a > two', '--yes', '--json']);
+  assert.equal(r.code, 0, out(r));
+  const task = r.json.data.followUp;
+  assert.match(task, /^T-AB-\d+$/);
+  assert.ok(r.stdout.includes(D(1)) && r.stdout.includes(task), 'the CLI names both IDs');
+  assert.match(f.record(D(1)), new RegExp(`\\nFollow-up: ${task}\\n`));
+  const shown = await f.cli(['task', 'show', task, '--json']);
+  assert.equal(shown.json.data.task.title, `Restore or confirm the coverage of 2 removed tests (${D(1)})`);
+  assert.equal(shown.json.data.task.events[0].data.note, 'a > one; a > two');
+  const list = await f.cli(['task', 'list', '--json']);
+  assert.ok(JSON.stringify(list.json).includes(task), 'the task is in task list');
+});
+
+test('decide --no-follow-up and a decision of another kind open no task', async (t) => {
+  const f = fixture(t);
+  const a = await f.cli(['decide', '--title', 'Drop one', '--why', 'Gone.', '--cost', 'low', '--allows-test-removal', 'a > one', '--no-follow-up', '--yes', '--json']);
+  assert.equal(a.code, 0, out(a));
+  assert.equal(a.json.data.followUp, undefined);
+  assert.ok(!/Follow-up/.test(f.record(D(1))));
+  const b = await f.cli(['decide', '--title', 'Other', '--why', 'Plain.', '--cost', 'low', '--yes', '--json']);
+  assert.equal(b.json.data.followUp, undefined);
+  const list = await f.cli(['task', 'list', '--json']);
+  assert.ok(!JSON.stringify(list.json).includes('T-AB-'), 'no task was created');
+});

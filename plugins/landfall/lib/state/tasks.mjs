@@ -125,8 +125,8 @@ export function createTask({ cwd, env, names, title, kind = 'task', lane = null,
 }
 
 // Shared task-new operation for commands that also change other records under a store batch.
-export function createTaskInStore({ store, handle: by, title, kind = 'task', lane = null, after = [], at = now() }) {
-  const data = after.length ? { after: [...new Set(after)] } : {};
+export function createTaskInStore({ store, handle: by, title, kind = 'task', lane = null, after = [], note, at = now() }) {
+  const data = { ...(after.length ? { after: [...new Set(after)] } : {}), ...(note ? { note } : {}) };
   const build = (id) => ({ id, kind, title, lane, owner: by, class: null, classHistory: [], status: 'new', round: 0, events: [{ at, by, event: 'created', data }], base: null, branch: null });
   const probe = `T-${by}-1`;
   checkWrite(KINDS.task, { schema: KINDS.task.version, ...build(probe) }, { where: 'task', key: probe });
