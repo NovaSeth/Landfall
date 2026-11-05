@@ -128,3 +128,20 @@ test('a head in the JSON that is not the tip stands after a merge of main, and i
   const res = await record(r);
   assert.equal(res.env.errors[0].code, 'review-head-moved');
 });
+
+test('a merge of main that also carries its own edit is a changed branch: review-head-moved', async (t) => {
+  const r = repo(t);
+  writeFileSync(r.file, JSON.stringify({ ...REVIEW, head: r.reviewed }));
+  r.git('checkout', '-q', 'main');
+  writeFileSync(join(r.dir, 'm.txt'), 'm');
+  r.git('add', '-A');
+  r.git('commit', '-q', '-m', 'main moves');
+  r.git('checkout', '-q', 'feat');
+  r.git('merge', '--no-edit', '--no-commit', 'main');
+  writeFileSync(join(r.dir, 'evil.txt'), 'smuggled in the merge');
+  r.git('add', 'evil.txt');
+  r.git('commit', '-q', '-m', 'Merge main (edited)');
+  const res = await record(r);
+  assert.equal(res.code, 7, JSON.stringify(res.env));
+  assert.equal(res.env.errors[0].code, 'review-head-moved');
+});
