@@ -101,14 +101,20 @@ export function gitIn(where, env, args) {
 }
 
 // T-MG-192: `tip` adds no change of its own to `head` (a review's commit): no own commit, and every first-parent commit
-// in head..tip is a merge whose other parents are in `target`. A merge of the target into the branch is no change.
+// in head..tip is a clean merge (its tree is the merge of its parents) whose other parents are in `target`: a merge of
+// the target into the branch is no change, an edited merge is. `target`: a branch name or full ref, resolved to a commit.
 export function sameChange(where, env, head, tip, target = 'main') {
-  if (gitIn(where, env, ['merge-base', '--is-ancestor', head, tip]).status !== 0) return false;
+  const full = target === 'HEAD' || target.startsWith('refs/') ? target : `refs/heads/${target}`;
+  const into = gitIn(where, env, ['rev-parse', '--verify', '-q', `${full}^{commit}`]).stdout.trim();
+  if (!into || gitIn(where, env, ['merge-base', '--is-ancestor', head, tip]).status !== 0) return false;
   const log = (...a) => gitIn(where, env, ['log', '--first-parent', ...a, '--end-of-options', `${head}..${tip}`]);
   const own = log('--no-merges', '--format=%H');
-  const merges = log('--merges', '--format=%P');
-  return own.status === 0 && own.stdout.trim() === '' && merges.status === 0
-    && merges.stdout.split('\n').filter(Boolean).every((l) => l.split(' ').slice(1).every((p) => gitIn(where, env, ['merge-base', '--is-ancestor', p, target]).status === 0));
+  const merges = log('--merges', '--format=%T %P');
+  return own.status === 0 && own.stdout.trim() === '' && merges.status === 0 && merges.stdout.split('\n').filter(Boolean).every((l) => {
+    const [tree, first, ...others] = l.split(' ');
+    return others.every((q) => gitIn(where, env, ['merge-base', '--is-ancestor', q, into]).status === 0)
+      && gitIn(where, env, ['merge-tree', '--write-tree', first, ...others]).stdout.split('\n')[0] === tree;
+  });
 }
 
 export const commitExists = (where, env, sha) => Boolean(sha) && gitIn(where, env, ['cat-file', '-e', `${sha}^{commit}`]).status === 0;
