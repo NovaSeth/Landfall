@@ -9,7 +9,7 @@ import { isAbsolute, relative } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { ENGINE_FLAG, lastRecordedChange } from '../engine/index.mjs';
 import { readProfile } from '../profile/index.mjs';
-import { open } from '../state/index.mjs';
+import { holderOf, mint, open } from '../state/index.mjs';
 import { getRule, openMethod } from '../method/index.mjs';
 import { forModel } from '../text/clean.mjs';
 import { DATA_MARKER, dataLine } from '../text/data.mjs';
@@ -47,8 +47,9 @@ const taskLine = (t) => `- ${dataLine(t.id, 40)} ${dataLine(t.status, 20)}${t.ro
 
 // Pure: the context text, never longer than max. tasks: active task documents in order (more: how many were not
 // read); loop: { doc, exit } | { error }; rules: [{ id, text }].
-export function renderContext({ bin, where, tier = null, scan = null, tasks = [], more = 0, loop = {}, rules = [], max = CONTEXT_MAX }) {
+export function renderContext({ bin, where, token = null, tier = null, scan = null, tasks = [], more = 0, loop = {}, rules = [], max = CONTEXT_MAX }) {
   let head = [`${bin} is active here (${where}); task state changes only through \`${bin}\` commands (FLW-7).`];
+  if (token) head.push(token);
   if (tier) head.push(`Tier: ${clip(oneLine(tier), 10)}.`);
   const scanLine = scan?.due ? `Profile: scan due (${clip(oneLine(scan.reason ?? 'due'), 40)}); run \`${bin} profile observe\`.` : null;
   if (scanLine) head.push(scanLine);
@@ -118,8 +119,16 @@ function scanOf(where, names, env, deadline) {
   } catch { return null; }
 }
 
-// Registry handler: (hook input, { env, deadline }) → { stdout }.
-export function sessionStart(input, { env = process.env, deadline = Infinity } = {}) {
+// SEC-13: the orchestrator token of this session (every source), or why none was minted. host: { pid, start } (tests).
+const WHY = { held: 'another live session holds it', busy: 'the store is busy' };
+function tokenLine(dir, names, session, host = holderOf()) {
+  const r = host ? mint({ dir, names, role: 'orchestrator', session, host }) : { none: 'unreadable' };
+  return r.token ? `Session token (SEC-13; stdin only, never in a file, argument or reply): ${r.token}. Use: printf %s <token> | ${names.bin} … --token -`
+    : `Session token: none (${WHY[r.none] ?? 'the store cannot be read'}); dispatch and review records are refused here.`;
+}
+
+// Registry handler: (hook input, { env, deadline, host }) → { stdout }.
+export function sessionStart(input, { env = process.env, deadline = Infinity, host } = {}) {
   const cwd = [input.cwd, env.CLAUDE_PROJECT_DIR].find((d) => typeof d === 'string' && isAbsolute(d));
   if (!cwd) return { stdout: '' };
   const names = loadNames();
@@ -132,6 +141,6 @@ export function sessionStart(input, { env = process.env, deadline = Infinity } =
   const rel = relative(where.worktree, where.dir); // from a linked worktree: the main checkout's state, by its path
   const tier = tierOf(where, names, env, deadline);
   const scan = scanOf(where, names, env, deadline);
-  const text = renderContext({ bin: names.bin, tier, scan, where: `state in ${rel && !rel.startsWith('..') && !isAbsolute(rel) ? rel : where.dir}`, tasks, more, loop, rules: alwaysRules() });
+  const text = renderContext({ bin: names.bin, token: tokenLine(where.dir, names, input.session_id, host), tier, scan, where: `state in ${rel && !rel.startsWith('..') && !isAbsolute(rel) ? rel : where.dir}`, tasks, more, loop, rules: alwaysRules() });
   return { stdout: `${JSON.stringify({ hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: forModel(text) } })}\n` };
 }

@@ -9,7 +9,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { isolateProcessEnv } from './helpers/isolated-env.mjs';
-import { MALFORMED, git, hook, launch, lib, loopDoc, names, repo, task, writeLoop } from './helpers/hook-fixture.mjs';
+import { MALFORMED, git, hook, launch, lib, loopDoc, names, pluginDir, repo, task, writeLoop } from './helpers/hook-fixture.mjs';
 
 isolateProcessEnv();
 
@@ -30,11 +30,16 @@ test('session context: an active repository gets the state line, the tasks with 
     assert.ok(c.length <= CONTEXT_MAX, `${c.length} chars`);
     assert.match(c, new RegExp(`\`${names.bin} tick\``), 'the next action names the tick');
     for (const id of ALWAYS) assert.match(c, new RegExp(`^${id}\\. `, 'm'), `always rule ${id}`);
-    for (const id of ids.slice(0, 5)) assert.match(c, new RegExp(`^- ${id} `, 'm'), `active task ${id}`);
+    // the session token line (SEC-13) takes its share of CONTEXT_MAX: the first tasks fit, the rest is counted in the "… N more" line
+    for (const id of ids.slice(0, 2)) assert.match(c, new RegExp(`^- ${id} `, 'm'), `active task ${id}`);
+    assert.match(c, /Active tasks \(5\)/); assert.match(c, /- … 3 more: /);
     for (const id of ids.slice(5)) assert.doesNotMatch(c, new RegExp(id), `closed task ${id}`);
-    assert.match(c, /- T-AB-3 fix-round r2: Work on part 3 → /, 'status, round, title and next step');
     assert.match(c, /Loop: running/);
   }
+  // without the token line all five fit, with status, round, title and next step
+  const full = renderContext({ bin: names.bin, where: 'state in x', tasks: ids.slice(0, 5).map((id, k) => f.store.read('task', id)), loop: { doc: loopDoc(null), exit: null }, rules: [] });
+  for (const id of ids.slice(0, 5)) assert.match(full, new RegExp(`^- ${id} `, 'm'), `active task ${id}`);
+  assert.match(full, /- T-AB-3 fix-round r2: Work on part 3 → /, 'status, round, title and next step');
 });
 
 test('session context: every active task status has a next step; a terminal or unreadable loop is said plainly', (t) => {
@@ -122,7 +127,6 @@ test('A-4: repository task titles are data: one marker line precedes them; each 
 const T = await lib('state/tokens.mjs');
 const { spawn } = await import('node:child_process');
 const { existsSync, readFileSync, readdirSync, statSync } = await import('node:fs');
-const { fileURLToPath } = await import('node:url');
 const me = T.holderOf(process.pid);
 const TOKEN = /lf1_[A-Za-z0-9_-]{43}/;
 const liveOf = (f) => T.live({ dir: f.stateDir, names });
@@ -182,8 +186,8 @@ const { holderOf } = await import(pathToFileURL(process.argv[2]).href);
 const r = sessionStart({ session_id: process.argv[3], hook_event_name: 'SessionStart', source: 'startup', cwd: process.argv[4] }, { env: process.env, host: holderOf(process.pid) });
 process.stdout.write(r.stdout);`;
   const run = (sid) => new Promise((res) => {
-    const c = spawn(process.execPath, ['--input-type=module', '-e', child, fileURLToPath(new URL('../plugins/landfall/lib/hooks/session-start.mjs', import.meta.url)),
-      fileURLToPath(new URL('../plugins/landfall/lib/state/tokens.mjs', import.meta.url)), sid, f.dir], { env: f.env });
+    const c = spawn(process.execPath, ['--input-type=module', '-e', child, join(pluginDir, 'lib', 'hooks', 'session-start.mjs'),
+      join(pluginDir, 'lib', 'state', 'tokens.mjs'), sid, f.dir], { env: f.env });
     let out = ''; c.stdout.on('data', (d) => { out += d; }); c.on('close', () => res(out));
   });
   const outs = await Promise.all([run('c1'), run('c2')]);

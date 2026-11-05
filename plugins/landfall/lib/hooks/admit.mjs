@@ -7,7 +7,7 @@
 import { readFileSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
 import { modeOf, readConfig, rollout } from '../config/index.mjs';
-import { open } from '../state/index.mjs';
+import { open, revoke as dropToken } from '../state/index.mjs';
 import { admitAgent, bindAgent, releaseAgent } from '../sched/index.mjs';
 import { closeLoadWait, openLoadWait } from '../loop/waits.mjs';
 import { loadNames, stateOf } from './loop-state.mjs';
@@ -23,6 +23,9 @@ const cwdOf = (input, env) => [input.cwd, env.CLAUDE_PROJECT_DIR].find((d) => ty
 // another model is denied in every admission mode (registry `whenOff`); no tool_input, a non-string model or an unreadable
 // agent file allow (GC8).
 export function modelLock(input) {
+  if (typeof input.agent_type === 'string' && input.agent_type) { // ORC-2 (SEC-13): a subagent starts no agent
+    return { stdout: `${JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: 'ORC-2: blocked: a subagent does not start agents. Instead report back to the orchestrator.' } })}\n` };
+  }
   const model = input.tool_input?.model;
   if (typeof model !== 'string') return NONE;
   const names = loadNames();
@@ -93,9 +96,22 @@ export function bindHook(input, { env = process.env } = {}) {
   return NONE;
 }
 
-export function releaseHook(input, { env = process.env } = {}) {
+// SubagentStop: the agent's review token entry goes, also with admission off (the registry's whenOff).
+export function revoke(input, { env = process.env, deadline = Infinity } = {}) {
+  const cwd = cwdOf(input, env);
+  if (!cwd || !ID.test(String(input.agent_id))) return NONE;
+  const where = stateOf(cwd, env, deadline).where;
+  if (where?.active) {
+    try { dropToken({ dir: where.dir, names: loadNames(), agent: input.agent_id, lockMs: LOCK_MS }); } catch { /* a lost revoke ends with the entry's 2 h expiry (GC8) */ }
+  }
+  return NONE;
+}
+
+export function releaseHook(input, opts = {}) {
+  const { env = process.env } = opts;
   const names = loadNames();
   if (!ID.test(String(input.agent_id))) return NONE;
+  revoke(input, opts);
   releaseAgent(input.agent_id, { names, env, lockTimeoutMs: LOCK_MS });
   return NONE;
 }

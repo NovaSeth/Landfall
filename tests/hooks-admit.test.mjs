@@ -138,6 +138,7 @@ for (const mode of ['off', 'shadow', 'on']) {
 
 // T-MG-196 (SEC-13, spec A10, A4): a subagent starts no agent; SubagentStop revokes the review token also with admission off.
 const T = await lib('state/tokens.mjs');
+const admitMod = await lib('hooks/admit.mjs');
 const me = T.holderOf(process.pid);
 for (const mode of ['off', 'shadow', 'on']) {
   test(`spawn lock (${mode}): an Agent call from a hook input with agent_type set is denied, ORC-2`, (t) => {
@@ -163,9 +164,11 @@ for (const mode of ['off', 'shadow', 'on']) {
     const file = join(f.stateDir, 'local', 'token.json');
     const agents = () => JSON.parse(readFileSync(file, 'utf8')).agents.map((a) => a.agent);
     assert.deepEqual(agents().sort(), ['agent-abc', 'agent-def']);
-    assert.equal(stop(f, 'agent-abc').decision, 'allow');
+    // admission off: the registry's whenOff (T-MG-197) runs this handler; here it is called as the row does
+    const stopped = (agentId) => (mode === 'off' ? admitMod.revoke({ session_id: 'sess-1', cwd: f.dir, agent_id: agentId }, { env: f.env }) : stop(f, agentId));
+    stopped('agent-abc');
     assert.deepEqual(agents(), ['agent-def']);
-    assert.equal(stop(f, 'agent-nobody').decision, 'allow');
+    stopped('agent-nobody');
     assert.deepEqual(agents(), ['agent-def']);
     assert.doesNotMatch(readFileSync(file, 'utf8'), /lf1_/);
   });
