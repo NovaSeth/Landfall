@@ -1,14 +1,14 @@
 // Role capability tokens (SEC-13, spec 2026-11-05): the machine-local kind `token` (local/token.json) holds the sha256 of
 // the session's orchestrator token and of each reviewer's one-use token, each bound to the Claude Code process that hosts
 // the session ({ pid, start }). Hooks mint and revoke; the CLI authorizes `task set dispatched|self-verified` and
-// `review record` by what stdin brings (`--token -`). A token is never stored, logged or printed; every change is one
+// `review record` by what stdin brings (`--token -`) from a caller inside the holder's process tree only. A token is never stored, logged or printed; every change is one
 // locked read-modify-write. Unreadable, corrupt or newer store: `token-store`, refused (fail closed).
 import { createHash, randomBytes } from 'node:crypto';
 import { readdirSync, statSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { isAlive } from '../fsx/index.mjs';
 import { run } from '../proc/index.mjs';
-import { identify, identityIn, processTable } from '../sched/machine.mjs';
+import { descends, identify, identityIn, processTable } from '../sched/machine.mjs';
 import { StateError } from './errors.mjs';
 import { KINDS, PATTERNS, defineKind } from './kinds.mjs';
 import { open } from './store.mjs';
@@ -38,7 +38,8 @@ function prune(doc, now, table) {
 function read(dir, names, now) {
   try {
     const raw = open_(dir, names).read('token', null);
-    return { ...prune(raw ?? empty, now, processTable()), raw };
+    const table = processTable();
+    return { ...prune(raw ?? empty, now, table), raw, table };
   } catch (e) {
     throw refused('token-store', `${dir}/local/token.json cannot be read (${e.code ?? 'error'}): a call is refused while the role tokens are unknown`, 'repair or remove local/token.json, or update the plugin when its schema is newer');
   }
@@ -76,8 +77,9 @@ const seenSession = (dir, now) => { try { return readdirSync(join(dir, 'local', 
 
 // What the call may do: { hash, role } for a valid token of the role needed ('orchestrator', or 'reviewer' for either
 // reviewer role), { warn: true } for no token while nothing is live. Otherwise REFUSED: token-required (an orchestrator
-// is live), token-unknown, token-expired, token-role, token-store.
-export function authorize({ dir, names, token, need, now = new Date() }) {
+// is live), token-unknown, token-expired, token-role, token-store, token-caller (the caller process `caller` does not
+// descend from the session's holder, or the process table cannot be read: a copied token is useless outside the tree, R2).
+export function authorize({ dir, names, token, need, now = new Date(), caller = process.pid }) {
   const doc = read(dir, names, now);
   if (doc.raw === null && seenSession(dir, now)) throw refused('token-store-missing', `${dir}/local/token.json is missing although a session ran here: a call is refused while the role tokens are unknown`, 'the session token store is gone: compact or resume the session so its hook mints it again');
   if (token === undefined) {
@@ -93,7 +95,17 @@ export function authorize({ dir, names, token, need, now = new Date() }) {
     throw refused(old ? 'token-expired' : 'token-unknown', old ? 'the token has expired or its session ended' : 'the token is not known here (spent, released or never minted)', 'a reviewer asks the orchestrator to dispatch again');
   }
   if ((need === 'orchestrator') !== (found.role === 'orchestrator')) throw refused('token-role', `a ${found.role} token does not serve this call (it needs ${need === 'orchestrator' ? 'the orchestrator' : 'a reviewer'} token)`);
+  if (!descends(doc.table, caller, doc.orchestrator.holder)) throw refused('token-caller', `the token is used outside the process tree of session ${doc.orchestrator.session} (process ${caller} does not descend from Claude Code process ${doc.orchestrator.holder.pid}, or the process table cannot be read)`, "dispatch and record from that session's own Bash tool; an external run (landfall exec) cannot");
   return { hash, role: found.role };
+}
+
+// Whether `pid` runs inside the live orchestrator's process tree (also when the table cannot be read: fail closed);
+// false when no orchestrator is live.
+export function attached({ dir, names, pid = process.pid, now = new Date() }) {
+  try {
+    const doc = read(dir, names, now);
+    return doc.orchestrator !== null && (doc.table === null || descends(doc.table, pid, doc.orchestrator.holder));
+  } catch { return true; }
 }
 
 // Spends the one-use token `hash` under the lock and returns its entry (token-unknown when it is gone).

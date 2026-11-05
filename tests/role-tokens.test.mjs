@@ -68,10 +68,10 @@ test('one orchestrator: a live other holder keeps it, a dead one is taken over, 
   const first = orch(dir, { host: other });
   assert.match(first.token, FORMAT);
   assert.deepEqual(orch(dir, { session: 's2' }).none, 'held');
-  assert.equal(T.authorize({ dir, names, token: first.token, need: 'orchestrator' }).role, 'orchestrator');
+  assert.equal(T.authorize({ dir, names, token: first.token, need: 'orchestrator', caller: other.pid }).role, 'orchestrator');
   const again = orch(dir, { host: other });
-  assert.throws(() => T.authorize({ dir, names, token: first.token, need: 'orchestrator' }), fails('token-unknown'));
-  assert.equal(T.authorize({ dir, names, token: again.token, need: 'orchestrator' }).role, 'orchestrator');
+  assert.throws(() => T.authorize({ dir, names, token: first.token, need: 'orchestrator', caller: other.pid }), fails('token-unknown'));
+  assert.equal(T.authorize({ dir, names, token: again.token, need: 'orchestrator', caller: other.pid }).role, 'orchestrator');
   const b = store(t);
   orch(b.dir, { host: { pid: 2147483000, start: '1' } });
   assert.match(orch(b.dir).token, FORMAT);
@@ -160,7 +160,7 @@ test('two concurrent session starts from different live hosts leave one orchestr
   const winner = hosts[got.findIndex((r) => r.token)];
   const a = T.mint({ dir, names, role: 'reviewer', session: doc.orchestrator.session, agent: 'x1', host: winner });
   assert.match(a.token, FORMAT);
-  const hash = T.authorize({ dir, names, token: a.token, need: 'reviewer' }).hash;
+  const hash = T.authorize({ dir, names, token: a.token, need: 'reviewer', caller: winner.pid }).hash;
   const spend = race(t, dir, "(T.consume({ dir, names, hash: arg }), { ok: true })", 2);
   const res = await spend([hash, hash]);
   assert.equal(res.filter((r) => r.ok).length, 1, JSON.stringify(res));
