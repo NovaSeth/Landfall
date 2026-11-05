@@ -78,7 +78,7 @@ function repo(t, { files = { 'calc.test.mjs': TESTS }, gates = [NODE_TEST], cls 
   profile.openStore(stateDir, names).write('profile', null, { ...profile.emptyProfile(), gates });
   const id = state.allocateId(store, {
     prefix: 'T', handle,
-    build: (tid) => ({ id: tid, kind: 'task', title: 'a task', lane: null, owner: handle, class: cls, classHistory: [{ class: cls, reason: `${cls}: test`, at: AT }], status: 'dispatched', round: 0, events: [], base: head, branch: null }),
+    build: (tid) => ({ id: tid, kind: 'task', title: 'a task', lane: null, owner: handle, class: cls, classHistory: [{ class: cls, reason: `${cls}: test`, at: AT }], status: 'dispatched', round: 0, events: [{ at: AT, by: handle, event: 'dispatched', data: { executor: 'claude:reviewer', base: head } }], base: head, branch: null }),
   });
   if (report !== null) write(`${names.stateDir}/tasks/${id}/report.md`, report);
   git('add', '-A');
@@ -103,7 +103,7 @@ const setGates = (r, gates) => profile.openStore(r.stateDir, names).write('profi
 // Commits everything and makes that commit the task base, so the committed baseline anchors later test changes.
 function rebase(r, msg = 'anchor') {
   const base = commitAll(r, msg);
-  state.setTask({ cwd: r.dir, env: r.env, names, id: r.id, state: 'dispatched', options: { executor: 'claude:implementer', base } });
+  state.setTask({ cwd: r.dir, env: r.env, names, id: r.id, state: 'dispatched', options: { executor: 'claude:reviewer', base } });
   return base;
 }
 // A review input file outside the repository; `value` is written as JSON unless it is a string.

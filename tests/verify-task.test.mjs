@@ -68,7 +68,7 @@ function repo(t, { files = { 'calc.test.mjs': TESTS }, gates = GATES, cls = 'tri
   profile.openStore(stateDir, names).write('profile', null, { ...profile.emptyProfile(), gates });
   const id = state.allocateId(store, {
     prefix: 'T', handle,
-    build: (tid) => ({ id: tid, kind: 'task', title: 'a task', lane: null, owner: handle, class: cls, classHistory: cls ? [{ class: cls, reason: `${cls}: test`, at: AT }] : [], status: 'dispatched', round: 0, events: [], base: head, branch: null }),
+    build: (tid) => ({ id: tid, kind: 'task', title: 'a task', lane: null, owner: handle, class: cls, classHistory: cls ? [{ class: cls, reason: `${cls}: test`, at: AT }] : [], status: 'dispatched', round: 0, events: [{ at: AT, by: handle, event: 'dispatched', data: { executor: 'claude:reviewer', base: head } }], base: head, branch: null }),
   });
   if (report !== null) write(`${names.stateDir}/tasks/${id}/report.md`, report);
   git('add', '-A');
@@ -360,7 +360,7 @@ test('task done refuses a verify that does not match the code: changed, uncommit
   const r = repo(t);
   assert.equal((await run(r)).code, 0);
   // The baseline committed at the base anchors the later test changes (review r2 D5).
-  state.setTask({ cwd: r.dir, env: r.env, names, id: r.id, state: 'dispatched', options: { executor: 'claude:implementer', base: commitAll(r, 'pin the baseline') } });
+  state.setTask({ cwd: r.dir, env: r.env, names, id: r.id, state: 'dispatched', options: { executor: 'claude:reviewer', base: commitAll(r, 'pin the baseline') } });
   r.write('calc.test.mjs', `${TESTS}test('later', () => {});\n`);
   let d = await done(r);
   assert.deepEqual([d.code, errorCodes(d)[0]], [1, 'uncommitted-changes'], show(d));
@@ -807,7 +807,7 @@ test('r2 D5: task merge compares with the target tip: a test added to the target
   const r = repo(t);
   assert.equal((await run(r)).code, 0);
   const base = commitAll(r, 'baseline at the base');
-  state.setTask({ cwd: r.dir, env: r.env, names, id: r.id, state: 'dispatched', options: { executor: 'claude:implementer', base } });
+  state.setTask({ cwd: r.dir, env: r.env, names, id: r.id, state: 'dispatched', options: { executor: 'claude:reviewer', base } });
   commitAll(r, 'dispatched');
   r.git('branch', 'feat/x');
   r.write('calc.test.mjs', `${TESTS}test('extra', () => {});\n`);

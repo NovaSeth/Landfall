@@ -126,6 +126,13 @@ export function recordReview({ cwd, env, names, id, from, run, at = new Date().t
     if (t.status === 'done' || t.status === 'cancelled') throw fail('task-closed', `${id} is ${t.status}: a closed task takes no further state`, `'${names.bin} task new' starts a new task`);
   };
   open(task);
+  if (!rec) {
+    // SEC-13: an implementer shares the owner handle, so a claude review counts only for a reviewer dispatch no implementer report followed.
+    const events = task.events;
+    const at = events.findLastIndex((e) => e.event === 'dispatched');
+    const reviewer = at >= 0 && /:(security-)?reviewer$/.test(events[at].data?.executor ?? '') && !events.slice(at + 1).some((e) => e.event === 'implementer');
+    if (!reviewer) throw refused('reviewer-not-dispatched', `${id} was not dispatched to a reviewer (or its implementer reported after): a claude review is recorded only by the dispatched reviewer (SEC-13)`, `dispatch a reviewer first: '${names.bin} task set ${id} dispatched --executor <plugin>:reviewer --base <sha>'`);
+  }
   const doc = rec
     ? { verdict: input.verdict, reviewer: { kind: 'external', id: `${rec.provider}:reviewer` }, findings: input.findings, run: rec.runId, sha256: createHash('sha256').update(bytes).digest('hex') }
     : { verdict: input.verdict, reviewer: input.reviewer, findings: input.findings };
