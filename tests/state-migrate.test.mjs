@@ -395,8 +395,9 @@ test('008-verify-machine and 009-review-focus: migrate changes only the schema o
     { id: '009-review-focus', kind: 'review', from: 1, to: 2 },
   ]);
   const at = (id) => MIGRATIONS.findIndex((m) => m.id === id);
-  assert.ok(at('007-finding-regression') < at('008-verify-machine') && at('008-verify-machine') < at('009-review-focus') && at('009-review-focus') < at('010-profile-fast-guards'), 'listed in NNN order after 007, before 010');
-  assert.deepEqual([VERIFY_KINDS.verify.version, VERIFY_KINDS.review.version], [3, 2]);
+  assert.ok(at('007-finding-regression') < at('008-verify-machine') && at('008-verify-machine') < at('009-review-focus') && at('009-review-focus') < at('010-profile-fast-guards') && at('011-verify-mode') < at('012-verify-train'), 'listed in NNN order after 007, before 010');
+  assert.equal(MIGRATIONS.at(-1).id, '012-verify-train');
+  assert.deepEqual([VERIFY_KINDS.verify.version, VERIFY_KINDS.review.version], [4, 2]);
   const dir = scratch(t);
   untouchable(dir);
   const files = {
@@ -419,10 +420,10 @@ test('008-verify-machine and 009-review-focus: migrate changes only the schema o
   const out = state.migrate(state.open(dir, { names, kinds }), { at: new Date(AT) });
   assert.deepEqual(out.steps.map(({ rel, from, to, ids }) => ({ rel, from, to, ids })).sort((a, b) => a.rel.localeCompare(b.rel)), [
     { rel: 'tasks/T-AB-1/review-r1.json', from: 1, to: 2, ids: ['009-review-focus'] },
-    { rel: 'tasks/T-AB-1/verify.json', from: 1, to: 3, ids: ['008-verify-machine', '011-verify-mode'] },
+    { rel: 'tasks/T-AB-1/verify.json', from: 1, to: 4, ids: ['008-verify-machine', '011-verify-mode', '012-verify-train'] },
   ]);
   for (const rel of Object.keys(files)) {
-    const want = before[rel].replace(/^ {2}"schema": 1,$/m, `  "schema": ${rel.endsWith('verify.json') ? 3 : 2},`);
+    const want = before[rel].replace(/^ {2}"schema": 1,$/m, `  "schema": ${rel.endsWith('verify.json') ? 4 : 2},`);
     assert.notEqual(want, before[rel], `${rel}: the schema line was found`);
     assert.equal(readFileSync(join(dir, rel), 'utf8'), want, `${rel}: only the schema changed, byte for byte`);
     assert.equal(readFileSync(join(dir, out.backup, rel), 'utf8'), before[rel], `${rel}: the original is backed up`);
