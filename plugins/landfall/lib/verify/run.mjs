@@ -43,14 +43,11 @@
 // there, its HEAD is verified and its change against the base classified; the state is the project's (a linked worktree
 // shares the state of its main checkout). State paths in git pathspecs are tree paths (relative to the project root,
 // the same in every checkout); state paths in messages are shown relative to the worktree, or absolute outside it.
-import { lstatSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { authorHandle, readRecords, stateRel } from '../decisions/index.mjs';
-import { git } from '../git/index.mjs';
 import { PROFILE_KINDS, emptyProfile, listFiles, observe, riskGlobsOf } from '../profile/index.mjs';
 import { lightMatcher, riskMatcher } from '../router/classify.mjs';
-import { MAX_PATHS, addedSteps, applyClass, classify, rank, recordedKeys, routeFor, routeTask, routerThresholds, testPath, weightless } from '../router/index.mjs';
-import { KINDS, StateError, check, gatesShaOf, isTrusted, open, resolve } from '../state/index.mjs';
+import { reroute, routeFor, routerThresholds } from '../router/index.mjs';
+import { KINDS, StateError, gatesShaOf, isTrusted, open, resolve } from '../state/index.mjs';
 import { appliedTier, readReport, reportHasEvidence, reviewNeed, reviewProblem, reviewState } from './artifacts.mjs';
 import { measureAt } from './base.mjs';
 import { baselineSha, compareInventory, excusable, fingerprint, referenceOf, splitFailures } from './baseline.mjs';
@@ -61,21 +58,17 @@ import { codeHealth } from './health.mjs';
 import { runHeavy } from './heavy.mjs';
 import { cacheState, measure } from './measure.mjs';
 import { readProjectPatterns, runRedacted } from './redact.mjs';
-import { byCodeUnit, hashOf } from './inventory.mjs';
+import { SOURCE_MAX, context, inventoryOf } from './collect.mjs';
+import { anchorAt, changeSince, codeState, commitExists, gitIn, lineOf, mergeChange } from './history.mjs';
+import { byCodeUnit } from './inventory.mjs';
 import { VERIFY_KINDS } from './kinds.mjs';
 import { detectRenames, idFiles } from './rename.mjs';
-import { parseReport } from './reporters.mjs';
-import { SKIP_DIRS, scanRepo, scannerOf } from './scan.mjs';
+import { scannerOf } from './scan.mjs';
 import { taskWhere } from './where.mjs';
 
-const SOURCE_MAX = 1024 * 1024;
-const COUNT_MAX = 8 * 1024 * 1024;
 const LEVELS = ['error', 'fail', 'baseline-shrunk', 'route-escalated', 'missing-artifact'];
-const UNSAFE_PATH = /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028\u2029\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]/u;
-
 const now = () => new Date().toISOString();
 const usage = (code, message, hint = '') => new StateError(code, 'USAGE', message, { hint });
-const envError = (code, message, hint = '') => new StateError(code, 'ENV', message, { hint });
 const some = (list, n = 5) => (list.length <= n ? list.join(', ') : `${list.slice(0, n).join(', ')} (+${list.length - n} more)`);
 
 export const storeOf = (where, names) => open(where.dir, { names, kinds: { ...KINDS, ...PROFILE_KINDS, ...VERIFY_KINDS } });
@@ -94,251 +87,6 @@ export function activeWhere({ cwd, env, names }) {
   return where;
 }
 
-// git in the worktree (the code); git missing or failing to start is an environment problem.
-export function gitIn(where, env, args) {
-  const r = git(args, { cwd: where.worktree, env });
-  if (r.error) throw envError('git-failed', `git ${args[0]} could not run (${r.error})`, 'install git and put it on PATH');
-  return r;
-}
-
-// T-MG-192: `tip` adds no change of its own to `head` (a review's commit): no own commit, every first-parent commit in
-// head..tip is a merge of commits already in `target`, and the own change (target's merge base..commit, over `scope`) is
-// the same text at both (the whole tree but the state directory, submodules included; `scope` as codeState gives it): a merge of the target into the branch is no change, an edited merge is. `target`: a branch name
-// or full ref, resolved to a commit. Git runs without repository-independent config, external diff or attribute sources.
-export function sameChange(where, env, head, tip, target = 'main', scope = ['--', '.']) {
-  const clean = Object.fromEntries(Object.entries(env).filter(([k]) => !/^GIT_(CONFIG|ATTR_SOURCE|EXTERNAL_DIFF|DIFF_OPTS)/.test(k)));
-  const g = (...a) => gitIn(where, { ...clean, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_ATTR_NOSYSTEM: '1', GIT_NO_REPLACE_OBJECTS: '1' }, a);
-  const full = target === 'HEAD' || target.startsWith('refs/') ? target : `refs/heads/${target}`;
-  const into = g('rev-parse', '--verify', '-q', `${full}^{commit}`).stdout.trim();
-  if (!into || g('merge-base', '--is-ancestor', head, tip).status !== 0) return false;
-  const log = (...a) => g('log', '--first-parent', ...a, '--end-of-options', `${head}..${tip}`);
-  const own = log('--no-merges', '--format=%H');
-  const merges = log('--merges', '--format=%P');
-  const change = (c) => {
-    const b = g('merge-base', '--end-of-options', c, into).stdout.trim();
-    const d = b ? g('-c', 'diff.external=', '-c', 'diff.ignoreSubmodules=none', '-c', 'core.attributesFile=/dev/null', 'diff', '--no-renames', '--no-ext-diff', '--no-textconv', '--ignore-submodules=none', '--binary', '--end-of-options', b, c, ...scope) : null;
-    return d && d.status === 0 ? d.stdout : null;
-  };
-  const was = change(head);
-  return own.status === 0 && own.stdout.trim() === '' && merges.status === 0 && was !== null && was === change(tip)
-    && merges.stdout.split('\n').filter(Boolean).every((l) => l.split(' ').slice(1).every((q) => g('merge-base', '--is-ancestor', q, into).status === 0));
-}
-
-export const commitExists = (where, env, sha) => Boolean(sha) && gitIn(where, env, ['cat-file', '-e', `${sha}^{commit}`]).status === 0;
-
-// The repository as verify sees it: { rel, scope, routeScope, head, dirty }. `scope` (freshness: dirty, done) and
-// `routeScope` (the change the route classifies) both leave the whole state directory out: the state is not code (a
-// decision recorded, a report stored or a review written between verify and `task done` is no change of the code, and
-// nothing the gates run reads them), so verify → decide → review record → task done needs no commit in between; the
-// typed review records and the baseline are read by value inside the lock of `task done` instead. Before 2.1 only
-// verify's own outputs left the scope, and every state write forced a commit before verify (156 state commits in one
-// 40-task project).
-export function codeState(where, env) {
-  const rel = stateRel(where.repo, where.dir);
-  const scope = ['--', '.', ...(rel ? [`:(exclude)${rel}`] : [])];
-  const routeScope = scope;
-  const h = gitIn(where, env, ['rev-parse', '--verify', '-q', 'HEAD']);
-  const st = gitIn(where, env, ['status', '--porcelain', '--untracked-files=all', ...scope]);
-  if (st.status !== 0) throw envError('git-failed', `git status failed in ${where.worktree}`, 'check that the repository is readable');
-  return { rel, scope, routeScope, head: h.status === 0 ? h.stdout.trim() : null, dirty: st.stdout.trim() !== '' };
-}
-
-// The collector context: repository files (tracked and untracked, not ignored; never the state directory) and a
-// reader that opens only those, as plain files of at most 1 MB.
-export function context(where, env, rel) {
-  let files = null;
-  let known = null;
-  const list = () => (files ??= listFiles(where.worktree, { env, exclude: rel }).filter((f) => !SKIP_DIRS.test(f)));
-  const read = (path) => {
-    known ??= new Set(list());
-    if (!known.has(path)) return null;
-    try {
-      const file = join(where.worktree, path);
-      const st = lstatSync(file);
-      return st.isFile() && st.size <= SOURCE_MAX ? readFileSync(file, 'utf8') : null;
-    } catch {
-      return null;
-    }
-  };
-  return { repo: where.worktree, files: list, read };
-}
-
-export function inventoryOf(runs, ctx) {
-  const tests = runs.filter((r) => r.kind === 'test');
-  const parts = [];
-  let weak = false;
-  let scan = tests.length === 0;
-  for (const run of tests) {
-    // a run reused from the gate cache carries the inventory its report collected (null: its output was no report)
-    const inv = run.report !== undefined ? run.report : parseReport(run.output, ctx);
-    if (inv) parts.push({ ...inv, run });
-    else { scan = true; weak = true; }
-  }
-  if (scan) parts.push({ ...scanRepo(ctx), run: null });
-  const byId = new Map();
-  for (const p of parts) {
-    for (const t of p.tests) {
-      const cur = byId.get(t.id);
-      byId.set(t.id, cur ? { ...cur, skipped: cur.skipped && t.skipped, focused: cur.focused || t.focused } : t);
-    }
-  }
-  const collector = [...new Set(parts.map((p) => p.collector))].sort(byCodeUnit).join('+');
-  return { collector, tests: [...byId.values()].sort((a, b) => byCodeUnit(a.id, b.id)), parts, weak };
-}
-
-// A state file as of commit `commit` (`path` relative to the state directory): with the state directory in the
-// repository, as committed there: { rel (its tree path), path, text (null: the commit has none) }; with a state
-// directory outside the repository (linked) no commit holds state and no branch writes it: { rel: null } — the store's
-// document stands for every commit.
-export function stateAt(where, env, commit, path) {
-  const rel = stateRel(where.repo, where.dir);
-  if (!rel) return { rel: null };
-  const shown = gitIn(where, env, ['show', `${commit}:${rel}/${path}`]);
-  return { rel, path: `${rel}/${path}`, text: shown.status === 0 ? shown.stdout : null };
-}
-
-// Where the baseline `doc` lies relative to code that descends from `commits`: 'none' (no baseline) · 'line' (its head
-// is one of them or an ancestor of one; head null, a baseline collected before the first commit, precedes every
-// commit) · 'branch' (off the line, on another local branch) · 'off' (off the line and on no branch: a rewritten
-// history) · 'unknown' (git cannot tell: the head is no commit here, or git fails). git that cannot run throws (ENV).
-function lineOf(where, env, doc, commits) {
-  if (!doc) return 'none';
-  if (doc.head === null) return 'line';
-  let unknown = false;
-  for (const c of commits.filter(Boolean)) {
-    const r = gitIn(where, env, ['merge-base', '--is-ancestor', doc.head, c]);
-    if (r.status === 0) return 'line';
-    if (r.status !== 1) unknown = true;
-  }
-  if (unknown) return 'unknown';
-  const branches = gitIn(where, env, ['for-each-ref', '--count=1', '--contains', doc.head, '--format=%(refname)', 'refs/heads']);
-  if (branches.status !== 0) return 'unknown';
-  return branches.stdout.trim() ? 'branch' : 'off';
-}
-
-// The accepted inventory as of `commit`: { doc, problem }. In-repo state: the baseline committed there, problem
-// 'missing' or 'malformed' when the commit's history has a baseline but the commit has no valid one (review r1 #3).
-// Linked state: `working`, the store's baseline when it describes the code verified (else null).
-function anchorAt(where, env, commit, working) {
-  if (!commit) return { doc: null, problem: null };
-  const at = stateAt(where, env, commit, VERIFY_KINDS.baseline.path());
-  if (at.rel === null) return { doc: working, problem: null };
-  if (at.text !== null) {
-    try {
-      const doc = JSON.parse(at.text);
-      if (doc?.schema === VERIFY_KINDS.baseline.version && check(VERIFY_KINDS.baseline, doc).length === 0 && doc.sha256 === baselineSha(doc)) return { doc, problem: null };
-    } catch { /* malformed */ }
-    return { doc: null, problem: 'malformed' };
-  }
-  const history = gitIn(where, env, ['log', '-1', '--format=%H', commit, '--', at.path]);
-  return { doc: null, problem: history.status === 0 && history.stdout.trim() !== '' ? 'missing' : null };
-}
-
-function lineCount(file) {
-  try {
-    const st = lstatSync(file);
-    if (!st.isFile() || st.size > COUNT_MAX) return 0;
-    const b = readFileSync(file);
-    if (b.includes(0)) return 0;
-    let n = 0;
-    for (const c of b) if (c === 10) n++;
-    return b.length && b[b.length - 1] !== 10 ? n + 1 : n;
-  } catch {
-    return 0;
-  }
-}
-
-// The integration line the task branches off, every ref of it that exists: origin's HEAD branch, origin/main,
-// origin/master, a local main or master; empty when none. Several refs, because a local main may be ahead of origin
-// (not pushed) or behind it (not pulled), and the work either one has is integration work, not the task's.
-function integrationRefs(where, env) {
-  const refs = [];
-  const head = gitIn(where, env, ['symbolic-ref', '-q', 'refs/remotes/origin/HEAD']);
-  if (head.status === 0 && head.stdout.trim()) refs.push(head.stdout.trim());
-  for (const name of ['refs/remotes/origin/main', 'refs/remotes/origin/master', 'refs/heads/main', 'refs/heads/master']) {
-    if (!refs.includes(name) && gitIn(where, env, ['rev-parse', '-q', '--verify', name]).status === 0) refs.push(name);
-  }
-  return refs;
-}
-
-// The task's own change since `base` (the state directory left out), or null when git cannot diff against it: the
-// commits of the branch's own first-parent line base..HEAD, always (no ref anyone can move hides them), plus every
-// commit of base..HEAD the integration line does not have (a side branch merged into the task is the task's work,
-// review r1 F3), so a `git merge main` into the branch brings none of main's work into the class (retro 2026-10
-// D-MG-13); a merge commit counts what it changes beyond every parent (`--cc`: a conflict resolution or an edit made
-// in the merge itself). Without an integration ref every commit of base..HEAD counts: a class may rise, never fall.
-// Plus the uncommitted and untracked changes; the LOC of those paths against the base. Weightless and light paths
-// (lib/router) count no LOC unless they match a risk glob.
-export function changeSince(where, env, base, scope, light = () => false, risky = () => false, max = MAX_PATHS) {
-  const counted = (path) => risky(path) || (!weightless(path) && !light(path));
-  // Total LOC also counts test files (the trivial cut); `counted` alone, without them, feeds the split rule.
-  const countedAll = (path) => counted(path) || (testPath(path) && !light(path));
-  const wt = gitIn(where, env, ['diff', '--name-only', '-z', 'HEAD', ...scope]);
-  if (wt.status !== 0) return null;
-  const paths = new Set(wt.stdout.split('\0').filter(Boolean));
-  const refs = integrationRefs(where, env);
-  const chain = gitIn(where, env, ['rev-list', '--first-parent', `${base}..HEAD`]);
-  const rest = gitIn(where, env, ['rev-list', `${base}..HEAD`, ...(refs.length ? ['--not', ...refs] : [])]);
-  if (chain.status !== 0 || rest.status !== 0) return null;
-  const shas = [...new Set([...chain.stdout.split('\n'), ...rest.stdout.split('\n')].filter(Boolean))];
-  for (let i = 0; i < shas.length; i += 200) {
-    const own = gitIn(where, env, ['log', '--no-walk=unsorted', '--format=', '--name-only', '-z', '--cc', ...shas.slice(i, i + 200), ...scope]);
-    if (own.status !== 0) return null;
-    for (const p of own.stdout.split('\0').filter(Boolean)) if (!/^[0-9a-f]{40}$/.test(p)) paths.add(p);
-  }
-  const tracked = [...paths].filter((p) => !UNSAFE_PATH.test(p)).slice(0, max);
-  let loc = 0;
-  let locCode = 0;
-  if (tracked.length) {
-    const d = gitIn(where, env, ['diff', '--numstat', '-z', '--no-renames', base, '--', ...tracked]);
-    if (d.status !== 0) return null;
-    for (const rec of d.stdout.split('\0')) {
-      const m = /^(\d+|-)\t(\d+|-)\t([\s\S]+)$/.exec(rec);
-      if (!m || m[1] === '-' || !countedAll(m[3])) continue;
-      loc += Number(m[1]) + Number(m[2]);
-      if (counted(m[3])) locCode += Number(m[1]) + Number(m[2]);
-    }
-  }
-  const u = gitIn(where, env, ['ls-files', '-z', '--others', '--exclude-standard', ...scope]);
-  for (const p of u.status === 0 ? u.stdout.split('\0').filter(Boolean) : []) {
-    if (paths.has(p)) continue;
-    paths.add(p);
-    if (countedAll(p)) {
-      const n = lineCount(join(where.worktree, p));
-      loc += n;
-      if (counted(p)) locCode += n;
-    }
-  }
-  // dropped / truncated (T-MG-182 r1 F1): a path left out here is not seen by whoever decides from the list (fastPlan
-  // then runs the full set, failing closed)
-  const safe = [...paths].filter((p) => !UNSAFE_PATH.test(p));
-  return { paths: safe.slice(0, max), loc, locCode, dropped: safe.length < paths.size, truncated: safe.length > max };
-}
-
-// The paths a merge in progress brings onto the target tip (the index against the tip), the state directory left out.
-function mergeChange(where, env, tip, scope) {
-  const d = gitIn(where, env, ['diff', '--cached', '--name-only', '-z', tip, ...scope]);
-  return d.status === 0 ? { paths: d.stdout.split('\0').filter(Boolean), loc: 0 } : null;
-}
-
-// { route (verify.json), flags } after re-classifying the change; writes the ratchet in write mode.
-function reroute({ store, task, id, write, handle, riskPaths, change, at }) {
-  const declared = task.class;
-  const route = { declared, actual: declared, escalated: false, missingSteps: [] };
-  let flags = recordedKeys(task).flags;
-  if (change.paths.length === 0) return { route, flags };
-  const plan = { paths: change.paths, loc: change.loc, locCode: change.locCode, flags: [], riskPaths };
-  if (write) {
-    const r = routeTask(store, id, { ...plan, handle, at });
-    flags = recordedKeys(store.read('task', id)).flags;
-    return { route: { declared, actual: r.class, escalated: r.escalated, missingSteps: [...r.addedSteps] }, flags };
-  }
-  const step = applyClass(task, classify({ ...plan, thresholds: routerThresholds(store) }), { at, by: handle ?? 'verify' });
-  const actual = step.next?.class ?? declared;
-  const escalated = declared !== null && rank(actual) > rank(declared);
-  return { route: { declared, actual, escalated, missingSteps: escalated ? [...addedSteps(declared, actual, { flags: step.flags })] : [] }, flags: step.flags };
-}
-
 // The evaluation of task `id` in a resolved, active repository: { doc (verify.json), reasons, written, candidates,
 // output, reused (the time of the gate runs reused from the gate cache, else null) }. `anchor`: the commit whose
 // baseline is the accepted inventory (merge mode: the target tip); `merged`: the commit a merge brings onto it (merge
@@ -351,9 +99,28 @@ function reroute({ store, task, id, write, handle, riskPaths, change, at }) {
 // Other modes store it at once (null is returned).
 // full (T-MG-182): the whole profile gate set in write and ci mode too; else verify runs the fast subset of the change
 // (fast.mjs) where it can. Merge mode always runs the full set: the only full run per task.
-export function evaluate({ where, names, env, id, mode, handle = null, at = now(), anchor = null, merged = null, version = null, cache = true, memo = null, full = false }) {
+export function evaluate(opts) {
+  const s = begin(opts);
+  if (s.profile.gates.length === 0) {
+    s.candidates = observe(s.where.worktree, { env: s.env, exclude: s.code.rel }).gates;
+    s.say('fail', 'no-gates', `the profile has no gates, so nothing can verify ${s.id}`, s.candidates.length ? `detected: ${some(s.candidates.map((g) => g.cmd))}; changing gates is a gate-change decision` : 'add a gate of kind test to the profile');
+  } else {
+    if (!s.profile.gates.some((g) => g.kind === 'test')) {
+      if (s.gateChange) s.allowedBy.add(s.gateChange.id);
+      else s.say('fail', 'no-test-gate', 'the profile has no gate of kind test', 'add one, or record a gate-change decision that waives it (a docs-only repository)');
+    }
+    const runs = runGates(s);
+    const { pinned, anchorDoc } = references(s);
+    const { reference, cmp } = compare(s, pinned, anchorDoc);
+    verdicts(s, runs, reference, cmp);
+  }
+  if (s.mode !== 'merge') routePhase(s);
+  return finish(s);
+}
+
+// The setup: the store, the task, the profile, the verify.json skeleton, the change under verification and the gate plan.
+function begin({ where, names, env, id, mode, handle = null, at = now(), anchor = null, merged = null, version = null, cache = true, memo = null, full = false }) {
   const started = Date.now();
-  const write = mode === 'write';
   const store = storeOf(where, names);
   const cost = measure({ store, id, mode }); // load, cache, heavy-lease wait and gate time (measure.mjs, T-MG-121)
   const task = store.read('task', id);
@@ -362,12 +129,9 @@ export function evaluate({ where, names, env, id, mode, handle = null, at = now(
   // A batch checked this gate set once before its merges (memo.trusted, batch.mjs); any other set is checked here.
   if (memo?.trusted !== gatesSha(profile.gates)) requireTrustedGates({ where, names, env, gates: profile.gates });
   const code = codeState(where, env);
-  const stateShown = stateRel(where.worktree, where.dir) ?? where.dir;
   const reasons = [];
   const say = (level, c, message, hint = '') => reasons.push({ level, code: c, message, hint });
   const active = readRecords(where.dir).records.map((r) => r.doc).filter((d) => d.status === 'active');
-  const gateChange = active.find((d) => d.kind === 'gate-change');
-  const allowedBy = new Set();
   const doc = {
     schema: VERIFY_KINDS.verify.version, task: id, head: code.dirty ? null : code.head, gatesSha: gatesSha(profile.gates), baselineSha: null,
     class: task.class, startedAt: at, durationMs: 0, gates: [],
@@ -375,13 +139,6 @@ export function evaluate({ where, names, env, id, mode, handle = null, at = now(
     failures: { preexisting: [], new: [] }, route: { declared: task.class, actual: task.class, escalated: false, missingSteps: [] },
     artifacts: { report: false, review: 'not-required' }, result: 'pass',
   };
-  let candidates = null;
-  let inv = null, ctx = null;
-  let output = [];
-  let reused = null;
-  let renamed = [];
-  let publish = null;
-  let cached = 'off';
   const baseOk = mode === 'merge' || commitExists(where, env, task.base);
   if (!baseOk) say('fail', 'base-missing', task.base ? `the base commit ${task.base.slice(0, 12)} of ${id} is not in this repository` : `${id} has no base commit`, `record it: ${names.bin} task set ${id} dispatched --executor <e> --base <sha> (fetch it first in a shallow clone)`);
   const anchorCommit = mode === 'merge' ? anchor : baseOk ? task.base : null;
@@ -395,171 +152,201 @@ export function evaluate({ where, names, env, id, mode, handle = null, at = now(
     ? { kind: 'full', why: mode === 'merge' ? 'task merge runs the full gate set' : 'no gates', files: [], gates: profile.gates }
     : fastPlan({ profile, change, full, critical: task.class === 'critical', riskPaths, repoFiles: listFiles(where.worktree, { env, exclude: code.rel }),
       trusted: (gates) => isTrusted({ dir: where.dir, dataDir: where.dataDir, names, env, kind: 'gates', sha: gatesShaOf(gates) }).trusted });
-  const fast = plan.kind === 'fast';
   doc.mode = { kind: plan.kind, why: plan.why.slice(0, 200), files: plan.files };
+  return {
+    started, write: mode === 'write', where, names, env, id, mode, handle, at, anchor, merged, version, cache, memo, store, cost, task, profile, code,
+    stateShown: stateRel(where.worktree, where.dir) ?? where.dir, reasons, say, active, gateChange: active.find((d) => d.kind === 'gate-change'),
+    allowedBy: new Set(), doc, candidates: null, inv: null, ctx: null, output: [], reused: null, renamed: [], publish: null, cached: 'off',
+    baseOk, anchorCommit, riskPaths, change, plan, fast: plan.kind === 'fast',
+  };
+}
 
-  if (profile.gates.length === 0) {
-    candidates = observe(where.worktree, { env, exclude: code.rel }).gates;
-    say('fail', 'no-gates', `the profile has no gates, so nothing can verify ${id}`, candidates.length ? `detected: ${some(candidates.map((g) => g.cmd))}; changing gates is a gate-change decision` : 'add a gate of kind test to the profile');
-  } else {
-    if (!profile.gates.some((g) => g.kind === 'test')) {
-      if (gateChange) allowedBy.add(gateChange.id);
-      else say('fail', 'no-test-gate', 'the profile has no gate of kind test', 'add one, or record a gate-change decision that waives it (a docs-only repository)');
-    }
-    // The gate cache (gate-cache.mjs): the runs stored for this tree, gate set and version are reused; a set that
-    // passed is stored (not in ci mode, which writes nothing).
-    // The project patterns first: an unreadable or invalid file refuses before any gate runs (T-MG-75).
-    const { extra, sha: patterns } = readProjectPatterns(where);
-    const tree = treeOf((a) => gitIn(where, env, a), { staged: mode === 'merge' });
-    // fast mode: the gates run are the subset's, so its cache entry is keyed by that set
-    const runSha = fast ? gatesSha(plan.gates) : doc.gatesSha;
-    const key = tree ? cacheKey({ tree, gatesSha: runSha, version, patterns }) : null;
-    // A critical task's verify never reuses runs; task merge may reuse an authenticated entry (T-MG-75).
-    const reuse = cache && (mode === 'merge' || task.class !== 'critical');
-    const shared = memo?.runs ?? null;
-    const hit = shared === null && key && reuse ? lookup(store, { key, tree, gatesSha: runSha, version, patterns, gates: plan.gates, at, secret: machineKey(where.dataDir) }) : null;
-    const runs = shared ?? (hit ? hit.runs : cost.heavy(() => runHeavy(plan.gates, { names, env, cwd: where.worktree, task: id }, (g) => runRedacted(g, { cwd: where.worktree, env, extra }), cost.meter)));
-    cached = cacheState({ shared, hit, consulted: Boolean(key && reuse) });
-    if (memo) memo.runs = runs;
-    reused = hit?.at ?? null;
-    doc.gates = runs.map((r) => r.gate);
-    output = runs.map((r) => ({ name: r.gate.name, lines: logLines(r.output) }));
-    ctx = context(where, env, code.rel);
-    // fast mode with no test file selected: nothing ran to take an inventory of (and no repository scan stands in)
-    inv = fast && !runs.some((r) => r.kind === 'test') ? { collector: 'none', tests: [], parts: [], weak: false } : inventoryOf(runs, ctx);
-    if (key && !hit && shared === null && mode !== 'ci') {
-      const report = (r) => {
-        const part = inv.parts.find((p) => p.run === r);
-        if (!part) return null;
-        const { run: _run, ...collected } = part;
-        return collected;
-      };
-      const entry = () => storeRuns(store, key, { tree, gatesSha: runSha, version, patterns, at, runs, report, secret: machineKey(where.dataDir, { create: true }) });
-      if (mode === 'merge') publish = entry;
-      else entry();
-    }
-
-    const current = store.read('baseline', null);
-    if (current && current.sha256 !== baselineSha(current)) {
-      say('fail', 'baseline-invalid', `${stateShown}/${VERIFY_KINDS.baseline.path()} does not match its sha256: it was changed outside verify`, 'restore it from git; a new baseline needs a decision');
-    }
-    // the code verified descends from the anchor and HEAD (a merge: the tip and the merged branch)
-    const line = lineOf(where, env, current, [anchorCommit, mode === 'merge' ? merged : code.head]);
-    const linked = code.rel === null;
-    const working = line === 'line' || (!linked && (line === 'off' || line === 'unknown')) ? current : null;
-    // Fast mode: the stored baselines hold the whole suite and name no file per test (node:test's tap), so the reference
-    // is the same subset measured at the anchor, over the selected files the anchor has (a file the task deleted counts
-    // there; one it added has no tests before it).
-    const anchored = fast ? { doc: null, problem: null } : anchorAt(where, env, anchorCommit, working);
-    const tests = (change?.paths ?? []).filter((p) => scannerOf(p) !== null);
-    const atAnchor = fast && anchorCommit ? plan.files.filter((f) => gitIn(where, env, ['cat-file', '-e', `${anchorCommit}:${f}`]).status === 0) : [];
-    // No stored baseline describes the anchor (linked: none, or off the line; in-repo: none committed there and the
-    // change touches tests): the reference is measured at the anchor itself.
-    const measure = fast ? atAnchor.length > 0 : !anchored.problem && anchorCommit && (linked ? line !== 'line' : !anchored.doc && tests.length > 0);
-    const baseGates = fast ? testGates(atAnchor, plan.gates.find((g) => g.kind === 'test')?.timeoutS ?? 600) : profile.gates;
-    let measured = null;
-    if (anchored.problem) {
-      say('fail', 'baseline-unanchored', `the baseline at ${anchorCommit.slice(0, 12)} is ${anchored.problem}, though its history has one: there is no accepted inventory to compare with`, 'restore the baseline on the target branch (git), or pin one with a decision');
-    } else if (measure) {
-      const m = memo?.measured?.get(anchorCommit) ?? cost.heavy(() => measureAt({ where, env, names, task: id, commit: anchorCommit, gates: baseGates, gitIn, meter: cost.meter, inventory: (runs, dir) => inventoryOf(runs, context({ ...where, worktree: dir }, env, code.rel)) }));
-      if (memo) (memo.measured ??= new Map()).set(anchorCommit, m); // one measurement per anchor (a train: per merge base)
-      if (m.error) say('error', 'base-gate-error', `${m.error}: there is no reference to compare with`, 'make the gates run at the base (install what they run), or pin a baseline (' + names.bin + ' baseline pin --decision <D>), then verify again');
-      measured = m.doc;
-    }
-    // The task's own last passing verify: a test it verified and later removes is removed, whatever replaced the baseline.
-    const last = store.read('verify', id);
-    // In fast mode it counts only when it was a fast run over files this run also ran (else it names tests not run now).
-    const sameFiles = !fast || (last?.mode?.kind === 'fast' && last.mode.files.every((f) => plan.files.includes(f)));
-    // (a fast run that selected no test file collected nothing: collector none, no reference)
-    const own = sameFiles && last?.result === 'pass' && last.inventory.tests && last.inventory.collector !== 'none' ? { collector: last.inventory.collector, tests: last.inventory.tests, failing: last.failures.preexisting } : null;
-    const pinned = (fast ? [measured, own] : [measure ? measured : anchored.doc, working, own]).filter((b, k, all) => b && all.indexOf(b) === k);
-    // a fast run whose selected files are all gone now (the task deleted them) ran no test: its empty inventory is
-    // compared with the reference's collector, so every test of those files counts as removed
-    if (fast && inv.collector === 'none' && pinned.length) inv = { ...inv, collector: pinned[0].collector };
-    // A reference that collected nothing (the base of a first task has no tests yet: the generic collector saw no
-    // runner output) is an empty inventory, not a change of collector.
-    const empty = (b) => b.collector === 'generic' && (b.tests?.length ?? 0) === 0 && (b.failing?.length ?? 0) === 0;
-    const other = pinned.find((b) => b.collector !== inv.collector && !empty(b));
-    let reference = { tests: [], failing: [] };
-    let cmp = { added: inv.tests.map((t) => t.id), removed: [], newlySkipped: [], allowedBy: [], unallowed: [] };
-    if (other) {
-      say('fail', 'collector-changed', `the baseline was collected by ${other.collector}, this run by ${inv.collector}: the inventories cannot be compared`, `restore the test gate, or pin the new inventory on the target (${names.bin} baseline pin --decision <gate-change D>) and base the task on that commit`);
-    } else {
-      reference = referenceOf(pinned);
-      cmp = compareInventory(reference, inv, active.map((d) => ({ id: d.id, allowsTestRemoval: d.allowsTestRemoval ?? [] })));
-      // A test removed by its title whose body is present under a title the anchor's inventory did not have (rename.mjs)
-      // changed its name, not its assertions: it is reported as renamed and needs no decision (COD-3 names removals and
-      // weakenings). The candidates are the current tests the anchor's accepted inventory lacks (not only this run's
-      // additions: after a passing verify grew the working baseline, a second run still sees the old titles removed).
-      const anchorDoc = measure ? measured : anchored.doc;
-      if (cmp.removed.length && anchorCommit && anchorDoc) {
-        const known = new Set(anchorDoc.tests.map((t) => t.id));
-        // only running tests are targets: a removed test paired with a skipped or focused one would hide the skip
-        const candidates = inv.tests.filter((t) => !t.skipped && !t.focused).map((t) => t.id).filter((x) => !known.has(x));
-        const readAt = (p) => { const r = gitIn(where, env, ['show', `${anchorCommit}:${p}`]); return r.status === 0 ? r.stdout : null; };
-        renamed = candidates.length ? detectRenames({ removed: cmp.removed, added: candidates, files: [...(change?.paths ?? []), ...idFiles(cmp.removed)], readAt, readNow: ctx.read }) : [];
-        if (renamed.length) {
-          const from = new Set(renamed.map((r) => r.from));
-          cmp = { ...cmp, removed: cmp.removed.filter((x) => !from.has(x)), unallowed: cmp.unallowed.filter((x) => !from.has(x)) };
-        }
-      }
-    }
-    for (const d of cmp.allowedBy) allowedBy.add(d);
-    if (cmp.unallowed.length) say('baseline-shrunk', 'baseline-shrunk', `removed or skipped without a decision: ${some(cmp.unallowed)}`, 'restore them, or record a decision that lists them in allowsTestRemoval');
-    const focused = inv.tests.filter((t) => t.focused).map((t) => t.id);
-    if (focused.length) say('fail', 'focused', `focused tests make the others not run: ${some(focused)}`, 'remove .only, fit and fdescribe');
-
-    doc.failures = splitFailures(reference.failing, inv.parts.flatMap((p) => p.failing.map(fingerprint)));
-    const known = new Set(reference.failing);
-    for (const r of runs) {
-      const g = r.gate;
-      if (g.result === 'error') say('error', 'gate-error', `gate ${g.name} could not run (exit ${g.exit ?? '-'})`, 'install what the gate runs, or fix its command in the profile');
-      else if (g.result === 'timeout') say('fail', 'gate-timeout', `gate ${g.name} ran over its ${profile.gates.find((x) => x.name === g.name)?.timeoutS} s limit`, 'make it faster, or raise its timeoutS in the profile');
-      else if (g.result === 'fail') {
-        const part = inv.parts.find((p) => p.run === r);
-        if (!(r.kind === 'test' && part && excusable(part, known))) say('fail', 'gate-failed', `gate ${g.name} failed (exit ${g.exit ?? '-'})`, `see its output in ${stateShown}/local/verify/${id}.log`);
-      }
-    }
-    if (doc.failures.new.length) say('fail', 'new-failures', `new failing tests: ${some(doc.failures.new)}`, 'fix them; only failures pinned in the baseline are tolerated');
-    doc.inventory = { collector: inv.collector, total: inv.tests.length, added: cmp.added, removed: cmp.removed, newlySkipped: cmp.newlySkipped, allowedBy: [], weak: inv.weak, tests: inv.tests.map(({ id: t, file, skipped }) => ({ id: t, file, skipped })) };
+// The gate runs: reused from a batch memo or the gate cache, else run; stores a passing set; takes the inventory.
+function runGates(s) {
+  const { where, env, names, mode, store, task, plan, memo, doc, fast, cost, version } = s;
+  // The gate cache (gate-cache.mjs): the runs stored for this tree, gate set and version are reused; a set that
+  // passed is stored (not in ci mode, which writes nothing).
+  // The project patterns first: an unreadable or invalid file refuses before any gate runs (T-MG-75).
+  const { extra, sha: patterns } = readProjectPatterns(where);
+  const tree = treeOf((a) => gitIn(where, env, a), { staged: mode === 'merge' });
+  // fast mode: the gates run are the subset's, so its cache entry is keyed by that set
+  const runSha = fast ? gatesSha(plan.gates) : doc.gatesSha;
+  const key = tree ? cacheKey({ tree, gatesSha: runSha, version, patterns }) : null;
+  // A critical task's verify never reuses runs; task merge may reuse an authenticated entry (T-MG-75).
+  const reuse = s.cache && (mode === 'merge' || task.class !== 'critical');
+  const shared = memo?.runs ?? null;
+  const hit = shared === null && key && reuse ? lookup(store, { key, tree, gatesSha: runSha, version, patterns, gates: plan.gates, at: s.at, secret: machineKey(where.dataDir) }) : null;
+  const runs = shared ?? (hit ? hit.runs : cost.heavy(() => runHeavy(plan.gates, { names, env, cwd: where.worktree, task: s.id }, (g) => runRedacted(g, { cwd: where.worktree, env, extra }), cost.meter)));
+  s.cached = cacheState({ shared, hit, consulted: Boolean(key && reuse) });
+  if (memo) memo.runs = runs;
+  s.reused = hit?.at ?? null;
+  doc.gates = runs.map((r) => r.gate);
+  s.output = runs.map((r) => ({ name: r.gate.name, lines: logLines(r.output) }));
+  s.ctx = context(where, env, s.code.rel);
+  // fast mode with no test file selected: nothing ran to take an inventory of (and no repository scan stands in)
+  s.inv = fast && !runs.some((r) => r.kind === 'test') ? { collector: 'none', tests: [], parts: [], weak: false } : inventoryOf(runs, s.ctx);
+  if (key && !hit && shared === null && mode !== 'ci') {
+    const report = (r) => {
+      const part = s.inv.parts.find((p) => p.run === r);
+      if (!part) return null;
+      const { run: _run, ...collected } = part;
+      return collected;
+    };
+    const entry = () => storeRuns(store, key, { tree, gatesSha: runSha, version, patterns, at: s.at, runs, report, secret: machineKey(where.dataDir, { create: true }) });
+    if (mode === 'merge') s.publish = entry;
+    else entry();
   }
+  return runs;
+}
 
-  if (mode !== 'merge') {
-    if (change) {
-      const { route, flags } = reroute({ store, task, id, write, handle, riskPaths, change, at });
-      doc.route = route;
-      doc.class = route.actual;
-      if (route.escalated) say('route-escalated', 'route-escalated', `the change is ${route.actual}, not ${route.declared}: the route adds ${route.missingSteps.join(', ')}`, 'do the added steps, then verify again');
-      if (doc.class !== null) {
-        const steps = routeFor(doc.class, { flags }).steps;
-        doc.artifacts.review = reviewState(store, id, steps);
-        const problem = doc.artifacts.review === 'missing' ? reviewProblem(store, id, names) : null;
-        if (problem) say('missing-artifact', 'missing-artifact', problem, 'an external round counts only with its run');
-        else if (doc.artifacts.review === 'missing') say('missing-artifact', 'missing-artifact', `the ${doc.class} route needs an approved ${reviewNeed(doc.class, appliedTier(store)) === 'external' ? 'cross-provider ' : ''}review of ${id}`, 'record the review (review-r<k>.json, verdict approved), then verify again');
-      }
-    }
-    if (doc.class === null) {
-      doc.artifacts.review = 'missing';
-      say('fail', 'not-classified', `${id} has no class`, `classify it: ${names.bin} route ${id} --paths <p,…> --loc <n>`);
+// The reference inventories: the accepted baseline at the anchor, the working baseline, a base measured at the anchor and
+// the task's own last passing verify; { pinned, anchorDoc }.
+function references(s) {
+  const { where, env, names, mode, store, plan, memo, fast, cost, say, id, code, anchorCommit, change, profile } = s;
+  const current = store.read('baseline', null);
+  if (current && current.sha256 !== baselineSha(current)) {
+    say('fail', 'baseline-invalid', `${s.stateShown}/${VERIFY_KINDS.baseline.path()} does not match its sha256: it was changed outside verify`, 'restore it from git; a new baseline needs a decision');
+  }
+  // the code verified descends from the anchor and HEAD (a merge: the tip and the merged branch)
+  const line = lineOf(where, env, current, [anchorCommit, mode === 'merge' ? s.merged : code.head]);
+  const linked = code.rel === null;
+  const working = line === 'line' || (!linked && (line === 'off' || line === 'unknown')) ? current : null;
+  // Fast mode: the stored baselines hold the whole suite and name no file per test (node:test's tap), so the reference
+  // is the same subset measured at the anchor, over the selected files the anchor has (a file the task deleted counts
+  // there; one it added has no tests before it).
+  const anchored = fast ? { doc: null, problem: null } : anchorAt(where, env, anchorCommit, working);
+  const tests = (change?.paths ?? []).filter((p) => scannerOf(p) !== null);
+  const atAnchor = fast && anchorCommit ? plan.files.filter((f) => gitIn(where, env, ['cat-file', '-e', `${anchorCommit}:${f}`]).status === 0) : [];
+  // No stored baseline describes the anchor (linked: none, or off the line; in-repo: none committed there and the
+  // change touches tests): the reference is measured at the anchor itself.
+  const measure = fast ? atAnchor.length > 0 : !anchored.problem && anchorCommit && (linked ? line !== 'line' : !anchored.doc && tests.length > 0);
+  const baseGates = fast ? testGates(atAnchor, plan.gates.find((g) => g.kind === 'test')?.timeoutS ?? 600) : profile.gates;
+  let measured = null;
+  if (anchored.problem) {
+    say('fail', 'baseline-unanchored', `the baseline at ${anchorCommit.slice(0, 12)} is ${anchored.problem}, though its history has one: there is no accepted inventory to compare with`, 'restore the baseline on the target branch (git), or pin one with a decision');
+  } else if (measure) {
+    const m = memo?.measured?.get(anchorCommit) ?? cost.heavy(() => measureAt({ where, env, names, task: id, commit: anchorCommit, gates: baseGates, gitIn, meter: cost.meter, inventory: (runs, dir) => inventoryOf(runs, context({ ...where, worktree: dir }, env, code.rel)) }));
+    if (memo) (memo.measured ??= new Map()).set(anchorCommit, m); // one measurement per anchor (a train: per merge base)
+    if (m.error) say('error', 'base-gate-error', `${m.error}: there is no reference to compare with`, 'make the gates run at the base (install what they run), or pin a baseline (' + names.bin + ' baseline pin --decision <D>), then verify again');
+    measured = m.doc;
+  }
+  // The task's own last passing verify: a test it verified and later removes is removed, whatever replaced the baseline.
+  const last = store.read('verify', id);
+  // In fast mode it counts only when it was a fast run over files this run also ran (else it names tests not run now).
+  const sameFiles = !fast || (last?.mode?.kind === 'fast' && last.mode.files.every((f) => plan.files.includes(f)));
+  // (a fast run that selected no test file collected nothing: collector none, no reference)
+  const own = sameFiles && last?.result === 'pass' && last.inventory.tests && last.inventory.collector !== 'none' ? { collector: last.inventory.collector, tests: last.inventory.tests, failing: last.failures.preexisting } : null;
+  const pinned = (fast ? [measured, own] : [measure ? measured : anchored.doc, working, own]).filter((b, k, all) => b && all.indexOf(b) === k);
+  // a fast run whose selected files are all gone now (the task deleted them) ran no test: its empty inventory is
+  // compared with the reference's collector, so every test of those files counts as removed
+  if (fast && s.inv.collector === 'none' && pinned.length) s.inv = { ...s.inv, collector: pinned[0].collector };
+  return { pinned, anchorDoc: measure ? measured : anchored.doc };
+}
+
+// The inventory against the reference: { reference, cmp }. A removed test whose body is present under a new title is a rename.
+function compare(s, pinned, anchorDoc) {
+  const { where, env, names, inv, say, anchorCommit, change, active } = s;
+  // A reference that collected nothing (the base of a first task has no tests yet: the generic collector saw no
+  // runner output) is an empty inventory, not a change of collector.
+  const empty = (b) => b.collector === 'generic' && (b.tests?.length ?? 0) === 0 && (b.failing?.length ?? 0) === 0;
+  const other = pinned.find((b) => b.collector !== inv.collector && !empty(b));
+  let reference = { tests: [], failing: [] };
+  let cmp = { added: inv.tests.map((t) => t.id), removed: [], newlySkipped: [], allowedBy: [], unallowed: [] };
+  if (other) {
+    say('fail', 'collector-changed', `the baseline was collected by ${other.collector}, this run by ${inv.collector}: the inventories cannot be compared`, `restore the test gate, or pin the new inventory on the target (${names.bin} baseline pin --decision <gate-change D>) and base the task on that commit`);
+    return { reference, cmp };
+  }
+  reference = referenceOf(pinned);
+  cmp = compareInventory(reference, inv, active.map((d) => ({ id: d.id, allowsTestRemoval: d.allowsTestRemoval ?? [] })));
+  // A test removed by its title whose body is present under a title the anchor's inventory did not have (rename.mjs)
+  // changed its name, not its assertions: it is reported as renamed and needs no decision (COD-3 names removals and
+  // weakenings). The candidates are the current tests the anchor's accepted inventory lacks (not only this run's
+  // additions: after a passing verify grew the working baseline, a second run still sees the old titles removed).
+  if (cmp.removed.length && anchorCommit && anchorDoc) {
+    const known = new Set(anchorDoc.tests.map((t) => t.id));
+    // only running tests are targets: a removed test paired with a skipped or focused one would hide the skip
+    const candidates = inv.tests.filter((t) => !t.skipped && !t.focused).map((t) => t.id).filter((x) => !known.has(x));
+    const readAt = (p) => { const r = gitIn(where, env, ['show', `${anchorCommit}:${p}`]); return r.status === 0 ? r.stdout : null; };
+    s.renamed = candidates.length ? detectRenames({ removed: cmp.removed, added: candidates, files: [...(change?.paths ?? []), ...idFiles(cmp.removed)], readAt, readNow: s.ctx.read }) : [];
+    if (s.renamed.length) {
+      const from = new Set(s.renamed.map((r) => r.from));
+      cmp = { ...cmp, removed: cmp.removed.filter((x) => !from.has(x)), unallowed: cmp.unallowed.filter((x) => !from.has(x)) };
     }
   }
-  const health = mode === 'merge' || !change ? null : codeHealth({ store, say, paths: change.paths, base: task.base, git: (a) => gitIn(where, env, a), read: (ctx ?? context(where, env, code.rel)).read, max: SOURCE_MAX });
+  return { reference, cmp };
+}
+
+// The reasons the comparison and the gate runs give, and the inventory of verify.json.
+function verdicts(s, runs, reference, cmp) {
+  const { say, inv, doc, id } = s;
+  for (const d of cmp.allowedBy) s.allowedBy.add(d);
+  if (cmp.unallowed.length) say('baseline-shrunk', 'baseline-shrunk', `removed or skipped without a decision: ${some(cmp.unallowed)}`, 'restore them, or record a decision that lists them in allowsTestRemoval');
+  const focused = inv.tests.filter((t) => t.focused).map((t) => t.id);
+  if (focused.length) say('fail', 'focused', `focused tests make the others not run: ${some(focused)}`, 'remove .only, fit and fdescribe');
+
+  doc.failures = splitFailures(reference.failing, inv.parts.flatMap((p) => p.failing.map(fingerprint)));
+  const known = new Set(reference.failing);
+  for (const r of runs) {
+    const g = r.gate;
+    if (g.result === 'error') say('error', 'gate-error', `gate ${g.name} could not run (exit ${g.exit ?? '-'})`, 'install what the gate runs, or fix its command in the profile');
+    else if (g.result === 'timeout') say('fail', 'gate-timeout', `gate ${g.name} ran over its ${s.profile.gates.find((x) => x.name === g.name)?.timeoutS} s limit`, 'make it faster, or raise its timeoutS in the profile');
+    else if (g.result === 'fail') {
+      const part = inv.parts.find((p) => p.run === r);
+      if (!(r.kind === 'test' && part && excusable(part, known))) say('fail', 'gate-failed', `gate ${g.name} failed (exit ${g.exit ?? '-'})`, `see its output in ${s.stateShown}/local/verify/${id}.log`);
+    }
+  }
+  if (doc.failures.new.length) say('fail', 'new-failures', `new failing tests: ${some(doc.failures.new)}`, 'fix them; only failures pinned in the baseline are tolerated');
+  doc.inventory = { collector: inv.collector, total: inv.tests.length, added: cmp.added, removed: cmp.removed, newlySkipped: cmp.newlySkipped, allowedBy: [], weak: inv.weak, tests: inv.tests.map(({ id: t, file, skipped }) => ({ id: t, file, skipped })) };
+}
+
+// verify and ci mode: the route after re-classifying the change, and the review it needs.
+function routePhase(s) {
+  const { store, task, id, say, doc, change, names } = s;
+  if (change) {
+    const { route, flags } = reroute({ store, task, id, write: s.write, handle: s.handle, riskPaths: s.riskPaths, change, at: s.at });
+    doc.route = route;
+    doc.class = route.actual;
+    if (route.escalated) say('route-escalated', 'route-escalated', `the change is ${route.actual}, not ${route.declared}: the route adds ${route.missingSteps.join(', ')}`, 'do the added steps, then verify again');
+    if (doc.class !== null) {
+      const steps = routeFor(doc.class, { flags }).steps;
+      doc.artifacts.review = reviewState(store, id, steps);
+      const problem = doc.artifacts.review === 'missing' ? reviewProblem(store, id, names) : null;
+      if (problem) say('missing-artifact', 'missing-artifact', problem, 'an external round counts only with its run');
+      else if (doc.artifacts.review === 'missing') say('missing-artifact', 'missing-artifact', `the ${doc.class} route needs an approved ${reviewNeed(doc.class, appliedTier(store)) === 'external' ? 'cross-provider ' : ''}review of ${id}`, 'record the review (review-r<k>.json, verdict approved), then verify again');
+    }
+  }
+  if (doc.class === null) {
+    doc.artifacts.review = 'missing';
+    say('fail', 'not-classified', `${id} has no class`, `classify it: ${names.bin} route ${id} --paths <p,…> --loc <n>`);
+  }
+}
+
+// The result, the baseline growth and the records of the run.
+function finish(s) {
+  const { where, env, store, id, mode, doc, say, code, change, inv, task, at, write, handle, output, fast } = s;
+  const health = mode === 'merge' || !change ? null : codeHealth({ store, say, paths: change.paths, base: task.base, git: (a) => gitIn(where, env, a), read: (s.ctx ?? context(where, env, code.rel)).read, max: SOURCE_MAX });
   if (inv?.weak && doc.class === 'critical') {
     say('fail', 'weak-collector', 'a test gate of this critical task is read only by the generic scan (no runtime results)', 'use a structured reporter: profile observe writes --test-reporter=tap for node:test, --json for Jest and Vitest');
   }
-  doc.inventory.allowedBy = [...allowedBy].sort(byCodeUnit);
+  doc.inventory.allowedBy = [...s.allowedBy].sort(byCodeUnit);
   doc.artifacts.report = reportHasEvidence(readReport(where.dir, id));
-  if (!doc.artifacts.report) say('missing-artifact', 'missing-artifact', `${stateShown}/tasks/${id}/report.md has no RED/GREEN evidence`, 'its frontmatter needs red and green: {"command": …, "exit": …, "excerpt": …}');
+  if (!doc.artifacts.report) say('missing-artifact', 'missing-artifact', `${s.stateShown}/tasks/${id}/report.md has no RED/GREEN evidence`, 'its frontmatter needs red and green: {"command": …, "exit": …, "excerpt": …}');
 
-  doc.result = LEVELS.find((l) => reasons.some((r) => r.level === l)) ?? 'pass';
+  doc.result = LEVELS.find((l) => s.reasons.some((r) => r.level === l)) ?? 'pass';
   // the baseline holds the whole suite: only a full run replaces it (a fast inventory is a subset)
   if (write && doc.result === 'pass' && inv && !fast) grow(store, { inv, preexisting: doc.failures.preexisting, head: code.head, at });
   doc.baselineSha = workingSha(store);
-  Object.assign(doc, cost.fields(cached));
-  doc.durationMs = Date.now() - started;
-  // Every run keeps its own log (local/verify/<id>-<n>.log, merge runs <id>-m<n>; machine-local) next to the latest
-  // one, so a failed run never hides the output of the one before it; a write-mode run is also an event of the task
-  // (result, head, attempt), so `task show` lists every attempt.
+  Object.assign(doc, s.cost.fields(s.cached));
+  doc.durationMs = Date.now() - s.started;
+  const attempt = record(s);
+  return { doc, reasons: s.reasons.map(({ code: c, message, hint }) => ({ code: c, message, hint })), written: write, candidates: s.candidates, output, reused: s.reused, attempt, renamed: s.renamed, publish: s.publish, health: health?.offenders ?? [] };
+}
+
+// Every run keeps its own log (local/verify/<id>-<n>.log, merge runs <id>-m<n>; machine-local) next to the latest
+// one, so a failed run never hides the output of the one before it; a write-mode run is also an event of the task
+// (result, head, attempt), so `task show` lists every attempt. Returns the attempt number (null: none).
+function record(s) {
+  const { store, id, mode, doc, at, write, handle, output } = s;
   let attempt = null;
   if (write) {
     store.write('verify', id, doc);
@@ -575,7 +362,7 @@ export function evaluate({ where, names, env, id, mode, handle = null, at = now(
     const n = store.list('verifyAttempt').filter((k) => k.startsWith(`${id}-m`)).length + 1;
     store.write('verifyAttempt', `${id}-m${n}`, { task: id, at, gates: output });
   }
-  return { doc, reasons: reasons.map(({ code: c, message, hint }) => ({ code: c, message, hint })), written: write, candidates, output, reused, attempt, renamed, publish, health: health?.offenders ?? [] };
+  return attempt;
 }
 
 // On pass the baseline is this inventory; written only when its content changed, and only over the baseline this run

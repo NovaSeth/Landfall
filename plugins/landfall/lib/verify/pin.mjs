@@ -21,7 +21,9 @@ import { requireTrustedGates, tailLines } from './gates.mjs';
 import { runHeavy } from './heavy.mjs';
 import { byCodeUnit } from './inventory.mjs';
 import { projectRedactions, runRedacted } from './redact.mjs';
-import { activeWhere, codeState, context, inventoryOf, storeOf } from './run.mjs';
+import { context, inventoryOf } from './collect.mjs';
+import { codeState } from './history.mjs';
+import { activeWhere, storeOf } from './run.mjs';
 
 export const PIN_KINDS = Object.freeze(['gate-change', 'test-removal']);
 
