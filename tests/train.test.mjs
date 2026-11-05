@@ -233,11 +233,11 @@ test('F3: a train that died after moving the target is recovered by the next tra
   const r = repo(t);
   const a = r.task('feat/a', addTest('a.test.mjs'));
   const b = r.task('feat/b', addTest('b.test.mjs'));
-  // the target already holds both tips; a has done recorded (died before merged), b neither
+  // the target already holds both tips; a has its train done recorded (died before merged), b neither
   r.git('merge', '-q', '--no-ff', '--no-edit', 'feat/a');
   r.git('merge', '-q', '--no-ff', '--no-edit', 'feat/b');
   const head = r.git('rev-parse', 'HEAD');
-  r.store.update('task', a, (cur) => ({ ...cur, status: 'done', events: [...cur.events, { at: AT, by: r.handle, event: 'done', data: { head } }] }));
+  r.store.update('task', a, (cur) => ({ ...cur, status: 'done', events: [...cur.events, { at: AT, by: r.handle, event: 'done', data: { head, mode: 'train' } }] }));
   r.git('add', '-A');
   r.git('commit', '-q', '-m', 'done a');
   const res = await cli(['train', a, b, '--yes'], r);
@@ -294,7 +294,7 @@ test('F5: a review that names the reviewed head binds it; a head the branch move
   const file = join(r.dir, '..', 'review.json');
   writeFileSync(file, JSON.stringify({ ...APPROVED, head: first }));
   const stale = await cli(['review', 'record', id, '--from', file, '--yes'], r);
-  assert.equal(stale.code, 1, JSON.stringify(stale.env));
+  assert.equal(stale.code, 7, JSON.stringify(stale.env));
   assert.ok(stale.env.errors.some((e) => e.code === 'review-head-moved'), JSON.stringify(stale.env.errors));
   assert.equal(events(r, id, 'review').length, 0);
   const tip = r.git('rev-parse', 'feat/rec');

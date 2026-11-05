@@ -409,8 +409,8 @@ export function evaluate({ where, names, env, id, mode, handle = null, at = now(
     if (anchored.problem) {
       say('fail', 'baseline-unanchored', `the baseline at ${anchorCommit.slice(0, 12)} is ${anchored.problem}, though its history has one: there is no accepted inventory to compare with`, 'restore the baseline on the target branch (git), or pin one with a decision');
     } else if (measure) {
-      const m = memo?.measured ?? cost.heavy(() => measureAt({ where, env, names, task: id, commit: anchorCommit, gates: profile.gates, gitIn, meter: cost.meter, inventory: (runs, dir) => inventoryOf(runs, context({ ...where, worktree: dir }, env, code.rel)) }));
-      if (memo) memo.measured = m;
+      const m = memo?.measured?.get(anchorCommit) ?? cost.heavy(() => measureAt({ where, env, names, task: id, commit: anchorCommit, gates: profile.gates, gitIn, meter: cost.meter, inventory: (runs, dir) => inventoryOf(runs, context({ ...where, worktree: dir }, env, code.rel)) }));
+      if (memo) (memo.measured ??= new Map()).set(anchorCommit, m); // one measurement per anchor (a train: per merge base)
       if (m.error) say('error', 'base-gate-error', `${m.error}: there is no reference to compare with`, 'make the gates run at the base (install what they run), or pin a baseline (' + names.bin + ' baseline pin --decision <D>), then verify again');
       measured = m.doc;
     }

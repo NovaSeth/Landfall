@@ -23,6 +23,7 @@ import { VERIFY_KINDS, reviewKey } from './kinds.mjs';
 import { activeWhere, gitIn, storeOf, unknownTask } from './run.mjs';
 
 const INPUT_MAX = 1024 * 1024;
+const OBJECT_ID = /^[0-9a-f]{40,64}$/;
 const ROUND_MAX = 999; // review-r<k>: k has at most three digits (the review kind's key)
 const ERRORS_MAX = 10;
 const SCHEMA_FILE = new URL('../../templates/review.schema.json', import.meta.url);
@@ -113,8 +114,13 @@ export function recordReview({ cwd, env, names, id, from, run, at = new Date().t
   const where = activeWhere({ cwd, env, names });
   KINDS.task.path(id);
   const rec = run === undefined ? null : reviewerRun(where, names, id, run);
-  const { value: input, bytes } = readInput(cwd, rec ? rec.outFile : from);
-  const invalid = reviewErrors(input);
+  const { value: raw, bytes } = readInput(cwd, rec ? rec.outFile : from);
+  // The reviewed commit (fix round 2, F5): the review may name it (`head`, outside the provider schema); it must be the
+  // branch tip when recorded. An external run binds the tip exec saw at its start (the run record's head).
+  const isObject = raw !== null && typeof raw === 'object' && !Array.isArray(raw);
+  const { head: claimed, ...rest } = isObject ? raw : {};
+  const input = isObject ? rest : raw;
+  const invalid = [...reviewErrors(input), ...(claimed === undefined || (typeof claimed === 'string' && OBJECT_ID.test(claimed)) ? [] : ['head: not a commit ID (40-64 hex)'])];
   if (invalid.length) return { invalid: invalid.slice(0, ERRORS_MAX) };
   if (!rec && input.reviewer.kind === 'external') throw refused('external-needs-run', `${from} claims an external reviewer: a file alone never makes a review external`, EXTERNAL_HINT);
   const store = storeOf(where, names);
@@ -126,6 +132,9 @@ export function recordReview({ cwd, env, names, id, from, run, at = new Date().t
     if (t.status === 'done' || t.status === 'cancelled') throw fail('task-closed', `${id} is ${t.status}: a closed task takes no further state`, `'${names.bin} task new' starts a new task`);
   };
   open(task);
+  const tip = typeof task.branch === 'string' && task.branch !== '' && !task.branch.startsWith('-') ? gitIn(where, env, ['rev-parse', '--verify', '-q', `${task.branch}^{commit}`]).stdout.trim() : '';
+  if (claimed !== undefined && claimed !== tip) throw refused('review-head-moved', `the review is of ${claimed.slice(0, 12)}, but ${task.branch} is at ${tip.slice(0, 12) || 'no commit'}`, 'review the new commits, then record the review again');
+  const head = rec ? rec.head ?? tip : tip;
   const doc = rec
     ? { verdict: input.verdict, reviewer: { kind: 'external', id: `${rec.provider}:reviewer` }, findings: input.findings, run: rec.runId, sha256: createHash('sha256').update(bytes).digest('hex') }
     : { verdict: input.verdict, reviewer: input.reviewer, findings: input.findings };
@@ -133,13 +142,9 @@ export function recordReview({ cwd, env, names, id, from, run, at = new Date().t
   let round = Math.max(0, ...taken) + 1;
   while (round <= ROUND_MAX && !store.create('review', reviewKey(id, round), doc)) round++;
   if (round > ROUND_MAX) throw usage('limit-exceeded', `${id} has ${ROUND_MAX} review rounds, the limit`, 'start a new task');
-  // The reviewed commit (T-MG-186 fix round 1, F2): the tip of the task branch now, so the train takes the task only
-  // while its branch still holds what was reviewed. None when the branch is unknown or unsafe to pass to git.
-  const tipOf = (b) => (typeof b === 'string' && b !== '' && !b.startsWith('-') ? gitIn(where, env, ['rev-parse', '--verify', '-q', `${b}^{commit}`]).stdout.trim() : '');
-  const head = tipOf(task.branch);
   store.update('task', id, (cur) => {
     open(cur);
-    return { ...cur, events: [...cur.events, { at, by: handle, event: 'review', data: { round, verdict: doc.verdict, reviewer: doc.reviewer.kind, ...(/^[0-9a-f]{40,64}$/.test(head) ? { head } : {}) } }] };
+    return { ...cur, events: [...cur.events, { at, by: handle, event: 'review', data: { round, verdict: doc.verdict, reviewer: doc.reviewer.kind, ...(OBJECT_ID.test(head) ? { head } : {}) } }] };
   });
   const rel = stateRel(where.worktree, where.dir); // shown from the worktree, absolute outside it
   const path = `tasks/${reviewKey(id, round)}.json`;
