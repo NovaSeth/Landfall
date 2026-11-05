@@ -17,7 +17,8 @@
 import { appendFileSync, lstatSync, readFileSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
 import { modeOf, readConfig, rollout } from '../config/index.mjs';
-import { evaluate } from '../guard/index.mjs';
+import { evaluate, LIMIT } from '../guard/index.mjs';
+import { expandLiterals, parse } from '../guard/tokenizer.mjs';
 import { realPath } from '../guard/protect.mjs';
 import { heartbeatAgent } from '../sched/index.mjs';
 import { open, stateDirName } from '../state/index.mjs';
@@ -83,16 +84,49 @@ function autoAllowMode(opts, env, where, names) {
 }
 
 // Role gate (SEC-13): the trust anchor for a review is the hook input, which an agent cannot write. A subagent (agent_type
-// set) never dispatches, and records a review only as the plugin's reviewer or security-reviewer. Matched on the command
-// text, so a path, a wrapper or `bash -c` does not hide it; the main session (no agent_type) is unchanged.
-const DISPATCH = /\btask\s+set\b[^;&|\n]*\bdispatched\b/;
-const RECORD = /\breview\s+record\b/;
-export function roleDeny(input, command, plugin) {
+// set) never dispatches, and records a review only as the plugin's reviewer or security-reviewer. The gate reads the
+// guard's tokenized form (literal variables expanded, quotes removed): each simple command whose program is the binary
+// (bare, by path, behind env/node/command/sudo …, or inside a literal `bash -c`) is checked for the words `task set …
+// dispatched` and `review record`. A line that cannot be reduced to literal words (an expansion, a substitution, eval, a
+// heredoc into a shell) and names the binary is denied for a subagent. Script files and interpreter code are not read.
+// The main session (no agent_type) is unchanged.
+const SHELLS = /^(ba|z|da|k)?sh$/;
+const WRAP = /^(env|command|exec|sudo|nohup|time|nice|xargs|node|builtin)$/;
+const base = (t) => t.slice(t.lastIndexOf('/') + 1);
+// The argv (after the binary) of every call of the binary in text, pushed to out; false when the text cannot be reduced.
+function calls(text, bin, depth, out) {
+  let cmds;
+  try { cmds = parse(expandLiterals(text), { limit: LIMIT.cmd }); } catch { return false; }
+  for (const c of cmds) {
+    const w = c.words.map((x) => x.text);
+    if (SHELLS.test(base(w[0] ?? ''))) {
+      const i = w.findIndex((t, k) => k > 0 && /^-[a-z]*c$/.test(t));
+      if (i > 0 && w[i + 1] !== undefined && depth < 3) { if (!calls(w[i + 1], bin, depth + 1, out)) return false; }
+      else if (c.heredoc !== null && i < 0 && c.heredoc.includes(bin)) return false;
+      continue;
+    }
+    if (base(w[0] ?? '') === 'eval' && w.some((t) => t.includes(bin))) return false;
+    const k = w.findIndex((t) => base(t) === bin);
+    if (k >= 0 && w.slice(0, k).every((t) => WRAP.test(base(t)) || t.startsWith('-') || t.includes('='))) out.push(w.slice(k + 1));
+  }
+  return true;
+}
+export function roleDeny(input, command, plugin, bin = plugin) {
   const t = input?.agent_type;
   if (typeof t !== 'string' || !t) return null;
-  if (DISPATCH.test(command)) return 'SEC-13: blocked: only the orchestrator dispatches. Instead leave `task set <id> dispatched` to the orchestrator session.';
-  if (RECORD.test(command) && t !== `${plugin}:reviewer` && t !== `${plugin}:security-reviewer`) {
-    return 'SEC-13: blocked: only the reviewer agents record a review. Instead let the orchestrator dispatch the reviewer and store its review file.';
+  const argvs = [];
+  if (command.length > LIMIT.cmd || !calls(command, bin, 0, argvs)) {
+    return command.includes(bin) ? 'SEC-13: blocked: a subagent cannot run this line, it cannot be read as plain words. Instead write the landfall call as plain words.' : null;
+  }
+  for (const a of argvs) {
+    const i = a.indexOf('task');
+    if (i >= 0 && a[i + 1] === 'set' && a.indexOf('dispatched', i + 2) > 0) return 'SEC-13: blocked: only the orchestrator dispatches. Instead leave `task set <id> dispatched` to the orchestrator session.';
+  }
+  if (t !== `${plugin}:reviewer` && t !== `${plugin}:security-reviewer`) {
+    for (const a of argvs) {
+      const i = a.indexOf('review');
+      if (i >= 0 && a[i + 1] === 'record') return 'SEC-13: blocked: only the reviewer agents record a review. Instead let the orchestrator dispatch the reviewer and store its review file.';
+    }
   }
   return null;
 }
@@ -126,7 +160,7 @@ function guardDecision(input, opts = {}) {
   const env = opts.env ?? process.env;
   const cwd = typeof input.cwd === 'string' && input.cwd ? input.cwd : (env.CLAUDE_PROJECT_DIR || process.cwd());
   const names = loadNames();
-  const role = roleDeny(input, command, names.plugin);
+  const role = roleDeny(input, command, names.plugin, names.bin);
   if (role) {
     (opts.shadowLog ?? defaultShadowLog(env))({ at: new Date().toISOString(), capability: 'guard-bash', event: 'block', rule: 'SEC-13', command: command.slice(0, 200), cwd });
     return deny(role);

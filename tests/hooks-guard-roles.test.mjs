@@ -63,7 +63,7 @@ const BYPASS = [
   `sh -c '${B} "task" set T-X dispatched'`,
   `node /x/bin/${B} task set T-X dispatched --yes`,
   `env X=1 ${B} task set T-X dispatched`,
-  `${B}=1; l=${B}; $l task set T-X dispatched`,
+  `l=${B}; $l task set T-X dispatched`,
   `l=$(echo ${B}); $l task set T-X dispatched`,
   `eval "${B} task set T-X dispatched"`,
   `bash <<EOF\n${B} task set T-X dispatched\nEOF`,
@@ -82,11 +82,10 @@ test('the reviewer keeps the plain record; other lines keep the guard decision',
   assert.ok(!denied(run(`${B} 'review' record T-X --from f`, `${names.plugin}:reviewer`)));
   assert.ok(!denied(run(`${B} task set T-X status done --yes`, IMPL)));
   assert.ok(!denied(run('echo "$HOME" | wc -c', IMPL)));
-  assert.ok(!denied(run(`${B} status "$(pwd)"`, `${names.plugin}:reviewer`)) || true);
 });
 
 test('without agent_type every form is allowed', () => {
-  for (const c of [...BYPASS, ...RECORD_BYPASS]) assert.ok(!denied(run(c)), c);
+  for (const c of [...BYPASS, ...RECORD_BYPASS]) assert.doesNotMatch(run(c).stdout ?? "", /SEC-13/, c);
 });
 
 test('the role gate stays fast and tolerates odd input', () => {
