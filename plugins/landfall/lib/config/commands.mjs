@@ -16,7 +16,7 @@
 // Context comes from io (cwd, env), never from process state (COD-9). Exit 2 an unknown flag or mode · 7 an inactive
 // repository, a newer schema, no consent · 8 not a git repository.
 import { relative } from 'node:path';
-import { EXIT } from '../cli/commands.mjs';
+import { EXIT } from '../cli/exit.mjs';
 import { authorHandle, createDecision, requireDecision } from '../decisions/index.mjs';
 import { ENGINE_FLAGS, THRESHOLDS as ENGINE_THRESHOLDS } from '../engine/index.mjs';
 import { TARGETS } from '../gen/index.mjs';

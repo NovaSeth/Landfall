@@ -4,7 +4,7 @@
 // line per rule, "<ID>. <text>". Exit 0 found · 2 an unknown name: the names are printed (--json: data.names). A stale
 // index is a broken copy: it throws, so the CLI reports INTERNAL (70).
 import { methodPart, openMethod, partNames } from '../method/index.mjs';
-import { EXIT } from './commands.mjs';
+import { EXIT } from './exit.mjs';
 
 function namesText(names) {
   const byTopic = new Map();

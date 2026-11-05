@@ -12,7 +12,7 @@
 import { DEFAULT_OPTIONS, TARGETS, applyGen, blockMarkers, checkOptions, openStore, packageSpec, readManifest, targetFlags, targetItems } from '../gen/index.mjs';
 import { emptyProfile, factValues, openStore as openProfileStore } from '../profile/index.mjs';
 import { StateError, resolve } from '../state/index.mjs';
-import { EXIT } from './commands.mjs';
+import { EXIT } from './exit.mjs';
 
 const FS_ERRORS = new Set(['EACCES', 'EPERM', 'EROFS', 'ENOSPC', 'EDQUOT', 'EISDIR', 'ENOTDIR', 'EFSUNSUPPORTED']);
 

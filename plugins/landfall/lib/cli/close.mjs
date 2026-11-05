@@ -9,7 +9,7 @@ import { StateError } from '../state/index.mjs';
 import { forTerminal } from '../text/clean.mjs';
 import { taskDone, taskMerge, verify } from '../verify/command.mjs';
 import { activeWhere, storeOf } from '../verify/run.mjs';
-import { EXIT } from './commands.mjs';
+import { EXIT } from './exit.mjs';
 import { commit } from './commit.mjs';
 import { LIMITS, clip } from './envelope.mjs';
 
