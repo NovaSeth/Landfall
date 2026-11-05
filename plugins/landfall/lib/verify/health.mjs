@@ -1,7 +1,8 @@
 // Code health (T-MG-188): verify judges the change, not the history. Each changed source file is compared with its
 // version at the task base: no baseline file, no bootstrap, no global state. Any language: the file's lines; JS and
 // TS also the length of each named function (a brace heuristic over the text with comments and strings blanked).
-//   fail  a file over file.hard lines that grew · a new or grown function over fn.hard lines
+//   fail  a file that crossed file.hard lines in this change · a function that crossed fn.hard
+//   warn  (over) a file or function already over its hard limit at the base that grew: split it first
 //   warn  a file that grew past file.warn lines · a new or grown function over fn.warn lines
 // A file that shrinks is never flagged; tests (router testPath), generated files (the owner's light paths, as for the
 // router: D-MG-31 replaced in-file markers), vendored and built paths and non-source files are exempt. The limits are
@@ -64,14 +65,16 @@ export function healthOf(files, t = THRESHOLDS, light = () => false) {
     if (typeof after !== 'string' || before === undefined || exempt(path) || light(path)) continue;
     const now = lineCount(after);
     const was = before === null ? 0 : lineCount(before);
-    if (now > was && now > t.file.hard) out.push({ level: 'fail', path, lines: now, was, limit: t.file.hard });
+    // D-MG-68: offenders warn until split
+    if (now > was && now > t.file.hard) out.push({ level: was > t.file.hard ? 'warn' : 'fail', over: was > t.file.hard, path, lines: now, was, limit: t.file.hard });
     else if (now > was && now > t.file.warn && was <= t.file.warn) out.push({ level: 'warn', path, lines: now, was, limit: t.file.warn });
     if (!BRACES.test(path)) continue;
     const old = before === null ? new Map() : functionsOf(before);
     for (const [name, n] of functionsOf(after)) {
       const prior = old.get(name) ?? 0;
       if (n <= prior || n <= t.fn.warn) continue;
-      out.push({ level: n > t.fn.hard ? 'fail' : 'warn', path, name, lines: n, was: prior, limit: n > t.fn.hard ? t.fn.hard : t.fn.warn });
+      const over = prior > t.fn.hard;
+      out.push({ level: n > t.fn.hard && !over ? 'fail' : 'warn', over, path, name, lines: n, was: prior, limit: n > t.fn.hard ? t.fn.hard : t.fn.warn });
     }
   }
   return out;
@@ -80,7 +83,7 @@ export function healthOf(files, t = THRESHOLDS, light = () => false) {
 // The `code health:` line of verify's output, or null without offenders.
 export function healthLine(offenders) {
   if (offenders.length === 0) return null;
-  const one = (o) => `${o.level} ${o.path}${o.name ? ` ${o.name}()` : ''} ${o.lines} lines (${o.was ? `was ${o.was}` : 'new'}; over ${o.limit})`;
+  const one = (o) => `${o.level} ${o.path}${o.name ? ` ${o.name}()` : ''} ${o.lines} lines (${o.was ? `was ${o.was}` : 'new'}; over ${o.limit}${o.over ? '; already over the limit at the base: split it first (D-MG-68)' : ''})`;
   return `code health: ${offenders.map(one).join('; ')}: split or refactor ${[...new Set(offenders.map((o) => o.path))].join(', ')}`;
 }
 
@@ -98,7 +101,7 @@ export function codeHealth({ store, say, paths, base, git, read, max = 1024 * 10
   const files = paths.filter((p) => !exempt(p) && !light(p)).map((path) => ({ path, before: show(path), after: read(path) }));
   const t = thresholdsWithOverrides('health', THRESHOLDS, store);
   const offenders = healthOf(files, t, light);
-  const hint = `a file over ${t.file.hard} lines or a function over ${t.fn.hard} lines may not grow: split or refactor the module named`;
+  const hint = `a file over ${t.file.hard} lines or a function over ${t.fn.hard} lines may not cross it: split or refactor the module named`;
   if (offenders.some((o) => o.level === 'fail')) say('fail', 'code-health', healthLine(offenders), hint);
   return { offenders };
 }
