@@ -256,7 +256,6 @@ export function batchMerge({ cwd, env, names, ids = null, ready = false, version
         t.conflicts = gitIn(here, env, ['diff', '--name-only', '-z', '--diff-filter=U']).stdout.split('\0').filter(Boolean).sort();
         const bad = t.conflicts.length ? regenerate(t.conflicts) : 'no conflicted file';
         if (bad === null) { ok.push(t); t.regenerated = t.conflicts; t.conflicts = []; continue; }
-        gitIn(here, env, ['reset', '-q', '--hard', 'HEAD']);
         gitIn(here, env, ['merge', '--abort']);
         gitIn(here, env, ['checkout', '-q', '-f', '-B', branch, 'HEAD']);
         t.outcome = 'conflict';
