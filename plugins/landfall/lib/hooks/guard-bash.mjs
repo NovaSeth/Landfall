@@ -184,14 +184,14 @@ function guardDecision(input, opts = {}) {
   const env = opts.env ?? process.env;
   const cwd = typeof input.cwd === 'string' && input.cwd ? input.cwd : (env.CLAUDE_PROJECT_DIR || process.cwd());
   const names = loadNames();
+  if (isExternalAgent(input, names.plugin)) { // the external wrapper agent: its policy first (G2); an allowed command still meets the guard
+    const r = externalBash(input);
+    if (r.code === 2) return r;
+  }
   const role = roleDeny(input, command, names.plugin, names.bin);
   if (role) {
     (opts.shadowLog ?? defaultShadowLog(env))({ at: new Date().toISOString(), capability: 'guard-bash', event: 'block', rule: 'SEC-13', command: command.slice(0, 200), cwd });
     return deny(role);
-  }
-  if (isExternalAgent(input, names.plugin)) { // the external wrapper agent: its policy first (G2); an allowed command still meets the guard
-    const r = externalBash(input);
-    if (r.code === 2) return r;
   }
   let resolved; // once, and only when a default reader needs it
   const s = () => (resolved ??= stateOf(cwd, env, opts.deadline ?? Infinity));
