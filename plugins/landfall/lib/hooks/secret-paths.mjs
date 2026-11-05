@@ -1,12 +1,7 @@
-// Secret paths (SEC-13, spec 2026-11-05 D3): a subagent (agent_type set) reads no Claude Code transcript and no token or
-// session file of the plugin's state. Protected roots, compared as real paths and as written (a loop or a denied directory
-// cannot hide one): the transcripts directory (the parent of the project directory of transcript_path, else
-// $CLAUDE_CONFIG_DIR/projects, else ~/.claude/projects), <state>/local/session/ and <state>/local/token.json.
-// secretDeny(input, { env, deadline }) → the deny reason or null, for Read|Grep|Glob (a target inside a root; Grep and
-// Glob also an ancestor of one; an unresolvable path whose written form touches one) and for Bash (a command that names a
-// root or `lf1_`, a recursive reader aimed at an ancestor, a line that cannot be reduced and names .claude or the state
-// directory). An ancestor inside the project's own repository does not count for the state roots: the repository holds the
-// in-repo state directory, and its checkout is what a subagent works in. The main session and malformed input pass (GC8).
+// Secret paths (SEC-13, spec 2026-11-05 D3): a subagent reads no transcript, token or session file. Roots, as real paths and as
+// written: the transcripts directory (transcript_path, else $CLAUDE_CONFIG_DIR/projects, else ~/.claude/projects),
+// <state>/local/session/ and <state>/local/token.json. secretDeny → the reason or null for Read|Grep|Glob and Bash. An
+// ancestor inside the project's repository is no hit for the state roots (an in-repo state directory). Main session → null.
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { caseVariants, prescan } from '../guard/tokens.mjs';
@@ -16,7 +11,7 @@ import { expandLiterals, parse } from '../guard/tokenizer.mjs';
 import { stateDirName } from '../state/index.mjs';
 import { loadNames, stateOf } from './loop-state.mjs';
 
-export const SECRET_REASON = "SEC-13: blocked: a subagent does not read Claude Code transcripts or the plugin's token and session files. Instead work from your brief and the repository.";
+const SECRET_REASON = "SEC-13: blocked: a subagent does not read Claude Code transcripts or the plugin's token and session files. Instead work from your brief and the repository.";
 const HOME = /^(~|\$HOME|\$\{HOME\})(?=\/|$)/;
 const READERS = { find: /./, rg: /./, ag: /./, fd: /./, tar: /./, zip: /./, rsync: /./, du: /./, grep: /^-[a-zA-Z]*[rR]|^--(dereference-)?recursive$|^-d=?recurse/, cp: /^-[a-zA-Z]*[rRa]/, ls: /^-[a-zA-Z]*R/ };
 const dirs = (p) => [...new Set([p, realPath(p)])];
@@ -30,9 +25,8 @@ function roots(input, env, deadline, names) {
   const w = s.where ?? s.fallback ?? null;
   const list = dirs(tp).map((p) => ({ p, state: false }));
   for (const d of w ? [w.dir, w.copy].filter(Boolean) : []) for (const p of dirs(join(d, 'local', 'session')).concat(dirs(join(d, 'local', 'token.json')))) list.push({ p, state: true });
-  return { list, home, cwd: input.cwd, w, name: stateDirName(names).toLowerCase(), repos: w ? [w.repo, w.worktree].map(realPath) : [] };
+  return { list, home, cwd: input.cwd, name: stateDirName(names).toLowerCase(), repos: w ? [w.repo, w.worktree].map(realPath) : [] };
 }
-// Whether the real or written path `p` is a root, inside one, or (ancestors) above one outside the project's repository.
 function touches(p, R, ancestors) {
   const forms = dirs(p);
   const own = ancestors && forms.some((f) => R.repos.some((r) => inside(r, f) !== null));
