@@ -32,6 +32,9 @@ test('a file growing past the hard limit fails; crossing the soft limit warns; s
   assert.deepEqual(levels([{ path: 'src/a.mjs', before: lines(790), after: lines(810) }]), ['fail src/a.mjs']);
   assert.deepEqual(levels([{ path: 'src/b.py', before: lines(450), after: lines(520) }]), ['warn src/b.py']);
   assert.deepEqual(levels([{ path: 'src/c.mjs', before: lines(900), after: lines(880) }]), []);
+  assert.deepEqual(levels([{ path: 'src/e.mjs', before: lines(900), after: lines(920) }]), ['warn src/e.mjs'], 'D-MG-68: an offender over the limit at the base warns');
+  const o = healthOf([{ path: 'src/e.mjs', before: lines(900), after: lines(920) }]);
+  assert.match(healthLine(o), /already over the limit at the base: split it first \(D-MG-68\)/);
   assert.deepEqual(levels([{ path: 'src/d.go', before: null, after: lines(801) }]), ['fail src/d.go'], 'a new file over 800 grew from nothing');
 });
 
@@ -50,7 +53,8 @@ test('a new function over 120 lines fails, one over 80 warns; a function that di
   assert.deepEqual(levels([{ path: 'src/f.mjs', before: '', after: fn('huge', 130) }]), ['fail src/f.mjs huge']);
   assert.deepEqual(levels([{ path: 'src/f.mjs', before: '', after: fn('long', 85) }]), ['warn src/f.mjs long']);
   assert.deepEqual(levels([{ path: 'src/f.mjs', before: fn('old', 130), after: `${fn('old', 130)}export const y = 1;\n` }]), []);
-  assert.deepEqual(levels([{ path: 'src/f.mjs', before: fn('old', 125), after: fn('old', 126) }]), ['fail src/f.mjs old'], 'a grown function over 120');
+  assert.deepEqual(levels([{ path: 'src/f.mjs', before: fn('old', 110), after: fn('old', 130) }]), ['fail src/f.mjs old'], 'a function crossing 120');
+  assert.deepEqual(levels([{ path: 'src/f.mjs', before: fn('old', 150), after: fn('old', 160) }]), ['warn src/f.mjs old'], 'D-MG-68: a function already over 120 warns');
   const arrow = `export const run = async ({ a = {}, b }) => {\n${'  b();\n'.repeat(90)}};\n`;
   assert.deepEqual(levels([{ path: 'src/g.ts', before: null, after: arrow }]), ['warn src/g.ts run'], 'braces inside the parameters do not end the body');
 });
