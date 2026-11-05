@@ -1,5 +1,21 @@
 # Changelog
 
+## 2.7.2
+
+Second small batch: the security and flow pair, one integration branch, one gate (decision D-MG-65).
+
+- **Merge train (T-MG-186, D-MG-65):** `landfall train <ids…>` (or `--ready`) merges approved tasks on one temporary integration branch in `--after` order, runs the gates once on the integrated tree, bisects a failure, fast-forwards the target only if it did not move, and records every task of the train as merged and done with a verify of mode `train`. Each task is checked again right before it is integrated and at record time with the same eligibility checks `task merge` uses (verify for the current head, class from the real change, approved review bound to the reviewed head, done head); a review record may carry the reviewed `head` and is refused when the branch tip moved. A task whose generated files conflict is left out as `conflict` (T-MG-191 follows). A task merged by hand (`task merge --adopt`) and not yet done rides the train as done-only: no merge, the one gate, then `done` (T-MG-195, first slice). The loop proposes the train for a critical task and `close` for the rest.
+- **No self-approval (T-MG-187, SEC-13):** `review record` of a Claude review needs the dispatched reviewer: the latest dispatched executor must be a reviewer agent and no implementer report may follow it. The Bash guard denies a subagent without the reviewer role running `landfall review record` or `landfall task set <id> dispatched`, reading the tokenized command through quotes and common wrappers. This is a partial control: see known limitations; the complete control is role capability tokens (T-MG-194).
+- **Verify record (schema 4):** one `mode` shape for every verify (`kind` fast, full or train, with the reason and the test files), the optional `train` block for the train's commit, head and batch; migration 012 stamps the schema so an older plugin refuses the record as newer (GC9) instead of reading it as invalid. The review event records the blocking count and the reviewed head.
+
+## 2.7.1
+
+First small batch after 2.7.0: one integration branch, one gate (PO 2026-11-05: ship in small batches).
+
+- **Fast verify (T-MG-182):** `landfall verify` runs the test files that the changed files own plus the profile's fast guards; a shared or risk path, a critical task or `--full` runs the full gate set; `task merge` stays the one full run, and a removed test in a changed file is still caught against the base. A dropped or truncated change list fails closed to the full set. The loop's next step for an approved task is its own close at once, not held for a batch.
+- **Guard shortcut outside Landfall repositories (T-MG-183):** in a repository with no Landfall state the Bash guard allows a plain command at once: bare words separated by single spaces, `--version` and `--help`. Quotes, escapes, expansions, braces, clustered or long options, directory changes, nested repositories and rm/mv/cp/ln/find/xargs get the full guard as before.
+- **Waits log cap (T-MG-162):** `local/waits.jsonl` gets the guard log's 256 KiB cap; an open load marker (`until: null`) older than an hour is ignored by the admission readers, no state write for it.
+
 ## 2.7.0
 
 Simplification week (decision D-MG-60): fewer orchestrator calls, shorter sessions, one gate per batch.

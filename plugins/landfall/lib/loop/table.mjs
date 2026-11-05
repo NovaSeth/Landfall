@@ -119,7 +119,10 @@ function taskRow(t, { now, bin, lanesOn, caps, budget = DEFAULT_BUDGET_MIN }) {
   };
   // a review dispatched to an in-session agent is visible only once recorded: the task then waits as dispatched
   const record = `record it: \`${bin} task set ${id} dispatched --executor <reviewer> --base <sha>\``;
-  const approved = (state) => action(id, state, `merge origin/main into its branch, then close it: \`${bin} close ${id}\` (verify, task done, task merge, commit; several ready: \`${bin} close <ids…>\`, one batch)`, ['REV-11', 'ORC-25', 'FLW-8']);
+  // critical: through the train (ORC-25); every other class: closed at once
+  const approved = (state) => (t.class === 'critical'
+    ? action(id, state, `merge it through the train, which verifies, merges and closes it: \`${bin} train ${id}\` (several approved: \`${bin} train --ready\`)`, ['REV-11', 'ORC-25', 'FLW-8'])
+    : action(id, state, `merge origin/main into its branch, then close it at once, not held for a batch: \`${bin} close ${id}\` (verify, task done, task merge, commit; several ready: \`${bin} close <ids…>\`, one batch)`, ['REV-11', 'ORC-25', 'FLW-8']));
   const decide = (k) => action(id, `fix round ${k} after the ${caps.rounds}-round limit`,
     'decide: escalate to the user or change the approach, and start no further fix round (`task set` refuses it; the remaining blocking findings close with a review-close decision)', ['REV-7']);
   // round k is delivered: approved when a self-verified event of round k follows the last fix-round event

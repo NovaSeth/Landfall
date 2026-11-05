@@ -53,6 +53,9 @@ test('the dispatch skill: verify failure goes back before any fix-round record, 
   assert.doesNotMatch(step(d, 5), /\| --ready/, step(d, 5));
   assert.match(step(d, 5), /close <ids…> --yes/);
   assert.match(step(d, 5), /verify failed: back to the implementer/);
+  // T-MG-186: critical or several approved go through the train
+  assert.match(step(d, 5), /train <ids…> --yes/);
+  assert.match(step(d, 5), /train --ready --yes/);
   assert.match(step(d, 4), /record as in 3 \(`--executor <reviewer>`\)/, step(d, 4));
   assert.match(step(d, 4), /--remaining <open finding IDs>/, step(d, 4));
 });

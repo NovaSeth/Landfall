@@ -35,8 +35,8 @@ const reviewDoc = (extra = {}) => ({ schema: VERIFY_KINDS.review.version, verdic
 const machine = (extra = {}) => ({ load1Start: 2.37, load1End: 0.5, cores: 8, ...extra });
 const paths = (errors) => errors.map((e) => `${e.path}:${e.code}`);
 
-test('versions: verify schema 2, review schema 2', () => {
-  assert.equal(VERIFY_KINDS.verify.version, 2);
+test('versions: the verify and review schemas are the kinds versions', () => {
+  assert.equal(VERIFY_KINDS.verify.version, 4); // T-MG-195: the train field is schema 4
   assert.equal(VERIFY_KINDS.review.version, 2);
 });
 
@@ -103,8 +103,8 @@ test('a verify v2 and a review v2 under the reader before the bump are refused a
   });
   const newer = (schema, known) => (e) => e instanceof state.StateError && e.code === 'schema-newer' && e.exit === 'REFUSED'
     && EXIT.REFUSED === 7 && new RegExp(`has schema ${schema}; this plugin knows schema ${known}`).test(e.message);
-  assert.throws(() => old.read('verify', 'T-MG-1'), newer(2, 1));
-  assert.throws(() => old.read('review', 'T-MG-1/review-r1'), newer(2, 1));
+  assert.throws(() => old.read('verify', 'T-MG-1'), newer(VERIFY_KINDS.verify.version, 1)); // the current verify is written at the kinds version
+  assert.throws(() => old.read('review', 'T-MG-1/review-r1'), newer(VERIFY_KINDS.review.version, 1));
   assert.equal(store.read('verify', 'T-MG-1').cache, 'miss', 'the current reader reads it');
   assert.deepEqual(store.read('review', 'T-MG-1/review-r1').focus, ['security']);
 });

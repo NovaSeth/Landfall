@@ -122,6 +122,7 @@ Commands:
   task start           Create the task's worktree and branch from a base commit and record them (started); the brief carries both.
   tick                 One loop tick: the next steps from the task state; exit ACTION (0), WAIT (3), DONE (4), STALLED (5) or BUDGET (6).
   tier                 Evaluate the project tier (L0-L3) from git history and the state; a change is logged (shadow) or recorded (on).
+  train                Merge approved tasks as one train: one integration branch, one gate run, then the target; merged and done in one step.
   trust                Show the gate commands and threshold overrides this machine does not trust yet; trust them after a y at a terminal.
   verify               Re-run the profile gates, compare the test inventory with the baseline and record verify.json for a task.
   wait                 Wait for an external run: exit 3 while it runs, exit 0 with a short summary once it ended.
@@ -1694,6 +1695,30 @@ Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
 Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
 ```
 
+### `landfall train [<id…>] [--ready] [--yes] [--json]`
+
+```text
+usage: landfall train [<id…>] [--ready] [--yes] [--json]
+
+Merge approved tasks as one train: one integration branch, one gate run, then the target; merged and done in one step.
+Takes the named tasks, or --ready (yours, open, unmerged, with a branch, whose route's review is approved or
+closed; done is not required). A temporary branch and worktree start at the target tip; each branch merges with
+--no-ff in --after order, else by ID; a conflict leaves only that task out, with its files. The gates run once on
+the integrated tree under the heavy lease; a failure is bisected, the failing task left out and the rest run once
+more. On pass the target is fast-forwarded only if it did not move, and every task of the train is recorded merged
+and done: the train gate on a tree containing its tip is its verify (verify.json mode train). Removed or skipped
+tests still need a decision. One line per task, the gate runs, the batch id.
+
+Arguments:
+  id  task ID such as T-AB-1
+
+Options:
+  --ready  take every approved, unmerged task with a branch
+
+Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
+Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
+```
+
 ### `landfall trust [--json]`
 
 ```text
@@ -1708,16 +1733,20 @@ Read-only.
 Exit codes: 0 OK · 1 FAIL · 7 REFUSED · 8 ENV
 ```
 
-### `landfall verify <id> [--ci] [--no-cache] [--yes] [--json]`
+### `landfall verify <id> [--ci] [--no-cache] [--full] [--yes] [--json]`
 
 ```text
-usage: landfall verify <id> [--ci] [--no-cache] [--yes] [--json]
+usage: landfall verify <id> [--ci] [--no-cache] [--full] [--yes] [--json]
 
 Re-run the profile gates, compare the test inventory with the baseline and record verify.json for a task.
 The gates run here (sh -c, their time limits); the report's prose never changes the result.
 A removed or newly skipped test fails unless an active decision lists it in allowsTestRemoval; only new failures fail.
 The class is re-classified from the diff against the task base and only rises; the report needs red and green
-evidence in its frontmatter, the route its approved review. On pass the baseline grows.
+evidence in its frontmatter, the route its approved review. On a full pass the baseline grows.
+Fast mode (default where it can): only the test files the change adds or changes, the tests named after each changed
+path's directory (lib/verify/run.mjs → verify-*.test.*) and the profile's fastGuards run, compared with the same files
+at the base; a risk path, package.json, tests/helpers/**, scripts/**, an unmapped path, a critical task or --full runs
+the full set. task merge always runs the full set on the merged tree. verify.json mode says which ran and why.
 Results: pass (0) · fail, baseline-shrunk, route-escalated, missing-artifact (1) · error (8: a gate could not run).
 Only the task's owner verifies with writes; changes files: needs a terminal or --yes (in CI: --ci --yes).
 A gate set that passed on this exact tree (clean worktree, same gates and plugin version, within 24 h) is reused from
@@ -1729,6 +1758,7 @@ Arguments:
 Options:
   --ci        check only: write nothing (verify.json, baseline, class); no registered owner needed
   --no-cache  run the gates even when a passing run of this tree is stored
+  --full      run the full profile gate set instead of the fast subset of the change
 
 Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
 Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV

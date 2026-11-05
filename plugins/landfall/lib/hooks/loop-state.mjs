@@ -33,7 +33,7 @@ export function stateOf(cwd, env, deadline = Infinity) {
   try {
     return { where: resolve({ cwd, env, names, timeoutMs: left }) };
   } catch (e) {
-    if (e?.code === 'not-a-repo') return { none: true };
+    if (e?.code === 'not-a-repo') return { none: true, certain: true };
     const unknown = typeof e?.code === 'string' ? e.code : 'error';
     if (unknown === 'git-missing' || unknown === 'git-failed') return unresolved(unknown);
     // machine data that cannot be read: the in-repo location, resolved without it

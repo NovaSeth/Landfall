@@ -49,7 +49,7 @@ export const VERIFY_KINDS = Object.freeze({
     },
     opt: ['pinnedBy'],
   }),
-  verify: defineKind('verify', 2, {
+  verify: defineKind('verify', 4, {
     dir: 'tasks',
     keyPattern: PATTERNS.taskId,
     file: (id) => `tasks/${id}/verify.json`,
@@ -86,8 +86,15 @@ export const VERIFY_KINDS = Object.freeze({
       cache: { t: 'enum', of: CACHE_STATES },
       heavyWaitMs: count,
       gatesMs: count,
+      // Schema 3 (T-MG-182): which gates ran: fast (the change's test files and the fastGuards; files: the test files
+      // selected), full (the profile gate set) or train (T-MG-186, D-MG-65: the passing train gate on the integrated
+      // tree is the task's verify), and why. Optional: a record written before it has none.
+      mode: { t: 'obj', f: { kind: { t: 'enum', of: ['fast', 'full', 'train'] }, why: str(200, { min: 1 }), files: many(str(LIMITS.path), 1000) } },
+      // Schema 4 (T-MG-195): a verify written by the merge train: the commit the gate ran on, the head the target was fast-forwarded to
+      // (both contain the task tip) and the train's batch id.
+      train: { t: 'obj', f: { commit: str(64, { re: PATTERNS.sha }), head: str(64, { re: PATTERNS.sha }), batch: str(80, { re: /^batch-\d{8}T\d{6}(?:-\d+)?$/ }) } },
     },
-    opt: ['machine', 'cache', 'heavyWaitMs', 'gatesMs'],
+    opt: ['machine', 'cache', 'heavyWaitMs', 'gatesMs', 'mode', 'train'],
   }),
   // The output tails of the latest verify of a task: machine-local (local/ is never committed), JSON text.
   verifyLog: defineKind('verifyLog', 1, {

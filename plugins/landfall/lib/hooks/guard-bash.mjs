@@ -1,6 +1,9 @@
 // PreToolUse Bash hook `guard-bash` (spec §7.13, §8.3, SD-29, SD-33, GC8): runs the guard (lib/guard) on
 // tool_input.command. A block is the permission decision JSON with the reason (rule ID first); an allow prints nothing.
-// It also runs in subagents and in bypassPermissions mode, in every repository where the plugin is enabled.
+// It also runs in subagents and in bypassPermissions mode, in every repository where the plugin is enabled, but does
+// nothing where the plugin has no state: when the command's directory resolves with certainty to no state at all (not in a
+// repository, or a repository with no state directory, not linked, no worktree copy, the directory not inside one), the
+// command is allowed at once without being parsed.
 // Input outside the contract (tool_input.command not a non-empty string) → allow. The repository of the command's
 // directory is resolved once per call through lib/state (lib/hooks/loop-state.mjs stateOf, git bounded by the guard's
 // budget): when it is active, its team mode (one registered handle: solo, more: team), its project rules (guard-extra.txt
@@ -14,10 +17,11 @@
 // | 'on'; else userConfig auto_allow_own_commands=false → off, else the auto-allow capability flag of lib/config, read
 // only for an own command, its default shadow when it cannot be read), shadowLog(entry), git (lib/git's git()).
 // The shadow log stays in the plugin data directory until lib/state appends to local/shadow.jsonl (ruling R72, S4).
-import { appendFileSync, lstatSync, readFileSync } from 'node:fs';
-import { isAbsolute, join } from 'node:path';
+import { appendFileSync, existsSync, lstatSync, readFileSync } from 'node:fs';
+import { isAbsolute, join, sep } from 'node:path';
 import { modeOf, readConfig, rollout } from '../config/index.mjs';
-import { evaluate } from '../guard/index.mjs';
+import { evaluate, LIMIT } from '../guard/index.mjs';
+import { expandLiterals, parse } from '../guard/tokenizer.mjs';
 import { realPath } from '../guard/protect.mjs';
 import { heartbeatAgent } from '../sched/index.mjs';
 import { open, stateDirName } from '../state/index.mjs';
@@ -61,6 +65,27 @@ function guardStates(s, names) {
   return s.where?.active ? [{ dir: realPath(s.where.dir), repo: s.where.repo }, ...copy(s.where, {})] : [null];
 }
 
+// True when the resolved state is certainly empty: no repository, or a repository whose state directory does not exist,
+// is not linked, has no worktree copy, and the directory is not inside one. Active, unknown or any trace goes to the guard.
+function stateless(s, cwd) {
+  if (s.none) return s.certain === true;
+  const w = s.where;
+  if (s.unknown || !w || w.active || w.linked) return false;
+  if (existsSync(w.dir) || (w.copy && existsSync(w.copy))) return false;
+  const c = realPath(cwd);
+  const inside = (d) => c === d || c.startsWith(d + sep);
+  return !inside(w.dir) && !(w.copy && inside(w.copy));
+}
+
+// Fails closed, no parsing: the shortcut stays only for plain words (letters, digits and . _ : @ % + , -) separated by single
+// spaces, so no quote, escape, expansion, brace, glob, operator, redirection, tab or newline gets through, and none of a
+// short option that is -C or -c or has more than one letter (-Cdir, -xC), any long option except --version and --help, a
+// directory variable (GIT_DIR, GIT_WORK_TREE), cd, pushd, popd, chdir, a parent path, or a command that moves or removes
+// files (rm mv cp ln find xargs): any of them may reach a repository with state.
+const PLAIN = /^[\w.:@%+,-]+( [\w.:@%+,-]+)*$/;
+const MUST_GUARD = /\b(cd|pushd|popd|chdir|rm|mv|cp|ln|find|xargs)\b|(^|\s)-([Cc]|[A-Za-z0-9]{2,}|-(?!(version|help)(\s|$)))|GIT_DIR|GIT_WORK_TREE|\.\./;
+export const mustGuard = (command) => !PLAIN.test(command) || MUST_GUARD.test(command);
+
 const decision = (permissionDecision, reason) => ({
   stdout: JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision, permissionDecisionReason: reason } }),
 });
@@ -80,6 +105,54 @@ function autoAllowMode(opts, env, where, names) {
   if (opts.autoAllow) return opts.autoAllow;
   if (/^(false|0|off|no)$/i.test(env.CLAUDE_PLUGIN_OPTION_AUTO_ALLOW_OWN_COMMANDS ?? '')) return 'off';
   try { return modeOf(AUTO_ALLOW, readConfig(where, { names, env })); } catch { return rollout(AUTO_ALLOW).default; }
+}
+
+// Role gate (SEC-13): the trust anchor for a review is the hook input, which an agent cannot write. A subagent (agent_type
+// set) never dispatches, and records a review only as the plugin's reviewer or security-reviewer. The gate reads the
+// guard's tokenized form (literal variables expanded, quotes removed): each simple command whose program is the binary
+// (bare, by path, behind env/node/command/sudo …, or inside a literal `bash -c`) is checked for the words `task set …
+// dispatched` and `review record`. A line that cannot be reduced to literal words (an expansion, a substitution, eval, a
+// heredoc into a shell) and names the binary is denied for a subagent. Script files and interpreter code are not read.
+// The main session (no agent_type) is unchanged.
+const SHELLS = /^(ba|z|da|k)?sh$/;
+const WRAP = /^(env|command|exec|sudo|nohup|time|nice|xargs|node|builtin)$/;
+const base = (t) => t.slice(t.lastIndexOf('/') + 1);
+// The argv (after the binary) of every call of the binary in text, pushed to out; false when the text cannot be reduced.
+function calls(text, bin, depth, out) {
+  let cmds;
+  try { cmds = parse(expandLiterals(text), { limit: LIMIT.cmd }); } catch { return false; }
+  for (const c of cmds) {
+    const w = c.words.map((x) => x.text);
+    if (SHELLS.test(base(w[0] ?? ''))) {
+      const i = w.findIndex((t, k) => k > 0 && /^-[a-z]*c$/.test(t));
+      if (i > 0 && w[i + 1] !== undefined && depth < 3) { if (!calls(w[i + 1], bin, depth + 1, out)) return false; }
+      else if (c.heredoc !== null && i < 0 && c.heredoc.includes(bin)) return false;
+      continue;
+    }
+    if (base(w[0] ?? '') === 'eval' && w.some((t) => t.includes(bin))) return false;
+    const k = w.findIndex((t) => base(t) === bin);
+    if (k >= 0 && w.slice(0, k).every((t) => WRAP.test(base(t)) || t.startsWith('-') || t.includes('='))) out.push(w.slice(k + 1));
+  }
+  return true;
+}
+export function roleDeny(input, command, plugin, bin = plugin) {
+  const t = input?.agent_type;
+  if (typeof t !== 'string' || !t) return null;
+  const argvs = [];
+  if (command.length > LIMIT.cmd || !calls(command, bin, 0, argvs)) {
+    return command.includes(bin) ? `SEC-13: blocked: a subagent cannot run this line, it cannot be read as plain words. Instead write the ${bin} call as plain words.` : null;
+  }
+  for (const a of argvs) {
+    const i = a.indexOf('task');
+    if (i >= 0 && a[i + 1] === 'set' && a.indexOf('dispatched', i + 2) > 0) return 'SEC-13: blocked: only the orchestrator dispatches. Instead leave `task set <id> dispatched` to the orchestrator session.';
+  }
+  if (t !== `${plugin}:reviewer` && t !== `${plugin}:security-reviewer`) {
+    for (const a of argvs) {
+      const i = a.indexOf('review');
+      if (i >= 0 && a[i + 1] === 'record') return 'SEC-13: blocked: only the reviewer agents record a review. Instead let the orchestrator dispatch the reviewer and store its review file.';
+    }
+  }
+  return null;
 }
 
 const AGENT_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
@@ -115,9 +188,15 @@ function guardDecision(input, opts = {}) {
     const r = externalBash(input);
     if (r.code === 2) return r;
   }
+  const role = roleDeny(input, command, names.plugin, names.bin);
+  if (role) {
+    (opts.shadowLog ?? defaultShadowLog(env))({ at: new Date().toISOString(), capability: 'guard-bash', event: 'block', rule: 'SEC-13', command: command.slice(0, 200), cwd });
+    return deny(role);
+  }
   let resolved; // once, and only when a default reader needs it
   const s = () => (resolved ??= stateOf(cwd, env, opts.deadline ?? Infinity));
   const active = () => (s().where?.active ? s().where : null);
+  if (opts.state === undefined && !mustGuard(command) && stateless(s(), cwd)) return { stdout: '' };
   let v;
   for (const state of opts.state !== undefined ? [opts.state] : guardStates(s(), names)) {
     v = evaluate(command, {

@@ -68,7 +68,7 @@ function repo(t, { files = { 'calc.test.mjs': TESTS }, gates = GATES, cls = 'tri
   profile.openStore(stateDir, names).write('profile', null, { ...profile.emptyProfile(), gates });
   const id = state.allocateId(store, {
     prefix: 'T', handle,
-    build: (tid) => ({ id: tid, kind: 'task', title: 'a task', lane: null, owner: handle, class: cls, classHistory: cls ? [{ class: cls, reason: `${cls}: test`, at: AT }] : [], status: 'dispatched', round: 0, events: [], base: head, branch: null }),
+    build: (tid) => ({ id: tid, kind: 'task', title: 'a task', lane: null, owner: handle, class: cls, classHistory: cls ? [{ class: cls, reason: `${cls}: test`, at: AT }] : [], status: 'dispatched', round: 0, events: [{ at: AT, by: handle, event: 'dispatched', data: { executor: 'claude:reviewer', base: head } }], base: head, branch: null }),
   });
   if (report !== null) write(`${names.stateDir}/tasks/${id}/report.md`, report);
   git('add', '-A');
@@ -116,7 +116,7 @@ test('verify re-runs every profile gate and writes verify.json in the §8.4 shap
   assert.equal(res.code, 0, show(res));
   assert.deepEqual([res.env.command, res.env.ok, res.env.exit], ['verify', true, 'OK']);
   const doc = r.vstore.read('verify', r.id);
-  assert.deepEqual(Object.keys(doc), ['schema', 'task', 'head', 'gatesSha', 'baselineSha', 'class', 'startedAt', 'durationMs', 'gates', 'inventory', 'failures', 'route', 'artifacts', 'result', 'machine', 'cache', 'heavyWaitMs', 'gatesMs']);
+  assert.deepEqual(Object.keys(doc), ['schema', 'task', 'head', 'gatesSha', 'baselineSha', 'class', 'startedAt', 'durationMs', 'gates', 'inventory', 'failures', 'route', 'artifacts', 'result', 'machine', 'cache', 'heavyWaitMs', 'gatesMs', 'mode']);
   assert.deepEqual(Object.keys(doc.machine), ['load1Start', 'load1End', 'cores'], 'the v2 cost fields (T-MG-121)');
   assert.equal(doc.gatesSha, verify.gatesSha(GATES));
   assert.equal(doc.baselineSha, verify.baselineSha(r.vstore.read('baseline', null)));
@@ -360,7 +360,7 @@ test('task done refuses a verify that does not match the code: changed, uncommit
   const r = repo(t);
   assert.equal((await run(r)).code, 0);
   // The baseline committed at the base anchors the later test changes (review r2 D5).
-  state.setTask({ cwd: r.dir, env: r.env, names, id: r.id, state: 'dispatched', options: { executor: 'claude:implementer', base: commitAll(r, 'pin the baseline') } });
+  state.setTask({ cwd: r.dir, env: r.env, names, id: r.id, state: 'dispatched', options: { executor: 'claude:reviewer', base: commitAll(r, 'pin the baseline') } });
   r.write('calc.test.mjs', `${TESTS}test('later', () => {});\n`);
   let d = await done(r);
   assert.deepEqual([d.code, errorCodes(d)[0]], [1, 'uncommitted-changes'], show(d));
@@ -563,7 +563,7 @@ test('verify, task done and task merge are command rows that change files; help 
   for (const name of ['verify', 'task done']) assert.deepEqual(row(name).args.map((a) => [a.name, Boolean(a.required)]), [['id', true]], name);
   // T-MG-80: task merge takes several IDs (a batch, --adopt) or none (--ready)
   assert.deepEqual(row('task merge').args.map((a) => [a.name, Boolean(a.required), Boolean(a.variadic)]), [['id', false, true]]);
-  assert.deepEqual(row('verify').flags.map((f) => f.flag), ['--ci', '--no-cache']);
+  assert.deepEqual(row('verify').flags.map((f) => f.flag), ['--ci', '--no-cache', '--full']);
   assert.deepEqual(row('task merge').flags.map((f) => f.flag), ['--branch', '--ready', '--adopt']);
   assert.deepEqual(row('verify').exits, ['OK', 'FAIL', 'USAGE', 'REFUSED', 'ENV']);
   const r = repo(t);
@@ -807,7 +807,7 @@ test('r2 D5: task merge compares with the target tip: a test added to the target
   const r = repo(t);
   assert.equal((await run(r)).code, 0);
   const base = commitAll(r, 'baseline at the base');
-  state.setTask({ cwd: r.dir, env: r.env, names, id: r.id, state: 'dispatched', options: { executor: 'claude:implementer', base } });
+  state.setTask({ cwd: r.dir, env: r.env, names, id: r.id, state: 'dispatched', options: { executor: 'claude:reviewer', base } });
   commitAll(r, 'dispatched');
   r.git('branch', 'feat/x');
   r.write('calc.test.mjs', `${TESTS}test('extra', () => {});\n`);

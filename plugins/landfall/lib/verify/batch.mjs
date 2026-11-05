@@ -57,12 +57,17 @@ export function readyIds(store, handle) {
     .map((t) => t.id).sort(order);
 }
 
-export function batchMerge({ cwd, env, names, ids = null, ready = false, version = null, at = new Date().toISOString(), now = new Date() }) {
+// train (T-MG-186, D-MG-65; lib/verify/train.mjs): the same steps for approved tasks, done not required. `train` is
+// { ready(store, handle) → IDs, eligible({ store, task, where, env, base, sha, scope, at }) → { why, route }, order(store,
+// tasks) → tasks, record({ store, set, integrated, batch, byTask, handle, at, check }) }: who is taken, the merge order, and what a passing train writes besides
+// `merged` (the verify and the done of each task). A train has no sequential fallback: what cannot run in the integration
+// worktree merges nothing.
+export function batchMerge({ cwd, env, names, ids = null, ready = false, version = null, at = new Date().toISOString(), now = new Date(), train = null }) {
   const where = activeWhere({ cwd, env, names });
   const store = storeOf(where, names);
   const handle = authorHandle({ store, where, names, env });
   if (!ready) for (const id of ids) KINDS.task.path(id);
-  const list = ready ? readyIds(store, handle) : [...new Set(ids)];
+  const list = ready ? (train ? train.ready(store, handle) : readyIds(store, handle)) : [...new Set(ids)];
   if (!ready && list.length === 0) throw usage('missing-argument', 'task merge needs task IDs or --ready', `${names.bin} task merge <id…> | --ready`);
   if (gitIn(where, env, ['rev-parse', '-q', '--verify', 'MERGE_HEAD']).status === 0) throw fail('merge-in-progress', 'a merge is already in progress', 'finish it or run git merge --abort first');
   const { scope } = codeState(where, env);
@@ -76,33 +81,54 @@ export function batchMerge({ cwd, env, names, ids = null, ready = false, version
   const targetRef = symbolic(); // F5: the branch the checkout holds (null: detached), checked again before the fast-forward
   const targetProfile = stateAt(where, env, tip, 'profile.json');
 
-  // 1. The checks; a task that fails one is skipped with its reason.
-  const tasks = list.map((id) => {
-    const task = store.read('task', id);
+  // 1. The checks; a task that fails one is skipped with its reason. A train makes the same checks again before the
+  // fast-forward and inside the lock of its record (`s`: that store; fix round 2, F2).
+  const check = (id, s = store) => {
+    const task = s.read('task', id);
     const t = { task: id, branch: task?.branch ?? null, outcome: 'skipped', why: null, conflicts: [], tests: [] };
     const skip = (why) => ({ ...t, why });
     if (task === null) return skip('task-unknown');
     if (task.owner !== handle) return skip(`not-owner (${task.owner})`);
     if (task.status === 'cancelled') return skip('cancelled');
-    if (task.status !== 'done') return skip(`not done (${task.status})`);
-    if (mergedOf(task) !== null) return skip('already merged');
+    if (!train && task.status !== 'done') return skip(`not done (${task.status})`);
+    // a train closes a task merged by hand (merged, not done) when its tip is on the target: done only, no merge
+    const byHand = train !== null && mergedOf(task) !== null && task.status !== 'done';
+    if (mergedOf(task) !== null && !byHand) return skip('already merged');
+    // a train's task that is not done yet has no done head: the train gate verifies its branch tip
+    const open = train !== null && task.status !== 'done';
     if (!task.branch) return skip('no branch');
     if (typeof task.branch !== 'string' || task.branch.startsWith('-')) return skip('the branch name starts with "-" (no ref git can merge safely)');
-    const done = [...task.events].reverse().find((e) => e.event === 'done')?.data?.head ?? null;
-    if (typeof done !== 'string' || !OBJECT_ID.test(done)) return skip('no done record at a commit');
+    const doneEvent = open ? null : [...task.events].reverse().find((e) => e.event === 'done');
+    const done = doneEvent?.data?.head ?? null;
+    if (!open && (typeof done !== 'string' || !OBJECT_ID.test(done))) return skip('no done record at a commit');
     const sha = gitIn(where, env, ['rev-parse', '--verify', '-q', `${task.branch}^{commit}`]).stdout.trim();
     if (!OBJECT_ID.test(sha)) return skip(`unknown branch ${task.branch}`);
-    if (gitIn(where, env, ['merge-base', '--is-ancestor', '--end-of-options', sha, tip]).status === 0) return skip(`already in ${target} (${names.bin} task merge --adopt ${id})`);
-    if (done !== sha && gitIn(where, env, ['diff', '--quiet', '--end-of-options', done, sha, ...scope]).status !== 0) return skip(`the branch changed since done at ${done.slice(0, 12)} (verify it again)`);
+    const contains = (outer, inner) => gitIn(where, env, ['merge-base', '--is-ancestor', '--end-of-options', inner, outer]).status === 0;
+    // A train takes a tip already on the target (a train that died after its fast-forward, or a merge by hand): the merge
+    // is then empty and the train gate on the target still verifies a tree that contains the tip (fix round 1, F3).
+    if (byHand && !contains(tip, sha)) return skip(`merged elsewhere: its tip is not on ${target}`);
+    if (!train && contains(tip, sha)) return skip(`already in ${target} (${names.bin} task merge --adopt ${id})`);
+    // Only a train's done (mode train: the integrated head, on the target) that contains the tip verified it too; every
+    // other done needs the tree of its head (fix round 2, F6).
+    const trainDone = doneEvent?.data?.mode === 'train' && contains(tip, done) && contains(done, sha);
+    if (!open && done !== sha && !trainDone && gitIn(where, env, ['diff', '--quiet', '--end-of-options', done, sha, ...scope]).status !== 0) return skip(`the branch changed since done at ${done.slice(0, 12)} (verify it again)`);
+    const base = train || targetProfile.rel !== null ? gitIn(where, env, ['merge-base', '--end-of-options', tip, sha]).stdout.trim() : null;
+    if (base !== null && !OBJECT_ID.test(base)) return skip('no merge base with the target');
     if (targetProfile.rel !== null) {
-      const base = gitIn(where, env, ['merge-base', '--end-of-options', tip, sha]).stdout.trim();
-      if (!OBJECT_ID.test(base)) return skip('no merge base with the target');
       const changes = gateChanges(profileOf(stateAt(where, env, base, 'profile.json').text), profileOf(stateAt(where, env, sha, 'profile.json').text));
       if (changes.length) return skip(`changes the gates in ${join(targetProfile.rel, 'profile.json')}: ${describeChanges(changes)} (merge it alone)`);
     }
+    // a train's task that is not done: train.eligible (its real change rerouted, its review approved and bound to the tip)
+    const fit = open ? train.eligible({ store: s, task, where, env, base, sha, scope, at }) : { why: null, route: null };
+    if (fit.why) return skip(fit.why);
+    // the base anchors the train's test baseline of the task (F3)
+    if (train) return { ...t, sha, base, outcome: null, byHand, route: fit.route, critical: (fit.route?.actual ?? task.class) === 'critical' };
     return { ...t, sha, outcome: null };
-  });
-  const candidates = tasks.filter((t) => t.outcome === null);
+  };
+  const tasks = list.map((id) => check(id));
+  const eligible = tasks.filter((t) => t.outcome === null);
+  const candidates = train ? train.order(store, eligible) : eligible;
+  if (train) tasks.splice(0, tasks.length, ...candidates, ...tasks.filter((t) => t.outcome !== null)); // listed in merge order
 
   const stamp = now.toISOString().replace(/[-:]/g, '').slice(0, 15);
   let batch = `batch-${stamp}`;
@@ -223,13 +249,15 @@ export function batchMerge({ cwd, env, names, ids = null, ready = false, version
       const tree = gitIn(here, env, ['write-tree']).stdout.trim();
       result.gateRuns += 1;
       const memo = { trusted };
-      const byTask = new Map(set.map((t) => [t.task, evaluate({ where: here, names, env, id: t.task, mode: 'merge', at, anchor: tip, merged: commit, version, memo })]));
+      // a train with a critical task never reuses gate runs from the cache (fix round 1, F1: as verify of a critical task)
+      const cache = !(train && set.some((t) => t.critical));
+      const byTask = new Map(set.map((t) => [t.task, evaluate({ where: here, names, env, id: t.task, mode: 'merge', at, anchor: t.base ?? tip, merged: commit, version, memo, cache })]));
       const checkedScope = linked ? [...scopeHere, ':(top,exclude)node_modules'] : scopeHere;
       if (!treeHeld(here, env, checkedScope, commit) || gitIn(here, env, ['status', '--porcelain', '--untracked-files=all', ...checkedScope]).stdout.trim() !== '' || gitIn(here, env, ['write-tree']).stdout.trim() !== tree) throw new TreeChanged();
       const all = [...byTask.values()];
       for (const o of all) o.publish?.(); // the gate-cache entry, only now that the tree held (fix round 2, F1)
       const worst = all.find((o) => o.doc.result === 'error') ?? all.find((o) => o.doc.result !== 'pass') ?? all[0];
-      if (worst.doc.result === 'pass') passed.set(set.map((t) => t.task).join(' '), commit);
+      if (worst.doc.result === 'pass') passed.set(set.map((t) => t.task).join(' '), { commit, byTask });
       return { ...worst, commit, byTask };
     };
     let set = build(candidates);
@@ -237,6 +265,8 @@ export function batchMerge({ cwd, env, names, ids = null, ready = false, version
     let out = gates(set);
     let final = set;
     let integrated = out.commit;
+    let verified = out.byTask; // the per-task evaluations of the passing run whose commit the target gets
+    if (out.doc.result === 'error' && train) return finish(errored(result, out, set));
     if (out.doc.result === 'error') throw new SequentialFallback(`the first batch gate run could not run: ${out.reasons.find((r) => r.level !== 'warn')?.message ?? 'gate error'}`);
     if (out.doc.result !== 'pass') {
       // Binary search over the prefixes: prefix(k) = set[0..k]; prefix(-1) is the target tip, prefix(N-1) failed.
@@ -265,13 +295,15 @@ export function batchMerge({ cwd, env, names, ids = null, ready = false, version
       integrated = null;
       if (final.length) {
         const confirm = gates(final);
-        if (confirm.doc.result === 'pass') integrated = confirm.commit;
+        if (confirm.doc.result === 'pass') { integrated = confirm.commit; verified = confirm.byTask; }
         else {
           // A second failure among the rest: only the prefix before the culprit (a passing run) merges.
           const after = set.slice(lo + 1);
           for (const t of after) if (t.outcome === null) { t.outcome = 'skipped'; t.why = `not verified: the batch fails also without ${culprit.task} (merge them again)`; }
           final = lo > 0 ? set.slice(0, lo) : [];
-          integrated = final.length ? passed.get(final.map((t) => t.task).join(' ')) ?? null : null;
+          const prefix = final.length ? passed.get(final.map((t) => t.task).join(' ')) ?? null : null;
+          integrated = prefix?.commit ?? null;
+          verified = prefix?.byTask ?? null;
           if (integrated === null) final = [];
         }
       }
@@ -303,6 +335,15 @@ export function batchMerge({ cwd, env, names, ids = null, ready = false, version
     };
     const firstLine = (r) => (r.stderr || r.stdout).trim().split('\n')[0] ?? '';
     const holds = (sha) => symbolic() === targetRef && head() === sha && (targetRef === null || gitIn(where, env, ['rev-parse', '--verify', '-q', targetRef]).stdout.trim() === sha);
+    // A train checks every task again before the fast-forward (a review recorded or a branch moved during the gates):
+    // one that fails now stops the whole train, as its commit is in the integrated one (fix round 2, F2).
+    const again = (t, s = store) => { const c = check(t.task, s); return c.outcome !== null ? c.why : c.sha !== t.sha ? `its branch moved to ${c.sha.slice(0, 12)} during the train` : null; };
+    const refused = train ? set.map((t) => [t, again(t)]).filter(([, why]) => why) : [];
+    if (refused.length) {
+      for (const t of set) { t.outcome = 'skipped'; t.why = refused.find(([x]) => x === t)?.[1] ?? `not merged: ${refused.map(([x]) => x.task).join(', ')} changed during the train gate (run the train again)`; }
+      result.reasons.push({ code: 'train-changed', message: `${refused.map(([x]) => x.task).join(', ')} no longer pass the train's checks; nothing was merged`, hint: `${names.bin} train ${ready ? '--ready' : list.join(' ')}` });
+      return finish(result);
+    }
     if (!holds(tip)) return moved();
     if (gitIn(where, env, ['merge-base', '--is-ancestor', '--end-of-options', tip, integrated]).status !== 0) return ffFailed('the verified commit does not descend from the target tip');
     gitIn(where, env, ['update-index', '-q', '--refresh']);
@@ -317,7 +358,18 @@ export function batchMerge({ cwd, env, names, ids = null, ready = false, version
     if (rt.status !== 0) { swap(tip, integrated); return ffFailed(firstLine(rt)); }
     result.commit = integrated;
     const tree = gitIn(where, env, ['rev-parse', `${integrated}^{tree}`]).stdout.trim();
-    recordMerged({ cwd, env, names, at, entries: set.map((t) => ({ id: t.task, data: { commit: integrated, target, batch, adopted: false, verify: tree } })) });
+    // A train records verify and done first: a run that dies between the two writes leaves done tasks whose tips are on
+    // the target (`task merge --adopt` records them), never merged tasks that no train takes again and nothing closes.
+    // A task the record's own check refuses (inside its lock) is on the target but recorded neither done nor merged.
+    if (train) train.record({ store, set, integrated, batch, byTask: verified, handle, at, check: again });
+    for (const t of set.filter((x) => x.refused)) {
+      t.outcome = 'skipped'; t.why = `on ${target} at ${integrated.slice(0, 12)} but not recorded: ${t.refused}`;
+      result.reasons.push({ code: 'train-changed', message: `${t.task} ${t.why}`.slice(0, 300), hint: `address it, then ${names.bin} task merge --adopt ${t.task}` });
+    }
+    set = set.filter((x) => !x.refused);
+    for (const t of set.filter((x) => x.byHand)) t.outcome = 'done'; // merged by hand: done recorded, no second merged event
+    set = set.filter((x) => !x.byHand);
+    if (set.length) recordMerged({ cwd, env, names, at, entries: set.map((t) => ({ id: t.task, data: { commit: integrated, target, batch, adopted: false, verify: tree } })) });
     for (const t of set) {
       t.outcome = 'merged'; t.why = null;
       Object.assign(t, refreshReceipt({ cwd, env, names, id: t.task, mergedAt: at }));
@@ -325,6 +377,12 @@ export function batchMerge({ cwd, env, names, ids = null, ready = false, version
     if (!result.verify) { result.verify = out.doc; result.output = out.output; }
     return finish(result);
   } catch (err) {
+    if (err instanceof SequentialFallback && train) {
+      for (const t of tasks) if (t.outcome === null) { t.outcome = 'skipped'; t.why = err.message; }
+      result.reasons.push({ code: 'train-cannot-run', message: `the train cannot run in the integration worktree: ${err.message}; nothing was merged`, hint: 'make the dependencies match the checkout, then run the train again' });
+      result.exit = 'ENV';
+      return finish(result);
+    }
     if (err instanceof SequentialFallback) return sequential(err.message);
     if (!(err instanceof TreeChanged)) throw err;
     for (const t of tasks) if (t.outcome === null || t.outcome === 'failed') { t.outcome = 'skipped'; t.why = 'merge-tree-changed'; }
@@ -353,9 +411,11 @@ function finish(result) {
   for (const t of result.tasks) {
     if (t.outcome === null) { t.outcome = 'skipped'; t.why = t.why ?? 'not merged'; }
     delete t.sha;
+    delete t.critical; delete t.base; delete t.refused; delete t.byHand;
   }
-  result.result = result.tasks.every((t) => t.outcome === 'merged') ? 'pass' : 'fail';
-  if (result.exit === 'OK' && result.tasks.some((t) => t.outcome !== 'merged')) result.exit = 'FAIL';
+  const ok = (t) => t.outcome === 'merged' || t.outcome === 'done';
+  result.result = result.tasks.every(ok) ? 'pass' : 'fail';
+  if (result.exit === 'OK' && !result.tasks.every(ok)) result.exit = 'FAIL';
   for (const t of result.tasks) {
     if (t.outcome === 'conflict') result.reasons.push({ code: 'merge-conflict', message: `${t.task}: ${t.why}`, hint: `merge ${result.target} into ${t.branch} first, verify it, then merge again` });
     if (t.outcome === 'failed') result.reasons.push({ code: 'new-failures', message: `${t.task}: ${t.why}`, hint: 'fix it on its branch, verify it, then merge again' });

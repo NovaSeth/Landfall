@@ -82,6 +82,7 @@ function project(t) {
     ok(cli(wt, 'report', id, '--from', reportFile));
     const reviewFile = join(iso.base, `${id}-review.json`);
     writeFileSync(reviewFile, JSON.stringify(REVIEW));
+    ok(cli(wt, 'task', 'set', id, 'dispatched', '--executor', 'claude:reviewer', '--base', started.data.base));
     ok(cli(wt, 'review', 'record', id, '--from', reviewFile));
     return { id, wt, branch: started.data.branch };
   };

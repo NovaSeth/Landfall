@@ -240,7 +240,7 @@
     "ORC-22": {"topic":"orchestration","file":"orchestration.md","line":28,"section":"Brief","pack":"core","summary":"Cut user-facing work into vertical slices whose result the human can see within one budget, and…","hash":"c009664f3c78"},
     "ORC-23": {"topic":"orchestration","file":"orchestration.md","line":29,"section":"Brief","pack":"core","summary":"A brief states the deliverable kind in the human's own words and its sources","hash":"4cccb99777f3"},
     "ORC-24": {"topic":"orchestration","file":"orchestration.md","line":30,"section":"Brief","pack":"core","summary":"Be proactive and keep the work flowing","hash":"d703c786d7e8"},
-    "ORC-25": {"topic":"orchestration","file":"orchestration.md","line":31,"section":"Brief","pack":"core","summary":"Merge ready tasks only with `task merge`, several at once as one batch","hash":"f9abd91ccf44"},
+    "ORC-25": {"topic":"orchestration","file":"orchestration.md","line":31,"section":"Brief","pack":"core","summary":"One approved task closes at once with `close <id>` (verify, done, `task merge`, commit)","hash":"62bf08099eab"},
     "ORC-26": {"topic":"orchestration","file":"orchestration.md","line":32,"section":"Brief","pack":"core","summary":"Start another provider's CLI only through `exec`, for a review or an implementation","must":true,"hash":"bf58a69875c6"},
     "ORC-27": {"topic":"orchestration","file":"orchestration.md","line":33,"section":"Brief","pack":"core","summary":"Store an executor's report verbatim with `report --from`","hash":"6fe1d9b66252"},
     "PRI-1": {"topic":"principles","file":"principles.md","line":16,"section":"Order of work","pack":"core","summary":"Keep process records in the project state directory or a separate process repository, apart from…","hash":"d48df1491619"},
