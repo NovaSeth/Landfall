@@ -94,8 +94,9 @@ function report(p, id, evidence) {
 }
 const EVIDENCE = { red: { command: 'npm test', exit: 1, excerpt: 'not ok 2 - subtracts' }, green: { command: 'npm test', exit: 0, excerpt: '# pass 2\n# fail 0' } };
 
-// The reviewer's typed result, recorded from a file outside the repository.
+// The reviewer's typed result, recorded from a file outside the repository, after the reviewer dispatch (T-MG-187, SEC-13).
 function review(p, id) {
+  p.ok(p.cli('task', 'set', id, 'dispatched', '--executor', 'claude:reviewer', '--base', p.git('rev-parse', 'HEAD')));
   const file = join(p.base, `${id}-review.json`);
   writeFileSync(file, JSON.stringify({ verdict: 'approved', reviewer: { kind: 'claude', id: 'claude:reviewer' }, findings: [{ id: 'F1', severity: 'minor', path: 'calc.mjs', line: 2, rule: null, text: 'a doc comment would help' }] }));
   const rec = p.ok(p.cli('review', 'record', id, '--from', file));
