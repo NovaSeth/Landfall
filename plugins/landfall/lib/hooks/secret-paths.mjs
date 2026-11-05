@@ -1,7 +1,6 @@
-// Secret paths (SEC-13, spec 2026-11-05 D3, D-MG-81): a subagent reads no transcript and no file of the plugin data. Roots, as real
-// paths and as written: the transcripts directory (transcript_path, else $CLAUDE_CONFIG_DIR/projects, else ~/.claude/projects)
-// and the plugin data directory ($CLAUDE_PLUGIN_DATA, else <config dir>/plugins/data). secretDeny → the reason or null for
-// Read|Grep|Glob and Bash. Main session → null.
+// Secret paths (SEC-13, D3, D-MG-81): a subagent reads no transcript and no plugin data file. Roots (real paths and as written): the
+// transcripts directory (transcript_path, else $CLAUDE_CONFIG_DIR/projects, else ~/.claude/projects) and the plugin data directory
+// ($CLAUDE_PLUGIN_DATA, else <config dir>/plugins/data). secretDeny → the reason or null for Read|Grep|Glob and Bash. Main → null.
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { caseVariants, prescan } from '../guard/tokens.mjs';
@@ -12,15 +11,14 @@ const SECRET_REASON = "SEC-13: blocked: a subagent does not read Claude Code tra
 const HOME = /^(~|\$HOME|\$\{HOME\})(?=\/|$)/;
 const READERS = { find: /./, rg: /./, ag: /./, fd: /./, tar: /./, zip: /./, rsync: /./, du: /./, grep: /^-[a-zA-Z]*[rR]|^--(dereference-)?recursive$|^-d=?recurse/, cp: /^-[a-zA-Z]*[rRa]/, ls: /^-[a-zA-Z]*R/ };
 const dirs = (p) => [...new Set([p, realPath(p)])];
-function roots(input, env) {
+function roots(input, env) { // D-MG-81: local/ holds no secret (hashes, records) and is no root; role-tokens-store-invariant.test.mjs guards it
   const home = env.HOME || homedir();
   const cfg = isAbsolute(env.CLAUDE_CONFIG_DIR ?? '') ? env.CLAUDE_CONFIG_DIR : join(home, '.claude');
   const seg = isAbsolute(input.transcript_path ?? '') ? input.transcript_path.split('/') : [];
   const k = seg.lastIndexOf('projects', -2);
-  // D-MG-81: local/ holds no secret (hashes and records), so the state directory is no root; tests/role-tokens-store-invariant.test.mjs guards it
   const list = [k > 0 ? seg.slice(0, k + 1).join('/') : seg.length ? dirname(dirname(input.transcript_path)) : null, join(cfg, 'projects'),
     isAbsolute(env.CLAUDE_PLUGIN_DATA ?? '') ? env.CLAUDE_PLUGIN_DATA : join(cfg, 'plugins', 'data')];
-  return { list: [...new Set(list.filter(Boolean).flatMap(dirs))], home, cwd: input.cwd };
+  return { list: [...new Set(list.filter(Boolean).flatMap(dirs))], home, cwd: input.cwd, root: env.CLAUDE_PLUGIN_ROOT ?? '' };
 }
 function touches(p, R, ancestors) {
   const forms = dirs(p);
@@ -62,7 +60,13 @@ const reaches = (text, name) => text.split(/\s+/).some((w) => /(^|\/)[.[]|\{/.te
 const SHELLS = /^(ba|z|da|k)?sh$|^eval$/; const GLOBBY = /[*?[]/; const HOME_VAR = /\$\{HOME\}|\$HOME\b/g;
 const WRAP = /^(env|nice|nohup|timeout|command|builtin|exec|stdbuf|xargs|sudo)$/;
 // T-MG-203: the one command that carries a token: printf %s <token> | landfall (review record | task set) <plain words> --token -
-const RECORD = /^printf %s lf1_[A-Za-z0-9_-]{43} \| ([\w.\/-]*\/)?landfall (review record|task set)( [\w.:@%+=,\/-]+)* --token -$/;
+// The program is the bare name or the plugin's own bin/landfall by absolute path (no relative prefix; no plugin root → bare only).
+const RECORD = /^printf %s lf1_[A-Za-z0-9_-]{43} \| (\/[\w.\/-]*\/)?landfall (review record|task set)( [\w.:@%+=,\/-]+)* --token -$/;
+function recordCmd(command, R) {
+  const m = RECORD.exec(command);
+  if (!m || command.match(/lf1_/gi).length !== 1) return false;
+  return !m[1] || (isAbsolute(R.root) && realPath(`${m[1]}landfall`) === realPath(join(R.root, 'bin', 'landfall')));
+}
 const INTERP =/^(python3?|node|perl|ruby)$/;
 function bare(w) { let i = 0; while (WRAP.test(basename(w[i] ?? ''))) { i++; while (/^-|^\w+=|^\d+[smhd]?$/.test(w[i] ?? '')) i++; } return w.slice(i); }
 const values = (t) => (t.startsWith('-') ? [] : [t]).concat(t.includes('=') ? [t.slice(t.indexOf('=') + 1)] : []);
@@ -101,7 +105,7 @@ function bashDeny(command, R) {
   const texts = expanded === command ? [command] : [command, expanded];
   const flat = texts.map((t) => t.toLowerCase().replace(/\/(\.?\/)+/g, '/')); // floor: a word naming local/ or the transcripts, any spelling
   if (flat.some((t) => ['.claude/projects', ...R.list.map((l) => l.toLowerCase())].some((n) => t.includes(n)))) return true;
-  const lits = [...(RECORD.test(command) && command.match(/lf1_/gi).length === 1 ? [] : ['lf1_']), '$claude_config_dir', '${claude_config_dir}', ...R.list, ...['~', '$home', '${home}', R.home].map((h) => `${h}/.claude`)].map((l) => l.toLowerCase());
+  const lits = [...(recordCmd(command, R) ? [] : ['lf1_']), '$claude_config_dir', '${claude_config_dir}', ...R.list, ...['~', '$home', '${home}', R.home].map((h) => `${h}/.claude`)].map((l) => l.toLowerCase());
   if (texts.some((t) => [...prescan(t, lits)].some((h) => h.startsWith('project rule literal')))) return true;
   if (texts.some((t) => reaches(caseVariants(t)[0], '.claude'))) return true;
   if (cmds === null) return texts.some((t) => /\.claude|\b(cd|pushd)\b/i.test(t)); // unparseable: unknown dir
