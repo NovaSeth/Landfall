@@ -13,6 +13,7 @@ import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gitShape } from './git-shape.mjs';
 import { GIT_ARG } from './git-options.mjs';
+import { isHookPath } from './hook-path.mjs';
 import { MSG, short } from './messages.mjs';
 import { braceShape, findDeleteShape, removeShape, stateWrite, writeRedir } from './protect.mjs';
 import { why } from './tokenizer.mjs';
@@ -358,7 +359,6 @@ export function shape(c, ctx) {
 // directory. A redirection that writes such a path, from any command (also alone), and any program other than a reader
 // (or git, whose rm / mv git-shape checks) with such a path in an argument or an option value (review r1 #5): no reading
 // of destination options. chmod passes only with a mode that just adds permissions.
-export const isHookPath = (t, cwd) => /(^|\/)(\.githooks|\.husky|\.git\/hooks)(\/|$)|(^|\/)\.git\/?$/.test(cwd ? resolve(cwd, t) : t);
 const HOOK_READERS = new Set(['cat', 'ls', 'head', 'tail', 'less', 'more', 'grep', 'egrep', 'fgrep', 'rg', 'diff', 'cmp', 'stat', 'file', 'wc', 'md5',
   'md5sum', 'shasum', 'sha1sum', 'sha256sum', 'realpath', 'readlink', 'basename', 'dirname', 'test', '[', '[[', 'cd', 'pushd', 'popd', 'du', 'tree',
   'echo', 'printf']);
