@@ -13,6 +13,7 @@ export { LAYOUTS, MIGRATIONS } from './migrations/index.mjs';
 export { checkChain, migrate } from './migrate.mjs';
 export { allocateId, retireId } from './ids.mjs';
 export { emailHash, gitIdentity, handleCandidates, registerHandle } from './team.mjs';
+export { TOKEN_KIND, authorize, consume, holderOf, live, mint, revoke } from './tokens.mjs';
 export { checkedPath, open, setForeignLocal, unlockStale } from './store.mjs';
 export { localForeign, machineId } from './machine.mjs';
 export { TRUST_HINT, TRUST_MAX, gatesShaOf, isTrusted, overridesShaOf, readTrust, recordTrust, repoKey } from './trust.mjs';

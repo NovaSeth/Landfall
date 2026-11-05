@@ -137,11 +137,25 @@ function checkRoundsCap({ args, flags, names, io }) {
   if (k > cap) throw new state.StateError('review-cap', 'REFUSED', `REV-7: fix round ${k} is past the ${cap}-round limit`, { hint: `${names.bin} decide --kind review-close --task ${args.id} --remaining <ids>` });
 }
 
-export function taskSet({ args, flags, names, io }) {
+// `--token -` (SEC-13, role tokens): the token comes from stdin only, never from argv; the command gets it as `token`.
+export const withToken = (impl) => async (ctx) => {
+  if (ctx.flags.token === undefined) return impl(ctx);
+  const usage = (code, message) => new state.StateError(code, 'USAGE', message, { hint: `printf %s <token> | ${ctx.names.bin} … --token -` });
+  if (ctx.flags.token !== '-') throw usage('token-on-argv', 'a token on the command line is visible to every process: pass --token - and the token on stdin');
+  if (ctx.io.stdinIsTTY) throw usage('token-stdin-tty', '--token - reads the token from a pipe, not from a terminal');
+  let text = '';
+  for await (const chunk of ctx.io.stdin ?? []) if ((text += chunk).length > 256) break;
+  if (!/^lf1_[A-Za-z0-9_-]{43}$/.test(text.trim())) throw usage('token-malformed', 'the token on stdin is not a role token');
+  return impl({ ...ctx, token: text.trim() });
+};
+
+export const taskSet = withToken(({ args, flags: { token: _, ...flags }, names, io, token }) => {
   checkRoundsCap({ args, flags, names, io });
+  const where = ['dispatched', 'self-verified'].includes(args.state) ? state.resolve(target(io, names)) : null;
+  const warn = where?.active && state.authorize({ dir: where.dir, names, token, need: 'orchestrator' }).warn;
   const r = state.setTask({ ...target(io, names), id: args.id, state: args.state, options: flags });
-  return { data: r, text: `${r.id}: ${args.state} recorded; status ${r.task.status}\n` };
-}
+  return { data: r, text: `${r.id}: ${args.state} recorded; status ${r.task.status}\n`, warnings: warn ? [`no live session token in ${where.dir}; recorded without a role check (SEC-13)`] : [] };
+});
 
 // `task outcome <id> <kind> [--by <ref>]` records the outcome of a cancelled task; `task outcome --adopt [--yes]` proposes
 // one from each reason (dry run) and, with --yes, writes it, one update per task (lib/state/outcome.mjs).
