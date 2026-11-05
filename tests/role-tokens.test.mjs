@@ -178,3 +178,37 @@ test('a missing store is refused once a session was seen in the last 24 hours (f
   utimesSync(file, old, old);
   assert.deepEqual(T.authorize({ dir, names, need: 'orchestrator' }), { warn: true });
 });
+
+test('authorize refuses a token from outside the holder\'s process tree (token-caller)', (t) => {
+  const { dir } = store(t);
+  const other = sleeper(t);
+  const o = orch(dir, { host: other });
+  const a = agent(dir, 'reviewer', { host: other });
+  const outside = (e) => fails('token-caller')(e) && !e.message.includes(o.token) && !e.message.includes(a.token);
+  assert.throws(() => T.authorize({ dir, names, token: o.token, need: 'orchestrator' }), outside);
+  assert.throws(() => T.authorize({ dir, names, token: a.token, need: 'reviewer' }), outside);
+  assert.equal(T.authorize({ dir, names, token: o.token, need: 'orchestrator', caller: other.pid }).role, 'orchestrator');
+  assert.equal(T.authorize({ dir, names, token: a.token, need: 'reviewer', caller: other.pid }).role, 'reviewer');
+});
+
+test('attached() is true inside the holder\'s tree and false outside it', (t) => {
+  const { dir } = store(t);
+  assert.equal(T.attached({ dir, names }), false, 'no orchestrator');
+  orch(dir);
+  assert.equal(T.attached({ dir, names }), true, 'this process is the holder');
+  const b = store(t);
+  orch(b.dir, { host: sleeper(t) });
+  assert.equal(T.attached({ dir: b.dir, names }), false, 'the holder is a sleeper');
+});
+
+test('the ancestry walk over a real process table costs under 5 ms (median of 20)', async () => {
+  const machine = await lib('sched/machine.mjs');
+  const table = machine.processTable();
+  const xs = [];
+  for (let i = 0; i < 20; i++) {
+    const s = process.hrtime.bigint();
+    machine.descends(table, process.pid, me);
+    xs.push(Number(process.hrtime.bigint() - s) / 1e6);
+  }
+  assert.ok(xs.sort((x, y) => x - y)[10] < 5, `median ${xs[10]} ms`);
+});

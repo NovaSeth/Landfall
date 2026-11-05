@@ -133,6 +133,59 @@ test('the reviewer token on stdin records the review once; the orchestrator toke
   assert.deepEqual([argv.code, argv.env.errors[0].code], [2, 'token-on-argv']);
 });
 
+// T-MG-199 (R2): a provider started the way exec starts it (a detached supervisor, which starts a detached provider,
+// while the parent exits) is outside the holder's tree once it is reparented. The copied tokens are then refused.
+const CHAIN = `
+import { spawn, spawnSync } from 'node:child_process';
+import { writeFileSync } from 'node:fs';
+const [mode, cfgText] = process.argv.slice(2);
+const cfg = JSON.parse(cfgText);
+const self = new URL(import.meta.url).pathname;
+if (mode === 'start') spawn(process.execPath, [self, 'supervise', cfgText], { detached: true, stdio: 'ignore' }).unref();
+if (mode === 'supervise') { spawn(process.execPath, [self, 'provide', cfgText], { detached: true, stdio: 'ignore' }).unref(); setTimeout(() => {}, 30000); }
+if (mode === 'provide') {
+  const inTree = () => {
+    const rows = new Map(spawnSync('ps', ['-A', '-o', 'pid=,ppid='], { encoding: 'utf8' }).stdout.split('\\n').map((l) => l.trim().split(/\\s+/).map(Number)).filter((r) => r.length === 2));
+    for (let p = process.pid, i = 0; p > 1 && i < 64; i++) { if (p === cfg.holder) return true; p = rows.get(p); if (p === undefined) return false; }
+    return false;
+  };
+  const deadline = Date.now() + 15000;
+  while (inTree() && Date.now() < deadline) spawnSync('sleep', ['0.1']);
+  const out = { attached: inTree() };
+  for (const [k, argv, input] of cfg.calls) {
+    const r = spawnSync(cfg.launcher, argv, { cwd: cfg.cwd, env: process.env, input, encoding: 'utf8' });
+    out[k] = { code: r.status, out: r.stdout.trim().split('\\n').pop() };
+  }
+  writeFileSync(cfg.result, JSON.stringify(out));
+  process.exit(0);
+}
+`;
+
+test('a provider started the way landfall exec starts it cannot dispatch or record with a stolen token (R2)', { timeout: 60000 }, async () => {
+  const stolen = state.mint({ dir, names, role: 'reviewer', session: 's1', agent: 'ag-r2', host }).token;
+  assert.ok(stolen);
+  const chain = join(base, 'chain.mjs');
+  const result = join(base, 'chain-result.json');
+  writeFileSync(chain, CHAIN);
+  const rec = ['review', 'record', id, '--from', file, '--yes', '--json', '--token', '-'];
+  const set = ['task', 'set', id, 'dispatched', '--executor', 'claude:reviewer', '--base', head, '--yes', '--json', '--token', '-'];
+  const cfg = { holder: process.pid, launcher, cwd: repo, result, calls: [['record', rec, stolen], ['dispatch', set, orch]] };
+  const before = tasks();
+  spawnSync(process.execPath, [chain, 'start', JSON.stringify(cfg)], { env, stdio: 'ignore' });
+  const deadline = Date.now() + 40000;
+  while (!existsSync(result) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 100));
+  assert.ok(existsSync(result), 'the provider reported');
+  const out = JSON.parse(readFileSync(result, 'utf8'));
+  all.push(JSON.stringify(out));
+  assert.equal(out.attached, false, 'the provider left the holder\'s tree');
+  for (const k of ['record', 'dispatch']) {
+    assert.equal(out[k].code, 7, `${k}: ${out[k].out}`);
+    assert.equal(JSON.parse(out[k].out).errors[0].code, 'token-caller');
+  }
+  assert.equal(tasks(), before, 'the task documents are byte-identical');
+  assert.ok(state.authorize({ dir, names, token: stolen, need: 'reviewer' }).hash, 'the reviewer token was not spent');
+});
+
 test('no output, event or state file holds a token (A7)', () => {
   const grep = [...all, dump(dir)].join('\n');
   assert.ok(!grep.includes('lf1_'));
