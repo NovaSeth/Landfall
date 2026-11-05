@@ -61,6 +61,7 @@ async function project(t) {
   p.commit = (msg) => { p.git('add', '-A'); p.git('commit', '-q', '-m', msg); return p.git('rev-parse', 'HEAD'); };
   for (const args of [['init'], ['task', 'new', 'Cart checkout'], ['task', 'new', 'Not routed yet'], ['route', 'T-TU-1', '--paths', 'src/auth/login.js', '--loc', '20']]) await p.run(args);
   p.base0 = p.git('rev-parse', 'HEAD');
+  p.git('checkout', '-q', '-b', 'task/T-TU-1-cart'); // T-MG-192: a review binds the commit the task branch is at, so the branch exists
   await p.run(['task', 'set', 'T-TU-1', 'started', '--branch', 'task/T-TU-1-cart', '--base', p.base0]);
   profile.openStore(p.store, names).write('profile', null, { facts: {}, gates: [], riskPaths: ['**/auth/**'], lastScan: null });
   await p.run(['brief', 'T-TU-1', '--write']);
