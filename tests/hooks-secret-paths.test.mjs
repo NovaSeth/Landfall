@@ -170,3 +170,37 @@ test('r2 F6: when the state cannot be resolved in time, a subagent read of the t
 //  'the main session is unchanged' · 'without agent_type every form is allowed' → the main-session cases of this file;
 //  'malformed input allows' → the malformed-input test above; 'quoting, wrappers and unresolvable lines' → the forge corpus
 //  (every spelling) and `eval "$X" ~/.claude` in the Bash corpus above; 'the role gate stays fast' → tests/perf-hooks.test.mjs.
+
+// Fix round 2 (security review r3 F1; the cheap fail-closed text rules).
+const sn = names.stateDir;
+const allDenied = (cmds) => { for (const c of cmds) { assert.ok(cmdDenied(c), `subagent: ${c}`); assert.ok(!cmdDenied(c, false), `main: ${c}`); } };
+
+test('r3 F1: the state directory is never an exempt ancestor; the repository root stays allowed', () => {
+  allDenied([`grep -rn tok ${sn}`, `rg . ${sn}`, `ls -R ${sn}`, `find ${sn} -type f`]);
+  assert.ok(denied(read(base('Grep', { pattern: '.', path: sn }))));
+  assert.ok(!denied(read(base('Grep', { pattern: '.' }))));
+  assert.ok(!cmdDenied('grep -r . .') && !cmdDenied('grep -rn foo src'));
+});
+
+test('round 2: a word naming the local directory or the transcripts is denied in any spelling', () => {
+  allDenied([`ls --path=${sn}/local/token.json`, `ls -d@${sn}/local`, `cat ${sn}//local/./token.json`, `cat @${sn}/local/x`, `ls -f${sn}/local/x`,
+    `X=${sn}/local; ls $X`, `cat ${sn}///local/x`, 'cat ~/.claude//projects/x', `cat ${projects}//-p/s1.jsonl`, `cat ${sn}/./local/z`]);
+  assert.ok(!cmdDenied(`cat ${sn}/state.json`));
+});
+
+test('round 2: cd and pushd skip options; an unknown directory fails closed; wrappers do not hide cd or a shell body', () => {
+  allDenied([`cd -- ${sn} && cat local/token.json`, `cd -P ${sn} && cat local/token.json`, `pushd ${sn} >/dev/null && cat local/token.json`,
+    `builtin cd ${sn} && cat local/token.json`, `command cd ${sn} && cat local/token.json`,
+    'cd && cat x.txt', 'cd - && cat x.txt', 'cd "$X"; cat x.txt', 'cd $(pwd)/.. && cat x.txt']);
+  for (const w of ['env', 'nice -n 5', 'nohup', 'timeout 5', 'command', 'builtin', 'exec', 'stdbuf -o0', 'xargs', 'sudo', 'env A=1']) {
+    allDenied([`${w} bash -c 'cat ${sn}/l*/token.json'`, `${w} sh -c 'cat l*/token.json' ; ${w} cd ${sn} && ${w} cat l*/token.json`]);
+  }
+  assert.ok(!cmdDenied('cd src && cat a.txt') && !cmdDenied('cd - && ls') && !cmdDenied('env FOO=1 ls src'));
+});
+
+test('round 2: an inline interpreter body naming the state directory, .claude or local/ is denied', () => {
+  allDenied(['python -c "print(open(\'local/x\').read())"', 'python3 -c "print(open(\'local/x\').read())"', 'node -e "require(\'fs\').readFileSync(\'local/x\')"',
+    'node -p "require(\'fs\').readdirSync(\'local/\')"', 'perl -e \'open F,"local/x"\'', 'ruby -e \'File.read("local/x")\'',
+    `python -c "import os;os.listdir('${sn}')"`, 'node -e "require(\'fs\').readFileSync(process.env.HOME+\'/.claude/x\')"']);
+  assert.ok(!cmdDenied('python3 -c "print(1)"') && !cmdDenied('node -e "console.log(2)"'));
+});
