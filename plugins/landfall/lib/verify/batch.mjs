@@ -91,7 +91,9 @@ export function batchMerge({ cwd, env, names, ids = null, ready = false, version
     if (task.owner !== handle) return skip(`not-owner (${task.owner})`);
     if (task.status === 'cancelled') return skip('cancelled');
     if (!train && task.status !== 'done') return skip(`not done (${task.status})`);
-    if (mergedOf(task) !== null) return skip('already merged');
+    // a train closes a task merged by hand (merged, not done) when its tip is on the target: done only, no merge
+    const byHand = train !== null && mergedOf(task) !== null && task.status !== 'done';
+    if (mergedOf(task) !== null && !byHand) return skip('already merged');
     // a train's task that is not done yet has no done head: the train gate verifies its branch tip
     const open = train !== null && task.status !== 'done';
     if (!task.branch) return skip('no branch');
@@ -104,6 +106,7 @@ export function batchMerge({ cwd, env, names, ids = null, ready = false, version
     const contains = (outer, inner) => gitIn(where, env, ['merge-base', '--is-ancestor', '--end-of-options', inner, outer]).status === 0;
     // A train takes a tip already on the target (a train that died after its fast-forward, or a merge by hand): the merge
     // is then empty and the train gate on the target still verifies a tree that contains the tip (fix round 1, F3).
+    if (byHand && !contains(tip, sha)) return skip(`merged elsewhere: its tip is not on ${target}`);
     if (!train && contains(tip, sha)) return skip(`already in ${target} (${names.bin} task merge --adopt ${id})`);
     // Only a train's done (mode train: the integrated head, on the target) that contains the tip verified it too; every
     // other done needs the tree of its head (fix round 2, F6).
@@ -119,7 +122,7 @@ export function batchMerge({ cwd, env, names, ids = null, ready = false, version
     const fit = open ? train.eligible({ store: s, task, where, env, base, sha, scope, at }) : { why: null, route: null };
     if (fit.why) return skip(fit.why);
     // the base anchors the train's test baseline of the task (F3)
-    if (train) return { ...t, sha, base, outcome: null, route: fit.route, critical: (fit.route?.actual ?? task.class) === 'critical' };
+    if (train) return { ...t, sha, base, outcome: null, byHand, route: fit.route, critical: (fit.route?.actual ?? task.class) === 'critical' };
     return { ...t, sha, outcome: null };
   };
   const tasks = list.map((id) => check(id));
@@ -364,7 +367,9 @@ export function batchMerge({ cwd, env, names, ids = null, ready = false, version
       result.reasons.push({ code: 'train-changed', message: `${t.task} ${t.why}`.slice(0, 300), hint: `address it, then ${names.bin} task merge --adopt ${t.task}` });
     }
     set = set.filter((x) => !x.refused);
-    recordMerged({ cwd, env, names, at, entries: set.map((t) => ({ id: t.task, data: { commit: integrated, target, batch, adopted: false, verify: tree } })) });
+    for (const t of set.filter((x) => x.byHand)) t.outcome = 'done'; // merged by hand: done recorded, no second merged event
+    set = set.filter((x) => !x.byHand);
+    if (set.length) recordMerged({ cwd, env, names, at, entries: set.map((t) => ({ id: t.task, data: { commit: integrated, target, batch, adopted: false, verify: tree } })) });
     for (const t of set) {
       t.outcome = 'merged'; t.why = null;
       Object.assign(t, refreshReceipt({ cwd, env, names, id: t.task, mergedAt: at }));
@@ -406,10 +411,11 @@ function finish(result) {
   for (const t of result.tasks) {
     if (t.outcome === null) { t.outcome = 'skipped'; t.why = t.why ?? 'not merged'; }
     delete t.sha;
-    delete t.critical; delete t.base; delete t.refused;
+    delete t.critical; delete t.base; delete t.refused; delete t.byHand;
   }
-  result.result = result.tasks.every((t) => t.outcome === 'merged') ? 'pass' : 'fail';
-  if (result.exit === 'OK' && result.tasks.some((t) => t.outcome !== 'merged')) result.exit = 'FAIL';
+  const ok = (t) => t.outcome === 'merged' || t.outcome === 'done';
+  result.result = result.tasks.every(ok) ? 'pass' : 'fail';
+  if (result.exit === 'OK' && !result.tasks.every(ok)) result.exit = 'FAIL';
   for (const t of result.tasks) {
     if (t.outcome === 'conflict') result.reasons.push({ code: 'merge-conflict', message: `${t.task}: ${t.why}`, hint: `merge ${result.target} into ${t.branch} first, verify it, then merge again` });
     if (t.outcome === 'failed') result.reasons.push({ code: 'new-failures', message: `${t.task}: ${t.why}`, hint: 'fix it on its branch, verify it, then merge again' });
