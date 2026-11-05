@@ -67,7 +67,7 @@ test('healthLine names every offender and the module to split', () => {
   assert.equal(healthLine([]), null);
 });
 
-function repo(t) {
+function repo(t, seed = {}) {
   const base = realpathSync(mkdtempSync(join(tmpdir(), 'verify-health-')));
   t.after(() => rmSync(base, { recursive: true, force: true }));
   const dir = join(base, 'repo');
@@ -84,6 +84,7 @@ function repo(t) {
   write('calc.test.mjs', "import { test } from 'node:test';\ntest('adds', () => {});\n");
   write('src/a.mjs', lines(790));
   write('src/b.mjs', lines(450));
+  for (const [rel, text] of Object.entries(seed)) write(rel, text);
   git('add', '-A');
   git('commit', '-q', '-m', 'base');
   const head = git('rev-parse', 'HEAD');
@@ -136,6 +137,37 @@ test('a change that only warns adds no code-health error', async (t) => {
   const env = JSON.parse((await cli(['verify', r.id, '--ci', '--yes', '--json'], r)).text);
   assert.deepEqual(env.errors.filter((e) => e.code === 'code-health'), []);
   assert.deepEqual(env.data.health.map((o) => `${o.level} ${o.path}`), ['warn src/b.mjs']);
+});
+
+const verifyJson = async (r) => JSON.parse((await cli(['verify', r.id, '--ci', '--yes', '--json'], r)).text);
+const silent = (env) => {
+  assert.deepEqual(env.errors.filter((e) => e.code === 'code-health'), []);
+  assert.deepEqual((env.data.health ?? []).filter((o) => /moved/.test(o.path)), []);
+};
+
+test('a committed rename of a file over the hard limit is silent: the base is measured at the old path', async (t) => {
+  const r = repo(t, { 'src/big.mjs': lines(850, 'big') });
+  r.git('mv', 'src/big.mjs', 'src/moved.mjs');
+  r.git('commit', '-q', '-m', 'move');
+  silent(await verifyJson(r));
+});
+
+test('an uncommitted rename (git mv) of a file over the hard limit is silent', async (t) => {
+  const r = repo(t, { 'src/big.mjs': lines(850, 'big') });
+  r.git('mv', 'src/big.mjs', 'src/moved.mjs');
+  silent(await verifyJson(r));
+});
+
+test('a renamed file that also grows from 790 to 810 still fails', async (t) => {
+  const r = repo(t, { 'src/big.mjs': lines(790, 'big') });
+  r.git('mv', 'src/big.mjs', 'src/moved.mjs');
+  r.write('src/moved.mjs', lines(810, 'big'));
+  r.git('add', '-A');
+  r.git('commit', '-q', '-m', 'move and grow');
+  const env = await verifyJson(r);
+  const found = env.errors.filter((e) => e.code === 'code-health');
+  assert.equal(found.length, 1);
+  assert.match(found[0].message, /src\/moved\.mjs 810 lines \(was 790/);
 });
 
 test('the implementer brief template names the code health check in its gate', () => {
