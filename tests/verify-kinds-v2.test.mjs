@@ -108,3 +108,14 @@ test('a verify v2 and a review v2 under the reader before the bump are refused a
   assert.equal(store.read('verify', 'T-MG-1').cache, 'miss', 'the current reader reads it');
   assert.deepEqual(store.read('review', 'T-MG-1/review-r1').focus, ['security']);
 });
+
+test('verify v4 (T-MG-192): mode train needs the train block, and any other record forbids it', () => {
+  const train = { commit: 'c'.repeat(40), head: 'd'.repeat(40), batch: 'batch-20261105T100000' };
+  const mode = (kind) => ({ kind, why: 'a reason', files: [] });
+  assert.deepEqual(check(VERIFY_KINDS.verify, verifyDoc({ mode: mode('train'), train })), []);
+  assert.deepEqual(check(VERIFY_KINDS.verify, verifyDoc({ mode: mode('fast') })), []);
+  assert.deepEqual(check(VERIFY_KINDS.verify, verifyDoc()), [], 'a record with no mode has no train either');
+  assert.deepEqual(paths(check(VERIFY_KINDS.verify, verifyDoc({ mode: mode('train') }))), [':invalid-value'], 'mode train without train');
+  assert.deepEqual(paths(check(VERIFY_KINDS.verify, verifyDoc({ mode: mode('fast'), train }))), [':invalid-value'], 'a fast record with train');
+  assert.deepEqual(paths(check(VERIFY_KINDS.verify, verifyDoc({ train }))), [':invalid-value'], 'train without a mode');
+});

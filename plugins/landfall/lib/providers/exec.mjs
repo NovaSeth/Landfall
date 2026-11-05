@@ -122,6 +122,7 @@ export function exec({ flags, names, io, pluginRoot }) {
   const taskDir = dirname(KINDS.task.path(id));
   let brief;
   let wt = null;
+  let named;
   if (role === 'implementer') {
     wt = taskWorktree(task, w, names, io.env);
     if (!wt) return fail('implementer-no-worktree', `${id} has no recorded worktree that is a linked worktree of ${w.repo}`, `${bin} task start ${id} records one`);
@@ -132,6 +133,11 @@ export function exec({ flags, names, io, pluginRoot }) {
     const got = reviewBrief(asked, store, w, taskDir, id, bin);
     if (got.refused) return got.refused;
     brief = got.text;
+    // T-MG-192: the run binds the commit the review brief names (its Range head); a branch that moved since is refused
+    named = /^Range: [0-9a-f]+\.\.([0-9a-f]{40,64})/m.exec(brief)?.[1];
+    const b = task.branch;
+    const tip = named && typeof b === 'string' && b !== '' && !b.startsWith('-') ? git(['rev-parse', '--verify', '-q', `${b}^{commit}`], { cwd: w.repo, env: io.env }).stdout.trim() : named;
+    if (tip !== named) return fail('brief-stale', `the review brief is of ${named.slice(0, 12)}, but ${b} is at ${tip.slice(0, 12) || 'no commit'}`, `${bin} review brief ${id} --write --force`);
   }
   const live = liveRun(store, id, role);
   if (live) return fail('run-live', `${live.runId} is ${live.status} for ${id} as ${role}`, 'wait for it to end');
@@ -160,10 +166,7 @@ export function exec({ flags, names, io, pluginRoot }) {
     elapsedMs: 0, capS, tokens: null, tokensReason: null, costMicroUsd: null, lastLine: null, unknownEvents: 0, outFile: join(outDir, OUT_NAME), exit: null, error: null, bin: program,
     outDirId: dirIdOf(dirSt), briefSha256: sha256(input),
   };
-  // the reviewed commit: the task branch tip now, at the start of the review (T-MG-186 fix round 2, F5)
-  const branch = task?.branch;
-  const head = role === 'reviewer' && typeof branch === 'string' && branch !== '' && !branch.startsWith('-') ? git(['rev-parse', '--verify', '-q', `${branch}^{commit}`], { cwd: w.repo, env: io.env }).stdout.trim() : '';
-  if (/^[0-9a-f]{40,64}$/.test(head)) record.head = head;
+  if (named) record.head = named;
   store.create('run', runId, record);
   store.create('runLog', runId, { runId, lines: [] });
   const child = start(process.execPath, [join(pluginRoot, 'bin', bin), 'run-supervise', runId, '--yes'], { unit: 'providers', cwd: io.cwd, env: io.env, detached: true, stdin: 'ignore' });

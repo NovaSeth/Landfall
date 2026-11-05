@@ -372,3 +372,19 @@ test('reviewer exec passes the review schema to the Codex adapter argv', async (
   assert.equal(args.sandbox, 'read-only');
   assert.ok(readFileSync(`${rec.outFile}.prompt`, 'utf8').endsWith(externalSection('codex', 'T-TU-1')));
 });
+
+test('T-MG-192: a reviewer run binds the Range head of its review brief, and a branch that moved since is refused (brief-stale)', async (t) => {
+  const p = await project(t);
+  const named = /^Range: [0-9a-f]+\.\.([0-9a-f]{40})/m.exec(reviewBrief(p, 'T-TU-1'))?.[1];
+  assert.ok(named, 'the rendered brief names its head');
+  const run = (await p.ok(['exec', '--task', 'T-TU-1', '--role', 'reviewer', '--provider', 'fakeok'])).e.data.runId;
+  assert.equal(p.record(run).head, named);
+  await p.ended(run);
+  writeFileSync(join(p.repo, 'b.txt'), 'b\n');
+  git(p.repo, p.env, ['add', 'b.txt']);
+  git(p.repo, p.env, ['commit', '-q', '-m', 'the branch moves']);
+  const stale = await p.cli(['exec', '--task', 'T-TU-1', '--role', 'reviewer', '--provider', 'fakeok']);
+  assert.equal(stale.code, 1, show(stale));
+  assert.equal(stale.e.errors[0].code, 'brief-stale');
+  assert.equal(p.records().length, 1, 'no second run record');
+});

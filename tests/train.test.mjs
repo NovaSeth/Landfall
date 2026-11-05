@@ -460,3 +460,24 @@ test('T-MG-191: a generator that leaves other changes (an untracked file) than t
   assert.deepEqual(outcomes(res), [[one, 'merged'], [two, 'conflict']]);
   assert.equal(r.git('ls-tree', '-r', '--name-only', 'HEAD').includes('stray.txt'), false);
 });
+
+test('T-MG-192: a merge of main into the branch after the review keeps it eligible; an own commit after it does not', async (t) => {
+  const r = repo(t);
+  const merged = r.task('feat/merged', addTest('merged.test.mjs'));
+  const own = r.task('feat/own', addTest('own.test.mjs'));
+  r.write('other.txt', 'main moved\n');
+  r.git('add', '-A', '--', '.', `:(exclude)${names.stateDir}`);
+  r.git('commit', '-q', '-m', 'main moves on');
+  r.git('checkout', '-q', 'feat/merged');
+  r.git('merge', '--no-edit', 'main');
+  r.git('checkout', '-q', 'feat/own');
+  r.write('own2.txt', 'one more commit\n');
+  r.git('add', '-A', '--', '.', `:(exclude)${names.stateDir}`);
+  r.git('commit', '-q', '-m', 'own change after the review');
+  r.git('checkout', '-q', 'main');
+  const res = await cli(['train', merged, own, '--yes'], r);
+  assert.ok(res.env.data?.tasks, JSON.stringify(res.env).slice(0, 1500));
+  const why = (id) => res.env.data.tasks.find((x) => x.task === id);
+  assert.doesNotMatch(why(merged).why ?? '', /changed since its review/, JSON.stringify(res.env));
+  assert.match(why(own).why, /branch changed since its review/);
+});

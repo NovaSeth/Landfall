@@ -53,14 +53,14 @@ export const TASK_STATUSES = Object.freeze(['new', 'planned', 'dispatched', 'imp
 // A kind: `dir` (its directory in the store, '' for the root), `keyPattern` (null for a single file),
 // `file(key)` (path inside the store), `match` (recognises its files; group 1 = the key), `key` (the document field
 // equal to the key), `fields` and `opt` (lib/state/schema.mjs), `readUpTo`. path() checks the key first.
-export function defineKind(name, version, { dir, keyPattern = null, file, match, key = null, fields, opt, readUpTo = version }) {
+export function defineKind(name, version, { dir, keyPattern = null, file, match, key = null, fields, opt, rule, readUpTo = version }) {
   const path = keyPattern
     ? (k) => {
       if (typeof k !== 'string' || !keyPattern.test(k)) throw new StateError('invalid-key', 'USAGE', `${JSON.stringify(k)} is not a valid ${name} key`, { hint: `expected ${keyPattern}` });
       return file(k);
     }
     : () => file();
-  return Object.freeze({ name, version, readUpTo, dir, keyPattern, path, match, key, spec: { t: 'obj', f: { schema: { t: 'int', min: version, max: version }, ...fields }, opt } });
+  return Object.freeze({ name, version, readUpTo, dir, keyPattern, path, match, key, spec: { t: 'obj', f: { schema: { t: 'int', min: version, max: version }, ...fields }, opt, rule } });
 }
 
 export const KINDS = Object.freeze({

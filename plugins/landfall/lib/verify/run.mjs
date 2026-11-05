@@ -101,6 +101,29 @@ export function gitIn(where, env, args) {
   return r;
 }
 
+// T-MG-192: `tip` adds no change of its own to `head` (a review's commit): no own commit, every first-parent commit in
+// head..tip is a merge of commits already in `target`, and the own change (target's merge base..commit, over `scope`) is
+// the same text at both (the whole tree but the state directory, submodules included; `scope` as codeState gives it): a merge of the target into the branch is no change, an edited merge is. `target`: a branch name
+// or full ref, resolved to a commit. Git runs without repository-independent config, external diff or attribute sources.
+export function sameChange(where, env, head, tip, target = 'main', scope = ['--', '.']) {
+  const clean = Object.fromEntries(Object.entries(env).filter(([k]) => !/^GIT_(CONFIG|ATTR_SOURCE|EXTERNAL_DIFF|DIFF_OPTS)/.test(k)));
+  const g = (...a) => gitIn(where, { ...clean, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_ATTR_NOSYSTEM: '1', GIT_NO_REPLACE_OBJECTS: '1' }, a);
+  const full = target === 'HEAD' || target.startsWith('refs/') ? target : `refs/heads/${target}`;
+  const into = g('rev-parse', '--verify', '-q', `${full}^{commit}`).stdout.trim();
+  if (!into || g('merge-base', '--is-ancestor', head, tip).status !== 0) return false;
+  const log = (...a) => g('log', '--first-parent', ...a, '--end-of-options', `${head}..${tip}`);
+  const own = log('--no-merges', '--format=%H');
+  const merges = log('--merges', '--format=%P');
+  const change = (c) => {
+    const b = g('merge-base', '--end-of-options', c, into).stdout.trim();
+    const d = b ? g('-c', 'diff.external=', '-c', 'diff.ignoreSubmodules=none', '-c', 'core.attributesFile=/dev/null', 'diff', '--no-renames', '--no-ext-diff', '--no-textconv', '--ignore-submodules=none', '--binary', '--end-of-options', b, c, ...scope) : null;
+    return d && d.status === 0 ? d.stdout : null;
+  };
+  const was = change(head);
+  return own.status === 0 && own.stdout.trim() === '' && merges.status === 0 && was !== null && was === change(tip)
+    && merges.stdout.split('\n').filter(Boolean).every((l) => l.split(' ').slice(1).every((q) => g('merge-base', '--is-ancestor', q, into).status === 0));
+}
+
 export const commitExists = (where, env, sha) => Boolean(sha) && gitIn(where, env, ['cat-file', '-e', `${sha}^{commit}`]).status === 0;
 
 // The repository as verify sees it: { rel, scope, routeScope, head, dirty }. `scope` (freshness: dirty, done) and
