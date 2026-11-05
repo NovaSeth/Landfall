@@ -92,6 +92,7 @@ Claude  Noted. I've opened a task for the export.
 ## What's new in 2.7.3
 
 - **Role tokens:** the hooks mint capability tokens for the session and for reviewer agents; dispatching and recording a review need one on stdin, so an implementer cannot approve its own work whatever the shell spelling. Subagents cannot read transcripts or the token store.
+- **Code-health guardrails:** verify fails a change that pushes a file over 800 lines or a function over 120, and warns on a grown pre-existing offender (decision D-MG-68).
 
 ## What's new in 2.7.2
 
