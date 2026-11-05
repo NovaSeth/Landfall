@@ -212,3 +212,13 @@ test('owned state files: nothing the previous hand-written list protected is all
   assert.equal(edit(f, f.s('guard-extra.txt'), { content: 'x\n' }, 'Write').decision, 'allow');
   assert.equal(ownedFile('secrets-patterns.txt'), null);
 });
+
+test('the role token store is owned by the session and subagent hooks: Edit and Write are denied with SEC-13', (t) => {
+  const f = fixture(t);
+  assert.equal(ownedFile('local/token.json')?.rule, 'SEC-13');
+  for (const [tool, input] of [['Edit', { old_string: '{', new_string: '{ ' }], ['Write', { content: '{}\n' }]]) {
+    const v = edit(f, f.s('local/token.json'), input, tool);
+    assert.equal(v.decision, 'deny', tool);
+    assert.match(v.reason, /^SEC-13: blocked a direct edit of /);
+  }
+});

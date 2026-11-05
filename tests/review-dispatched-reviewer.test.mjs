@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
@@ -194,4 +194,22 @@ test('token flag: argv value, a terminal, a malformed token and a corrupt store 
   const closed = await cli(r, argv);
   assert.deepEqual([closed.code, codeOf(closed)], [7, 'token-store']);
   assert.deepEqual(reviews(r), []);
+});
+
+test('token matrix, review record: a failed review write keeps the reviewer token, so the retry records once', async (t) => {
+  const r = repo(t);
+  dispatched(r);
+  mint(r, 'orchestrator');
+  const token = mint(r, 'reviewer');
+  const taskDir = join(r.dir, names.stateDir, 'tasks', r.id);
+  chmodSync(taskDir, 0o555);
+  t.after(() => chmodSync(taskDir, 0o755));
+  const failed = await cli(r, rec(r, ['--token', '-']), { token });
+  assert.notEqual(failed.code, 0);
+  assert.deepEqual(reviews(r), []);
+  chmodSync(taskDir, 0o755);
+  assert.equal((await cli(r, rec(r, ['--token', '-']), { token })).code, 0);
+  const again = await cli(r, rec(r, ['--token', '-']), { token });
+  assert.deepEqual([again.code, codeOf(again)], [7, 'token-unknown']);
+  assert.equal(reviews(r).length, 1);
 });
