@@ -169,20 +169,119 @@ test('1.x fix round delivered → scoped re-review (REV-6, REV-20); a round in p
   assert.deepEqual(s.rules, ['REV-6', 'REV-20'], 'the implementer reporting a round delivers it too');
 });
 
+test('D-MG-80: approved tasks wait for dispatched work, review, delivered reports and fix rounds', () => {
+  const approved = task('T-TU-1', 'implemented', { events: [ev('implementer', 1), ev('review', 3, { verdict: 'approved', round: 1 })] });
+  const others = [
+    task('T-TU-2', 'dispatched', { events: [ev('dispatched', 4)] }),
+    task('T-TU-2', 'in-review', { events: [ev('dispatched', 4)] }),
+    task('T-TU-2', 'implemented', { events: [ev('implementer', 4)] }),
+    task('T-TU-2', 'fix-round', { round: 1, events: [ev('fix-round', 4, { open: 2 })] }),
+    task('T-TU-2', 'fix-round', { round: 1, events: [ev('fix-round', 4, { open: 0 })] }),
+    task('T-TU-2', 'implemented', { events: [ev('review', 4, { verdict: 'needs-fixes', blocking: 1 })] }),
+  ];
+  for (const other of others) {
+    const s = row(table([approved, other]), approved.id);
+    assert.equal(s.kind, 'wait', other.status);
+    assert.equal(s.state, 'approved, held for the train');
+    assert.equal(s.step, 'held for one train with the tasks in flight (D-MG-80); the train runs when they settle');
+    assert.deepEqual(s.rules, ['ORC-25']);
+    assert.doesNotMatch(s.step, /close/);
+  }
+});
+
+test('D-MG-80: a lone approval of every class takes the train immediately', () => {
+  for (const cls of ['mechanical', 'standard', 'sensitive', 'critical']) {
+    const t = task('T-TU-1', 'dispatched', { cls, events: [ev('dispatched', 1), ev('review', 3, { verdict: 'approved' })] });
+    const s = row(table([t]), t.id);
+    assert.equal(s.kind, 'action', cls);
+    assert.ok(s.step.includes(`\`${BIN} train T-TU-1\``), s.step);
+    assert.doesNotMatch(s.step, /close/);
+    assert.deepEqual(s.rules, ['REV-11', 'ORC-25', 'FLW-8']);
+  }
+});
+
+test('D-MG-80: several approved or self-verified tasks name one train --ready command', () => {
+  const tasks = [
+    task('T-TU-1', 'implemented', { events: [ev('review', 2, { verdict: 'approved' })] }),
+    task('T-TU-2', 'fix-round', { round: 1, events: [ev('fix-round', 1, { open: 0 }), ev('self-verified', 3, { round: 1 })] }),
+    task('T-TU-3', 'verified', { events: [ev('verify', 4)] }),
+  ];
+  for (const s of table(tasks, { bin: 'custom-bin' }).steps) {
+    assert.equal(s.kind, 'action');
+    assert.deepEqual(s.step.match(/`[^`]+`/g), ['`custom-bin train --ready`']);
+    assert.doesNotMatch(s.step, /close/);
+    assert.deepEqual(s.rules, ['REV-11', 'ORC-25', 'FLW-8']);
+  }
+});
+
+test('D-MG-80: new, planned, blocked and closed tasks do not hold an approval', () => {
+  const approved = task('T-TU-1', 'verified', { events: [ev('verify', 3)] });
+  for (const status of ['new', 'planned', 'blocked', 'cancelled', 'done']) {
+    const s = row(table([approved, task('T-TU-2', status)]), approved.id);
+    assert.equal(s.kind, 'action', status);
+    assert.ok(s.step.includes(`\`${BIN} train T-TU-1\``), s.step);
+  }
+});
+
+test('D-MG-80: the oldest approval releases every held task at exactly 45 minutes despite later events', () => {
+  const oldest = task('T-TU-1', 'implemented', { events: [ev('implementer', 1), ev('review', 10, { verdict: 'approved' }), ev('status-request', 50)] });
+  const newer = task('T-TU-2', 'verified', { events: [ev('verify', 40)] });
+  const working = task('T-TU-3', 'dispatched', { events: [ev('dispatched', 50)] });
+  const tasks = [newer, working, oldest];
+  for (const t of [oldest, newer]) {
+    assert.equal(row(table(tasks, { now: T0 + 55 * MIN - 1 }), t.id).kind, 'wait');
+    for (const min of [55, 56]) {
+      const s = row(table(tasks, { now: T0 + min * MIN }), t.id);
+      assert.equal(s.kind, 'action');
+      assert.ok(s.step.includes(`\`${BIN} train --ready\``), s.step);
+      assert.match(s.step, /2 held/);
+      assert.ok(s.step.includes(`since ${at(10)}`), s.step);
+      assert.deepEqual(s.rules, ['REV-11', 'ORC-25', 'FLW-8']);
+    }
+  }
+});
+
+test('D-MG-80: self-verification and verify events start the hold clock, not an earlier approval', () => {
+  const working = task('T-TU-2', 'dispatched', { events: [ev('dispatched', 50)] });
+  const approvals = [
+    task('T-TU-1', 'fix-round', { round: 1, events: [ev('review', 1, { verdict: 'approved' }), ev('fix-round', 10, { open: 0 }), ev('self-verified', 20, { round: 1 })] }),
+    task('T-TU-1', 'verified', { events: [ev('verify', 20), ev('status-request', 50)] }),
+  ];
+  for (const approved of approvals) {
+    assert.equal(row(table([approved, working], { now: T0 + 65 * MIN - 1 }), approved.id).kind, 'wait');
+    const s = row(table([approved, working], { now: T0 + 65 * MIN }), approved.id);
+    assert.equal(s.kind, 'action');
+    assert.match(s.step, /1 held/);
+    assert.ok(s.step.includes(`since ${at(20)}`), s.step);
+  }
+});
+
+test('D-MG-80: a critical approval is held with the batch and released when work settles', () => {
+  const approved = task('T-TU-1', 'implemented', { cls: 'critical', events: [ev('review', 3, { verdict: 'approved' })] });
+  const other = task('T-TU-2', 'dispatched', { events: [ev('dispatched', 4)] });
+  assert.equal(row(table([approved, other]), approved.id).kind, 'wait');
+  const settled = { ...other, events: [...other.events, ev('review', 5, { verdict: 'approved' })] };
+  for (const s of table([approved, settled]).steps) {
+    assert.equal(s.kind, 'action');
+    assert.ok(s.step.includes(`\`${BIN} train --ready\``), s.step);
+    assert.doesNotMatch(s.step, /close/);
+  }
+});
+
 test('1.x self-verified round → approved: verify, merge, close (REV-11, FLW-8); a verified task the same', () => {
   const events = [ev('fix-round', 2, { round: 1, addressed: 1, open: 0 }), ev('self-verified', 3, { round: 1 })];
   let s = row(table([task('T-TU-1', 'fix-round', { round: 1, events })]), 'T-TU-1');
   assert.deepEqual(s.rules, ['REV-11', 'ORC-25', 'FLW-8']);
-  // T-MG-178 (intended change): one `close` call replaces the verify → task done → task merge chain
-  assert.match(s.step, new RegExp(`\`${BIN} close T-TU-1\``));
-  assert.match(s.step, new RegExp(`${BIN} close <ids…>\`, one batch`));
+  // D-MG-80: every approved class takes the train.
+  assert.match(s.step, new RegExp(`\`${BIN} train T-TU-1\``));
+  assert.doesNotMatch(s.step, /close/);
   // T-MG-186: a critical task merges through the train
   const crit = row(table([task('T-TU-1', 'fix-round', { round: 1, cls: 'critical', events })]), 'T-TU-1');
   assert.deepEqual(crit.rules, ['REV-11', 'ORC-25', 'FLW-8']);
   assert.match(crit.step, new RegExp(`${BIN} train T-TU-1`), 'T-MG-186: an approved critical task merges through the train');
-  assert.match(crit.step, new RegExp(`${BIN} train --ready`));
+  assert.doesNotMatch(crit.step, /close/);
   assert.doesNotMatch(s.step, /squash|by hand|locally/);
-  assert.match(s.step, /at once, not held for a batch/);
+  assert.equal(s.kind, 'action');
   s = row(table([task('T-TU-1', 'verified')]), 'T-TU-1');
   assert.deepEqual(s.rules, ['REV-11', 'ORC-25', 'FLW-8']);
   // a self-check of round 1 does not approve round 2

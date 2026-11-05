@@ -7,7 +7,7 @@
 //   it as dispatched (the reviewer as executor), so the next tick waits ·
 //   implemented (round k) | fix-round (round k delivered, no open findings) → scoped re-review, or approved after a
 //   self-verified event of round k · fix-round with open findings → wait · round > rounds cap → decide (REV-7) ·
-//   verified → `close` (verify, task done, task merge, commit) · blocked after an implementer report → resolve it (ORC-7) · blocked with a reason
+//   approved | verified → hold for one train while other tasks run (at most 45 min), then train · blocked after an implementer report → resolve it (ORC-7) · blocked with a reason
 //   "question: …" → an open question (information with its answer step, waits; SPC-5) · blocked otherwise →
 //   information (waits) · done | cancelled → nothing.
 // A live run (queued, starting, running) of an open task turns its row into a wait for that run, so a step is not
@@ -28,6 +28,7 @@ import { codeSpan, dataLine, shellQuote } from '../text/data.mjs';
 import { DEFAULT_BUDGET_MIN } from './budget.mjs';
 
 export const STATUS_MIN = 20; // ORC-9 default: status request after 20 min without an event
+const TRAIN_HOLD_MIN = 45; // D-MG-80, GC4: an approved batch cannot wait indefinitely for other tasks.
 export const WAIT_S = Object.freeze({ runs: 600, agents: 1800, min: 60, max: 3600 });
 const LIVE = new Set(['queued', 'starting', 'running']);
 const FINISHED = new Set(['done', 'failed', 'timeout', 'stopped']);
@@ -102,7 +103,7 @@ export function parsePlan(text) {
 
 const belongs = (t, ref) => t.id === ref || t.title === ref || t.title.startsWith(`${ref}:`) || t.title.startsWith(`${ref} `);
 
-function taskRow(t, { now, bin, lanesOn, caps, budget = DEFAULT_BUDGET_MIN }) {
+function taskRow(t, { now, bin, lanesOn, caps, approvals, budget = DEFAULT_BUDGET_MIN }) {
   const id = t.id;
   const age = Math.floor((now - lastEvent(t)) / MIN_MS);
   // over budget (ORC-9, ORC-11): the last dispatched or fix-round event is older than the brief's budget. A visible
@@ -119,29 +120,30 @@ function taskRow(t, { now, bin, lanesOn, caps, budget = DEFAULT_BUDGET_MIN }) {
   };
   // a review dispatched to an in-session agent is visible only once recorded: the task then waits as dispatched
   const record = `record it: \`${bin} task set ${id} dispatched --executor <reviewer> --base <sha>\``;
-  // critical: through the train (ORC-25); every other class: closed at once
-  const approved = (state) => (t.class === 'critical'
-    ? action(id, state, `merge it through the train, which verifies, merges and closes it: \`${bin} train ${id}\` (several approved: \`${bin} train --ready\`)`, ['REV-11', 'ORC-25', 'FLW-8'])
-    : action(id, state, `merge origin/main into its branch, then close it at once, not held for a batch: \`${bin} close ${id}\` (verify, task done, task merge, commit; several ready: \`${bin} close <ids…>\`, one batch)`, ['REV-11', 'ORC-25', 'FLW-8']));
+  const approved = (state, event) => {
+    approvals.set(id, timeOf(event));
+    return action(id, state, `merge through one train: \`${bin} train ${id}\``, ['REV-11', 'ORC-25', 'FLW-8']);
+  };
   const decide = (k) => action(id, `fix round ${k} after the ${caps.rounds}-round limit`,
     'decide: escalate to the user or change the approach, and start no further fix round (`task set` refuses it; the remaining blocking findings close with a review-close decision)', ['REV-7']);
   // round k is delivered: approved when a self-verified event of round k follows the last fix-round event
   const delivered = (k) => {
     const from = lastIndex(t.events, ['fix-round']);
-    if (t.events.slice(from + 1).some((e) => e.event === 'self-verified' && e.data?.round === k)) return approved(`fix round ${k} verified by the orchestrator`);
+    const verified = t.events.slice(from + 1).find((e) => e.event === 'self-verified' && e.data?.round === k);
+    if (verified) return approved(`fix round ${k} verified by the orchestrator`, verified);
     const last = k >= caps.rounds ? `; if it needs fixes again, decide (escalate to the user or change the approach): no fix round ${k + 1}` : '';
     return action(id, `fix round ${k} delivered`, `dispatch the scoped re-review of round ${k}'s diff and ${record}; a mechanical or UI round you may verify yourself: \`${bin} task set ${id} self-verified --round ${k}\`${last}`,
       k >= caps.rounds ? ['REV-6', 'REV-20', 'REV-7'] : ['REV-6', 'REV-20']);
   };
   // a review recorded (a `review` event, review record) after the last report, fix round or dispatch decides the step by
-  // its verdict, whatever the status says: approved → verify and close; needs-fixes → the next fix round from its
+  // its verdict, whatever the status says: approved → the train; needs-fixes → the next fix round from its
   // findings, or the decision past the rounds cap. A review before the fix round that answers it decides nothing.
   const since = lastIndex(t.events, ['implementer', 'fix-round', 'dispatched']);
   const rv = [...t.events.slice(since + 1)].reverse().find((e) => e.event === 'review');
   if (rv && ['dispatched', 'in-review', 'implemented', 'fix-round'].includes(t.status)) {
     const n = rv.data?.round ?? '?';
     // `blocking` counts the blocking findings; an older event lacks it (unknown: the verdict decides)
-    if (rv.data?.verdict === 'approved' || rv.data?.blocking === 0) return approved(`review r${n} approved`);
+    if (rv.data?.verdict === 'approved' || rv.data?.blocking === 0) return approved(`review r${n} approved`, rv);
     const k = (t.round ?? 0) + 1;
     if (k > caps.rounds) return decide(k);
     return action(id, `review r${n}: needs-fixes`, `hand its blocking findings to the implementer as fix round ${k} (REV-5; the review file: \`${bin} task show ${id}\`) and record it: \`${bin} task set ${id} fix-round --round ${k} --addressed 0 --open <n>\``, ['REV-5', 'PRI-6']);
@@ -165,7 +167,7 @@ function taskRow(t, { now, bin, lanesOn, caps, budget = DEFAULT_BUDGET_MIN }) {
       if (e && e.data?.open > 0) return working(`fix round ${t.round} in progress (${e.data.open} open)`);
       return delivered(t.round);
     }
-    case 'verified': return approved('verified');
+    case 'verified': return approved('verified', t.events[lastIndex(t.events, ['verify', 'verified'])]);
     case 'blocked': {
       const e = t.events[lastIndex(t.events, ['implementer', 'blocked'])];
       if (e?.event === 'implementer' && BLOCKING_REPORTS.has(e.data?.report)) {
@@ -237,6 +239,16 @@ export function nextSteps({ tasks = [], runs = [], handles = [], me = null, plan
     steps.push(action('-', `the task state cannot be read: ${cell(problem.message)}`, cell(problem.hint || 'repair or restore the file'), ['FLW-7']));
   } else {
     if (multi && me === null) steps.push(action('-', 'your git user.email has no handle in this repository', `register it: \`${bin} init\``, []));
+    // Use the same approval decision for the cross-task view and each row; handoff's inFlight excludes delivered reports.
+    const approvals = new Map();
+    const rows = new Map(tasks.filter(open).map((t) => [t.id, taskRow(t, { now, bin, lanesOn, caps, approvals, budget: budgets[t.id] ?? DEFAULT_BUDGET_MIN })]));
+    const flying = tasks.some((t) => open(t) && !approvals.has(t.id) && REVIEWABLE.has(t.status));
+    const oldest = Math.min(...approvals.values());
+    const capped = approvals.size > 0 && now - oldest >= TRAIN_HOLD_MIN * MIN_MS;
+    for (const [id] of approvals) {
+      if (flying && !capped) rows.set(id, wait(id, 'approved, held for the train', 'held for one train with the tasks in flight (D-MG-80); the train runs when they settle', ['ORC-25']));
+      else rows.get(id).step = `${flying ? `${approvals.size} held since ${new Date(oldest).toISOString()}; ${TRAIN_HOLD_MIN}-minute hold cap reached; ` : ''}merge through one train: \`${bin} train ${approvals.size > 1 ? '--ready' : id}\``;
+    }
     let ownOpen = 0;
     for (const t of [...tasks].sort((a, b) => natural(a.id, b.id))) {
       if (!open(t)) continue;
@@ -252,7 +264,7 @@ export function nextSteps({ tasks = [], runs = [], handles = [], me = null, plan
       const pending = (t.status === 'new' || t.status === 'planned') ? afterOf(t).filter((id) => open(byId.get(id)) || !byId.has(id)) : [];
       const r = pending.length
         ? wait(t.id, `waits for ${pending.join(', ')}`, `dispatch nothing until ${pending.length === 1 ? 'it is' : 'they are'} done or cancelled; then route and brief it from the merged base`, ['FLW-9'])
-        : taskRow(t, { now, bin, lanesOn, caps, budget: budgets[t.id] ?? DEFAULT_BUDGET_MIN });
+        : rows.get(t.id);
       if (r.kind !== 'question') ownOpen++; // a queued question holds no slot: the next plan entry may start (SPC-5)
       const run = liveOf.get(t.id);
       // a live run of the task is its work in progress: wait for it instead of starting the step again

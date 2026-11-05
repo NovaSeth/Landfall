@@ -169,7 +169,7 @@ test('loop: an approved task\'s next step is its own close at once, not held for
   const task = { id: 'T-TU-1', kind: 'task', title: 't', lane: null, owner: 'TU', class: 'standard', classHistory: [], status: 'verified', round: 0, events: [{ at: AT, by: 'TU', event: 'verify', data: {} }], base: null, branch: null };
   const { steps } = nextSteps({ tasks: [task], caps: { rounds: 2 }, now: Date.parse(AT), bin: names.bin });
   const s = steps.find((x) => x.task === 'T-TU-1');
-  assert.match(s.step, new RegExp(`at once, not held for a batch: \`${names.bin} close T-TU-1\``));
+  assert.match(s.step, new RegExp(`\`${names.bin} train T-TU-1\``));
   assert.doesNotMatch(s.step, /--ready/);
 });
 
