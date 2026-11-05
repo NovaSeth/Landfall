@@ -57,6 +57,7 @@ import { baselineSha, compareInventory, excusable, fingerprint, referenceOf, spl
 import { fastPlan, testGates } from './fast.mjs';
 import { cacheKey, lookup, machineKey, store as storeRuns, treeOf } from './gate-cache.mjs';
 import { logLines, requireTrustedGates } from './gates.mjs';
+import { codeHealth } from './health.mjs';
 import { runHeavy } from './heavy.mjs';
 import { cacheState, measure } from './measure.mjs';
 import { readProjectPatterns, runRedacted } from './redact.mjs';
@@ -352,8 +353,7 @@ export function evaluate({ where, names, env, id, mode, handle = null, at = now(
     artifacts: { report: false, review: 'not-required' }, result: 'pass',
   };
   let candidates = null;
-  let inv = null;
-  let ctx = null;
+  let inv = null, ctx = null;
   let output = [];
   let reused = null;
   let renamed = [];
@@ -520,6 +520,7 @@ export function evaluate({ where, names, env, id, mode, handle = null, at = now(
       say('fail', 'not-classified', `${id} has no class`, `classify it: ${names.bin} route ${id} --paths <p,…> --loc <n>`);
     }
   }
+  const health = mode === 'merge' || !change ? null : codeHealth({ store, say, paths: change.paths, base: task.base, git: (a) => gitIn(where, env, a), read: (ctx ?? context(where, env, code.rel)).read, max: SOURCE_MAX });
   if (inv?.weak && doc.class === 'critical') {
     say('fail', 'weak-collector', 'a test gate of this critical task is read only by the generic scan (no runtime results)', 'use a structured reporter: profile observe writes --test-reporter=tap for node:test, --json for Jest and Vitest');
   }
@@ -551,7 +552,7 @@ export function evaluate({ where, names, env, id, mode, handle = null, at = now(
     const n = store.list('verifyAttempt').filter((k) => k.startsWith(`${id}-m`)).length + 1;
     store.write('verifyAttempt', `${id}-m${n}`, { task: id, at, gates: output });
   }
-  return { doc, reasons: reasons.map(({ code: c, message, hint }) => ({ code: c, message, hint })), written: write, candidates, output, reused, attempt, renamed, publish };
+  return { doc, reasons: reasons.map(({ code: c, message, hint }) => ({ code: c, message, hint })), written: write, candidates, output, reused, attempt, renamed, publish, health: health?.offenders ?? [] };
 }
 
 // On pass the baseline is this inventory; written only when its content changed, and only over the baseline this run

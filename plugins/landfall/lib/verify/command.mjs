@@ -12,6 +12,7 @@ import { StateError } from '../state/index.mjs';
 import { forTerminal } from '../text/clean.mjs';
 import { batchMerge } from './batch.mjs';
 import { markDone } from './done.mjs';
+import { healthLine } from './health.mjs';
 import { adoptMerged, mergeTask } from './merge.mjs';
 import { pinBaseline, showBaseline } from './pin.mjs';
 import { runTrain } from './train.mjs';
@@ -57,10 +58,11 @@ export function renderVerify(doc, reused = null, renamed = []) {
 
 export const verify = typed(({ args, flags, names, version, io }) => {
   const out = verifyTask({ cwd: io.cwd, env: io.env, names, id: args.id, ci: Boolean(flags.ci), cache: !flags.noCache, full: Boolean(flags.full), version: version ?? null });
-  const data = { ...out.doc, renamed: out.renamed, written: out.written, attempt: out.attempt, closed: out.closed, ...(out.candidates ? { candidates: out.candidates } : {}), output: out.output, reusedFrom: out.reused };
+  const health = healthLine(out.health);
+  const data = { ...out.doc, renamed: out.renamed, health: out.health, written: out.written, attempt: out.attempt, closed: out.closed, ...(out.candidates ? { candidates: out.candidates } : {}), output: out.output, reusedFrom: out.reused };
   const tail = out.written ? `gate output: local/verify/${out.doc.task}.log in the state directory (attempt ${out.attempt}: ${out.doc.task}-${out.attempt}.log)`
     : out.closed ? `nothing written: ${out.doc.task} is ${out.closed}, a closed task takes no further state` : 'nothing written (--ci)';
-  return { code: exitOf(out.doc.result), data, errors: out.reasons, text: `${forTerminal([...renderVerify(out.doc, out.reused, out.renamed), tail].join('\n'))}\n` };
+  return { code: exitOf(out.doc.result), data, errors: out.reasons, text: `${forTerminal([...renderVerify(out.doc, out.reused, out.renamed), ...(health ? [health] : []), tail].join('\n'))}\n` };
 });
 
 export const taskDone = typed(({ args, names, io }) => {
