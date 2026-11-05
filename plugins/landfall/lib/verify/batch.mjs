@@ -241,8 +241,7 @@ export function batchMerge({ cwd, env, names, ids = null, ready = false, version
       if (lost) return `no generator rebuilds ${lost}`;
       gitIn(here, env, ['add', '--', ...paths]);
       const stray = gitIn(here, env, ['diff', '--quiet', '--', '.', ...paths.map((p) => `:(exclude,literal)${p}`)]).status !== 0 || gitIn(here, env, ['ls-files', '--others', '--exclude-standard']).stdout.trim() !== '';
-      if (stray) return 'the generators changed other files';
-      return gitIn(here, env, ['commit', '-q', '--no-edit']).status === 0 ? null : 'cannot commit the regenerated merge';
+      return stray ? 'the generators changed other files' : gitIn(here, env, ['commit', '-q', '--no-edit']).status === 0 ? null : 'cannot commit the regenerated merge';
     };
     const build = (set) => {
       const key = set.map((t) => t.task).join(' ');
