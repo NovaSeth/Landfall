@@ -61,7 +61,7 @@ function repo(t) {
 
 // A run record of `task` and `role` with `status`, its out file holding `out` (JSON unless a string). Its out
 // directory is as exec makes it (T-MG-91): a 0700 directory right under the temp directory, bound by outDirId.
-function addRun(r, { task = r.id, role = 'reviewer', status = 'done', out = EXTERNAL, n = 1 } = {}) {
+function addRun(r, { task = r.id, role = 'reviewer', status = 'done', out = EXTERNAL, n = 1, head = 'a'.repeat(40) } = {}) {
   const runId = runs.runIdOf('codex', task, role, n);
   const outDir = mkdtempSync(join(tmpdir(), 'review-run-out-'));
   chmodSync(outDir, 0o700);
@@ -73,7 +73,7 @@ function addRun(r, { task = r.id, role = 'reviewer', status = 'done', out = EXTE
   r.rstore.write('run', runId, {
     runId, task, role, provider: 'codex', adapterVersion: null, model: null, sandbox: 'read-only', cwd: r.dir, pid: null, pidStart: null, pidMethod: null, lease: null,
     status, queuedAt: AT, startedAt: AT, endedAt: terminal ? AT : null, elapsedMs: 0, capS: 900, tokens: null, tokensReason: null, costMicroUsd: null,
-    lastLine: null, unknownEvents: 0, outFile, exit: terminal ? 0 : null, error: null, outDirId: `${st.dev}:${st.ino}`,
+    lastLine: null, unknownEvents: 0, outFile, exit: terminal ? 0 : null, error: null, outDirId: `${st.dev}:${st.ino}`, ...(head === null ? {} : { head }),
   });
   return { runId, outFile, outDir };
 }
@@ -238,4 +238,16 @@ test('the texts name the --run form: the dispatch skill step 6, and the provider
   const dispatch = readFileSync(join(pluginDir, 'templates', 'skills', 'dispatch.md'), 'utf8');
   assert.match(dispatch.split('\n').find((l) => l.startsWith('4. ')), /external: `\{\{bin\}\} review record <id> --kind external --run <run ID> --yes`/);
   assert.match(readFileSync(join(pluginDir, 'lib', 'providers', 'cli.mjs'), 'utf8').split('\n')[0], /--env/);
+});
+
+test('T-MG-192: a run record without head is refused (run-head-missing), one with head binds it', async (t) => {
+  const r = repo(t);
+  const old = addRun(r, { head: null });
+  const res = await viaRun(r, old.runId);
+  assert.equal(res.code, 7, res.text);
+  assert.equal(first(res).code, 'run-head-missing');
+  assert.match(first(res).hint, /exec/);
+  const ok = await viaRun(r, addRun(r, { n: 2, head: 'b'.repeat(40) }).runId);
+  assert.equal(ok.code, 0, ok.text);
+  assert.equal(r.store.read('task', r.id).events.findLast((e) => e.event === 'review').data.head, 'b'.repeat(40));
 });
