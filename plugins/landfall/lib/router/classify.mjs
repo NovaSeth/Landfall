@@ -1,10 +1,9 @@
 // Task classifier (spec §7.5, SD-14): trivial / standard / critical from the declared plan (paths, LOC estimate,
 // risk flags) and risk globs, deterministic and pure (no file is read). Thresholds and the default risk globs are
 // data (thresholds.json):
-//   critical  a path matches a risk glob, or a flag in criticalFlags, or files > critical.overFiles, or
-//             LOC > critical.overLoc
+//   critical  a path matches a risk glob, or a flag in criticalFlags (size never makes a task critical)
 //   trivial   files <= trivial.maxFiles and LOC <= trivial.maxLoc and no flag at all (new-dependency included)
-//   standard  otherwise
+//   standard  otherwise; over split.overFiles or split.overLoc it also carries a `split:` reason (size says split)
 // `reasons` lists every reason of the resulting class; `all` lists every reason at every level with a stable key
 // (code, plus the flag or the path hash), which the ratchet records on the task and an override waives.
 // Paths are repository-relative POSIX paths: `./` and `..` are resolved and duplicates count once; a backslash is a
@@ -175,8 +174,11 @@ const strip = ({ code, text, path }) => (path === undefined ? { code, text } : {
 // and its translation, one a batch of screenshots. A path is weightless by its extension alone (a script under docs/ is
 // code; archives, executable formats, .txt manifests such as requirements.txt and .svg, which may carry script, never
 // are: review r1 F4); a change made only of weightless paths is `docs-only`: size never raises it above standard.
+// Test files (the root tests/ directory, or a real *.test.<ext> suffix) never count toward the split thresholds; the trivial cut still counts every file and every line (`loc`); `locCode` is the LOC without test lines, for the split rule only.
+const TEST_PATH = /^tests\/|\.test\.(?:js|mjs|cjs|ts|tsx|py)$/i;
 const WEIGHTLESS_EXT = /\.(?:md|mdx|markdown|rst|adoc|asciidoc|png|jpe?g|gif|webp|avif|ico|bmp|tiff?|pdf|mp[34]|mov|webm|ogg|wav|woff2?|ttf|otf|eot)$/i;
-export const weightless = (path) => WEIGHTLESS_EXT.test(path);
+export const testPath = (path) => TEST_PATH.test(path);
+export const weightless = (path) => WEIGHTLESS_EXT.test(path) || TEST_PATH.test(path);
 
 // Light paths (incident 2026-10-27: a project whose only code was a throwaway UI prototype under mockups/ had every
 // change over 400 LOC routed critical by size alone): globs from thresholds.json lightPaths, matched like risk globs.
@@ -188,12 +190,13 @@ export const weightless = (path) => WEIGHTLESS_EXT.test(path);
 // `riskPaths` are the profile's globs, added to the defaults; `thresholds` are the shipped ones with the repository's
 // overrides (lib/config thresholdsOf), the shipped ones when omitted. Size thresholds count the paths that carry weight;
 // a docs-only change (every path weightless, no flag) is trivial when small and standard otherwise.
-export function classify({ paths, loc, flags = [], riskPaths = [], thresholds = THRESHOLDS } = {}) {
+export function classify({ paths, loc, locCode = loc, flags = [], riskPaths = [], thresholds = THRESHOLDS } = {}) {
   const files = checkPaths(paths);
   checkLoc(loc);
+  checkLoc(locCode);
   const declared = checkFlags(flags);
   const globs = checkGlobs(riskPaths);
-  const { trivial, critical } = thresholds;
+  const { trivial, split } = thresholds;
   const light = lightMatcher(thresholds);
   // A risk path is never weightless: a change to agent instructions (CLAUDE.md, SKILL.md, ...) is no docs-only change.
   const risky = riskMatcher(riskPaths);
@@ -209,13 +212,13 @@ export function classify({ paths, loc, flags = [], riskPaths = [], thresholds = 
     if (hit) add('critical', 'risk-path', `matches risk glob ${hit.glob}`, pathKey(path), path);
   }
   for (const f of declared) if (CRITICAL_FLAGS.includes(f)) add('critical', 'risk-flag', `flag ${f}`, `risk-flag:${f}`);
-  if (sized.length > critical.overFiles) add('critical', 'files-over', `${sized.length} files > ${critical.overFiles}`, 'files-over');
-  if (!docsOnly && loc > critical.overLoc) add('critical', 'loc-over', `${loc} LOC > ${critical.overLoc}`, 'loc-over');
   const big = files.length > trivial.maxFiles || loc > trivial.maxLoc;
   if (lightOnly && big) add('standard', 'light-only', `${files.length} ${files.length === 1 ? 'file' : 'files'}, ${loc} LOC: size never raises prototype or mockup paths above standard`, 'light-only');
-  else if (docsOnly && big) add('standard', 'docs-only', `${files.length} documentation or binary ${files.length === 1 ? 'file' : 'files'}, ${loc} LOC: size never raises docs above standard`, 'docs-only');
+  else if (docsOnly && big) add('standard', 'docs-only', `${files.length} documentation, test or binary ${files.length === 1 ? 'file' : 'files'}, ${loc} LOC: size never raises docs above standard`, 'docs-only');
   if (!docsOnly && files.length > trivial.maxFiles) add('standard', 'files-over-trivial', `${files.length} files > ${trivial.maxFiles}`, 'files-over-trivial');
   if (!docsOnly && loc > trivial.maxLoc) add('standard', 'loc-over-trivial', `${loc} LOC > ${trivial.maxLoc}`, 'loc-over-trivial');
+  if (sized.length > split.overFiles) add('standard', 'split-files', `split: ${sized.length} files > ${split.overFiles}`, 'split-files');
+  if (!docsOnly && locCode > split.overLoc) add('standard', 'split-loc', `split: ${locCode} LOC > ${split.overLoc}`, 'split-loc');
   for (const f of declared) if (!CRITICAL_FLAGS.includes(f)) add('standard', 'flag', `flag ${f}`, `flag:${f}`);
 
   const cls = all.some((r) => r.level === 'critical') ? 'critical' : all.length ? 'standard' : 'trivial';

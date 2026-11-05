@@ -5,7 +5,7 @@
 //     lib/state, which validates it again (atomic, locked). Invalid input: exit 2, one error per failing field.
 //   - Only the task's owner records, only while the task is open (done and cancelled tasks take no further state).
 //   - The round is the next free number, created exclusively (two records never share a round); the task gets the
-//     event `review` { round, verdict, reviewer: kind, head } (head: the tip of the task branch, the reviewed commit).
+//     event `review` { round, verdict, reviewer: kind, blocking, head } (head: the reviewed tip of the task branch).
 // The validator knows exactly the JSON Schema keywords the schema uses; any other keyword is an error, never ignored.
 // An external review comes from its run (D4): `--kind external --run <runId>` reads the out file of a done reviewer
 // run of the task (lib/runs record; a regular file, no link followed, capped) and stores the run ID and the sha256 of
@@ -144,7 +144,7 @@ export function recordReview({ cwd, env, names, id, from, run, at = new Date().t
   if (round > ROUND_MAX) throw usage('limit-exceeded', `${id} has ${ROUND_MAX} review rounds, the limit`, 'start a new task');
   store.update('task', id, (cur) => {
     open(cur);
-    return { ...cur, events: [...cur.events, { at, by: handle, event: 'review', data: { round, verdict: doc.verdict, reviewer: doc.reviewer.kind, ...(OBJECT_ID.test(head) ? { head } : {}) } }] };
+    return { ...cur, events: [...cur.events, { at, by: handle, event: 'review', data: { round, verdict: doc.verdict, reviewer: doc.reviewer.kind, blocking: doc.findings.filter((f) => f.severity === 'blocking').length, ...(OBJECT_ID.test(head) ? { head } : {}) } }] };
   });
   const rel = stateRel(where.worktree, where.dir); // shown from the worktree, absolute outside it
   const path = `tasks/${reviewKey(id, round)}.json`;

@@ -279,8 +279,26 @@ test('work: trivial requests are classed from the request (no command first); wo
   for (const name of ['work', 'dispatch']) assert.match(read(skillFile(name)), /`landfall secrets` \(exit 0\) before/, name);
 });
 
-test('dispatch step 8 merges approved tasks through the train (ORC-25)', () => {
-  const step = read(skillFile('dispatch')).split('\n').find((l) => l.startsWith('8. '));
-  // T-MG-83 (intended change): two command forms, no `|` that reads as a shell pipe; T-MG-186: the train
-  assert.ok(step && step.includes('train <ids…> --yes') && step.includes('train --ready --yes') && !step.includes('| --ready'), step);
+test('dispatch step 5 merges ready tasks as one batch (ORC-25)', () => {
+  // T-MG-178 (intended change): steps 4–8 shrank to dispatch and close; close <ids…> merges several as one batch
+  const step = read(skillFile('dispatch')).split('\n').find((l) => l.startsWith('5. '));
+  // T-MG-83 (intended change): no `|` that reads as a shell pipe; T-MG-186: critical or several approved: the train
+  assert.ok(step && step.includes('close <ids…> --yes') && step.includes('one batch') && step.includes('train --ready --yes') && !step.includes('| --ready'), step);
+});
+
+test('implementer and reviewer store their own output as the last step, never with the Write tool into the state (T-MG-178)', () => {
+  const own = {
+    implementer: [read(agentFile('implementer')), 'report <id> --from <file> --yes'],
+    reviewer: [read(agentFile('reviewer')), 'review record <id> --from <file> --yes'],
+    brief: [read('templates/task/brief.md'), 'report <id> --from <file> --yes'],
+    'review-brief': [read('templates/task/review-brief.md'), 'review record <task ID> --from <file> --yes'],
+  };
+  for (const [name, [text, cmd]] of Object.entries(own)) {
+    assert.ok(text.includes(`Last step: `) && text.includes(cmd), `${name}: the last step runs ${cmd}`);
+    assert.ok(text.includes('never with the Write tool into the state directory'), `${name}: no Write into the state`);
+    assert.doesNotMatch(text, /orchestrator (stores|records|runs) it|the orchestrator runs `/, name);
+  }
+  assert.match(read(agentFile('implementer')), /a fix round: `--round <k>`/);
+  assert.match(read(agentFile('implementer')), /Reply in exactly 5 lines/);
+  assert.match(read(agentFile('reviewer')), /Reply in exactly 5 lines/);
 });

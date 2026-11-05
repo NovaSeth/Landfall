@@ -16,8 +16,9 @@ import { createHash } from 'node:crypto';
 import { closeSync, fstatSync, lstatSync, openSync, readFileSync, readSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { git } from '../git/index.mjs';
-import { costSince, readRuns } from '../receipts/index.mjs';
+import { costSince, readRuns, sessionContext } from '../receipts/index.mjs';
 import { projectDirs, slug } from '../receipts/sessions.mjs';
+import { thresholdsWithOverrides } from '../router/index.mjs';
 import { KINDS, StateError, emailHash, open, resolve } from '../state/index.mjs';
 import { billingMode } from './billing.mjs';
 import { readRunRecords, runsStore } from '../runs/index.mjs';
@@ -25,9 +26,9 @@ import { usageLimit } from './limits.mjs';
 import { recordLoopWait } from './waits.mjs';
 import { CONSENT, consentAllows, consentCaps, consumeConsent } from '../hooks/prompt-consent.mjs';
 import { cheapCap, clock, decide, effectiveCaps, newLoop, parseCaps } from './decide.mjs';
-import { CAP_RANGE, CARRIED_PLAN, DEFAULT_CAPS, LOOP, LOOP_ID, STALL, TERMINAL, UNMEASURED, fixedPrompt } from './kind.mjs';
+import { CAP_RANGE, CARRIED_PLAN, DEFAULT_CAPS, LOOP, LOOP_ID, STALL, TERMINAL, THRESHOLDS, UNMEASURED, fixedPrompt } from './kind.mjs';
 import { DEFAULT_BUDGET_MIN, budgetOf, readBudgets } from './budget.mjs';
-import { OUTSIDE_MAX, STATUS_MIN, TABLE_RULES, WAIT_S, nextSteps, parsePlan, readWatch } from './table.mjs';
+import { OUTSIDE_MAX, STATUS_MIN, TABLE_RULES, WAIT_S, inFlight, nextSteps, parsePlan, readWatch } from './table.mjs';
 
 export { DEFAULT_BUDGET_MIN, budgetOf, readBudgets };
 export { billingMode, CAP_RANGE, CARRIED_PLAN, DEFAULT_CAPS, LOOP, LOOP_ID, STALL, STATUS_MIN, TABLE_RULES, TERMINAL, UNMEASURED, WAIT_S, cheapCap, decide, fixedPrompt, newLoop, nextSteps, parseCaps, parsePlan };
@@ -157,6 +158,7 @@ export function gitProbe(where, env, names) {
       return r.status === 0 && r.stdout.trim() ? r.stdout.trim() : null;
     },
     cost: (startedAt) => costSince(startedAt, { env, names, where }),
+    session: () => sessionContext({ repo: where.repo, env, bin: names.bin }),
     dirty: () => stateChanges(where, env),
     outside: (tasks) => outsideMerges({ where, env, tasks }),
     // the run records carry the provider's last line (the tick's snapshot of runs does not); nothing here throws
@@ -190,6 +192,44 @@ function readLimit(probe, loop, runs, now) {
   }
 }
 
+// The calling session's context { tokens, startedAt }, or null; an error is no session, so the tick is the tick of
+// before (T-MG-177, GC4).
+function readSession(probe) {
+  if (typeof probe.session !== 'function') return null;
+  try {
+    const s = probe.session();
+    return s && Number.isSafeInteger(s.tokens) && s.tokens >= 0 ? s : null;
+  } catch {
+    return null;
+  }
+}
+
+// Short orchestrator life (T-MG-177): a session whose context reached `threshold` tokens, or in which a task was merged
+// (a milestone), hands off: one HANDOFF action step (commit, schedule no wakeup, end the session; the next session
+// resumes with `status`). The loop stays running. While a task of this tick is in flight the tick drains instead: only
+// that task's rows, no new dispatch, WAIT (with the fixed wakeup prompt) or ACTION for its status request; the handoff
+// follows once none is left. Returns the fields that replace the tick's, or null (no session, or no handoff due).
+export function handoffOf({ session, tasks, steps, runs = [], liveRuns = 0, threshold, bin }) {
+  if (!session) return null;
+  const since = Date.parse(session.startedAt ?? '');
+  const merged = Number.isFinite(since) ? tasks.filter((t) => (t.events ?? []).some((e) => e.event === 'merged' && Date.parse(e.at) >= since)).map((t) => t.id).sort() : [];
+  const over = session.tokens >= threshold;
+  if (!over && merged.length === 0) return null;
+  const reason = over ? `context ${session.tokens} tokens ≥ ${threshold} (thresholds.loop.handoffTokens)` : `${merged[0]} merged in this session (a milestone)`;
+  const shown = new Set(steps.map((s) => s.task));
+  const busy = new Set(tasks.filter((t) => shown.has(t.id) && inFlight(t)).map((t) => t.id));
+  const base = { reason, tokens: session.tokens, threshold };
+  if (busy.size) {
+    const runOf = new Map(runs.map((r) => [r.runId, r.task])); // a collection row is keyed by its run ID (fix round 1, F1)
+    const kept = steps.filter((s) => busy.has(s.task) || busy.has(runOf.get(s.task)));
+    const acting = kept.some((s) => s.kind === 'action');
+    const nextTickS = acting ? null : Math.min(WAIT_S.max, Math.max(WAIT_S.min, liveRuns > 0 ? WAIT_S.runs : WAIT_S.agents));
+    return { handoff: { ...base, draining: true }, steps: kept, result: acting ? 'ACTION' : 'WAIT', reason: null, nextTickS };
+  }
+  const step = `\`${bin} commit --yes\`; schedule no wakeup (cancel a pending one) and end this session; a new session resumes with \`${bin} status\`, then \`${bin} tick\``;
+  return { handoff: { ...base, draining: false }, steps: [{ task: 'HANDOFF', state: reason, step, rules: ['FLW-10'], kind: 'action' }], result: 'ACTION', reason: null, nextTickS: null };
+}
+
 const NOT_RECORDED = Object.freeze({ mode: 'unknown', source: 'not recorded in the loop' });
 
 // One tick on an open store. probe: { heads() → text, email() → text | null, cost(startedAt) → { costMicroUsd, partial,
@@ -198,6 +238,7 @@ const NOT_RECORDED = Object.freeze({ mode: 'unknown', source: 'not recorded in t
 export function tickStore(store, { where, names, now, plan = null, probe, watch = [], billing = null, signal = null }) {
   const pre = store.read(LOOP.name, null);
   const measured = pre && !pre.exit ? { id: pre.id, startedAt: pre.startedAt, cost: measure(probe, pre, now) } : null;
+  const session = pre?.exit ? null : readSession(probe);
   const heads = probe.heads();
   const email = probe.email();
   const hash = email ? emailHash(email) : null;
@@ -233,7 +274,10 @@ export function tickStore(store, { where, names, now, plan = null, probe, watch 
     const info = limit?.kind === 'codex' && !d.doc.exit
       ? [...table.info, { task: limit.provider ?? 'codex', state: `${limit.provider ?? 'codex'} usage limit ${Number.isFinite(limit.resetAt) ? `until ${clock(limit.resetAt)}` : '(reset time unknown)'}: send reviews and implementations to Claude until then`, step: null, rules: [], kind: 'limit' }]
       : table.info;
-    out = { ...d, loop: d.doc, steps: table.steps, info, costPartial: cost?.partial === true, costProblems: cost?.problems ?? [] };
+    // a usage-limit wait stands (it wakes after the reset); an ended loop needs no handoff
+    const h = d.doc.exit || (d.result === 'WAIT' && d.reason) ? null
+      : handoffOf({ session, tasks: snap.tasks, steps: table.steps, runs: snap.runs, liveRuns: table.liveRuns, threshold: thresholdsWithOverrides('loop', THRESHOLDS, store).handoffTokens, bin: names.bin });
+    out = { ...d, loop: d.doc, steps: table.steps, info, costPartial: cost?.partial === true, costProblems: cost?.problems ?? [], ...(h ?? {}) };
     return d.doc;
   });
   const { doc, ...result } = out;

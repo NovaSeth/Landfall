@@ -180,6 +180,28 @@ const ROWS = [
 
   // Views (spec §8.2, §12): lib/ui.
   {
+    name: 'metrics',
+    summary: 'Print the seven KPI rows from task events and repository transcripts; writes nothing.',
+    details: [
+      'Default: today (UTC). --day and --since exclude each other; --since includes the named day onward.',
+      'Tasks: any event in the period; closed means a merged event, falling back to done. Fix rounds count events',
+      'over the whole history of those tasks. Backlog is all currently open tasks, including blocked tasks.',
+      'Calls and context: main-checkout sessions. Cache reads: those sessions, worktree sessions and subagents.',
+      'Only requests timestamped in the period count; resumed requests are deduplicated. Context is input plus',
+      'cache writes plus cache reads. Start is the first started event; end is the last merged event, else done.',
+      'Last review uses the last review or implementer event, falling back to start, matching the measurement scripts.',
+      'Missing data prints n/a with a reason. --json: data.period and seven data.rows (id, label, value, unit, reason;',
+      'the fix-round row also has total). Unavailable values are null; durations are minutes, without rounding.',
+    ],
+    args: [],
+    flags: [
+      { flag: '--day', value: 'YYYY-MM-DD', summary: 'one UTC calendar day (default: today)' },
+      { flag: '--since', value: 'YYYY-MM-DD', summary: 'from this UTC calendar day onward, inclusive' },
+    ],
+    exits: ['OK', 'FAIL', 'USAGE', 'REFUSED', 'ENV'],
+    load: () => import('../metrics/index.mjs').then((m) => m.metrics),
+  },
+  {
     name: 'status',
     summary: 'Show this repository: activation, tier, open tasks with their next step, the loop and leases; the default command.',
     details: [
@@ -382,7 +404,9 @@ const ROWS = [
       'state (git heads, the files under tasks/, run statuses) for 3 ticks over ≥ 30 min with no live run → STALLED. Every task',
       'done or cancelled and the state directory committed → DONE. The exit is written to local/loop.json before it is printed;',
       'every later tick returns it. Writes only that loop record (never committed), so it needs no --yes. Exit 7 in an inactive',
-      'repository.',
+      'repository. A session whose context (its transcript, by CLAUDE_CODE_SESSION_ID) reaches thresholds.loop.handoffTokens',
+      '(default 200000), or in which a task was merged, gets one HANDOFF action step: commit, schedule no wakeup, end the',
+      'session, resume in a new one with status; while tasks are in flight the tick lists only them. No transcript: no change.',
     ],
     args: [],
     flags: [{ flag: '--plan', value: 'file', summary: 'a plan whose "### Task <id>: <title>" entries the loop must finish (relative to the repository root); a docs/plans/*.md plan travels in the wakeup prompt' }],
@@ -738,7 +762,11 @@ const ROWS = [
       'The gates run here (sh -c, their time limits); the report\'s prose never changes the result.',
       'A removed or newly skipped test fails unless an active decision lists it in allowsTestRemoval; only new failures fail.',
       'The class is re-classified from the diff against the task base and only rises; the report needs red and green',
-      'evidence in its frontmatter, the route its approved review. On pass the baseline grows.',
+      'evidence in its frontmatter, the route its approved review. On a full pass the baseline grows.',
+      'Fast mode (default where it can): only the test files the change adds or changes, the tests named after each changed',
+      'path\'s directory (lib/verify/run.mjs → verify-*.test.*) and the profile\'s fastGuards run, compared with the same files',
+      'at the base; a risk path, package.json, tests/helpers/**, scripts/**, an unmapped path, a critical task or --full runs',
+      'the full set. task merge always runs the full set on the merged tree. verify.json mode says which ran and why.',
       'Results: pass (0) · fail, baseline-shrunk, route-escalated, missing-artifact (1) · error (8: a gate could not run).',
       'Only the task\'s owner verifies with writes; changes files: needs a terminal or --yes (in CI: --ci --yes).',
       'A gate set that passed on this exact tree (clean worktree, same gates and plugin version, within 24 h) is reused from',
@@ -748,6 +776,7 @@ const ROWS = [
     flags: [
       { flag: '--ci', summary: 'check only: write nothing (verify.json, baseline, class); no registered owner needed' },
       { flag: '--no-cache', summary: 'run the gates even when a passing run of this tree is stored' },
+      { flag: '--full', summary: 'run the full profile gate set instead of the fast subset of the change' },
     ],
     exits: ['OK', 'FAIL', 'USAGE', 'REFUSED', 'ENV'],
     mutating: true,
@@ -794,6 +823,21 @@ const ROWS = [
     exits: ['OK', 'FAIL', 'USAGE', 'REFUSED', 'ENV'],
     mutating: true,
     load: () => import('../verify/command.mjs').then((m) => m.taskMerge),
+  },
+  {
+    name: 'close',
+    summary: 'Close approved tasks in one call: verify, task done, task merge and commit, only the steps still due.',
+    details: [
+      'Run from the main checkout (verify reads the code in the task\'s worktree). A task not done gets verify, then task done; a task',
+      'without a recorded merge gets task merge (several IDs: one batch with one gate run, as task merge <ids…>); then commit.',
+      'The first failing step ends the call with that step\'s exit code and one line naming the step and the command that resumes;',
+      'the steps done stay done. A merge that records nothing (the branch is already in HEAD) fails the merge step. On success: one line.',
+    ],
+    args: [{ name: 'id', required: true, variadic: true, summary: 'task ID such as T-AB-1 (several: one merge batch)' }],
+    flags: [],
+    exits: ['OK', 'FAIL', 'USAGE', 'REFUSED', 'ENV'],
+    mutating: true,
+    load: () => import('./close.mjs').then((m) => m.close),
   },
   {
     name: 'train',
@@ -1153,8 +1197,8 @@ const ROWS = [
     name: 'config set',
     summary: 'Set one config value: a threshold override (only with an active decision) or the providers of an executor role.',
     details: [
-      'Keys: thresholds.<unit>.<path> (a whole number of lib/router or lib/engine thresholds.json, such as',
-      'thresholds.router.trivial.maxLoc) and executors.reviewer|implementer (providers in order, comma-separated).',
+      'Keys: thresholds.<unit>.<path> (a whole number of lib/router or lib/engine thresholds.json or of the loop, such as',
+      'thresholds.router.trivial.maxLoc or thresholds.loop.handoffTokens) and executors.reviewer|implementer (providers in order, comma-separated).',
       'A threshold override needs --decision with an active decision (else exit 1, nothing written); config.json keeps',
       'the decision with the value. The value default removes an override or a preference. Flags: use flags set.',
       'Changes files: needs a terminal or --yes.',

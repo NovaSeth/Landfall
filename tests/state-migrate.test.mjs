@@ -419,7 +419,7 @@ test('008-verify-machine and 009-review-focus: migrate changes only the schema o
   const out = state.migrate(state.open(dir, { names, kinds }), { at: new Date(AT) });
   assert.deepEqual(out.steps.map(({ rel, from, to, ids }) => ({ rel, from, to, ids })).sort((a, b) => a.rel.localeCompare(b.rel)), [
     { rel: 'tasks/T-AB-1/review-r1.json', from: 1, to: 2, ids: ['009-review-focus'] },
-    { rel: 'tasks/T-AB-1/verify.json', from: 1, to: 3, ids: ['008-verify-machine', '011-verify-train'] },
+    { rel: 'tasks/T-AB-1/verify.json', from: 1, to: 3, ids: ['008-verify-machine', '011-verify-mode'] },
   ]);
   for (const rel of Object.keys(files)) {
     const want = before[rel].replace(/^ {2}"schema": 1,$/m, `  "schema": ${rel.endsWith('verify.json') ? 3 : 2},`);

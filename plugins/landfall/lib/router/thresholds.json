@@ -4,7 +4,7 @@
     "maxFiles": 2,
     "maxLoc": 30
   },
-  "critical": {
+  "split": {
     "overFiles": 15,
     "overLoc": 400
   },

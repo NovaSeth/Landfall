@@ -28,7 +28,7 @@
 **REV-6.** A scoped re-review covers only the round's diff: it marks each previous finding ADDRESSED or NOT ADDRESSED by repeating its reproduction on the new code, and seeks new problems only among the risks the fix could introduce.
 **REV-19.** A re-review brief carries the orchestrator's evidence: the regression test fails on the old code and passes on the new, with the gate's numbers.
 **REV-20.** The orchestrator may verify a mechanical or UI fix round itself and record that; for data, writes, authorization or concurrency it MUST NOT, at every tier and in gate rounds too (PRI-6).
-**REV-7.** After two fix rounds (default 2), MUST NOT start a third: decide the remaining non-critical findings with a decision or escalate to the user; Critical findings are exempt and go to the strongest executor; Minor findings go to the deferred list with a target and a task.
+**REV-7.** After two fix rounds (default 2), MUST NOT start a third: decide the remaining blocking findings with a decision or escalate to the user; `task set` refuses a fix round past the cap; Minor findings never start a round and go to the deferred list with a target and a task.
 **REV-8.** A finding that shows a defective pattern, not one spot, is checked in every lane and fixed once in a cross-cutting round; a defect seen in two or more places gets one shared fix; MUST NOT serialize lanes behind that fix.
 **REV-9.** An implementer does not fix a finding it disputes: it describes it under `DISPUTED` in its report, and the orchestrator decides it before the next round; a disputed round does not count toward the breaker.
 

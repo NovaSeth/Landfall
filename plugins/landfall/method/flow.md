@@ -17,6 +17,7 @@
 ### Loop
 **FLW-4.** [always] Each tick runs the CLI `tick` and does the listed steps: ACTION → act, tick again; WAIT → wake after `NEXT_TICK`; DONE, STALLED, BUDGET → stop, report.
 **FLW-5.** [always] The wakeup prompt is fixed and carries no task state; after DONE, STALLED or BUDGET, MUST NOT schedule another wakeup.
+**FLW-10.** On a HANDOFF step (the session's context over `thresholds.loop.handoffTokens`, or a merge in this session) commit the state, schedule no wakeup and end the session; a new session resumes with the CLI `status`, then `tick`.
 **FLW-6.** Accept a result only after checking the exit code AND the count of results (tests, files, rows); exit 0 with zero tests or an empty report is not success.
 
 ### Task state

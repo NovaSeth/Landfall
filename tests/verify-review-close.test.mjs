@@ -92,3 +92,8 @@ test('review-close: the record keeps task and remaining; the kind needs a task; 
   const flags = COMMANDS.find((c) => c.name === 'decide').flags.map((f) => f.flag);
   assert.ok(flags.includes('--task') && flags.includes('--remaining'), flags.join(' '));
 });
+
+test('a needs-fixes review with only minor findings is approved (REV-7); with a blocking finding it stays missing', (t) => {
+  assert.equal(verify.reviewState(fixture(t, [needsFixes([finding('F1', 'minor')])]), TASK, ['review'], AT_L1), 'approved');
+  assert.equal(verify.reviewState(fixture(t, [needsFixes([finding('F1', 'minor'), finding('F2', 'blocking')])]), TASK, ['review'], AT_L1), 'missing');
+});

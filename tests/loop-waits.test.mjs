@@ -157,6 +157,16 @@ test('recordWait checks its fields (TypeError) and writes through store.append; 
   assert.deepEqual(waits.closeLoadWait(f.loopStore, { key: 'sess-90', at: at(6) }), { at: at(4), until: at(6), kind: 'load', task: null, source: 'admit', key: 'sess-90' });
 });
 
+test('an open load marker older than the stale window is ignored, a fresh one is not', (t) => {
+  const f = loopRepo(t);
+  assert.ok(waits.openLoadWait(f.loopStore, { key: 'old', at: at(0) }));
+  assert.equal(waits.closeLoadWait(f.loopStore, { key: 'old', at: at(61) }), null, 'stale: nothing to close');
+  assert.ok(waits.openLoadWait(f.loopStore, { key: 'old', at: at(61) }), 'stale: a new marker opens');
+  assert.ok(waits.closeLoadWait(f.loopStore, { key: 'old', at: at(62) }), 'fresh: closed');
+  assert.ok(waits.openLoadWait(f.loopStore, { key: 'new', at: at(100) }));
+  assert.ok(waits.closeLoadWait(f.loopStore, { key: 'new', at: at(159) }), 'inside the window: closed');
+});
+
 test('loopWait: a past or unknown reset waits nextTickS; ACTION, exits and a codex limit record nothing', () => {
   const now = T0;
   assert.deepEqual(waits.loopWait({ result: 'WAIT', nextTickS: 600, limit: { kind: 'session', resetAt: null }, now }), { kind: 'usage-limit', at: at(0), until: at(10), task: null, source: 'loop' });

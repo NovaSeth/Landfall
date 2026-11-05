@@ -498,7 +498,7 @@ function fill(file, bytes, pad = 200) {
 test('append: the waits and guard logs take one line each; an unknown log still throws', (t) => {
   const { dir } = scratch(t);
   const s = active(dir);
-  assert.deepEqual(state.LOGS.waits, { file: 'local/waits.jsonl', entryBytes: state.LIMITS.logEntryBytes });
+  assert.deepEqual(state.LOGS.waits, { file: 'local/waits.jsonl', entryBytes: state.LIMITS.logEntryBytes, capBytes: 262144 });
   assert.deepEqual(state.LOGS.guard, { file: 'local/guard.jsonl', entryBytes: state.LIMITS.logEntryBytes, capBytes: 262144 });
   const wait = { at: AT, until: AT, kind: 'usage-limit', task: null, source: 'loop' };
   assert.deepEqual(s.append('waits', wait), wait);
@@ -528,6 +528,19 @@ test('append: the guard log past its cap keeps the newest half and the new line,
   const after = readFileSync(file, 'utf8');
   s.append('guard', { at: AT, n: n + 1 });
   assert.equal(readFileSync(file, 'utf8'), `${after}${JSON.stringify({ at: AT, n: n + 1 })}\n`);
+});
+
+test('append: the waits log past its cap behaves like the guard log (newest half, at most capBytes)', (t) => {
+  const { dir } = scratch(t);
+  const s = active(dir);
+  const cap = state.LOGS.waits.capBytes;
+  const file = join(dir, 'local', 'waits.jsonl');
+  const n = fill(file, cap);
+  s.append('waits', { at: AT, until: AT, kind: 'tick', task: null, source: 'loop', pad: 'p'.repeat(200) });
+  assert.ok(readFileSync(file).length <= cap);
+  const lines = logLines(file);
+  assert.equal(lines.at(-1).kind, 'tick');
+  assert.equal(lines.length, Math.floor(n / 2) + 1);
 });
 
 test('append: a capped rewrite drops the oldest lines until the new line fits, even when the newest half is large', (t) => {

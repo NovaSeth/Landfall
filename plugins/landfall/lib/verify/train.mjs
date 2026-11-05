@@ -109,7 +109,7 @@ function recordTrain({ store, set, integrated, batch, byTask, handle, at, check 
       const why = check(t, s);
       if (why || !run || run.doc.result !== 'pass') { t.refused = why ?? 'no passing train gate for it'; continue; }
       const review = reviewState(s, t.task, routeFor(t.route.actual, { flags: recordedKeys(cur).flags }).steps);
-      s.write('verify', t.task, { ...run.doc, head: integrated, class: t.route.actual, route: t.route, artifacts: { ...run.doc.artifacts, review }, mode: 'train', train: { commit: run.doc.head ?? integrated, head: integrated, batch } });
+      s.write('verify', t.task, { ...run.doc, head: integrated, class: t.route.actual, route: t.route, artifacts: { ...run.doc.artifacts, review }, mode: { kind: 'train', why: 'train gate on the integrated tree', files: [] }, train: { commit: run.doc.head ?? integrated, head: integrated, batch } });
       const pending = findingsForTask(s, t.task).filter((f) => f.status === 'taken');
       s.update('task', t.task, (doc) => ({ ...doc, status: 'done', events: [...doc.events, { at, by: handle, event: 'done', data: { head: integrated, mode: 'train' } }] }));
       closeFindings(s, pending, { by: t.task, reason: `Fixed by ${t.task}`, at });

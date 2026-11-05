@@ -90,7 +90,7 @@ const show = (res) => `${res.text}\n${res.stderr}`;
 const errorCodes = (res) => res.env.errors.map((e) => e.code);
 const setGates = (r, gates) => profile.openStore(r.stateDir, names).write('profile', null, { ...profile.emptyProfile(), gates });
 // An external round counts only with the run it came from and its out file's sha256 (T-MG-91; review record --run).
-const review = (r, round, verdict, kind = 'claude') => r.vstore.write('review', verify.reviewKey(r.id, round), { verdict, reviewer: { kind, id: kind === 'claude' ? 'claude:reviewer' : 'codex' }, findings: [],
+const review = (r, round, verdict, kind = 'claude') => r.vstore.write('review', verify.reviewKey(r.id, round), { verdict, reviewer: { kind, id: kind === 'claude' ? 'claude:reviewer' : 'codex' }, findings: verdict === 'needs-fixes' ? [{ id: 'F1', severity: 'blocking', path: 'calc.js', line: 1, rule: null, text: 'a blocking finding' }] : [], // minors-only needs-fixes counts as approved (REV-7)
   ...(kind === 'external' ? { run: `codex-${r.id}-reviewer-${round}`, sha256: 'a'.repeat(64) } : {}) });
 const commitAll = (r, msg = 'work') => { r.git('add', '-A'); r.git('commit', '-q', '-m', msg); return r.git('rev-parse', 'HEAD'); };
 function snapshot(dir) {
@@ -116,7 +116,7 @@ test('verify re-runs every profile gate and writes verify.json in the §8.4 shap
   assert.equal(res.code, 0, show(res));
   assert.deepEqual([res.env.command, res.env.ok, res.env.exit], ['verify', true, 'OK']);
   const doc = r.vstore.read('verify', r.id);
-  assert.deepEqual(Object.keys(doc), ['schema', 'task', 'head', 'gatesSha', 'baselineSha', 'class', 'startedAt', 'durationMs', 'gates', 'inventory', 'failures', 'route', 'artifacts', 'result', 'machine', 'cache', 'heavyWaitMs', 'gatesMs']);
+  assert.deepEqual(Object.keys(doc), ['schema', 'task', 'head', 'gatesSha', 'baselineSha', 'class', 'startedAt', 'durationMs', 'gates', 'inventory', 'failures', 'route', 'artifacts', 'result', 'machine', 'cache', 'heavyWaitMs', 'gatesMs', 'mode']);
   assert.deepEqual(Object.keys(doc.machine), ['load1Start', 'load1End', 'cores'], 'the v2 cost fields (T-MG-121)');
   assert.equal(doc.gatesSha, verify.gatesSha(GATES));
   assert.equal(doc.baselineSha, verify.baselineSha(r.vstore.read('baseline', null)));
@@ -236,8 +236,8 @@ test('the route is re-classified from the diff against the task base: a larger c
   let res = await run(r);
   assert.equal(res.code, 1, show(res));
   assert.equal(res.env.data.result, 'route-escalated');
-  assert.deepEqual(res.env.data.route, { declared: 'trivial', actual: 'critical', escalated: true, missingSteps: ['spec-plan', 'cross-provider-review', 'rereview'] });
-  assert.equal(r.store.read('task', r.id).class, 'critical', 'the ratchet is written to task.json');
+  assert.deepEqual(res.env.data.route, { declared: 'trivial', actual: 'standard', escalated: true, missingSteps: ['plan-in-brief', 'review'] });
+  assert.equal(r.store.read('task', r.id).class, 'standard', 'the ratchet is written to task.json');
   res = await run(r);
   assert.deepEqual([res.env.data.result, res.env.data.route.escalated, res.env.data.artifacts.review], ['missing-artifact', false, 'missing']);
   // The state directory is not part of the change; risk paths count.
@@ -249,18 +249,18 @@ test('the route is re-classified from the diff against the task base: a larger c
 
 for (const tracked of [true, false]) {
   const mode = tracked ? 'tracked' : 'untracked';
-  for (const [path, loc, cls] of [['mockups/b.js', 300, 'standard'], ['src/b.js', 600, 'critical']]) {
+  for (const [path, loc, cls] of [['mockups/b.js', 300, 'standard'], ['src/b.js', 600, 'standard']]) {
     test(`verify measured LOC: ${mode} src/a.js plus ${path} counts ${loc} LOC`, async (t) => {
       const files = { 'calc.test.mjs': TESTS, ...(tracked ? { 'src/a.js': '', [path]: '' } : {}) };
       const r = repo(t, { files, cls: null });
-      review(r, 1, 'approved', cls === 'critical' ? 'external' : 'claude');
+      review(r, 1, 'approved', 'claude');
       r.write('src/a.js', '// source\n'.repeat(300));
       r.write(path, '// second file\n'.repeat(300));
       const res = await run(r);
       assert.equal(res.code, 0, show(res));
       assert.equal(res.env.data.route.actual, cls, show(res));
       const task = r.store.read('task', r.id);
-      assert.equal(task.classHistory.at(-1).reason, `${cls}: ${loc} LOC > ${cls === 'critical' ? 400 : 30}`);
+      assert.equal(task.classHistory.at(-1).reason, `${cls}: ${loc} LOC > 30${loc > 400 ? `; split: ${loc} LOC > 400` : ''}`);
       assert.equal((await run(r)).env.data.route.actual, cls, 'a repeated verify keeps the class');
     });
   }
@@ -278,9 +278,30 @@ for (const tracked of [true, false]) {
       assert.equal(res.env.data.route.actual, 'critical');
       const reason = r.store.read('task', r.id).classHistory.at(-1).reason;
       assert.match(reason, /matches risk glob/, 'the light path remains in the measured paths');
-      assert.match(reason, /600 LOC > 400/, 'risk LOC counts even for a weightless extension');
     });
   }
+}
+
+test('verify measured change: test lines never say split (T-MG-181)', async (t) => {
+  const r = repo(t);
+  r.write('src/a.js', 'export const a = 1;\n');
+  for (let i = 0; i < 5; i++) r.write(`tests/t${i}.js`, '// test line\n'.repeat(200));
+  r.write('src/b.test.js', '// test line\n'.repeat(200));
+  const res = await run(r);
+  assert.equal(res.env.data.route.actual, 'standard', show(res));
+  assert.ok(!/split/.test(r.store.read('task', r.id).classHistory.at(-1).reason), 'test lines are no split');
+});
+
+for (const tracked of [true, false]) {
+  test(`verify reroute: ${tracked ? 'tracked' : 'untracked'} src/a.js plus a 5000-line test file is not trivial (F3)`, async (t) => {
+    const files = { 'calc.test.mjs': TESTS, ...(tracked ? { 'src/a.js': '', 'tests/big.test.mjs': '' } : {}) };
+    const r = repo(t, { files });
+    r.write('src/a.js', 'export const a = 1;\n');
+    r.write('tests/big.test.mjs', '// test line\n'.repeat(5000));
+    const res = await run(r);
+    assert.equal(res.env.data.route.actual, 'standard', show(res));
+    assert.ok(!/split/.test(r.store.read('task', r.id).classHistory.at(-1)?.reason ?? ''), 'test lines are no split');
+  });
 }
 
 // ---- --ci, owner, inactive, unknown ----
@@ -542,7 +563,7 @@ test('verify, task done and task merge are command rows that change files; help 
   for (const name of ['verify', 'task done']) assert.deepEqual(row(name).args.map((a) => [a.name, Boolean(a.required)]), [['id', true]], name);
   // T-MG-80: task merge takes several IDs (a batch, --adopt) or none (--ready)
   assert.deepEqual(row('task merge').args.map((a) => [a.name, Boolean(a.required), Boolean(a.variadic)]), [['id', false, true]]);
-  assert.deepEqual(row('verify').flags.map((f) => f.flag), ['--ci', '--no-cache']);
+  assert.deepEqual(row('verify').flags.map((f) => f.flag), ['--ci', '--no-cache', '--full']);
   assert.deepEqual(row('task merge').flags.map((f) => f.flag), ['--branch', '--ready', '--adopt']);
   assert.deepEqual(row('verify').exits, ['OK', 'FAIL', 'USAGE', 'REFUSED', 'ENV']);
   const r = repo(t);

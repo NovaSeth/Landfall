@@ -5,7 +5,7 @@
   </picture>
 </p>
 
-# Landfall (2.6.0)
+# Landfall (2.7.1)
 
 Landfall is a Claude Code plugin that turns one session into a small engineering team and accepts its work only when code has checked the outcome. The session sizes the task, writes a brief and hands the work to a fresh implementer in its own worktree (a Claude agent, or an external CLI such as Codex, which can also review). Every run gets a row in the agent panel. Each role runs on the cheapest model that can do it, the result is reviewed, and the task closes only after `landfall verify` has re-run the project's gates on the code. A trivial change skips all of this. Every task leaves a receipt of what it cost. Landfall was formerly called `caw`.
 
@@ -78,7 +78,7 @@ Claude  Noted. I've opened a task for the export.
 
 - **Orchestration.** Skills take each task through `landfall task start` (worktree, branch, base) → brief → implementer → `landfall report` → verify → `landfall review brief` → reviewer → at most two fix rounds → merge → `landfall commit`, and name the exact command for every step. An agent gets a brief file with exact values and never sees the session history; a session resumes from the card that `landfall task show` prints.
 - **Verification.** `landfall verify` re-runs the gate commands itself, measures the size of a change without owner-set light paths (a risk path always counts), and compares the test inventory with a baseline: a removed or newly skipped test fails unless a decision records it, and a test whose title alone changed is reported as renamed. `landfall task done` and `landfall task merge` refuse without a passing verify, and a merge commits only if the gates pass on the merged tree. The state directory is not code, so a decision or report written after verify needs no new commit.
-- **Task sizing.** `landfall route` classes a change as trivial, standard or critical from its paths, size and risk flags. It counts only the task's own commits, not main merged into it, and gives documentation and images no weight. The profile holds the project's risk globs and review focus, the review need follows the project tier (`landfall tier`), and a critical change gets a spec, a plan and a review from another provider.
+- **Task sizing.** `landfall route` classes a change as trivial, standard or critical: critical comes only from risk flags and risk paths, size says split (a `split:` reason) and never raises a task above standard. It counts only the task's own commits, not main merged into it, and gives documentation, images and test files no weight. The profile holds the project's risk globs and review focus, the review need follows the project tier (`landfall tier`), and a critical change gets a spec, a plan and a review from another provider.
 - **Decisions.** `landfall decide` records what was decided, why, and the cost if it is wrong, under an ID such as `D-AB-3`. An agent that edits code citing a decision sees that decision.
 - **Loops and machine load.** An unattended run ends with a typed exit (done, stalled or budget) and never reschedules after that. A loop detects at creation whether Claude Code bills by subscription or by API (`landfall loop status` prints `billing: <mode> (<source>)`); the $25 dollar cap ends it only in API billing or when the mode is unknown, because the API-price estimate means nothing on a subscription. A usage-limit message in the transcripts makes `tick` wait until the reset instead of stalling. `landfall heavy` queues full test suites and builds per machine, so parallel agents take turns.
 - **Security review.** A change on a risk path (auth, money, migrations, CI, agent instructions) or with the security flag gets the security reviewer, which works through the OWASP Top 10:2025, the OWASP Top 10 for LLM Applications 2025 and the OWASP Top 10 for Agentic Applications (rules `OWA-*`, `LLM-*` and `AGT-*`, read with `landfall rule`). A critical change is also reviewed by another model provider when one is installed (`landfall providers`).
@@ -88,6 +88,20 @@ Claude  Noted. I've opened a task for the export.
 - **Dashboard.** In a wide fullscreen terminal, `/landfall:dashboard` opens the `Landfall` pane beside the transcript. From the overview down to the detail, it shows the project and its loop, how many tasks are open and at which stage, the open tasks, each with its live agents and runs as `↳` rows (role, round, elapsed time and where each result landed) and an UNASSIGNED group for the rest, the slots in use and the next step. A narrower terminal gets one line in the status bar. The pane reads the plugin's own `status --json`, never the model's context.
 - **Model tiers and cost.** The implementer and the reviewer run on Sonnet, the external wrapper on Haiku and the designer on Opus; the orchestrating session plans, dispatches and merges but never implements. Method rules load by ID on demand, so the always-on context is about 550 tokens, and trivial work calls nothing. `landfall receipt` shows tokens and cost per task, loop, class or executor, and unattended loops on API billing have a dollar cap.
 - **Footprint.** Landfall is installed once per user. A project gets one `.landfall/` directory only when real work starts there and you agree.
+
+## What's new in 2.7.1
+
+- **Fast verify:** a task verify runs the test files its changed files own plus the profile's fast guards; shared or risk paths, a critical task or `--full` run the full set, and `task merge` stays the one full run. An approved task closes at once, not held for a batch.
+- **Guard outside Landfall repositories:** plain commands (bare words, `--version`, `--help`) skip the guard there; anything with quotes, expansions, options, directory changes or rm/mv/cp/ln/find/xargs still gets it.
+- **Waits log cap:** `local/waits.jsonl` is capped like the guard log; a load marker left open for over an hour is ignored.
+
+## What's new in 2.7.0
+
+- `landfall close <id…>` runs verify, done, merge and commit in one call; agents store their own reports and reviews.
+- `landfall metrics` prints the KPI table (orchestrator calls and context per closed task, fix rounds, start→merge and review→merge times, open backlog).
+- The loop hands off to a fresh session when the context passes ~200k tokens or after a merge, and never waits on a question: it records it and goes on.
+- The fix-round cap is enforced in code; size alone never makes a task critical; the implementer keeps its declared model.
+- Node 22 or later is required.
 
 ## What's new in 2.6.0
 

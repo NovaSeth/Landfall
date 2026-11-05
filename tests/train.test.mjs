@@ -125,7 +125,7 @@ test('a train of 3: the conflicting task is left out, the failing one bisected o
   assert.equal(events(r, clean, 'done')[0].data.head, head);
   const v = r.store.read('verify', clean);
   assert.equal(v.result, 'pass');
-  assert.equal(v.mode, 'train');
+  assert.deepEqual(v.mode, { kind: 'train', why: 'train gate on the integrated tree', files: [] });
   assert.deepEqual([v.head, v.train.head, v.train.commit, v.train.batch], [head, head, head, res.env.data.batch]);
   for (const id of [conflict, failing]) {
     assert.equal(r.store.read('task', id).status, 'in-review', `${id} keeps its status`);
@@ -248,7 +248,7 @@ test('F3: a train that died after moving the target is recovered by the next tra
     assert.equal(events(r, id, 'merged').length, 1, id);
     assert.equal(events(r, id, 'done').length, 1, id);
   }
-  assert.equal(r.store.read('verify', b).mode, 'train');
+  assert.equal(r.store.read('verify', b).mode.kind, 'train');
 });
 
 // Fix round 2 (security review r3): the train takes nothing `task merge` would refuse.
@@ -256,7 +256,7 @@ test('F2: a needs-fixes review recorded while the train gate runs keeps the task
   const r = repo(t, { extra: 'cp "$NEXT_REVIEW" "$REVIEW_DEST";' });
   const id = r.task('feat/a', addTest('a.test.mjs'));
   const next = join(r.dir, '..', 'r2.json');
-  writeFileSync(next, JSON.stringify({ schema: verify.VERIFY_KINDS.review.version, ...APPROVED, verdict: 'needs-fixes' }));
+  writeFileSync(next, JSON.stringify({ schema: verify.VERIFY_KINDS.review.version, ...APPROVED, verdict: 'needs-fixes', findings: [{ id: 'F1', severity: 'blocking', path: 'a.test.mjs', line: 1, rule: null, text: 'fails open' }] })); // REV-7: a needs-fixes with no blocking finding counts as approved
   Object.assign(r.env, { NEXT_REVIEW: next, REVIEW_DEST: join(r.stateDir, 'tasks', id, 'review-r2.json') });
   const tip = r.git('rev-parse', 'HEAD');
   const res = await cli(['train', id, '--yes'], r);

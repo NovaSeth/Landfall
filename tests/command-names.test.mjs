@@ -95,8 +95,9 @@ test('every command the templates, skills, agents, loop steps, hook messages and
     assert.ok(refs.some((r) => r.where.startsWith(part)), `${part}: references found`);
   }
   const has = (part, name) => refs.some((r) => r.where.startsWith(part) && isPrefix(name, r.words));
+  // T-MG-178 (intended change): the approved step names `close`, which runs verify, so lib/loop/ is checked for close
   for (const [part, name] of [['templates/', 'gen apply'], ['templates/', 'decisions check'], ['skills/', 'rule'], ['agents/', 'rule'], ['lib/loop/', 'task set'],
-    ['lib/loop/', 'brief'], ['lib/loop/', 'train'], ['lib/hooks/', 'tick'], ['lib/guard/', 'decisions supersede']]) assert.ok(has(part, name), `${part}: names ${name}`);
+    ['lib/loop/', 'brief'], ['lib/loop/', 'close'], ['lib/loop/', 'train'], ['lib/hooks/', 'tick'], ['lib/guard/', 'decisions supersede']]) assert.ok(has(part, name), `${part}: names ${name}`);
   assert.ok(OWN_COMMANDS.length >= 8, 'the allow list is scanned');
   assert.deepEqual(unresolved(refs), []);
 });

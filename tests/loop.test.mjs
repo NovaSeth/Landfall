@@ -173,9 +173,16 @@ test('1.x self-verified round → approved: verify, merge, close (REV-11, FLW-8)
   const events = [ev('fix-round', 2, { round: 1, addressed: 1, open: 0 }), ev('self-verified', 3, { round: 1 })];
   let s = row(table([task('T-TU-1', 'fix-round', { round: 1, events })]), 'T-TU-1');
   assert.deepEqual(s.rules, ['REV-11', 'ORC-25', 'FLW-8']);
-  assert.match(s.step, new RegExp(`${BIN} train T-TU-1`), 'T-MG-186: an approved task merges through the train');
-  assert.match(s.step, new RegExp(`${BIN} train --ready`));
+  // T-MG-178 (intended change): one `close` call replaces the verify → task done → task merge chain
+  assert.match(s.step, new RegExp(`\`${BIN} close T-TU-1\``));
+  assert.match(s.step, new RegExp(`${BIN} close <ids…>\`, one batch`));
+  // T-MG-186: a critical task merges through the train
+  const crit = row(table([task('T-TU-1', 'fix-round', { round: 1, cls: 'critical', events })]), 'T-TU-1');
+  assert.deepEqual(crit.rules, ['REV-11', 'ORC-25', 'FLW-8']);
+  assert.match(crit.step, new RegExp(`${BIN} train T-TU-1`), 'T-MG-186: an approved critical task merges through the train');
+  assert.match(crit.step, new RegExp(`${BIN} train --ready`));
   assert.doesNotMatch(s.step, /squash|by hand|locally/);
+  assert.match(s.step, /at once, not held for a batch/);
   s = row(table([task('T-TU-1', 'verified')]), 'T-TU-1');
   assert.deepEqual(s.rules, ['REV-11', 'ORC-25', 'FLW-8']);
   // a self-check of round 1 does not approve round 2
@@ -219,7 +226,7 @@ test('rounds (1.x breaker after 2 rounds): the second round names the decision; 
   assert.equal(s.kind, 'action');
   assert.deepEqual(s.rules, ['REV-7']);
   assert.match(s.step, /^decide: escalate to the user or change the approach/);
-  assert.match(s.step, /Critical findings are exempt/, '1.x: Critical is not subject to the breaker');
+  assert.doesNotMatch(s.step, /exempt/, 'no class is exempt from the breaker');
   s = row(table([round(1, 0)], { caps: { ...CAPS, rounds: 1 } }), 'T-TU-1');
   assert.ok(s.rules.includes('REV-7'), 'the rounds cap of the loop decides when');
 });
@@ -1584,4 +1591,14 @@ test('limits (g) F2: no cap of any kind lets the tick read the limit probe; the 
   x = mk({}, { costMicroUsd: 10000, partial: false }, { mode: 'subscription', source: 'test' });
   assert.equal(x.run().result, 'WAIT');
   assert.equal(x.calls(), 1, 'subscription: the cost caps do not apply');
+});
+
+test('a needs-fixes review with no blocking finding asks for no fix round: it is treated as approved (REV-7, REV-11)', () => {
+  const rev = (blocking) => ev('review', 3, { round: 1, verdict: 'needs-fixes', reviewer: 'claude', blocking });
+  const t = (blocking) => task('T-TU-1', 'implemented', { events: [ev('implementer', 2, { report: 'done' }), rev(blocking)] });
+  let s = row(table([t(0)]), 'T-TU-1');
+  assert.deepEqual(s.rules, ['REV-11', 'ORC-25', 'FLW-8']);
+  assert.match(s.state, /review r1 approved/);
+  s = row(table([t(1)]), 'T-TU-1');
+  assert.deepEqual(s.rules, ['REV-5', 'PRI-6']);
 });

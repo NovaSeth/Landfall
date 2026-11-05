@@ -14,6 +14,9 @@ export const CAP_RANGE = Object.freeze({ wallMin: [1, 10080], ticks: [1, 10000],
 export const STALL = Object.freeze({ ticks: 3, minutes: 30 });
 // Ticks in a row whose cost cannot be measured at all before BUDGET (cost-unmeasurable) [default 3].
 export const UNMEASURED = 3;
+// The loop's threshold data (`config set thresholds.loop.<key>`, T-MG-177): a session whose context reaches handoffTokens
+// hands off to a new one.
+export const THRESHOLDS = Object.freeze({ handoffTokens: 200000 });
 export const LOOP_ID = /^L-\d{14}-[0-9a-f]{6}$/;
 
 const int = ([min, max], extra = {}) => ({ t: 'int', min, max, ...extra });

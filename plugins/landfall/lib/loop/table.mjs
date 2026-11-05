@@ -7,7 +7,8 @@
 //   it as dispatched (the reviewer as executor), so the next tick waits ·
 //   implemented (round k) | fix-round (round k delivered, no open findings) → scoped re-review, or approved after a
 //   self-verified event of round k · fix-round with open findings → wait · round > rounds cap → decide (REV-7) ·
-//   verified → verify, merge, close · blocked after an implementer report → resolve it (ORC-7) · blocked otherwise →
+//   verified → `close` (verify, task done, task merge, commit) · blocked after an implementer report → resolve it (ORC-7) · blocked with a reason
+//   "question: …" → an open question (information with its answer step, waits; SPC-5) · blocked otherwise →
 //   information (waits) · done | cancelled → nothing.
 // A live run (queued, starting, running) of an open task turns its row into a wait for that run, so a step is not
 // started twice; a live run of a closed task is a wait row of its own. A finished run whose end is newer than every
@@ -32,12 +33,14 @@ const LIVE = new Set(['queued', 'starting', 'running']);
 const FINISHED = new Set(['done', 'failed', 'timeout', 'stopped']);
 const CLOSED = new Set(['done', 'cancelled']);
 const BLOCKING_REPORTS = new Set(['needs-context', 'blocked']);
+const QUESTION = /^\s*question:/i; // the reason of a `blocked` event that records an open question for the user
+const INFO = new Set(['blocked', 'question']); // task rows that are information and keep the loop waiting
 const MIN_MS = 60000;
 const LIVE_GRACE_S = 120; // a live-status run past capS + this is not live: its supervisor ends it at capS plus a grace
 
 // Every rule ID this table cites (tests check that each resolves in the method).
 export const TABLE_RULES = Object.freeze(['FLW-3', 'ORC-4', 'FLW-4', 'ORC-9', 'FLW-6', 'PRI-6', 'ORC-5', 'REV-6', 'REV-20', 'REV-7', 'REV-5',
-  'REV-11', 'FLW-8', 'ORC-7', 'ORC-11', 'SPC-1', 'SPC-2', 'SPC-11', 'FLW-9', 'PRI-1', 'COL-24', 'FLW-7', 'ORC-24', 'ORC-25']);
+  'REV-11', 'FLW-8', 'ORC-7', 'ORC-11', 'SPC-1', 'SPC-2', 'SPC-11', 'FLW-9', 'PRI-1', 'COL-24', 'FLW-7', 'ORC-24', 'ORC-25', 'FLW-10', 'SPC-5', 'PRI-17']);
 
 const HEAVY_WAIT_MIN = 10;
 
@@ -74,6 +77,17 @@ const lastEvent = (t) => t.events.reduce((m, e) => Math.max(m, timeOf(e)), 0);
 const runTime = (r) => Date.parse(r.queuedAt ?? r.startedAt ?? r.endedAt ?? '') || 0;
 const lastIndex = (events, names) => { for (let i = events.length - 1; i >= 0; i--) if (names.includes(events[i].event)) return i; return -1; };
 
+// A task an executor may still be working on (the handoff drains it, T-MG-177): dispatched, in review, or in a fix round
+// with open findings, and no review recorded since the last report, fix round or dispatch (that review decides the next
+// step, as in taskRow: fix round 1, F2).
+const REVIEWABLE = new Set(['dispatched', 'in-review', 'implemented', 'fix-round']);
+export function inFlight(t) {
+  const events = t.events ?? [];
+  if (!REVIEWABLE.has(t.status) || events.slice(lastIndex(events, ['implementer', 'fix-round', 'dispatched']) + 1).some((e) => e.event === 'review')) return false;
+  if (t.status === 'dispatched' || t.status === 'in-review') return true;
+  return t.status === 'fix-round' && events[lastIndex(events, ['fix-round'])]?.data?.open > 0;
+}
+
 // Plan entries of a Markdown plan: [{ ref, title }] in order.
 export function parsePlan(text) {
   const out = [];
@@ -105,9 +119,12 @@ function taskRow(t, { now, bin, lanesOn, caps, budget = DEFAULT_BUDGET_MIN }) {
   };
   // a review dispatched to an in-session agent is visible only once recorded: the task then waits as dispatched
   const record = `record it: \`${bin} task set ${id} dispatched --executor <reviewer> --base <sha>\``;
-  const approved = (state) => action(id, state, `merge it through the train, which verifies, merges and closes it: \`${bin} train ${id}\` (several approved: \`${bin} train --ready\`)`, ['REV-11', 'ORC-25', 'FLW-8']);
+  // critical: through the train (ORC-25); every other class: closed at once
+  const approved = (state) => (t.class === 'critical'
+    ? action(id, state, `merge it through the train, which verifies, merges and closes it: \`${bin} train ${id}\` (several approved: \`${bin} train --ready\`)`, ['REV-11', 'ORC-25', 'FLW-8'])
+    : action(id, state, `merge origin/main into its branch, then close it at once, not held for a batch: \`${bin} close ${id}\` (verify, task done, task merge, commit; several ready: \`${bin} close <ids…>\`, one batch)`, ['REV-11', 'ORC-25', 'FLW-8']));
   const decide = (k) => action(id, `fix round ${k} after the ${caps.rounds}-round limit`,
-    'decide: escalate to the user or change the approach, and start no further fix round (Critical findings are exempt: they go to the strongest executor)', ['REV-7']);
+    'decide: escalate to the user or change the approach, and start no further fix round (`task set` refuses it; the remaining blocking findings close with a review-close decision)', ['REV-7']);
   // round k is delivered: approved when a self-verified event of round k follows the last fix-round event
   const delivered = (k) => {
     const from = lastIndex(t.events, ['fix-round']);
@@ -123,7 +140,8 @@ function taskRow(t, { now, bin, lanesOn, caps, budget = DEFAULT_BUDGET_MIN }) {
   const rv = [...t.events.slice(since + 1)].reverse().find((e) => e.event === 'review');
   if (rv && ['dispatched', 'in-review', 'implemented', 'fix-round'].includes(t.status)) {
     const n = rv.data?.round ?? '?';
-    if (rv.data?.verdict === 'approved') return approved(`review r${n} approved`);
+    // `blocking` counts the blocking findings; an older event lacks it (unknown: the verdict decides)
+    if (rv.data?.verdict === 'approved' || rv.data?.blocking === 0) return approved(`review r${n} approved`);
     const k = (t.round ?? 0) + 1;
     if (k > caps.rounds) return decide(k);
     return action(id, `review r${n}: needs-fixes`, `hand its blocking findings to the implementer as fix round ${k} (REV-5; the review file: \`${bin} task show ${id}\`) and record it: \`${bin} task set ${id} fix-round --round ${k} --addressed 0 --open <n>\``, ['REV-5', 'PRI-6']);
@@ -152,6 +170,11 @@ function taskRow(t, { now, bin, lanesOn, caps, budget = DEFAULT_BUDGET_MIN }) {
       const e = t.events[lastIndex(t.events, ['implementer', 'blocked'])];
       if (e?.event === 'implementer' && BLOCKING_REPORTS.has(e.data?.report)) {
         return action(id, `report: ${e.data.report}`, `resolve the gap or the obstacle, no review; then dispatch again: \`${bin} task set ${id} dispatched --executor <executor> --base <sha>\``, ['ORC-7']);
+      }
+      // an open question for the user (SPC-5, T-MG-185): recorded as `blocked --reason "question: …"`; information,
+      // listed apart, so the loop goes on with the other tasks instead of waiting on an AskUserQuestion answer
+      if (QUESTION.test(e?.data?.reason ?? '')) {
+        return { task: id, state: cell(e.data.reason), step: `put it to the user in your report; on the answer: \`${bin} task set ${id} dispatched --executor <executor> --base <sha>\` or \`${bin} task set ${id} cancelled --reason <why>\``, rules: ['SPC-5', 'PRI-17'], kind: 'question' };
       }
       return { task: id, state: `blocked: ${cell(e?.data?.reason ?? 'no reason recorded')}`, kind: 'blocked' };
     }
@@ -218,9 +241,9 @@ export function nextSteps({ tasks = [], runs = [], handles = [], me = null, plan
     for (const t of [...tasks].sort((a, b) => natural(a.id, b.id))) {
       if (!open(t)) continue;
       if (!mine(t)) { info.push({ task: t.id, state: cell(`${t.owner}: ${t.status}${t.lane ? ` (lane ${t.lane})` : ''}`), kind: 'others' }); continue; }
-      ownOpen++;
       const newest = newestOf.get(t.id);
       if (newest && uncollected(newest, t)) {
+        ownOpen++;
         collect.push(action(t.id, `run ${newest.runId} ${newest.status}: collect it`, collectStep(newest, t), ['FLW-6']));
         continue;
       }
@@ -230,10 +253,11 @@ export function nextSteps({ tasks = [], runs = [], handles = [], me = null, plan
       const r = pending.length
         ? wait(t.id, `waits for ${pending.join(', ')}`, `dispatch nothing until ${pending.length === 1 ? 'it is' : 'they are'} done or cancelled; then route and brief it from the merged base`, ['FLW-9'])
         : taskRow(t, { now, bin, lanesOn, caps, budget: budgets[t.id] ?? DEFAULT_BUDGET_MIN });
+      if (r.kind !== 'question') ownOpen++; // a queued question holds no slot: the next plan entry may start (SPC-5)
       const run = liveOf.get(t.id);
       // a live run of the task is its work in progress: wait for it instead of starting the step again
-      if (run && r.kind !== 'blocked') steps.push(wait(t.id, `${r.state}; run ${run.runId} ${run.status}`, 'wait for the run; its record changes when it ends', ['FLW-4']));
-      else (r.kind === 'blocked' ? info : steps).push(r);
+      if (run && !INFO.has(r.kind)) steps.push(wait(t.id, `${r.state}; run ${run.runId} ${run.status}`, 'wait for the run; its record changes when it ends', ['FLW-4']));
+      else (INFO.has(r.kind) ? info : steps).push(r);
     }
     for (const r of [...runs].sort((a, b) => natural(a.runId, b.runId))) {
       const t = byId.get(r.task);
@@ -263,7 +287,7 @@ export function nextSteps({ tasks = [], runs = [], handles = [], me = null, plan
   steps.unshift(...collect);
   for (const w of watch) info.push({ task: w.code, state: w.message, step: null, rules: ['ORC-24'], kind: 'watch' }); // notes: never a step, never an exit
   const acting = steps.some((s) => s.kind === 'action');
-  const waiting = steps.some((s) => s.kind === 'wait') || info.some((i) => i.kind === 'blocked' || i.kind === 'others') || liveRuns > 0;
+  const waiting = steps.some((s) => s.kind === 'wait') || info.some((i) => INFO.has(i.kind) || i.kind === 'others') || liveRuns > 0;
   if (!acting && !waiting) {
     const files = dirty();
     if (files.length) {

@@ -20,6 +20,7 @@ import { EXIT } from '../cli/commands.mjs';
 import { authorHandle, createDecision, requireDecision } from '../decisions/index.mjs';
 import { ENGINE_FLAGS, THRESHOLDS as ENGINE_THRESHOLDS } from '../engine/index.mjs';
 import { TARGETS } from '../gen/index.mjs';
+import { THRESHOLDS as LOOP_THRESHOLDS } from '../loop/kind.mjs';
 import { THRESHOLDS as ROUTER_THRESHOLDS } from '../router/index.mjs';
 import { LIMITS, PATTERNS, StateError, machineDataDir, open, resolve, updateMachineConfig } from '../state/index.mjs';
 import { ROLES, ROLLOUT, executorsOf, flagsOf, readConfig, repoMaySet, rollout, thresholdKeys, thresholdsOf } from './index.mjs';
@@ -126,7 +127,7 @@ function setLocal({ name, mode, spec, where, io, names }) {
 }
 
 // The threshold data a key may override, per unit (the data each unit ships).
-const THRESHOLD_DATA = Object.freeze({ router: ROUTER_THRESHOLDS, engine: ENGINE_THRESHOLDS });
+const THRESHOLD_DATA = Object.freeze({ router: ROUTER_THRESHOLDS, engine: ENGINE_THRESHOLDS, loop: LOOP_THRESHOLDS });
 const DEFAULT = 'default';
 const valueAt = (data, path) => path.split('.').reduce((v, k) => v?.[k], data);
 

@@ -48,12 +48,16 @@ test('the external agent passes --yes, waits, and starts reviewer or implementer
 
 test('the dispatch skill: verify failure goes back before any fix-round record, merge forms read as commands, the reviewer dispatch is recorded', () => {
   const d = read(plugin, 'skills', 'dispatch', 'SKILL.md');
+  // T-MG-178 (intended change): steps 4–8 shrank to 4 dispatch (review and fix rounds included) and 5 close
   assert.doesNotMatch(step(d, 5), /Fail: `?task set <id> fix-round/, step(d, 5));
-  assert.doesNotMatch(step(d, 8), /\| --ready/, step(d, 8));
-  assert.match(step(d, 8), /train <ids…> --yes/);
-  assert.match(step(d, 8), /train --ready --yes/);
-  assert.match(step(d, 6), /record as in 3 \(`--executor <reviewer>`\)/, step(d, 6));
-  assert.match(step(d, 7), /--remaining <open finding IDs>/, step(d, 7));
+  assert.doesNotMatch(step(d, 5), /\| --ready/, step(d, 5));
+  assert.match(step(d, 5), /close <ids…> --yes/);
+  assert.match(step(d, 5), /verify failed: back to the implementer/);
+  // T-MG-186: critical or several approved go through the train
+  assert.match(step(d, 5), /train <ids…> --yes/);
+  assert.match(step(d, 5), /train --ready --yes/);
+  assert.match(step(d, 4), /record as in 3 \(`--executor <reviewer>`\)/, step(d, 4));
+  assert.match(step(d, 4), /--remaining <open finding IDs>/, step(d, 4));
 });
 
 test('the review and work skills: the Rules line holds every rule the steps cite; init comes before the class branch', () => {

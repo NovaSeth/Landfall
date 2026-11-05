@@ -100,6 +100,9 @@ export function reviewProblem(store, id, names) {
   return latest && !counts(latest) ? `external review without its run: record it again with ${names.bin} review record ${id} --kind external --run <run ID>` : null;
 }
 
+// A review that needs no fix round: approved, or needs-fixes with no blocking finding (its minors go to the backlog; REV-7).
+const cleared = (review) => review.verdict === 'approved' || !(review.findings ?? []).some((f) => f.severity === 'blocking');
+
 export function reviewState(store, id, steps, { tier = appliedTier(store), providerAvailable = false } = {}) {
   const need = reviewNeed(classOf(steps), tier, providerAvailable);
   const round = roundOf;
@@ -109,12 +112,12 @@ export function reviewState(store, id, steps, { tier = appliedTier(store), provi
   if (!keys.length) return 'missing';
   const latest = store.read('review', keys[keys.length - 1]);
   if (!counts(latest)) return 'missing';
-  if (latest.verdict === 'approved' && (need === 'any' || latest.reviewer.kind === 'external')) return 'approved';
+  if (cleared(latest) && (need === 'any' || latest.reviewer.kind === 'external')) return 'approved';
   return reviewClosed(store, id, round(keys[keys.length - 1]), latest) ? 'approved' : 'missing';
 }
 
 // The loop's rounds cap (local/loop.json, read through the store), else the default.
-function roundsCap(store) {
+export function roundsCap(store) {
   let rounds;
   try { rounds = JSON.parse(store.readText(LOOP.path()) ?? 'null')?.caps?.rounds; } catch { rounds = undefined; }
   const [min, max] = CAP_RANGE.rounds;

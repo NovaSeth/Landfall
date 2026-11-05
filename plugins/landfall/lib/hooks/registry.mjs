@@ -20,10 +20,11 @@ import { modeOf, readConfig, rollout } from '../config/index.mjs';
 import { hasToken } from '../guard/index.mjs';
 import { MSG } from '../guard/messages.mjs';
 import { stateDirName } from '../state/index.mjs';
-import { admitHook, bindHook, releaseHook } from './admit.mjs';
+import { admitHook, bindHook, modelLock, releaseHook } from './admit.mjs';
 import { decisionsContext } from './edit-decisions.mjs';
 import { editProtect } from './edit-protect.mjs';
 import { guardBash } from './guard-bash.mjs';
+import { guardQuestion } from './guard-question.mjs';
 import { guardWakeup } from './guard-wakeup.mjs';
 import { headroomHook } from './headroom.mjs';
 import { loadNames, stateOf } from './loop-state.mjs';
@@ -52,8 +53,9 @@ export const HOOKS = [
   { name: 'subagent-start', event: 'SubagentStart', timeout: TIMEOUT_S, budgetMs: BUDGET_MS, handler: subagentStart, onError: 'allow' },
   { name: 'guard-bash', event: 'PreToolUse', matcher: 'Bash', timeout: TIMEOUT_S, budgetMs: GUARD_BUDGET_MS, handler: guardBash, onError: 'block-if-guarded', capability: 'guard-bash' },
   { name: 'guard-wakeup', event: 'PreToolUse', matcher: 'ScheduleWakeup|CronCreate', timeout: TIMEOUT_S, budgetMs: BUDGET_MS, handler: guardWakeup, onError: 'allow' },
+  { name: 'guard-question', event: 'PreToolUse', matcher: 'AskUserQuestion', timeout: TIMEOUT_S, budgetMs: BUDGET_MS, handler: guardQuestion, onError: 'allow' },
   { name: 'decisions-context', event: 'PreToolUse', matcher: 'Edit|Write|MultiEdit', timeout: TIMEOUT_S, budgetMs: BUDGET_MS, handler: editHook, onError: 'allow', capability: 'edit-retrieval', whenOff: editProtect },
-  { name: 'admit-agent', event: 'PreToolUse', matcher: 'Agent', timeout: TIMEOUT_S, budgetMs: BUDGET_MS, handler: admitHook, onError: 'allow', capability: 'admission' },
+  { name: 'admit-agent', event: 'PreToolUse', matcher: 'Agent', timeout: TIMEOUT_S, budgetMs: BUDGET_MS, handler: admitHook, onError: 'allow', capability: 'admission', whenOff: modelLock },
   { name: 'bind-agent', event: 'PostToolUse', matcher: 'Agent', timeout: TIMEOUT_S, budgetMs: BUDGET_MS, handler: bindHook, onError: 'allow', capability: 'admission' },
   { name: 'release-agent', event: 'SubagentStop', timeout: TIMEOUT_S, budgetMs: BUDGET_MS, handler: releaseHook, onError: 'allow', capability: 'admission' },
   { name: 'headroom', event: 'PostToolUse', matcher: 'Bash|Edit|Write|Agent', timeout: TIMEOUT_S, budgetMs: BUDGET_MS, handler: headroomHook, onError: 'allow', capability: 'headroom' },
