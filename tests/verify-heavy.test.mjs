@@ -152,7 +152,7 @@ const waitLines = (s) => {
 const docOf = (v) => JSON.parse(v.text).data;
 // The verify doc inside the CLI's data (command.mjs adds its own fields next to the doc's) validates under v2.
 const valid = (d) => {
-  const { renamed: _r, written: _w, attempt: _a, closed: _c, candidates: _k, output: _o, reusedFrom: _f, ...doc } = d;
+  const { renamed: _r, health: _h /* T-MG-188: command data carries the health offenders next to the doc */, written: _w, attempt: _a, closed: _c, candidates: _k, output: _o, reusedFrom: _f, ...doc } = d;
   assert.deepEqual(state.check(VERIFY_KINDS.verify, doc), [], 'the doc validates under verify v2');
 };
 
