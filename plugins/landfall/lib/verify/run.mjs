@@ -100,28 +100,27 @@ export function gitIn(where, env, args) {
   return r;
 }
 
-// A merge's tree is what git merges its parents to: merge-tree exits 0 with the one tree ID, under no system or global
-// config and no renormalizing (a repository's merge drivers are not trusted to decide).
-const cleanMerge = (where, env, tree, parents) => {
-  const m = gitIn(where, { ...env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_ATTR_NOSYSTEM: '1' }, ['-c', 'merge.renormalize=false', 'merge-tree', '--write-tree', ...parents]);
-  return m.status === 0 && m.stdout.trim() === tree;
-};
-
-// T-MG-192: `tip` adds no change of its own to `head` (a review's commit): no own commit, and every first-parent commit
-// in head..tip is a clean merge (its tree is the merge of its parents) whose other parents are in `target`: a merge of
-// the target into the branch is no change, an edited merge is. `target`: a branch name or full ref, resolved to a commit.
-export function sameChange(where, env, head, tip, target = 'main') {
+// T-MG-192: `tip` adds no change of its own to `head` (a review's commit): no own commit, every first-parent commit in
+// head..tip is a merge of commits already in `target`, and the own change (target's merge base..commit, over `scope`) is
+// the same text at both: a merge of the target into the branch is no change, an edited merge is. `target`: a branch name
+// or full ref, resolved to a commit. Git runs without repository-independent config, external diff or attribute sources.
+export function sameChange(where, env, head, tip, target = 'main', scope = []) {
+  const clean = Object.fromEntries(Object.entries(env).filter(([k]) => !/^GIT_(CONFIG|ATTR_SOURCE|EXTERNAL_DIFF|DIFF_OPTS)/.test(k)));
+  const g = (...a) => gitIn(where, { ...clean, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_ATTR_NOSYSTEM: '1' }, a);
   const full = target === 'HEAD' || target.startsWith('refs/') ? target : `refs/heads/${target}`;
-  const into = gitIn(where, env, ['rev-parse', '--verify', '-q', `${full}^{commit}`]).stdout.trim();
-  if (!into || gitIn(where, env, ['merge-base', '--is-ancestor', head, tip]).status !== 0) return false;
-  const log = (...a) => gitIn(where, env, ['log', '--first-parent', ...a, '--end-of-options', `${head}..${tip}`]);
+  const into = g('rev-parse', '--verify', '-q', `${full}^{commit}`).stdout.trim();
+  if (!into || g('merge-base', '--is-ancestor', head, tip).status !== 0) return false;
+  const log = (...a) => g('log', '--first-parent', ...a, '--end-of-options', `${head}..${tip}`);
   const own = log('--no-merges', '--format=%H');
-  const merges = log('--merges', '--format=%T %P');
-  return own.status === 0 && own.stdout.trim() === '' && merges.status === 0 && merges.stdout.split('\n').filter(Boolean).every((l) => {
-    const [tree, first, ...others] = l.split(' ');
-    return others.every((q) => gitIn(where, env, ['merge-base', '--is-ancestor', q, into]).status === 0)
-      && cleanMerge(where, env, tree, [first, ...others]);
-  });
+  const merges = log('--merges', '--format=%P');
+  const change = (c) => {
+    const b = g('merge-base', '--end-of-options', c, into).stdout.trim();
+    const d = b ? g('-c', 'diff.external=', '-c', 'core.attributesFile=/dev/null', 'diff', '--no-renames', '--no-ext-diff', '--no-textconv', '--binary', '--end-of-options', b, c, '--', ...scope) : null;
+    return d && d.status === 0 ? d.stdout : null;
+  };
+  const was = change(head);
+  return own.status === 0 && own.stdout.trim() === '' && merges.status === 0 && was !== null && was === change(tip)
+    && merges.stdout.split('\n').filter(Boolean).every((l) => l.split(' ').slice(1).every((q) => g('merge-base', '--is-ancestor', q, into).status === 0));
 }
 
 export const commitExists = (where, env, sha) => Boolean(sha) && gitIn(where, env, ['cat-file', '-e', `${sha}^{commit}`]).status === 0;

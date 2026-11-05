@@ -68,7 +68,7 @@ export function eligible({ store, task, where, env, base, sha, scope, at }) {
   if (reviewNeed(actual, appliedTier(store)) === 'none') return { why: null, route };
   const head = [...task.events].reverse().find((e) => e.event === 'review')?.data?.head;
   if (typeof head !== 'string' || !OBJECT_ID.test(head)) return { why: 'its review records no reviewed commit (record the review again with review record)', route };
-  if (head !== sha && !sameChange(where, env, head, sha, targetOf(where, env))) {
+  if (head !== sha && !sameChange(where, env, head, sha, targetOf(where, env), scope)) {
     return { why: `the branch changed since its review at ${head.slice(0, 12)} (review the new commits, then record the review)`, route };
   }
   return { why: null, route };

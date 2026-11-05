@@ -165,3 +165,23 @@ test('a merge committed with its conflict unresolved is a changed branch, not a 
   assert.equal(res.code, 7, JSON.stringify(res.env));
   assert.equal(res.env.errors[0].code, 'review-head-moved');
 });
+
+test('a repository merge driver and a worktree merge=union attribute do not make an edited merge pass', async (t) => {
+  const r = repo(t);
+  writeFileSync(r.file, JSON.stringify({ ...REVIEW, head: r.reviewed }));
+  r.git('config', 'merge.union.driver', 'true');
+  r.git('config', 'merge.evil.driver', 'true');
+  writeFileSync(join(r.dir, '.gitattributes'), '* merge=union\n');
+  r.git('checkout', '-q', 'main');
+  writeFileSync(join(r.dir, 'm.txt'), 'm');
+  r.git('add', 'm.txt');
+  r.git('commit', '-q', '-m', 'main moves');
+  r.git('checkout', '-q', 'feat');
+  r.git('merge', '--no-edit', '--no-commit', 'main');
+  writeFileSync(join(r.dir, 'evil.txt'), 'smuggled in the merge');
+  r.git('add', 'evil.txt');
+  r.git('commit', '-q', '-m', 'Merge main (edited)');
+  const res = await record(r);
+  assert.equal(res.code, 7, JSON.stringify(res.env));
+  assert.equal(res.env.errors[0].code, 'review-head-moved');
+});
