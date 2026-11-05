@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.7.3
+
+Security batch: role capability tokens replace the parsing role gate of 2.7.2 (decisions D-MG-72, D-MG-75).
+
+- **Role tokens (T-MG-194, T-MG-196, T-MG-197, SEC-13):** the SessionStart hook mints a 256-bit session token for the orchestrator and the SubagentStart hook one single-use token for each reviewer or security-reviewer agent; only their hashes live in `local/token.json` (machine-local, bound to the live Claude Code process). `task set <id> dispatched`, `task set <id> self-verified` and `review record` take the token on stdin (`printf %s <token> | landfall … --token -`): a token on argv or in the environment is refused, a reviewer token records one review, and with no token the call is refused while a session holds the repository (nothing live: allowed with one warning). The store schema moves forward (migration 013), so an older CLI on the same machine is refused instead of forging around the check (SC10). A subagent cannot read Claude Code transcripts or the token store (Bash, Read, Grep and Glob are denied) and cannot start agents. The 2.7.2 parsing gate `roleDeny` and its test file are gone (D-MG-76 pattern: the forge test holds its 64 spellings against the CLI).
+
 ## 2.7.2
 
 Second small batch: the security and flow pair, one integration branch, one gate (decision D-MG-65).

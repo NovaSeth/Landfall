@@ -1,4 +1,4 @@
-# Known limitations (2.7.2)
+# Known limitations (2.7.3)
 
 ## Not in this release
 - The adaptive engine runs in shadow mode. `landfall tier` explains the recommended tier. Nothing applies tier changes automatically.
@@ -70,4 +70,4 @@
 - `landfall doctor` does not check branch protection. There is no degraded mode below the minimum Claude Code version, and doctor reports it.
 - Terminal output: an unterminated escape sequence in data hides the rest of that text. Nothing unsafe is printed.
 - Emoji in decision titles show in text presentation.
-- Role gate (2.7.2, T-MG-187): the Bash guard's reviewer-role check parses the command text. A security fuzz of 251 spellings passed 64 (shell keywords, wrappers with options, xargs, nested `sh -c`, symlinks, case changes), so a steered implementer that knows one of them can still record a dispatch or a review. The CLI-side check (the latest dispatched executor must be a reviewer, no implementer report after it) stays in force. The complete control is role capability tokens minted by the session and subagent hooks (T-MG-194).
+- Role tokens (2.7.3, T-MG-194, T-MG-196, T-MG-197): the token store and the task state share one state directory under one write protection (the FLW-7 guard and the edit hook); same-user code that defeats that protection with obfuscated commands can write either (R1). A reviewer token is not bound to a task ID: a steered reviewer dispatched for one task could record a review for another task that also awaits a reviewer. An external implementer (Codex) runs without Claude Code hooks and can read the orchestrator transcript, which holds the session token (R2; a follow-up decides a read sandbox for `landfall exec`). While a session holds a repository, a human in another terminal is refused until that session ends (R6). A 2.7.2 or older CLI on the same machine is refused on the migrated state (SC10, exit 7). The session transcript under ~/.claude/projects holds the session token while its Claude Code process lives (R7): subagents cannot read it, the user and any other process of the user can.
