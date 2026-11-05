@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, relative } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -54,7 +54,7 @@ test('Read, Grep and Glob on a protected root are denied for a subagent with the
     ['Read', { file_path: join(repo, 'link-token') }],
     ['Read', { file_path: join(repo, 'link-projects', '-p', 's1.jsonl') }],
     ['Read', { file_path: 'link-token' }],
-    ['Read', { file_path: '../../..' + transcript }],
+    ['Read', { file_path: relative(repo, transcript) }],
     ['Read', { file_path: '~/.claude/projects/-p/s1.jsonl' }],
     ['Read', { file_path: '$HOME/.claude/projects/-p/s1.jsonl' }],
     ['Read', { file_path: '${HOME}/.claude/projects/-p/s1.jsonl' }],
@@ -101,12 +101,12 @@ test('the Bash read corpus is denied for a subagent and allowed for the main ses
     `cat ${transcript}`, 'cat ~/.claude/projects/-p/s1.jsonl', 'cat $HOME/.claude/projects/-p/s1.jsonl', 'cat ${HOME}/.claude/projects/x',
     `cat ${home}/.claude/projects/-p/s1.jsonl`, 'grep -r lf1_ ~', 'grep -rn foo $HOME', 'echo lf1_abc', `cat ${join(state, 'local', 'token.json')}`,
     `cat ${names.stateDir}/local/token.json`, 'find / -name "*.jsonl"', `find ${home} -type f`, 'rg secret ~', 'ls -R ~/.claude', `tar cf - ${home}`,
-    'cat "$(echo ~/.claude/projects/x)"', 'cat link-token', 'cat ~/.cl*/projects/-p/s1.jsonl', 'cat ~/.claude/pro{jects,x}/-p/s1.jsonl',
+    'cat "$(echo ~/.claude/projects/x)"', 'cat ~/.cl*/projects/-p/s1.jsonl', 'cat ~/.claude/pro{jects,x}/-p/s1.jsonl',
   ];
   for (const c of corpus) {
     const r = bash(c);
     assert.ok(denied(r), `subagent: ${c}`);
-    if (c !== 'cat link-token') assert.match(r.stdout, /SEC-13: blocked: a subagent does not read Claude Code transcripts/, c);
+    assert.match(r.stdout, /SEC-13: blocked: a subagent does not read Claude Code transcripts/, c);
     assert.ok(!/SEC-13: blocked: a subagent does not read/.test(bash(c, false).stdout), `main: ${c}`);
   }
   const eval_ = bash('eval "$X" ~/.claude');

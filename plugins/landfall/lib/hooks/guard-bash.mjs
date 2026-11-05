@@ -27,6 +27,7 @@ import { heartbeatAgent } from '../sched/index.mjs';
 import { open, stateDirName } from '../state/index.mjs';
 import { externalBash, isExternalAgent } from './external-bash.mjs';
 import { loadNames, stateOf } from './loop-state.mjs';
+import { secretDeny } from './secret-paths.mjs';
 
 const GUARD_EXTRA_MAX = 65536;
 
@@ -188,7 +189,7 @@ function guardDecision(input, opts = {}) {
     const r = externalBash(input);
     if (r.code === 2) return r;
   }
-  const role = roleDeny(input, command, names.plugin, names.bin);
+  const role = secretDeny(input, { env, deadline: opts.deadline });
   if (role) {
     (opts.shadowLog ?? defaultShadowLog(env))({ at: new Date().toISOString(), capability: 'guard-bash', event: 'block', rule: 'SEC-13', command: command.slice(0, 200), cwd });
     return deny(role);
