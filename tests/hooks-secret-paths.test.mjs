@@ -186,3 +186,14 @@ test('round 2: an inline interpreter body naming .claude is denied', () => {
     'node -e "require(\'fs\').readFileSync(process.env.HOME+\'/.claude/x\')"']);
   assert.ok(!cmdDenied('python3 -c "print(1)"') && !cmdDenied('node -e "console.log(2)"') && !cmdDenied(`python -c "import os;os.listdir('${sn}/local')"`));
 });
+
+// T-MG-203: the one command shape that carries a token passes; every other command naming the prefix is denied.
+test('T-MG-203: printf %s <token> | landfall review record|task set ... --token - is allowed for a subagent', () => {
+  const t = ['lf', '1_'].join('') + 'A'.repeat(43);
+  for (const c of [`printf %s ${t} | landfall review record T-AA-1 --from r.md --yes --token -`, `printf %s ${t} | /opt/x/bin/landfall review record T-AA-1 --token -`,
+    `printf %s ${t} | landfall task set T-AA-1 dispatched --token -`]) assert.ok(!cmdDenied(c), c);
+  for (const c of [`grep ${t} .`, `echo ${t} > f`, `printf %s ${t} | sh`, `printf %s ${t} | landfall review record T-AA-1 --yes`, `printf %s ${t} ; cat x`,
+    `printf %s ${t} | landfall review record T-AA-1 --token - ${t}`, `printf %s ${t}${t} | landfall review record T-AA-1 --token -`, `printf %s ${t} | landfall review record T-AA-1 --token - > f`,
+    `printf %s ${t} | landfall review record T-AA-1 --token - && cat x`, `printf %s ${t} | landfall review record $(id) --token -`, `printf %s ${t} | landfall status --token -`,
+    `printf %s ${t} | evil/landfall2 review record T-AA-1 --token -`, `printf %s ${t.slice(0, 20)} | landfall review record T-AA-1 --token -`, `echo ${t}`]) assert.ok(cmdDenied(c), c);
+});
