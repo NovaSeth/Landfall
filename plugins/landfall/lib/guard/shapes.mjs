@@ -212,6 +212,167 @@ const INTERP_VAL = ['-W', '-X', '-r', '--require', '--import', '--loader', '-I',
 const XARGS_GIT = new Set(['add', 'rm', 'log', 'diff', 'show', 'ls-files', 'blame', 'grep']);
 const SED_EXEC = /(^|[;{}\n]\s*|[0-9$/]\s*)e(\s|$)|\/[gpiImM0-9]*e[gpiImM0-9]*\s*(;|}|$)/;
 
+// A family's shape: null, a message, or UNHANDLED (the command goes on as an unknown one). Its state `s` (shapeState):
+// c, w, ctx, name, b (base), fed, tok(k), pipeAfter(gate) (a pipe after a gate hides its exit code, TRP-2, SEC-6).
+const UNHANDLED = Symbol('unhandled');
+const pmShape = ({ c, w, b, ctx, tok }) => {
+  if (c.pipeOut) { const g = pmGate(w, ctx); if (g) return MSG.pipe(g, w.join(' ')); }
+  const p = pmParse(w, ctx);
+  if (p.exec !== undefined && tok(p.exec)) why(`${b} exec with a guarded word`);
+  if (p.script !== undefined && wordTok(p.script) && !/^check-secrets(:|$)/.test(p.script)) why(`${b} script "${short(p.script)}" with a guarded word in its name`);
+  return null;
+};
+const npxShape = ({ w, b, tok }) => { const t = w.find((x, k) => k > 0 && !x.startsWith('-')); if (tok() && !DATA.has(base(t ?? ''))) why(`${b} with a guarded word`); return null; };
+function shellShape({ w, b, fed, pipeAfter }) {
+  // a shell only as `<shell> <script> [arguments]` or alone without input; any option (-c, -s, -o, +o, --, -) in a line
+  // with a guarded word has no recognized form: the guard does not read shell options or their values
+  if (/^[-+]/.test(w[1] ?? '')) why(`${b} with the option "${short(w[1])}": run the script without shell options, or without a guarded word in the line`);
+  if (w.length < 2) { if (fed) why(`${b} reads code from a pipe, a redirection or a heredoc`); return null; }
+  if (gateScript(w[1])) return pipeAfter(gateScript(w[1]));
+  return scriptShape(w, 1);
+}
+const evalShape = ({ b, w, ctx }) => { ctx.unsure = true; return codeShape(b, w.slice(1).join(' '), [], ctx); };
+function sourceShape({ b, w, ctx, fed, pipeAfter }) {
+  // source only as `source <script> [arguments]`: an option (source -p <path> in bash 5.3, --) has no recognized form
+  if (/^-/.test(w[1] ?? '')) why(`${b} with the option "${short(w[1])}": run the script without options`);
+  if (gateScript(w[1] ?? '')) return pipeAfter(gateScript(w[1])); // a gate script changes neither branch nor directory
+  ctx.unsure = true; if (fed || w.length < 2) why(`${b} reads code from its input`); return scriptShape(w, 1);
+}
+function interpShape({ c, w, b, ctx, fed }) {
+  for (let k = 1; k < w.length; k++) {
+    const t = w[k];
+    const f = INTERP[b].find((x) => t === x || (x.length === 2 && t.startsWith(x)));
+    if (f) return codeShape(b, t === f ? w[k + 1] ?? '' : t.slice(f.length), w.slice(t === f ? k + 2 : k + 1), ctx);
+    if (t === '-m' || t === '--') { // the script after them is checked as one without them (review r1 F1)
+      if (hookEntry(w, k + 1, ctx)) return MSG.hookCli(BIN);
+      return scriptShape(w, k + 1 < w.length ? k + 1 : k);
+    }
+    if (t === '-') why(`${b} reads code from its input`);
+    if (!t.startsWith('-')) {
+      if (hookEntry(w, k, ctx)) return MSG.hookCli(BIN); // `node <any>/bin/<bin> hook …`, also renamed (T-MG-149)
+      return isLauncher(t, ctx) ? shape(asBin(c, k), ctx) : scriptShape(w, k);
+    }
+    if (wordTok(t) || (INTERP_VAL.includes(t) && wordTok(w[k + 1] ?? ''))) why(`an option of ${b} with a guarded word`);
+    if (INTERP_VAL.includes(t)) k++;
+  }
+  if (fed) why(`${b} reads code from a pipe, a redirection or a heredoc`);
+  return null;
+}
+function xargsShape({ w, ctx, tok }) { // xargs [-0 -r] git <paths/revisions> — appended words are data; no git or code otherwise
+  let k = 1; while (k < w.length && /^(-0|-r|--null|--no-run-if-empty)$/.test(w[k])) k++;
+  if (w[k] === 'git' && XARGS_GIT.has(w[k + 1]) && !tok(k + 2)) return null;
+  if (tok() || w.slice(k).some((x) => base(x) === 'git' || CODE_RUNNERS.has(base(x)))) why('xargs to git or code');
+  if (ctx.codeTok(w.slice(k).join(' '))) why('xargs runs a command with a guarded word'); // xargs rm -rf: targets from input
+  return null;
+}
+function aliasShape({ w, ctx }) { // a shell alias: a body without a guarded word; a later use of the name in this command has no form
+  for (const t of w.slice(1)) { const e = t.indexOf('='); if (e > 0) { if (ctx.codeTok(t.slice(e + 1))) why('a shell alias with a guarded word'); ctx.shadowNames.add(t.slice(0, e)); } }
+  return null;
+}
+function hashShape({ w, ctx }) {
+  if (!w.some((t) => /^-[a-z]*p/.test(t))) return UNHANDLED;
+  for (const t of w.slice(1)) if (!t.startsWith('-')) ctx.shadowNames.add(t);
+  return null;
+}
+function findShape({ c, w, b, ctx, tok }) { // trap '<code>' / find -exec <command>: code without a guarded word; find -delete: a removal
+  if (b === 'find') { const v = findDeleteShape(c, ctx); if (v) return v; }
+  if ((b === 'trap' || w.some((t) => /^-(exec|execdir|ok|okdir)$/.test(t))) && (tok() || ctx.codeTok(w.slice(1).join(' ')))) why(`${b} runs a command with a guarded word`);
+  return null;
+}
+const sedShape = ({ w }) => { if (w.slice(1).some((t) => !t.startsWith('-') && SED_EXEC.test(t))) why('sed with the e command'); return null; };
+const awkShape = ({ w }) => { if (w.slice(1).some((t) => !t.startsWith('-') && /system|getline|\|/.test(t))) why('awk that runs a command'); return null; };
+const ghShape = ({ w }) => { if (w.find((t, k) => k > 0 && !t.startsWith('-')) === 'alias') why('gh alias'); return null; };
+const containerShape = ({ w, b, tok }) => { // a container with the repository mounted runs a command on the same repository
+  if (['run', 'exec', 'create', 'start', 'compose', 'container'].includes(w.find((t, k) => k > 0 && !t.startsWith('-'))) && tok()) why(`${b} runs a command with a guarded word`);
+  return null;
+};
+const declShape = ({ w, b, tok }) => { if (w.some((t) => /^GIT_/i.test(t)) || tok()) why(`${b} of a GIT_* variable or with a guarded word`); return null; };
+const rmShape = ({ c, ctx }) => removeShape(c, ctx); // a recursive removal of a tracked top-level directory (PRI-17)
+const dataShape = () => null;
+// The families: the base name of the program selects the shape; where a name is in two, the first family listed wins.
+const FAMILY = new Map();
+const family = (names, fn) => { for (const n of names) if (!FAMILY.has(n)) FAMILY.set(n, fn); };
+family(PM, pmShape); family(['npx', 'pnpx', 'bunx'], npxShape); family(SHELLS, shellShape); family(['eval'], evalShape);
+family(['source', '.'], sourceShape); family(Object.keys(INTERP), interpShape); family(['xargs'], xargsShape); family(['alias'], aliasShape);
+family(['hash'], hashShape); family(['trap', 'find'], findShape); family(['sed', 'gsed'], sedShape); family(['awk', 'gawk', 'mawk', 'nawk'], awkShape);
+family(['gh'], ghShape); family(['docker', 'podman', 'nerdctl'], containerShape); family(DECL, declShape); family(['rm'], rmShape); family(DATA, dataShape);
+
+// Checks on the command word alone, in order: forms that evaluate a value or run code through the shell.
+function wordRules({ c, w, b, name, ctx }) {
+  if (c.words.some((x) => x.q === '?') && b !== 'echo' && b !== 'printf') why('$? outside echo/printf');
+  if (c.words.some((x) => x.q === 'msg') && !['git', 'gh', 'echo', 'printf'].includes(b)) why('a $( ) substitution outside a message');
+  if (ctx.shadowNames.has(name)) why(`"${short(name)}" redefined earlier in this command (alias or hash -p)`);
+}
+function varRules({ w, b, name }) {
+  if (KEYWORDS.has(name)) why(`compound syntax (${name})`);
+  // arithmetic evaluation of a value runs a $(…) stored in it: let, declare -i, an array index in a variable name,
+  // [[ … -eq … ]] with a name instead of a number
+  if (b === 'let' || (DECL.has(b) && w.some((t) => /^[-+][a-zA-Z]*i/.test(t)))) why(`${b}: arithmetic evaluation`);
+  if (VAR_NAMES.has(b) && w.slice(1).some((t) => t.includes('[') && !/^\[\[?$/.test(t))) why(`${b} with an array index (evaluated like code)`);
+  if (b === '[[' && w.some((t, k) => /^-(eq|ne|lt|le|gt|ge)$/.test(t) && !(/^-?\d+$/.test(w[k - 1]) && /^-?\d+$/.test(w[k + 1])))) why('[[ … ]] compares the value of a variable arithmetically');
+  // setting a variable a shell, git or the loader runs (G152 r3 b): declarations, read, mapfile, printf -v, getopts
+  if (VAR_SETTERS.has(b) && w.slice(1).some((t) => execVar(t.split('=')[0]))) why(`${b} sets a variable that runs code`);
+}
+// `time` (with -p) only measures the command after it, which is judged as if written alone (2.2.1); an assignment, an
+// option or compound syntax after it has no simple form (bash reads `time X=a cmd` as a prefix assignment)
+function timeShape({ c, w, ctx }) {
+  let k = 1; while (k < w.length && w[k] === '-p') k++;
+  if (k >= w.length) return null;
+  if (/^[A-Za-z_]\w*(\[[^\]]*\])?\+?=/.test(w[k]) || KEYWORDS.has(w[k]) || w[k].startsWith('-')) why('time before an assignment, an option or compound syntax');
+  return shape({ ...c, words: c.words.slice(k) }, ctx);
+}
+// A wrapper (env, nice, timeout, command, sudo …): an option of the wrapper has no recognized form (review r1 #4); the
+// wrapped command gets its own shape; then, as 1.5.2, a guarded word in the wrapper's words outside a path has none
+// (shells, source and gate scripts excepted: their shape already read every word)
+function wrapperShape({ c, w, b, ctx }) {
+  const u = unwrap(w);
+  if (u.opt) why(`${b} with an option: the wrapped command has no recognized form; run it without the wrapper option`);
+  if (u.at >= w.length) return null;
+  const p = base(w[u.at]);
+  const inner = shape({ ...c, words: c.words.slice(u.at) }, ctx);
+  if (inner || SHELLS.has(p) || p === 'source' || p === '.' || gateScript(w[u.at])) return inner;
+  for (const t of w) if (wordTok(t) && !isPath(t)) why(`"${short(t)}" in the command ${short(b)} outside the list`);
+  return null;
+}
+// The plugin's own command and its launcher by any path: the hook entry is blocked, `heavy` runs the command after "--".
+function binShape({ c, w, name, ctx, pipeAfter }) {
+  if (hookEntry(w, 0, ctx)) return MSG.hookCli(BIN); // any path to the launcher, also renamed (T-MG-149)
+  if (isLauncher(name, ctx)) return shape(asBin(c, 0), ctx); // the launcher by its path: the own command
+  if (base(name) === BIN && name !== BIN) { const gate = pipeAfter(binGate(w), true); if (gate) return gate; } // another path: gates only
+  if (!isBin(name)) return UNHANDLED;
+  const gate = pipeAfter(binGate(w), true); if (gate) return gate;
+  const { k, words } = binWords(w);
+  if (words[0] !== 'heavy') return null; // the CLI reads its arguments as data, never as shell
+  const e = w.indexOf('--', k);
+  const inner = c.words.slice(e < 0 ? k + 1 : e + 1);
+  return inner.length ? shape({ ...c, words: inner, pipeOut: false }, ctx) : null;
+}
+// The programs read before the families: git, a gate script as the program (no pipe after it, TRP-2, SEC-6; as the first
+// argument of a shell, source or a wrapper — in their families), wrappers, the plugin's own command.
+function leadShape(s) {
+  const { c, w, ctx, b, name } = s;
+  if (name === 'git' || /^\/.*\/git$/.test(name)) return gitShape(c, w, ctx);
+  if (/^git-[a-z][\w-]*$/.test(b)) return gitShape(c, ['git', b.slice(4), ...w.slice(1)], ctx);
+  if (gateScript(name)) return s.pipeAfter(gateScript(name));
+  return WRAPPERS.has(b) ? wrapperShape(s) : binShape(s);
+}
+// An unknown command or a script from a file: a guarded word only in a path; piped input could be code.
+function plainShape({ w, b, name, fed }) {
+  if (fed) why(`${short(b)} reads input from a pipe, a redirection or a heredoc`);
+  if (name.includes('/')) return scriptShape(w, 0);
+  for (const t of w) if (wordTok(t) && !isPath(t)) why(`"${short(t)}" in the command ${short(b)} outside the list`); // also the name (alias, function)
+  return null;
+}
+
+// Input from a pipe, heredoc or file; the plugin's own command with --json among its own flags (before a `--`) carries
+// its code in the envelope, so a pipe after it reads data (retro 2026-10 §3.9); `heavy` runs another command (review r1 F2).
+function shapeState(c, w, ctx) {
+  const dd = w.indexOf('--'); const own = (dd < 0 ? w : w.slice(0, dd)).includes('--json');
+  return { c, w, ctx, name: w[0], b: base(w[0]), fed: c.pipeIn || c.heredoc !== null || c.redirs.some((r) => r.op.startsWith('<')),
+    tok: (k = 1) => w.slice(k).some(wordTok),
+    pipeAfter: (gate, jsonOk = false) => (c.pipeOut && gate && !(jsonOk && gate.id !== 'slot admission' && own) ? MSG.pipe(gate, w.join(' ')) : null) };
+}
+
 // The shape of a simple command: null — allowed; text — a broken rule; NotPlain — no recognized simple form.
 export function shape(c, ctx) {
   const w = c.words.map((x) => x.text);
@@ -221,138 +382,14 @@ export function shape(c, ctx) {
   const owned = stateWrite(c, w, ctx, { args: !WRAPPERS.has(base(w[0] ?? '')) });
   if (owned) return owned;
   if (!w.length) return null; // a redirection alone
-  const name = w[0]; const b = base(name);
-  const fed = c.pipeIn || c.heredoc !== null || c.redirs.some((r) => r.op.startsWith('<')); // input from a pipe, heredoc or file
-  const tok = (k = 1) => w.slice(k).some(wordTok);
-  // a pipe after a gate reports the last command's exit code (TRP-2, SEC-6); the plugin's own command with --json among
-  // its own flags (before a `--`) carries its code in the envelope, so a pipe after it reads data (retro 2026-10 §3.9);
-  // `heavy` runs another command, whose own --json is no envelope (review r1 F2)
-  const ownJson = () => { const dd = w.indexOf('--'); return (dd < 0 ? w : w.slice(0, dd)).includes('--json'); };
-  const pipeAfter = (gate, jsonOk = false) => (c.pipeOut && gate && !(jsonOk && gate.id !== 'slot admission' && ownJson()) ? MSG.pipe(gate, w.join(' ')) : null);
-  if (c.words.some((x) => x.q === '?') && b !== 'echo' && b !== 'printf') why('$? outside echo/printf');
-  if (c.words.some((x) => x.q === 'msg') && !['git', 'gh', 'echo', 'printf'].includes(b)) why('a $( ) substitution outside a message');
-  if (ctx.shadowNames.has(name)) why(`"${short(name)}" redefined earlier in this command (alias or hash -p)`);
-  // `time` (with -p) only measures the command after it, which is judged as if written alone (2.2.1); an assignment, an
-  // option or compound syntax after it has no simple form (bash reads `time X=a cmd` as a prefix assignment)
-  if (name === 'time') {
-    let k = 1; while (k < w.length && w[k] === '-p') k++;
-    if (k >= w.length) return null;
-    if (/^[A-Za-z_]\w*(\[[^\]]*\])?\+?=/.test(w[k]) || KEYWORDS.has(w[k]) || w[k].startsWith('-')) why('time before an assignment, an option or compound syntax');
-    return shape({ ...c, words: c.words.slice(k) }, ctx);
-  }
-  if (KEYWORDS.has(name)) why(`compound syntax (${name})`);
-  // arithmetic evaluation of a value runs a $(…) stored in it: let, declare -i, an array index in a variable name,
-  // [[ … -eq … ]] with a name instead of a number
-  if (b === 'let' || (DECL.has(b) && w.some((t) => /^[-+][a-zA-Z]*i/.test(t)))) why(`${b}: arithmetic evaluation`);
-  if (VAR_NAMES.has(b) && w.slice(1).some((t) => t.includes('[') && !/^\[\[?$/.test(t))) why(`${b} with an array index (evaluated like code)`);
-  if (b === '[[' && w.some((t, k) => /^-(eq|ne|lt|le|gt|ge)$/.test(t) && !(/^-?\d+$/.test(w[k - 1]) && /^-?\d+$/.test(w[k + 1])))) why('[[ … ]] compares the value of a variable arithmetically');
-  // setting a variable a shell, git or the loader runs (G152 r3 b): declarations, read, mapfile, printf -v, getopts
-  if (VAR_SETTERS.has(b) && w.slice(1).some((t) => execVar(t.split('=')[0]))) why(`${b} sets a variable that runs code`);
-  if (name === 'git' || /^\/.*\/git$/.test(name)) return gitShape(c, w, ctx);
-  if (/^git-[a-z][\w-]*$/.test(b)) return gitShape(c, ['git', b.slice(4), ...w.slice(1)], ctx);
-  // a gate script as the executed program: no pipe after it (TRP-2, SEC-6); as the first argument of a shell, source or
-  // a wrapper — below
-  if (gateScript(name)) return pipeAfter(gateScript(name));
-  // a wrapper (env, nice, timeout, command, sudo …): an option of the wrapper has no recognized form (review r1 #4); the
-  // wrapped command gets its own shape; then, as 1.5.2, a guarded word in the wrapper's words outside a path has none
-  // (shells, source and gate scripts excepted: their shape already read every word)
-  if (WRAPPERS.has(b)) {
-    const u = unwrap(w);
-    if (u.opt) why(`${b} with an option: the wrapped command has no recognized form; run it without the wrapper option`);
-    if (u.at >= w.length) return null;
-    const p = base(w[u.at]);
-    const inner = shape({ ...c, words: c.words.slice(u.at) }, ctx);
-    if (inner || SHELLS.has(p) || p === 'source' || p === '.' || gateScript(w[u.at])) return inner;
-    for (const t of w) if (wordTok(t) && !isPath(t)) why(`"${short(t)}" in the command ${short(b)} outside the list`);
-    return null;
-  }
-  if (hookEntry(w, 0, ctx)) return MSG.hookCli(BIN); // any path to the launcher, also renamed (T-MG-149)
-  if (isLauncher(name, ctx)) return shape(asBin(c, 0), ctx); // the launcher by its path: the own command
-  if (base(name) === BIN && name !== BIN) { const gate = pipeAfter(binGate(w), true); if (gate) return gate; } // another path: gates only
-  if (isBin(name)) {
-    const gate = pipeAfter(binGate(w), true); if (gate) return gate;
-    const { k, words } = binWords(w);
-    if (words[0] !== 'heavy') return null; // the CLI reads its arguments as data, never as shell
-    const e = w.indexOf('--', k);
-    const inner = c.words.slice(e < 0 ? k + 1 : e + 1);
-    return inner.length ? shape({ ...c, words: inner, pipeOut: false }, ctx) : null;
-  }
-  if (PM.has(b)) {
-    if (c.pipeOut) { const g = pmGate(w, ctx); if (g) return MSG.pipe(g, w.join(' ')); }
-    const p = pmParse(w, ctx);
-    if (p.exec !== undefined && tok(p.exec)) why(`${b} exec with a guarded word`);
-    if (p.script !== undefined && wordTok(p.script) && !/^check-secrets(:|$)/.test(p.script)) why(`${b} script "${short(p.script)}" with a guarded word in its name`);
-    return null;
-  }
-  if (['npx', 'pnpx', 'bunx'].includes(b)) { const t = w.find((x, k) => k > 0 && !x.startsWith('-')); if (tok() && !DATA.has(base(t ?? ''))) why(`${b} with a guarded word`); return null; }
-  if (SHELLS.has(b)) {
-    // a shell only as `<shell> <script> [arguments]` or alone without input; any option (-c, -s, -o, +o, --, -) in a line
-    // with a guarded word has no recognized form: the guard does not read shell options or their values
-    if (/^[-+]/.test(w[1] ?? '')) why(`${b} with the option "${short(w[1])}": run the script without shell options, or without a guarded word in the line`);
-    if (w.length < 2) { if (fed) why(`${b} reads code from a pipe, a redirection or a heredoc`); return null; }
-    if (gateScript(w[1])) return pipeAfter(gateScript(w[1]));
-    return scriptShape(w, 1);
-  }
-  if (b === 'eval') { ctx.unsure = true; return codeShape(b, w.slice(1).join(' '), [], ctx); }
-  if (b === 'source' || b === '.') {
-    // source only as `source <script> [arguments]`: an option (source -p <path> in bash 5.3, --) has no recognized form
-    if (/^-/.test(w[1] ?? '')) why(`${b} with the option "${short(w[1])}": run the script without options`);
-    if (gateScript(w[1] ?? '')) return pipeAfter(gateScript(w[1])); // a gate script changes neither branch nor directory
-    ctx.unsure = true; if (fed || w.length < 2) why(`${b} reads code from its input`); return scriptShape(w, 1);
-  }
-  if (Object.hasOwn(INTERP, b)) {
-    for (let k = 1; k < w.length; k++) {
-      const t = w[k];
-      const f = INTERP[b].find((x) => t === x || (x.length === 2 && t.startsWith(x)));
-      if (f) return codeShape(b, t === f ? w[k + 1] ?? '' : t.slice(f.length), w.slice(t === f ? k + 2 : k + 1), ctx);
-      if (t === '-m' || t === '--') { // the script after them is checked as one without them (review r1 F1)
-        if (hookEntry(w, k + 1, ctx)) return MSG.hookCli(BIN);
-        return scriptShape(w, k + 1 < w.length ? k + 1 : k);
-      }
-      if (t === '-') why(`${b} reads code from its input`);
-      if (!t.startsWith('-')) {
-        if (hookEntry(w, k, ctx)) return MSG.hookCli(BIN); // `node <any>/bin/<bin> hook …`, also renamed (T-MG-149)
-        return isLauncher(t, ctx) ? shape(asBin(c, k), ctx) : scriptShape(w, k);
-      }
-      if (wordTok(t) || (INTERP_VAL.includes(t) && wordTok(w[k + 1] ?? ''))) why(`an option of ${b} with a guarded word`);
-      if (INTERP_VAL.includes(t)) k++;
-    }
-    if (fed) why(`${b} reads code from a pipe, a redirection or a heredoc`);
-    return null;
-  }
-  if (b === 'xargs') { // xargs [-0 -r] git <paths/revisions> — appended words are data; no git or code otherwise
-    let k = 1; while (k < w.length && /^(-0|-r|--null|--no-run-if-empty)$/.test(w[k])) k++;
-    if (w[k] === 'git' && XARGS_GIT.has(w[k + 1]) && !tok(k + 2)) return null;
-    if (tok() || w.slice(k).some((x) => base(x) === 'git' || CODE_RUNNERS.has(base(x)))) why('xargs to git or code');
-    if (ctx.codeTok(w.slice(k).join(' '))) why('xargs runs a command with a guarded word'); // xargs rm -rf: targets from input
-    return null;
-  }
-  if (b === 'alias') { // a shell alias: a body without a guarded word; a later use of the name in this command has no form
-    for (const t of w.slice(1)) { const e = t.indexOf('='); if (e > 0) { if (ctx.codeTok(t.slice(e + 1))) why('a shell alias with a guarded word'); ctx.shadowNames.add(t.slice(0, e)); } }
-    return null;
-  }
-  if (b === 'hash' && w.some((t) => /^-[a-z]*p/.test(t))) { for (const t of w.slice(1)) if (!t.startsWith('-')) ctx.shadowNames.add(t); return null; }
-  if (b === 'trap' || b === 'find') { // trap '<code>' / find -exec <command>: code without a guarded word; find -delete: a removal
-    if (b === 'find') { const v = findDeleteShape(c, ctx); if (v) return v; }
-    if ((b === 'trap' || w.some((t) => /^-(exec|execdir|ok|okdir)$/.test(t))) && (tok() || ctx.codeTok(w.slice(1).join(' ')))) why(`${b} runs a command with a guarded word`);
-    return null;
-  }
-  if (/^g?sed$/.test(b) && w.slice(1).some((t) => !t.startsWith('-') && SED_EXEC.test(t))) why('sed with the e command');
-  if (/^[gmn]?awk$/.test(b) && w.slice(1).some((t) => !t.startsWith('-') && /system|getline|\|/.test(t))) why('awk that runs a command');
-  if (/^(g?sed|[gmn]?awk)$/.test(b)) return null;
-  if (b === 'gh') { if (w.find((t, k) => k > 0 && !t.startsWith('-')) === 'alias') why('gh alias'); return null; }
-  if (b === 'docker' || b === 'podman' || b === 'nerdctl') { // a container with the repository mounted runs a command on the same repository
-    if (['run', 'exec', 'create', 'start', 'compose', 'container'].includes(w.find((t, k) => k > 0 && !t.startsWith('-'))) && tok()) why(`${b} runs a command with a guarded word`);
-    return null;
-  }
-  if (DECL.has(b)) { if (w.some((t) => /^GIT_/i.test(t)) || tok()) why(`${b} of a GIT_* variable or with a guarded word`); return null; }
-  if (b === 'rm') return removeShape(c, ctx); // a recursive removal of a tracked top-level directory (PRI-17)
-  if (DATA.has(b)) return null;
-  // an unknown command or a script from a file: a guarded word only in a path; piped input could be code
-  if (fed) why(`${short(b)} reads input from a pipe, a redirection or a heredoc`);
-  if (name.includes('/')) return scriptShape(w, 0);
-  for (const t of w) if (wordTok(t) && !isPath(t)) why(`"${short(t)}" in the command ${short(b)} outside the list`); // also the name (alias, function)
-  return null;
+  const s = shapeState(c, w, ctx);
+  wordRules(s);
+  if (s.name === 'time') return timeShape(s);
+  varRules(s);
+  const lead = leadShape(s);
+  if (lead !== UNHANDLED) return lead;
+  const f = FAMILY.get(s.b); const r = f ? f(s) : UNHANDLED;
+  return r === UNHANDLED ? plainShape(s) : r;
 }
 
 // Hook files (SEC-4): a hook directory (.githooks, .husky, .git/hooks) or .git itself, after resolving against the command's
