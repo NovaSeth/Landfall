@@ -1,4 +1,4 @@
-# Known limitations (2.7.1)
+# Known limitations (2.7.2)
 
 ## Not in this release
 - The adaptive engine runs in shadow mode. `landfall tier` explains the recommended tier. Nothing applies tier changes automatically.
@@ -70,3 +70,4 @@
 - `landfall doctor` does not check branch protection. There is no degraded mode below the minimum Claude Code version, and doctor reports it.
 - Terminal output: an unterminated escape sequence in data hides the rest of that text. Nothing unsafe is printed.
 - Emoji in decision titles show in text presentation.
+- Role gate (2.7.2, T-MG-187): the Bash guard's reviewer-role check parses the command text. A security fuzz of 251 spellings passed 64 (shell keywords, wrappers with options, xargs, nested `sh -c`, symlinks, case changes), so a steered implementer that knows one of them can still record a dispatch or a review. The CLI-side check (the latest dispatched executor must be a reviewer, no implementer report after it) stays in force. The complete control is role capability tokens minted by the session and subagent hooks (T-MG-194).

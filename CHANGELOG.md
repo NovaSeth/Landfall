@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.7.2
+
+Second small batch: the security and flow pair, one integration branch, one gate (decision D-MG-65).
+
+- **Merge train (T-MG-186, D-MG-65):** `landfall train <ids…>` (or `--ready`) merges approved tasks on one temporary integration branch in `--after` order, runs the gates once on the integrated tree, bisects a failure, fast-forwards the target only if it did not move, and records every task of the train as merged and done with a verify of mode `train`. Each task is checked again right before it is integrated and at record time with the same eligibility checks `task merge` uses (verify for the current head, class from the real change, approved review bound to the reviewed head, done head); a review record may carry the reviewed `head` and is refused when the branch tip moved. A task whose generated files conflict is left out as `conflict` (T-MG-191 follows). The loop proposes the train for a critical task and `close` for the rest.
+- **No self-approval (T-MG-187, SEC-13):** `review record` of a Claude review needs the dispatched reviewer: the latest dispatched executor must be a reviewer agent and no implementer report may follow it. The Bash guard denies a subagent without the reviewer role running `landfall review record` or `landfall task set <id> dispatched`, reading the tokenized command through quotes and common wrappers. This is a partial control: see known limitations; the complete control is role capability tokens (T-MG-194).
+- **Verify record:** one `mode` shape for every verify (`kind` fast, full or train, with the reason and the test files), the optional `train` block for the train's commit, head and batch; the review event records the blocking count and the reviewed head.
+
 ## 2.7.1
 
 First small batch after 2.7.0: one integration branch, one gate (PO 2026-11-05: ship in small batches).
