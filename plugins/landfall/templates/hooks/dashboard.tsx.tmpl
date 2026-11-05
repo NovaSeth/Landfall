@@ -359,7 +359,7 @@ const minutes = (ms: number): string => {
   return m >= 60 ? `${Math.floor(m / 60)}h${pad2(m % 60)}m` : `${m}m`
 }
 
-// `[■■■■■□□□□□] 12m/45m` and the expected finish (`~HH:MM`, or `+Nm over` once past); null without a start or an estimate.
+// `■■■■■□□□□□ 12m/45m` and the expected finish (`~HH:MM`, or `+Nm over` once past); null without a start or an estimate.
 function barOf(t: TaskView, now: number): { bar: string; clock: string } | null {
   const started = Date.parse(t.startedAt ?? '')
   const expected = t.expectedMs
@@ -369,28 +369,30 @@ function barOf(t: TaskView, now: number): { bar: string; clock: string } | null 
   const finish = started + expected
   const d = new Date(finish)
   return {
-    bar: `[${'■'.repeat(filled)}${'□'.repeat(BAR_CELLS - filled)}] ${minutes(spent)}/${minutes(expected)}`,
+    bar: `${'■'.repeat(filled)}${'□'.repeat(BAR_CELLS - filled)} ${minutes(spent)}/${minutes(expected)}`,
     clock: finish > now ? `~${pad2(d.getHours())}:${pad2(d.getMinutes())}` : `+${minutes(now - finish)} over`,
   }
 }
 
-// One task on one line: icon, id, round, class, the timing (bar, then clock), the title shortened to the room that is left, the
-// stage if room remains. Narrow: the title is shortened first; only when too little of it would stay, the clock goes, then the bar.
+// One task on one line: icon, id, round, the timing (bar, then clock), the class in brackets, the title shortened to the room that
+// is left, the stage if room remains. Narrow: the title is shortened first; only when too little of it would stay, the clock goes,
+// then the bar. The class is never dropped.
 function taskText(t: TaskView, icon: string, stage: string, now: number, width: number): string {
-  const head = `${icon} ${t.id}${t.round ? ` r${t.round}` : ''} ${t.cls ? CLASS_TAG[t.cls] ?? t.cls : '-'}`
+  const head = `${icon} ${t.id}${t.round ? ` r${t.round}` : ''}`
+  const cls = `[${t.cls ? CLASS_TAG[t.cls] ?? t.cls : '-'}]`
   const title = t.title ?? ''
   const titleLen = [...title].length
   const b = barOf(t, now)
-  const mids = b ? [`  ${b.bar} ${b.clock}`, `  ${b.bar}`, ''] : ['']
+  const mids = b ? [` ${b.bar} ${b.clock}`, ` ${b.bar}`, ''] : ['']
   for (const mid of mids) {
-    const base = `${head}${mid}`
+    const base = `${head}${mid} ${cls}`
     const room = width - [...base].length - 1
     if (room < Math.min(titleLen, 12)) continue
     if (titleLen === 0) return addStage(base, stage, width)
     if (titleLen > room) return `${base} ${cut(title, room)}`
     return addStage(`${base} ${title}`, stage, width)
   }
-  return cut(`${head} ${title}`, width)
+  return cut(`${head} ${cls} ${title}`, width)
 }
 
 function addStage(base: string, stage: string, width: number): string {
