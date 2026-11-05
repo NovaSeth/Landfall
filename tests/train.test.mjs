@@ -73,7 +73,9 @@ function repo(t, { extra = '' } = {}) {
     git('commit', '-q', '-m', name);
     const tipSha = git('rev-parse', 'HEAD');
     git('checkout', '-q', 'main');
-    const reviewed = review ? [{ at: AT, by: handle, event: 'review', data: { round: 1, verdict: 'approved', reviewer: 'claude', head: tipSha } }] : [];
+    // review false: the task waits for its review; the reviewer dispatch lets `review record` accept it (T-MG-187, SEC-13)
+    const reviewed = review ? [{ at: AT, by: handle, event: 'review', data: { round: 1, verdict: 'approved', reviewer: 'claude', head: tipSha } }]
+      : [{ at: AT, by: handle, event: 'dispatched', data: { executor: `${names.plugin}:reviewer`, base: head } }];
     const id = state.allocateId(store, {
       prefix: 'T', handle,
       build: (tid) => ({
