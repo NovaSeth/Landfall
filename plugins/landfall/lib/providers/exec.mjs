@@ -23,6 +23,7 @@ import { dirname, isAbsolute, join, resolve as resolvePath } from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 import { EXIT } from '../cli/commands.mjs';
 import { createExclusive, readRegularFile } from '../fsx/index.mjs';
+import { git } from '../git/index.mjs';
 import { start } from '../proc/index.mjs';
 import { OUT_NAME, capFor, dirIdOf, liveRun, nextRunId, ownOutDir, runsStore, LOG_LINE, LOG_LINES } from '../runs/index.mjs';
 import { SYSTEM, acquireWait, attachChild, identify, release, supervise } from '../sched/index.mjs';
@@ -159,6 +160,10 @@ export function exec({ flags, names, io, pluginRoot }) {
     elapsedMs: 0, capS, tokens: null, tokensReason: null, costMicroUsd: null, lastLine: null, unknownEvents: 0, outFile: join(outDir, OUT_NAME), exit: null, error: null, bin: program,
     outDirId: dirIdOf(dirSt), briefSha256: sha256(input),
   };
+  // the reviewed commit: the task branch tip now, at the start of the review (T-MG-186 fix round 2, F5)
+  const branch = task?.branch;
+  const head = role === 'reviewer' && typeof branch === 'string' && branch !== '' && !branch.startsWith('-') ? git(['rev-parse', '--verify', '-q', `${branch}^{commit}`], { cwd: w.repo, env: io.env }).stdout.trim() : '';
+  if (/^[0-9a-f]{40,64}$/.test(head)) record.head = head;
   store.create('run', runId, record);
   store.create('runLog', runId, { runId, lines: [] });
   const child = start(process.execPath, [join(pluginRoot, 'bin', bin), 'run-supervise', runId, '--yes'], { unit: 'providers', cwd: io.cwd, env: io.env, detached: true, stdin: 'ignore' });

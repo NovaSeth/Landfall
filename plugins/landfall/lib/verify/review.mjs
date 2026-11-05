@@ -5,7 +5,7 @@
 //     lib/state, which validates it again (atomic, locked). Invalid input: exit 2, one error per failing field.
 //   - Only the task's owner records, only while the task is open (done and cancelled tasks take no further state).
 //   - The round is the next free number, created exclusively (two records never share a round); the task gets the
-//     event `review` { round, verdict, reviewer: kind }.
+//     event `review` { round, verdict, reviewer: kind, blocking, head } (head: the reviewed tip of the task branch).
 // The validator knows exactly the JSON Schema keywords the schema uses; any other keyword is an error, never ignored.
 // An external review comes from its run (D4): `--kind external --run <runId>` reads the out file of a done reviewer
 // run of the task (lib/runs record; a regular file, no link followed, capped) and stores the run ID and the sha256 of
@@ -20,9 +20,10 @@ import { readRegularFile } from '../fsx/index.mjs';
 import { RUN_ID, ownOutDir, runsStore } from '../runs/index.mjs';
 import { KINDS, StateError } from '../state/index.mjs';
 import { VERIFY_KINDS, reviewKey } from './kinds.mjs';
-import { activeWhere, storeOf, unknownTask } from './run.mjs';
+import { activeWhere, gitIn, storeOf, unknownTask } from './run.mjs';
 
 const INPUT_MAX = 1024 * 1024;
+const OBJECT_ID = /^[0-9a-f]{40,64}$/;
 const ROUND_MAX = 999; // review-r<k>: k has at most three digits (the review kind's key)
 const ERRORS_MAX = 10;
 const SCHEMA_FILE = new URL('../../templates/review.schema.json', import.meta.url);
@@ -113,8 +114,13 @@ export function recordReview({ cwd, env, names, id, from, run, at = new Date().t
   const where = activeWhere({ cwd, env, names });
   KINDS.task.path(id);
   const rec = run === undefined ? null : reviewerRun(where, names, id, run);
-  const { value: input, bytes } = readInput(cwd, rec ? rec.outFile : from);
-  const invalid = reviewErrors(input);
+  const { value: raw, bytes } = readInput(cwd, rec ? rec.outFile : from);
+  // The reviewed commit (fix round 2, F5): the review may name it (`head`, outside the provider schema); it must be the
+  // branch tip when recorded. An external run binds the tip exec saw at its start (the run record's head).
+  const isObject = raw !== null && typeof raw === 'object' && !Array.isArray(raw);
+  const { head: claimed, ...rest } = isObject ? raw : {};
+  const input = isObject ? rest : raw;
+  const invalid = [...reviewErrors(input), ...(claimed === undefined || (typeof claimed === 'string' && OBJECT_ID.test(claimed)) ? [] : ['head: not a commit ID (40-64 hex)'])];
   if (invalid.length) return { invalid: invalid.slice(0, ERRORS_MAX) };
   if (!rec && input.reviewer.kind === 'external') throw refused('external-needs-run', `${from} claims an external reviewer: a file alone never makes a review external`, EXTERNAL_HINT);
   const store = storeOf(where, names);
@@ -133,6 +139,9 @@ export function recordReview({ cwd, env, names, id, from, run, at = new Date().t
     const reviewer = at >= 0 && /:(security-)?reviewer$/.test(events[at].data?.executor ?? '') && !events.slice(at + 1).some((e) => e.event === 'implementer');
     if (!reviewer) throw refused('reviewer-not-dispatched', `${id} was not dispatched to a reviewer (or its implementer reported after): a claude review is recorded only by the dispatched reviewer (SEC-13)`, `dispatch a reviewer first: '${names.bin} task set ${id} dispatched --executor <plugin>:reviewer --base <sha>'`);
   }
+  const tip = typeof task.branch === 'string' && task.branch !== '' && !task.branch.startsWith('-') ? gitIn(where, env, ['rev-parse', '--verify', '-q', `${task.branch}^{commit}`]).stdout.trim() : '';
+  if (claimed !== undefined && claimed !== tip) throw refused('review-head-moved', `the review is of ${claimed.slice(0, 12)}, but ${task.branch} is at ${tip.slice(0, 12) || 'no commit'}`, 'review the new commits, then record the review again');
+  const head = rec ? rec.head ?? tip : tip;
   const doc = rec
     ? { verdict: input.verdict, reviewer: { kind: 'external', id: `${rec.provider}:reviewer` }, findings: input.findings, run: rec.runId, sha256: createHash('sha256').update(bytes).digest('hex') }
     : { verdict: input.verdict, reviewer: input.reviewer, findings: input.findings };
@@ -142,7 +151,7 @@ export function recordReview({ cwd, env, names, id, from, run, at = new Date().t
   if (round > ROUND_MAX) throw usage('limit-exceeded', `${id} has ${ROUND_MAX} review rounds, the limit`, 'start a new task');
   store.update('task', id, (cur) => {
     open(cur);
-    return { ...cur, events: [...cur.events, { at, by: handle, event: 'review', data: { round, verdict: doc.verdict, reviewer: doc.reviewer.kind, blocking: doc.findings.filter((f) => f.severity === 'blocking').length } }] };
+    return { ...cur, events: [...cur.events, { at, by: handle, event: 'review', data: { round, verdict: doc.verdict, reviewer: doc.reviewer.kind, blocking: doc.findings.filter((f) => f.severity === 'blocking').length, ...(OBJECT_ID.test(head) ? { head } : {}) } }] };
   });
   const rel = stateRel(where.worktree, where.dir); // shown from the worktree, absolute outside it
   const path = `tasks/${reviewKey(id, round)}.json`;

@@ -176,6 +176,11 @@ test('1.x self-verified round → approved: verify, merge, close (REV-11, FLW-8)
   // T-MG-178 (intended change): one `close` call replaces the verify → task done → task merge chain
   assert.match(s.step, new RegExp(`\`${BIN} close T-TU-1\``));
   assert.match(s.step, new RegExp(`${BIN} close <ids…>\`, one batch`));
+  // T-MG-186: a critical task merges through the train
+  const crit = row(table([task('T-TU-1', 'fix-round', { round: 1, cls: 'critical', events })]), 'T-TU-1');
+  assert.deepEqual(crit.rules, ['REV-11', 'ORC-25', 'FLW-8']);
+  assert.match(crit.step, new RegExp(`${BIN} train T-TU-1`), 'T-MG-186: an approved critical task merges through the train');
+  assert.match(crit.step, new RegExp(`${BIN} train --ready`));
   assert.doesNotMatch(s.step, /squash|by hand|locally/);
   assert.match(s.step, /at once, not held for a batch/);
   s = row(table([task('T-TU-1', 'verified')]), 'T-TU-1');

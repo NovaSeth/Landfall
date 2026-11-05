@@ -8,7 +8,8 @@
 // run-supervise starts; outDirId (SF-AB-10) is "<dev>:<ino>" of the run's private temp directory, made by exec, which
 // run-supervise checks before it starts the provider. Both are optional for the schema: a record without them, written
 // by 2.4.1, is refused as tampered. briefSha256 (T-MG-64; every role since T-MG-96, not only implementer runs) is the sha256 of the pinned brief the
-// provider gets on stdin; run-supervise refuses a run whose pinned brief does not match it.
+// provider gets on stdin; run-supervise refuses a run whose pinned brief does not match it. head (T-MG-186 fix round 2,
+// F5): a reviewer run's task branch tip when exec started it, the commit `review record --run` binds as reviewed.
 import { LAST_LINE, PROVIDER_ID, ROLES } from '../providers/kind.mjs';
 import { LIMITS, PATTERNS, defineKind } from '../state/index.mjs';
 
@@ -64,8 +65,9 @@ export const RUN = defineKind('run', 1, {
     bin: str(LIMITS.path, { re: PATTERNS.absPath }),
     outDirId: str(41, { re: /^[0-9]{1,20}:[0-9]{1,20}$/ }),
     briefSha256: str(64, { re: /^[0-9a-f]{64}$/ }),
+    head: str(64, { re: /^[0-9a-f]{40,64}$/ }),
   },
-  opt: ['bin', 'outDirId', 'briefSha256'],
+  opt: ['bin', 'outDirId', 'briefSha256', 'head'],
 });
 
 export const RUN_LOG = defineKind('runLog', 1, {

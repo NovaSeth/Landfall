@@ -839,6 +839,24 @@ const ROWS = [
     mutating: true,
     load: () => import('./close.mjs').then((m) => m.close),
   },
+  {
+    name: 'train',
+    summary: 'Merge approved tasks as one train: one integration branch, one gate run, then the target; merged and done in one step.',
+    details: [
+      'Takes the named tasks, or --ready (yours, open, unmerged, with a branch, whose route\'s review is approved or',
+      'closed; done is not required). A temporary branch and worktree start at the target tip; each branch merges with',
+      '--no-ff in --after order, else by ID; a conflict leaves only that task out, with its files. The gates run once on',
+      'the integrated tree under the heavy lease; a failure is bisected, the failing task left out and the rest run once',
+      'more. On pass the target is fast-forwarded only if it did not move, and every task of the train is recorded merged',
+      'and done: the train gate on a tree containing its tip is its verify (verify.json mode train). Removed or skipped',
+      'tests still need a decision. One line per task, the gate runs, the batch id.',
+    ],
+    args: [{ name: 'id', variadic: true, summary: 'task ID such as T-AB-1' }],
+    flags: [{ flag: '--ready', summary: 'take every approved, unmerged task with a branch' }],
+    exits: ['OK', 'FAIL', 'USAGE', 'REFUSED', 'ENV'],
+    mutating: true,
+    load: () => import('../verify/command.mjs').then((m) => m.train),
+  },
   // Team lanes (spec §7.9, SD-20): lib/lanes/command.mjs. A claim is a ref on origin; nothing is stored locally.
   {
     name: 'lane claim',

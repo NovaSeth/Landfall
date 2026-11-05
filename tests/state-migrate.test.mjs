@@ -394,7 +394,8 @@ test('008-verify-machine and 009-review-focus: migrate changes only the schema o
     { id: '008-verify-machine', kind: 'verify', from: 1, to: 2 },
     { id: '009-review-focus', kind: 'review', from: 1, to: 2 },
   ]);
-  assert.deepEqual(MIGRATIONS.slice(-4, -2), steps, 'listed in NNN order after 007, before 010');
+  const at = (id) => MIGRATIONS.findIndex((m) => m.id === id);
+  assert.ok(at('007-finding-regression') < at('008-verify-machine') && at('008-verify-machine') < at('009-review-focus') && at('009-review-focus') < at('010-profile-fast-guards'), 'listed in NNN order after 007, before 010');
   assert.deepEqual([VERIFY_KINDS.verify.version, VERIFY_KINDS.review.version], [3, 2]);
   const dir = scratch(t);
   untouchable(dir);
