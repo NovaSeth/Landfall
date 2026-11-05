@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync, mkdirSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -165,4 +165,16 @@ test('two concurrent session starts from different live hosts leave one orchestr
   const res = await spend([hash, hash]);
   assert.equal(res.filter((r) => r.ok).length, 1, JSON.stringify(res));
   assert.equal(res.filter((r) => r.error === 'token-unknown').length, 1);
+});
+
+test('a missing store is refused once a session was seen in the last 24 hours (fail closed), otherwise a warning', (t) => {
+  const { dir } = store(t);
+  mkdirSync(join(dir, 'local', 'session'), { recursive: true });
+  const file = join(dir, 'local', 'session', 'x.json');
+  writeFileSync(file, '{}');
+  assert.throws(() => T.authorize({ dir, names, need: 'orchestrator' }), (e) => fails('token-store-missing')(e) && /compact or resume/.test(e.hint));
+  assert.throws(() => T.authorize({ dir, names, token: `lf1_${'A'.repeat(43)}`, need: 'reviewer' }), fails('token-store-missing'));
+  const old = new Date(Date.now() - 25 * 3600000);
+  utimesSync(file, old, old);
+  assert.deepEqual(T.authorize({ dir, names, need: 'orchestrator' }), { warn: true });
 });

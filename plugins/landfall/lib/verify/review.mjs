@@ -18,7 +18,7 @@ import { isAbsolute, join } from 'node:path';
 import { authorHandle, stateRel } from '../decisions/index.mjs';
 import { readRegularFile } from '../fsx/index.mjs';
 import { RUN_ID, ownOutDir, runsStore } from '../runs/index.mjs';
-import { KINDS, StateError, authorize, consume } from '../state/index.mjs';
+import { KINDS, StateError, authorize, consume, restore } from '../state/index.mjs';
 import { VERIFY_KINDS, reviewKey } from './kinds.mjs';
 import { activeWhere, gitIn, storeOf, unknownTask } from './run.mjs';
 
@@ -147,11 +147,16 @@ export function recordReview({ cwd, env, names, id, from, run, token, at = new D
   const doc = rec
     ? { verdict: input.verdict, reviewer: { kind: 'external', id: `${rec.provider}:reviewer` }, findings: input.findings, run: rec.runId, sha256: createHash('sha256').update(bytes).digest('hex') }
     : { verdict: input.verdict, reviewer: input.reviewer, findings: input.findings };
-  if (!rec && auth.hash) consume({ dir: where.dir, names, hash: auth.hash });
+  const spent = !rec && auth.hash ? consume({ dir: where.dir, names, hash: auth.hash }) : null;
   const taken = store.list('review').filter((k) => k.startsWith(`${id}/`)).map((k) => Number(k.slice(k.lastIndexOf('-r') + 2)));
   let round = Math.max(0, ...taken) + 1;
-  while (round <= ROUND_MAX && !store.create('review', reviewKey(id, round), doc)) round++;
-  if (round > ROUND_MAX) throw usage('limit-exceeded', `${id} has ${ROUND_MAX} review rounds, the limit`, 'start a new task');
+  try {
+    while (round <= ROUND_MAX && !store.create('review', reviewKey(id, round), doc)) round++;
+    if (round > ROUND_MAX) throw usage('limit-exceeded', `${id} has ${ROUND_MAX} review rounds, the limit`, 'start a new task');
+  } catch (e) {
+    if (spent) restore({ dir: where.dir, names, entry: spent }); // no review was written: the reviewer may retry
+    throw e;
+  }
   store.update('task', id, (cur) => {
     open(cur);
     return { ...cur, events: [...cur.events, { at, by: handle, event: 'review', data: { round, verdict: doc.verdict, reviewer: doc.reviewer.kind, blocking: doc.findings.filter((f) => f.severity === 'blocking').length, ...(OBJECT_ID.test(head) ? { head } : {}) } }] };
