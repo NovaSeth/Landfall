@@ -38,9 +38,9 @@ const v1State = (flags) => ({ schema: 1, codename: names.codename, createdWith: 
 const v2State = (extra = {}) => ({ schema: KINDS.state.version, codename: names.codename, createdWith: '2.0.0', activatedAt: AT, ...extra });
 const listing = (dir) => (existsSync(dir) ? readdirSync(dir, { recursive: true }).map(String).sort() : []);
 
-test('state.json is store schema 2 without a flags map; config.json holds flags, threshold overrides with their decision and executor preferences', (t) => {
+test('state.json is store schema 3 without a flags map; config.json holds flags, threshold overrides with their decision and executor preferences', (t) => {
   const dir = join(scratch(t), 'store');
-  assert.equal(KINDS.state.version, 2);
+  assert.equal(KINDS.state.version, 3);
   assert.deepEqual(state.check(KINDS.state, v2State()), []);
   assert.ok(state.check(KINDS.state, v2State({ flags: {} })).some((e) => e.path === 'flags'), 'a flags map is no longer a state.json field');
   put(dir, 'state.json', v2State());
@@ -75,7 +75,7 @@ test('a state.json of schema 1 with a flags map is read as before: its flags are
   put(dir, 'state.json', legacy);
   const s = state.open(dir, { names });
   const before = read(dir, 'state.json');
-  assert.deepEqual(s.read('state', null), { schema: 2, codename: names.codename, createdWith: '2.0.0-beta.1', activatedAt: AT }, 'state.json upgrades in memory');
+  assert.deepEqual(s.read('state', null), { schema: 3, codename: names.codename, createdWith: '2.0.0-beta.1', activatedAt: AT }, 'state.json upgrades in memory');
   assert.deepEqual(s.read('config', null), { schema: 1, flags: { engine: 'off', lanes: 'on', 'pre-push': 'off' } }, 'the flags are read from the old state.json');
   assert.equal(read(dir, 'state.json'), before, 'a read writes nothing');
   assert.equal(read(dir, 'config.json'), null);
@@ -100,12 +100,12 @@ test('migrate moves the flags of an old state.json into config.json and drops th
   const dry = state.migrate(s, { dryRun: true });
   assert.deepEqual(dry.steps.map(({ rel, kind, from, to, ids }) => ({ rel, kind, from, to, ids })), [
     { rel: 'config.json', kind: 'config', from: 1, to: 1, ids: ['001-state-flags-to-config'] },
-    { rel: 'state.json', kind: 'state', from: 1, to: 2, ids: ['001-state-flags-to-config'] },
+    { rel: 'state.json', kind: 'state', from: 1, to: 3, ids: ['001-state-flags-to-config', '013-state-role-tokens'] },
   ], 'the dry run lists the config.json step before the state.json step');
   assert.equal(JSON.parse(read(dir, 'state.json')).schema, 1, 'the dry run wrote nothing');
   const r = state.migrate(s);
   assert.equal(r.steps.length, 2);
-  assert.deepEqual(JSON.parse(read(dir, 'state.json')), { schema: 2, codename: names.codename, createdWith: '2.0.0-beta.1', activatedAt: AT });
+  assert.deepEqual(JSON.parse(read(dir, 'state.json')), { schema: 3, codename: names.codename, createdWith: '2.0.0-beta.1', activatedAt: AT });
   assert.deepEqual(JSON.parse(read(dir, 'config.json')).flags, { admission: 'on', engine: 'off', lanes: 'off' });
   assert.equal(JSON.parse(read(join(dir, r.backup), 'state.json')).flags.engine, 'off', 'the old state.json is in the backup');
   assert.deepEqual(state.migrate(s), { steps: [], backup: null }, 'a second run writes nothing');
@@ -132,7 +132,7 @@ test('a newer config.json or state.json refuses with exit 7 before any byte is w
   assert.throws(() => state.migrate(s, { dryRun: true }), is('schema-newer', 'REFUSED'));
   assert.deepEqual(listing(dir), before);
   const newer = join(scratch(t), 'newer');
-  put(newer, 'state.json', v2State({ schema: 3, flags: { engine: 'on' } }));
+  put(newer, 'state.json', v2State({ schema: 4, flags: { engine: 'on' } }));
   const n = state.open(newer, { names });
   assert.equal(n.read('config', null), null, 'reads go by the file kind (spec §5.4): a newer store.json carries nothing into it');
   assert.throws(() => n.write('config', null, { flags: { engine: 'off' } }), is('schema-newer', 'REFUSED'));
@@ -178,7 +178,7 @@ test('store.append writes one JSON line to the shadow log under the store lock; 
   assert.throws(() => s.append('shadow', { big: 'x'.repeat(20000) }), is('limit-exceeded', 'USAGE'));
   assert.throws(() => s.append('nolog', { at: AT }), TypeError);
   assert.equal(read(dir, 'local/shadow.jsonl'), before);
-  put(dir, 'state.json', v2State({ schema: 3 }));
+  put(dir, 'state.json', v2State({ schema: 4 }));
   assert.throws(() => s.append('shadow', { at: AT }), is('schema-newer', 'REFUSED'));
   assert.equal(read(dir, 'local/shadow.jsonl'), before);
   const inactive = join(scratch(t), 'inactive');

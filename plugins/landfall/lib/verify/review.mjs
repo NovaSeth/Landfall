@@ -18,7 +18,7 @@ import { isAbsolute, join } from 'node:path';
 import { authorHandle, stateRel } from '../decisions/index.mjs';
 import { readRegularFile } from '../fsx/index.mjs';
 import { RUN_ID, ownOutDir, runsStore } from '../runs/index.mjs';
-import { KINDS, StateError } from '../state/index.mjs';
+import { KINDS, StateError, authorize, consume } from '../state/index.mjs';
 import { VERIFY_KINDS, reviewKey } from './kinds.mjs';
 import { activeWhere, gitIn, storeOf, unknownTask } from './run.mjs';
 
@@ -110,9 +110,11 @@ function reviewerRun(where, names, id, run) {
 
 // { invalid: [messages] } for input that breaks the schema, else { task, round, key, file, doc } after the write.
 // `from`: a claude review file; `run`: the run ID of an external review (its out file is the input).
-export function recordReview({ cwd, env, names, id, from, run, at = new Date().toISOString() }) {
+export function recordReview({ cwd, env, names, id, from, run, token, at = new Date().toISOString() }) {
   const where = activeWhere({ cwd, env, names });
   KINDS.task.path(id);
+  // SEC-13: a claude review needs a reviewer token (spent below, before the write), an external one the orchestrator's.
+  const auth = authorize({ dir: where.dir, names, token, need: run === undefined ? 'reviewer' : 'orchestrator' });
   const rec = run === undefined ? null : reviewerRun(where, names, id, run);
   const { value: raw, bytes } = readInput(cwd, rec ? rec.outFile : from);
   // The reviewed commit (fix round 2, F5): the review may name it (`head`, outside the provider schema); it must be the
@@ -145,6 +147,7 @@ export function recordReview({ cwd, env, names, id, from, run, at = new Date().t
   const doc = rec
     ? { verdict: input.verdict, reviewer: { kind: 'external', id: `${rec.provider}:reviewer` }, findings: input.findings, run: rec.runId, sha256: createHash('sha256').update(bytes).digest('hex') }
     : { verdict: input.verdict, reviewer: input.reviewer, findings: input.findings };
+  if (!rec && auth.hash) consume({ dir: where.dir, names, hash: auth.hash });
   const taken = store.list('review').filter((k) => k.startsWith(`${id}/`)).map((k) => Number(k.slice(k.lastIndexOf('-r') + 2)));
   let round = Math.max(0, ...taken) + 1;
   while (round <= ROUND_MAX && !store.create('review', reviewKey(id, round), doc)) round++;
@@ -155,5 +158,5 @@ export function recordReview({ cwd, env, names, id, from, run, at = new Date().t
   });
   const rel = stateRel(where.worktree, where.dir); // shown from the worktree, absolute outside it
   const path = `tasks/${reviewKey(id, round)}.json`;
-  return { task: id, round, key: reviewKey(id, round), file: rel ? `${rel}/${path}` : join(where.dir, path), doc: { schema: VERIFY_KINDS.review.version, ...doc } };
+  return { task: id, round, key: reviewKey(id, round), file: rel ? `${rel}/${path}` : join(where.dir, path), ...(auth.warn ? { warn: where.dir } : {}), doc: { schema: VERIFY_KINDS.review.version, ...doc } };
 }

@@ -113,7 +113,7 @@ export const train = typed(({ args, flags, names, version, io }) => {
   return { code: EXIT[exit], data, errors: reasons, warnings: b.tasks.flatMap((t) => receiptWarnings(t.receiptProblem, t.task, names)), text: `${forTerminal(lines.join('\n'))}\n` };
 });
 
-export const reviewRecord = typed(({ args, flags, names, io }) => {
+export const reviewRecord = typed(({ args, flags, names, io, token }) => {
   const kind = flags.kind ?? 'claude';
   const given = (v) => typeof v === 'string' && v !== '';
   const bad = (code, message, hint) => ({ code: EXIT.USAGE, errors: [{ code, message, hint }] });
@@ -125,7 +125,7 @@ export const reviewRecord = typed(({ args, flags, names, io }) => {
     if (flags.run !== undefined) return bad('unexpected-flag', '--run applies to --kind external only', `${names.bin} review record ${args.id} --kind external --run <runId>`);
     if (!given(flags.from)) return bad('missing-flag', 'review record needs --from <file>: the typed review JSON', `${names.bin} review record ${args.id} --from <file>`);
   }
-  const r = recordReview({ cwd: io.cwd, env: io.env, names, id: args.id, ...(kind === 'external' ? { run: flags.run } : { from: flags.from }) });
+  const r = recordReview({ cwd: io.cwd, env: io.env, names, id: args.id, token, ...(kind === 'external' ? { run: flags.run } : { from: flags.from }) });
   if (r.invalid) {
     const hint = 'the file must match templates/review.schema.json in the plugin; nothing was written';
     return { code: EXIT.USAGE, data: { task: args.id, written: false }, errors: r.invalid.map((message) => ({ code: 'invalid-review', message, hint })) };
@@ -133,7 +133,7 @@ export const reviewRecord = typed(({ args, flags, names, io }) => {
   const { verdict, reviewer, findings } = r.doc;
   const blocking = findings.filter((f) => f.severity === 'blocking').length;
   const text = `${r.task}: review r${r.round} recorded: ${verdict} by ${reviewer.id} (${reviewer.kind}), ${findings.length} findings (${blocking} blocking): ${r.file}`;
-  return { data: { task: r.task, round: r.round, file: r.file, verdict, reviewer, findings: findings.length, blocking }, text: `${forTerminal(text)}\n` };
+  return { data: { task: r.task, round: r.round, file: r.file, verdict, reviewer, findings: findings.length, blocking }, text: `${forTerminal(text)}\n`, warnings: r.warn ? [`no live session token in ${r.warn}; recorded without a role check (SEC-13)`] : [] };
 });
 
 const testLine = (t) => `  ${t.id}${t.file ? `  ${t.file}` : ''}${t.skipped ? '  skipped' : ''}`;

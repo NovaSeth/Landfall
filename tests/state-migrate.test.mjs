@@ -396,7 +396,7 @@ test('008-verify-machine and 009-review-focus: migrate changes only the schema o
   ]);
   const at = (id) => MIGRATIONS.findIndex((m) => m.id === id);
   assert.ok(at('007-finding-regression') < at('008-verify-machine') && at('008-verify-machine') < at('009-review-focus') && at('009-review-focus') < at('010-profile-fast-guards') && at('011-verify-mode') < at('012-verify-train'), 'listed in NNN order after 007, before 010');
-  assert.equal(MIGRATIONS.at(-1).id, '012-verify-train');
+  assert.equal(MIGRATIONS.at(-1).id, '013-state-role-tokens');
   assert.deepEqual([VERIFY_KINDS.verify.version, VERIFY_KINDS.review.version], [4, 2]);
   const dir = scratch(t);
   untouchable(dir);
@@ -445,4 +445,26 @@ test('010-profile-fast-guards: migrate changes only the schema of a v2 profile',
   const out = state.migrate(s, { at: new Date(AT) });
   assert.deepEqual(out.steps.filter((x) => x.rel === 'profile.json').map(({ from, to, ids }) => ({ from, to, ids })), [{ from: 2, to: 3, ids: ['010-profile-fast-guards'] }]);
   assert.equal(readFileSync(join(dir, 'profile.json'), 'utf8'), before.replace(/^ {2}"schema": 2,$/m, '  "schema": 3,'));
+});
+
+// T-MG-194 (D-MG-75, A12): store schema 2 -> 3 (013, the machine-local role token kind) is a no-op step: only the schema
+// line of state.json changes; a reader at the previous schema (the 2.7.2 plugin) then refuses every write (SC10).
+test('013-state-role-tokens: migrate changes only the schema of state.json; a reader at schema 2 refuses to write', (t) => {
+  const step = MIGRATIONS.find((m) => m.id === '013-state-role-tokens');
+  assert.deepEqual(step && { kind: step.kind, from: step.from, to: step.to }, { kind: 'state', from: 2, to: 3 });
+  assert.equal(KINDS.state.version, 3);
+  const dir = scratch(t);
+  put(dir, 'state.json', stateDoc({ schema: 2 }));
+  const before = readFileSync(join(dir, 'state.json'), 'utf8');
+  const out = state.migrate(state.open(dir, { names }), { at: new Date(AT) });
+  assert.deepEqual(out.steps.map(({ rel, from, to, ids }) => ({ rel, from, to, ids })), [{ rel: 'state.json', from: 2, to: 3, ids: ['013-state-role-tokens'] }]);
+  assert.equal(readFileSync(join(dir, 'state.json'), 'utf8'), before.replace(/^ {2}"schema": 2,$/m, '  "schema": 3,'), 'only the schema line changed');
+  assert.deepEqual(state.migrate(state.open(dir, { names })).steps, [], 'a second run writes nothing');
+  const { schema: _, ...fields } = KINDS.state.spec.f;
+  const previous = state.defineKind('state', 2, { dir: '', file: () => 'state.json', match: /^state\.json$/, fields });
+  const old = state.open(dir, { names, kinds: { ...KINDS, state: previous } });
+  const kept = snapshot(dir);
+  assert.throws(() => old.update('config', null, () => ({ flags: {} })), is('schema-newer', 'REFUSED'));
+  assert.throws(() => old.write('state', null, stateDoc({ schema: 2 })), is('schema-newer', 'REFUSED'));
+  assert.deepEqual(snapshot(dir), kept, 'the refused writes changed nothing');
 });

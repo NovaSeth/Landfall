@@ -135,3 +135,41 @@ for (const mode of ['off', 'shadow', 'on']) {
     assert.equal(call(null).decision, 'allow');
   });
 }
+
+// T-MG-196 (SEC-13, spec A10, A4): a subagent starts no agent; SubagentStop revokes the review token also with admission off.
+const T = await lib('state/tokens.mjs');
+const admitMod = await lib('hooks/admit.mjs');
+const me = T.holderOf(process.pid);
+for (const mode of ['off', 'shadow', 'on']) {
+  test(`spawn lock (${mode}): an Agent call from a hook input with agent_type set is denied, ORC-2`, (t) => {
+    const f = repo(t);
+    relaxAdmission(f.env);
+    f.store.write('config', null, { schema: 1, flags: { admission: mode } });
+    const call = (extra) => hook('admit-agent', { hook_event_name: 'PreToolUse', tool_name: 'Agent', session_id: 'sess-1', cwd: f.dir, tool_use_id: 'toolu_s1', tool_input: { subagent_type: `${names.plugin}:reviewer`, prompt: 'x' }, ...extra }, { env: f.env });
+    for (const agent_type of [`${names.plugin}:implementer`, 'Explore', 'x']) {
+      const v = call({ agent_type, agent_id: 'a1' });
+      assert.equal(v.decision, 'deny', agent_type);
+      assert.equal(v.reason, 'ORC-2: blocked: a subagent does not start agents. Instead report back to the orchestrator.');
+    }
+    assert.equal(call({}).decision, 'allow', 'the main session');
+    for (const agent_type of ['', 7, null]) assert.equal(call({ agent_type }).decision, 'allow', String(agent_type));
+  });
+
+  test(`release (${mode}): SubagentStop removes the agent's token entry`, (t) => {
+    const f = repo(t);
+    relaxAdmission(f.env);
+    f.store.write('config', null, { schema: 1, flags: { admission: mode } });
+    assert.ok(T.mint({ dir: f.stateDir, names, role: 'orchestrator', session: 'sess-1', host: me }).token);
+    for (const a of ['agent-abc', 'agent-def']) assert.ok(T.mint({ dir: f.stateDir, names, role: 'reviewer', session: 'sess-1', agent: a, host: me }).token);
+    const file = join(f.stateDir, 'local', 'token.json');
+    const agents = () => JSON.parse(readFileSync(file, 'utf8')).agents.map((a) => a.agent);
+    assert.deepEqual(agents().sort(), ['agent-abc', 'agent-def']);
+    // admission off: the registry's whenOff (T-MG-197) runs this handler; here it is called as the row does
+    const stopped = (agentId) => (mode === 'off' ? admitMod.revoke({ session_id: 'sess-1', cwd: f.dir, agent_id: agentId }, { env: f.env }) : stop(f, agentId));
+    stopped('agent-abc');
+    assert.deepEqual(agents(), ['agent-def']);
+    stopped('agent-nobody');
+    assert.deepEqual(agents(), ['agent-def']);
+    assert.doesNotMatch(readFileSync(file, 'utf8'), /lf1_/);
+  });
+}

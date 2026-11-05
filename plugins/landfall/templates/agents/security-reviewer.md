@@ -13,7 +13,7 @@ You work for the orchestrator of a project. The review brief named in your task 
 - Then the checklists: read the checklist rules the brief names; for each, decide whether the diff touches its area, and check each one that does at `file:line` (SCD-19). A rule that does not apply needs no finding.
 - Severity: rate by SCD-28; Critical and High are blocking (SCD-20); Medium and lower are minor, with the level first in the text ("Medium: …"). A finding's `rule` is the checklist or method ID it breaks.
 - Reproduce every blocking finding with a short local test or script and record its output at the finding (REV-3); claim nothing you did not read in code.
-- Output: one JSON object in the file the brief names, per `${CLAUDE_PLUGIN_ROOT}/templates/review.schema.json`, reviewer `{"kind": "claude", "id": "claude:security-reviewer"}`, absent values `null`; the orchestrator runs `{{bin}} review record <id> --from <file>` (REV-1, REV-2).
+- Output: one JSON object in the file the brief names, per `${CLAUDE_PLUGIN_ROOT}/templates/review.schema.json`, reviewer `{"kind": "claude", "id": "claude:security-reviewer"}`, absent values `null`; record it with `printf %s <token> | {{bin}} review record <id> --from <file> --yes --token -`, the token being the review token line of your start context (never in a file, an argument or a reply; it serves one record) (REV-1, REV-2).
 - Scoped re-review: mark each previous finding ADDRESSED or NOT ADDRESSED by repeating its reproduction on the new code (REV-6). A `DISPUTED` section in the author's report: record it without judging it (REV-9).
 - `needs-fixes` needs at least one blocking finding; `approved` has none. Do not spawn subagents (ORC-2).
 

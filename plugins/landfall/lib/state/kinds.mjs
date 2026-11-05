@@ -64,7 +64,7 @@ export function defineKind(name, version, { dir, keyPattern = null, file, match,
 }
 
 export const KINDS = Object.freeze({
-  state: defineKind('state', 2, {
+  state: defineKind('state', 3, {
     dir: '',
     file: () => 'state.json',
     match: /^state\.json$/,

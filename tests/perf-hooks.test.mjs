@@ -82,6 +82,7 @@ function eventFor(h, dir, command) {
   const base = { session_id: 's', cwd: dir, hook_event_name: h.event };
   switch (h.name) {
     case 'guard-bash': return { ...base, tool_name: 'Bash', tool_input: { command } };
+    case 'guard-read': return { ...base, agent_type: `${names.plugin}:implementer`, tool_name: 'Grep', tool_input: { pattern: 'v0', path: join(dir, 'src') } };
     case 'guard-wakeup': return { ...base, tool_name: 'ScheduleWakeup', tool_input: { delaySeconds: 600, prompt: TICK } };
     case 'decisions-context': return { ...base, tool_name: 'Edit', tool_input: { file_path: join(dir, 'src', 'm0', 'f0.ts'), old_string: 'v0', new_string: 'w0' } };
     case 'session-start': return { ...base, source: 'startup' };
@@ -141,6 +142,7 @@ test('hook latency on a 10,000-file repository: p95 ≤ 300 ms, max < 1 s of CPU
       assert.equal(r.status, 0, `${h.name} <- ${c}`);
       // the measured guard is the real one: it decides, it does not just exit
       if (h.name === 'guard-bash') assert.equal(r.stdout.includes('"deny"'), c === 'git stash', `${h.name} <- ${c}: ${r.stdout}`);
+      if (h.name === 'guard-read') assert.ok(!r.stdout.includes('"deny"'), `${h.name}: an ordinary subagent read passes: ${r.stdout}`);
       if (['session-start', 'subagent-start'].includes(h.name)) assert.match(r.stdout, /additionalContext/, `${h.name}: the context was built`);
       samples[h.name].push({ cpuMs: r.cpuMs, wallMs: r.wallMs });
     }

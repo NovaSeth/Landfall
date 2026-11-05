@@ -1227,10 +1227,10 @@ Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
 Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
 ```
 
-### `landfall review record <id> [--from <file>] [--kind <kind>] [--run <runId>] [--yes] [--json]`
+### `landfall review record <id> [--from <file>] [--kind <kind>] [--run <runId>] [--token <->] [--yes] [--json]`
 
 ```text
-usage: landfall review record <id> [--from <file>] [--kind <kind>] [--run <runId>] [--yes] [--json]
+usage: landfall review record <id> [--from <file>] [--kind <kind>] [--run <runId>] [--token <->] [--yes] [--json]
 
 Record a typed review result as the next round tasks/<id>/review-r<k>.json; the Markdown review closes nothing.
 The file holds one JSON object {verdict: approved|needs-fixes, reviewer: {kind: claude|external, id}, findings: [{id,
@@ -1249,6 +1249,7 @@ Options:
   --from <file>  kind claude: the review JSON file (a regular file of at most 1 MB)
   --kind <kind>  claude (default) or external
   --run <runId>  kind external: the done reviewer run whose out file holds the review
+  --token <->    the role token, read from stdin (printf %s <token> | … --token -), never an argument: a reviewer token for kind claude, the orchestrator token for external
 
 Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
 Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
@@ -1574,10 +1575,10 @@ Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED. Read-only wi
 Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
 ```
 
-### `landfall task set <id> <state> [--executor <name>] [--base <sha>] [--branch <branch>] [--worktree <path>] [--lane <lane>] [--report <status>] [--reason <text>] [--round <k>] [--addressed <n>] [--open <n>] [--note <text>] [--outcome <kind>] [--by <ref>] [--yes] [--json]`
+### `landfall task set <id> <state> [--executor <name>] [--base <sha>] [--branch <branch>] [--worktree <path>] [--lane <lane>] [--report <status>] [--reason <text>] [--round <k>] [--addressed <n>] [--open <n>] [--note <text>] [--outcome <kind>] [--by <ref>] [--token <->] [--yes] [--json]`
 
 ```text
-usage: landfall task set <id> <state> [--executor <name>] [--base <sha>] [--branch <branch>] [--worktree <path>] [--lane <lane>] [--report <status>] [--reason <text>] [--round <k>] [--addressed <n>] [--open <n>] [--note <text>] [--outcome <kind>] [--by <ref>] [--yes] [--json]
+usage: landfall task set <id> <state> [--executor <name>] [--base <sha>] [--branch <branch>] [--worktree <path>] [--lane <lane>] [--report <status>] [--reason <text>] [--round <k>] [--addressed <n>] [--open <n>] [--note <text>] [--outcome <kind>] [--by <ref>] [--token <->] [--yes] [--json]
 
 Record a state of your task as an event with author and time; it moves the task's status.
 States: started --branch <b> --base <sha> [--worktree <path>] (status unchanged; task start records it) · dispatched --executor <e>
@@ -1604,6 +1605,7 @@ Options:
   --note <text>      any state: a note (at most 200 characters)
   --outcome <kind>   cancelled: delivered, superseded or dropped, recorded in the same update
   --by <ref>         cancelled with --outcome: what delivered or replaced it (task ID, commit SHA or vX.Y.Z)
+  --token <->        dispatched, self-verified: the orchestrator token, read from stdin (printf %s <token> | … --token -), never an argument
 
 Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
 Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV

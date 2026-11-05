@@ -166,9 +166,9 @@ test('kind claude with --from still records, with no run and no sha256', async (
   assert.deepEqual(reviewKeys(r).length, 2);
 });
 
-test('the review record row lists --from, --kind and --run', () => {
+test('the review record row lists --from, --kind, --run and --token', () => {
   const row = COMMANDS.find((c) => c.name === 'review record');
-  assert.deepEqual(row.flags.map((f) => f.flag), ['--from', '--kind', '--run']);
+  assert.deepEqual(row.flags.map((f) => f.flag), ['--from', '--kind', '--run', '--token']);
 });
 
 // ---- T-MG-91: the run's bound out directory, and a stored external round without its run ----
