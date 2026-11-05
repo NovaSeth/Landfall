@@ -145,3 +145,23 @@ test('a merge of main that also carries its own edit is a changed branch: review
   assert.equal(res.code, 7, JSON.stringify(res.env));
   assert.equal(res.env.errors[0].code, 'review-head-moved');
 });
+
+test('a merge committed with its conflict unresolved is a changed branch, not a clean merge (merge-tree fails)', async (t) => {
+  const r = repo(t);
+  writeFileSync(join(r.dir, 'a.txt'), 'feat side');
+  r.git('add', '-A');
+  r.git('commit', '-q', '-m', 'feat edits a');
+  const reviewed = r.git('rev-parse', 'HEAD');
+  writeFileSync(r.file, JSON.stringify({ ...REVIEW, head: reviewed }));
+  r.git('checkout', '-q', 'main');
+  writeFileSync(join(r.dir, 'a.txt'), 'main side');
+  r.git('add', '-A');
+  r.git('commit', '-q', '-m', 'main edits a');
+  r.git('checkout', '-q', 'feat');
+  spawnSync('git', ['merge', '--no-edit', 'main'], { cwd: r.dir, env: r.env, encoding: 'utf8' }); // conflicts
+  r.git('add', 'a.txt'); // the conflict markers are committed as they are
+  r.git('commit', '-q', '-m', 'Merge main (unresolved)');
+  const res = await record(r);
+  assert.equal(res.code, 7, JSON.stringify(res.env));
+  assert.equal(res.env.errors[0].code, 'review-head-moved');
+});

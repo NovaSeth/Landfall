@@ -100,6 +100,13 @@ export function gitIn(where, env, args) {
   return r;
 }
 
+// A merge's tree is what git merges its parents to: merge-tree exits 0 with the one tree ID, under no system or global
+// config and no renormalizing (a repository's merge drivers are not trusted to decide).
+const cleanMerge = (where, env, tree, parents) => {
+  const m = gitIn(where, { ...env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_ATTR_NOSYSTEM: '1' }, ['-c', 'merge.renormalize=false', 'merge-tree', '--write-tree', ...parents]);
+  return m.status === 0 && m.stdout.trim() === tree;
+};
+
 // T-MG-192: `tip` adds no change of its own to `head` (a review's commit): no own commit, and every first-parent commit
 // in head..tip is a clean merge (its tree is the merge of its parents) whose other parents are in `target`: a merge of
 // the target into the branch is no change, an edited merge is. `target`: a branch name or full ref, resolved to a commit.
@@ -113,7 +120,7 @@ export function sameChange(where, env, head, tip, target = 'main') {
   return own.status === 0 && own.stdout.trim() === '' && merges.status === 0 && merges.stdout.split('\n').filter(Boolean).every((l) => {
     const [tree, first, ...others] = l.split(' ');
     return others.every((q) => gitIn(where, env, ['merge-base', '--is-ancestor', q, into]).status === 0)
-      && gitIn(where, env, ['merge-tree', '--write-tree', first, ...others]).stdout.split('\n')[0] === tree;
+      && cleanMerge(where, env, tree, [first, ...others]);
   });
 }
 
