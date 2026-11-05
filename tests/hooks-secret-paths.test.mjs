@@ -121,3 +121,52 @@ test('daily subagent commands still pass', () => {
     assert.ok(!/SEC-13: blocked: a subagent does not read/.test(bash(c).stdout), c);
   }
 });
+
+// Fix round 1 (security review r1 F1-F3, Codex review r2 F1-F6). The state lives in the repository here (the hard case).
+const sd = (...p) => join(state, 'local', ...p);
+const RE = /SEC-13: blocked: a subagent does not read/;
+const cmdDenied = (c, sub = true) => RE.test(bash(c, sub).stdout);
+
+test('r1 F1 / r2 F1: the whole local directory is a root; Grep and Glob over it are denied, the repository root stays allowed', () => {
+  for (const [tool, input] of [['Grep', { pattern: '.', path: sd() }], ['Glob', { pattern: sd('*') }], ['Glob', { pattern: sd('**') }],
+    ['Glob', { pattern: '*', path: sd() }], ['Glob', { pattern: 'local/**', path: state }], ['Read', { file_path: sd('token.json') }],
+    ['Read', { file_path: sd('other.json') }], ['Grep', { pattern: '.', path: home }]]) {
+    assert.ok(denied(read(base(tool, input))), `${tool} ${JSON.stringify(input)}`);
+  }
+  assert.ok(!denied(read(base('Grep', { pattern: '.', path: repo }))));
+  assert.ok(!denied(read(base('Grep', { pattern: '.', path: sd() }, false))));
+});
+
+test('r1 F2 / r2 F2, F4: every word of a subagent command is resolved (globs, cd chain, links, shell bodies, redirections)', () => {
+  const loc = join(names.stateDir, 'local');
+  for (const c of [`cat ${loc}/tok*`, `cat ${loc}/t?ken.json`, `cd ${loc} && cat token.json`, 'cat link-token', `cat ${loc}/./token.json`,
+    `head -c 5 ${loc}/token.json`, `cat < ${loc}/token.json`, `cd ${names.stateDir} && cat local/token.json`, `sed -n 1p ${loc}/token.json`,
+    `bash -c "grep -r . ${home}"`, `cd ${home}; grep -r . .`, `bash -c 'cat ${loc}/token.json'`, `grep -r . ${loc}`, `cat ${names.stateDir}/l*/token.json`]) {
+    assert.ok(cmdDenied(c), `subagent: ${c}`);
+    assert.ok(!cmdDenied(c, false), `main: ${c}`);
+  }
+  for (const c of ['cat README.md', 'ls tests', 'git status', `cd ${names.stateDir} && cat state.json`, 'bash -c "ls src"']) assert.ok(!cmdDenied(c), c);
+});
+
+test('r2 F3: a nested subagent transcript still protects the whole transcripts directory', () => {
+  const nested = join(projects, '-p', 's1', 'subagents', 'agent-abc.jsonl');
+  assert.ok(denied(read(base('Read', { file_path: transcript }, true, { transcript_path: nested }))));
+  assert.ok(denied(read(base('Read', { file_path: join(projects, '-q', 'z.jsonl') }, true, { transcript_path: nested }))));
+});
+
+test('r2 F5: an absolute cwd outside the project does not drop the project state roots', () => {
+  const input = { ...base('Read', { file_path: sd('token.json') }), cwd: tmpdir() };
+  assert.ok(denied(runHook('guard-read', JSON.stringify(input), { env: { ...env, CLAUDE_PROJECT_DIR: repo } })));
+});
+
+test('r2 F6: when the state cannot be resolved in time, a subagent read of the token is still denied', () => {
+  const input = base('Read', { file_path: sd('token.json') });
+  assert.ok(denied(runHook('guard-read', JSON.stringify(input), { env, deadline: 0 })));
+});
+
+// F3 (r1): the eight tests of the deleted tests/hooks-guard-roles.test.mjs (D-MG-78) and what covers them now:
+//  'a subagent cannot dispatch' · 'review record needs the reviewer or security-reviewer agent' · 'the reviewer keeps the plain
+//  record' → tests/role-tokens-forge.test.mjs (the CLI refuses a forged role; the tokens test records and dispatches);
+//  'the main session is unchanged' · 'without agent_type every form is allowed' → the main-session cases of this file;
+//  'malformed input allows' → the malformed-input test above; 'quoting, wrappers and unresolvable lines' → the forge corpus
+//  (every spelling) and `eval "$X" ~/.claude` in the Bash corpus above; 'the role gate stays fast' → tests/perf-hooks.test.mjs.
