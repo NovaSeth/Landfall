@@ -15,6 +15,7 @@ import { existsSync, readdirSync, realpathSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { KINDS } from '../state/index.mjs';
 import { MSG, short } from './messages.mjs';
+import { GIT_LONG, longOpt } from './git-options.mjs';
 import { why } from './tokenizer.mjs';
 import { BIN, base } from './tokens.mjs';
 
@@ -290,13 +291,28 @@ export function stateWrite(c, w, ctx, { args = true } = {}) {
 // that may mean it) changes only the index and passes (findings-r2 A-m1).
 const GIT_REWRITE = new Set(['checkout', 'restore', 'clean', 'rm', 'mv']);
 const indexOnly = (opts) => opts.some((a) => a === '--staged' || /^-[pqmS]*S[pqmS]*$/.test(a)) && !opts.some((a) => /^--w/.test(a) || /^-[^-]*W/.test(a));
-const GIT_READ = new Set(['status', 'diff', 'log', 'show', 'add', 'ls-files', 'blame', 'grep', 'commit']);
+const GIT_READ = new Set(['status', 'diff', 'log', 'show', 'add', 'ls-files', 'blame', 'grep']);
+// The arguments of `git commit` without the text of -m / --message / -F / --file (and a glued or following value): a
+// message is text, never a path (the long names resolve through the option table, abbreviations included).
+function commitPaths(args) {
+  const out = [];
+  for (let k = 0; k < args.length; k++) {
+    const t = args[k];
+    if (t === '--') { out.push(...args.slice(k)); break; }
+    const o = t.startsWith('--') ? longOpt(GIT_LONG.commit, t) : null;
+    if (o && (o.name === 'message' || o.name === 'file')) { if (!o.value) k++; continue; }
+    const c = !t.startsWith('--') && /^-[a-zA-Z]*[mF]/.exec(t);
+    if (c) { if (c[0].length === t.length) k++; continue; }
+    out.push(t);
+  }
+  return out;
+}
 function gitState(w, ctx) {
   const ws = base(w[0]) === 'git' ? w : ['git', base(w[0]).slice(4), ...w.slice(1)];
   let k = 1;
   const global = [];
   while (k < ws.length && ws[k].startsWith('-')) { global.push(ws[k]); if (['-C', '-c', '--git-dir', '--work-tree', '--namespace'].includes(ws[k])) global.push(ws[++k]); k++; }
-  const sub = ws[k]; const args = ws.slice(k + 1);
+  const sub = ws[k]; const args = sub === 'commit' ? commitPaths(ws.slice(k + 1)) : ws.slice(k + 1);
   const dashes = args.indexOf('--');
   const paths = args.filter((a, j) => (dashes >= 0 && j > dashes) || (!a.startsWith('-') && j !== dashes));
   const st = ctx.state;
