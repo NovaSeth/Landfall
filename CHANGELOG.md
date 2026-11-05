@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.7.1
+
+First small batch after 2.7.0: one integration branch, one gate (PO 2026-11-05: ship in small batches).
+
+- **Fast verify (T-MG-182):** `landfall verify` runs the test files that the changed files own plus the profile's fast guards; a shared or risk path, a critical task or `--full` runs the full gate set; `task merge` stays the one full run, and a removed test in a changed file is still caught against the base. A dropped or truncated change list fails closed to the full set. The loop's next step for an approved task is its own close at once, not held for a batch.
+- **Guard shortcut outside Landfall repositories (T-MG-183):** in a repository with no Landfall state the Bash guard allows a plain command at once: bare words separated by single spaces, `--version` and `--help`. Quotes, escapes, expansions, braces, clustered or long options, directory changes, nested repositories and rm/mv/cp/ln/find/xargs get the full guard as before.
+- **Waits log cap (T-MG-162):** `local/waits.jsonl` gets the guard log's 256 KiB cap; an open load marker (`until: null`) older than an hour is ignored by the admission readers, no state write for it.
+
 ## 2.7.0
 
 Simplification week (decision D-MG-60): fewer orchestrator calls, shorter sessions, one gate per batch.
