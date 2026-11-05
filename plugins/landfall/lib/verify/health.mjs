@@ -91,7 +91,15 @@ export function healthLine(offenders) {
 // git(args) → { status, stdout }; read(path) → the text now or null (at most `max` bytes). The text at the base: null
 // for a new path, undefined (skipped) when larger or unreadable. Called once, by verify's evaluate (run.mjs).
 export function codeHealth({ store, say, paths, base, git, read, max = 1024 * 1024 }) {
+  // new path → its path at the base (one listing: `R<score> old new`; a copy `C` counts as new)
+  const moved = new Map();
+  const names = git(['diff', '--name-status', '-M', '--find-renames', '-z', base]);
+  const f = names.status === 0 ? names.stdout.split('\0') : [];
+  for (let i = 0; i < f.length; i++) {
+    if (f[i][0] === 'R') { moved.set(f[i + 2], f[i + 1]); i += 2; } else if (f[i][0] === 'C') i += 2; else i++;
+  }
   const show = (p) => {
+    p = moved.get(p) ?? p;
     const size = git(['cat-file', '-s', `${base}:${p}`]);
     if (size.status !== 0) return null;
     const r = Number(size.stdout) <= max ? git(['show', `${base}:${p}`]) : null;
