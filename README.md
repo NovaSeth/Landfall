@@ -91,7 +91,7 @@ Claude  Noted. I've opened a task for the export.
 
 ## What's new in 2.7.2
 
-- **Merge train:** `landfall train <ids…>` or `landfall train --ready` merges approved tasks on one integration branch, runs the gates once, and records every task merged and done; each task is re-checked before it is integrated and at record time. The loop proposes the train for critical tasks and `landfall close` for the rest.
+- **Merge train:** `landfall train <ids…>` or `landfall train --ready` merges approved tasks on one integration branch, runs the gates once, and records every task merged and done; each task is re-checked before it is integrated and at record time. A task merged by hand and not yet done rides the train as done-only. The loop proposes the train for critical tasks and `landfall close` for the rest.
 - **No self-approval:** a Claude review is recorded only by the dispatched reviewer, and the Bash guard denies a subagent without the reviewer role recording a review or a dispatch. A partial control until role tokens land (see known limitations).
 
 ## What's new in 2.7.1
