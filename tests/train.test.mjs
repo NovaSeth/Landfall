@@ -335,3 +335,35 @@ test('F7: an escalated route is refused until its added steps exist, even with a
   assert.equal(r.store.read('verify', id), null);
   assert.equal(events(r, id, 'merged').length, 0);
 });
+
+// T-MG-195: a task merged by hand (a merged event and its tip on the target, no done) is closed by the train.
+const adopt = (r, id) => {
+  r.store.update('task', id, (cur) => ({ ...cur, events: [...cur.events, { at: AT, by: r.handle, event: 'merged', data: { commit: r.git('rev-parse', 'HEAD'), target: 'main', adopted: true } }] }));
+  r.git('add', '-A');
+  r.git('commit', '-q', '-m', 'adopt');
+};
+
+test('a task merged by hand is taken as done only: done with mode train, one merged event, then skipped as already merged', async (t) => {
+  const r = repo(t);
+  const id = r.task('feat/hand', addTest('hand.test.mjs'));
+  r.git('merge', '--no-ff', '-q', '-m', 'by hand', 'feat/hand');
+  adopt(r, id);
+  const res = await cli(['train', id, '--yes'], r);
+  assert.equal(res.code, 0, JSON.stringify(res.env));
+  assert.deepEqual(outcomes(res), [[id, 'done']]);
+  const head = r.git('rev-parse', 'HEAD');
+  assert.equal(r.store.read('task', id).status, 'done');
+  assert.equal(events(r, id, 'merged').length, 1);
+  assert.deepEqual(events(r, id, 'done').map((e) => e.data), [{ head, mode: 'train' }]);
+  assert.equal(r.store.read('verify', id).mode.kind, 'train');
+  const again = await cli(['train', id, '--yes'], r);
+  assert.match(again.env.data.tasks[0].why, /already merged/);
+});
+
+test('a merged task whose tip is not on the target is skipped as merged elsewhere', async (t) => {
+  const r = repo(t);
+  const id = r.task('feat/elsewhere', addTest('e.test.mjs'));
+  adopt(r, id);
+  const res = await cli(['train', id, '--yes'], r);
+  assert.match(res.env.data.tasks[0].why, /merged elsewhere: its tip is not on main/);
+});
