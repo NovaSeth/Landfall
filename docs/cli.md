@@ -280,10 +280,10 @@ Changes files: needs a terminal or --yes, otherwise exit 7 REFUSED.
 Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
 ```
 
-### `landfall decide [--title <text>] [--why <text>] [--cost <text>] [--scope <globs>] [--kind <kind>] [--supersedes <ids>] [--allows-test-removal <ids>] [--from-verify <task>] [--from-file <json>] [--task <id>] [--remaining <ids>] [--yes] [--json]`
+### `landfall decide [--title <text>] [--why <text>] [--cost <text>] [--scope <globs>] [--kind <kind>] [--supersedes <ids>] [--allows-test-removal <ids>] [--from-verify <task>] [--from-file <json>] [--no-follow-up] [--task <id>] [--remaining <ids>] [--yes] [--json]`
 
 ```text
-usage: landfall decide [--title <text>] [--why <text>] [--cost <text>] [--scope <globs>] [--kind <kind>] [--supersedes <ids>] [--allows-test-removal <ids>] [--from-verify <task>] [--from-file <json>] [--task <id>] [--remaining <ids>] [--yes] [--json]
+usage: landfall decide [--title <text>] [--why <text>] [--cost <text>] [--scope <globs>] [--kind <kind>] [--supersedes <ids>] [--allows-test-removal <ids>] [--from-verify <task>] [--from-file <json>] [--no-follow-up] [--task <id>] [--remaining <ids>] [--yes] [--json]
 
 Record a decision: a new D-<H>-<n> file under the state directory with what, why and cost if wrong.
 The number is the next of your handle: above every local record and tombstone and every one on origin/main.
@@ -294,6 +294,7 @@ remaining lists every blocking finding ID of that round, the review step counts 
 --from-verify <task> takes the tests the task's latest verify saw removed or newly skipped as allowsTestRemoval (title,
 kind test-removal and scope filled in unless given). --from-file <json> reads the fields from a JSON object (title, why,
 cost, scope, kind, supersedes, allowsTestRemoval, task, remaining); a flag given here wins over the file.
+A test-removal decision also opens a task "Restore or confirm the coverage of <n> removed tests" and ends with "Follow-up: T-<id>".
 Cite it next to the code it constrains (COD-12): "// D-<H>-<n>: <why in five words>".
 
 Options:
@@ -306,6 +307,7 @@ Options:
   --allows-test-removal <ids>  comma-separated test IDs verify may see removed or newly skipped (as verify prints them); kind test-removal by default
   --from-verify <task>         allow the tests the task's latest verify saw removed or newly skipped (a test-removal decision)
   --from-file <json>           read the fields from a JSON file (a regular file of at most 64 KB); flags given here win
+  --no-follow-up               test-removal: do not open the task that restores or confirms the removed tests' coverage
   --task <id>                  the task whose review step a review-close decision closes; kind review-close by default
   --remaining <ids>            comma-separated blocking and minor finding IDs left open in the latest review; files them in the backlog
 

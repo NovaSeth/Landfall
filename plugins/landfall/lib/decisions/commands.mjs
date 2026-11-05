@@ -150,9 +150,10 @@ function create({ flags: given, names, io }, supersedes) {
   const allowsTestRemoval = splitTestIds(flags.allowsTestRemoval);
   const kind = flags.kind ?? (allowsTestRemoval.length ? 'test-removal' : flags.task !== undefined ? 'review-close' : undefined);
   const review = flags.task !== undefined || flags.remaining !== undefined ? { task: flags.task, remaining: splitList(flags.remaining) } : {};
-  const input = { title: flags.title.trim(), why: flags.why, cost: flags.cost, scope: splitList(flags.scope), kind, supersedes, allowsTestRemoval, ...review };
+  const input = { title: flags.title.trim(), why: flags.why, cost: flags.cost, scope: splitList(flags.scope), kind, supersedes, allowsTestRemoval, followUp: !flags.noFollowUp, ...review };
   const result = createDecision({ store, where, names, env: io.env, handle, input });
   const lines = [`${result.id} created: ${result.file}`, ...result.supersedes.map((old) => `${old} superseded by ${result.id}`)];
+  if (result.followUp) lines.push(`follow-up task ${result.followUp} for ${result.id}`);
   if (result.filed) lines.push(`filed: ${result.filed.length ? result.filed.join(', ') : 'none'}`);
   return { data: result, text: `${lines.join('\n')}\n`, warnings: result.warnings.map((w) => w.message) };
 }
