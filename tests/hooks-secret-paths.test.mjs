@@ -8,6 +8,9 @@ import { tmpdir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { isolateProcessEnv } from './helpers/isolated-env.mjs';
+
+isolateProcessEnv();
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const dirName = readdirSync(join(root, 'plugins')).find((d) => existsSync(join(root, 'plugins', d, 'lib', 'name.json')));
