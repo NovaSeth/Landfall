@@ -52,7 +52,7 @@ test('no role token lands under the state local directory or the plugin data', (
   assert.ok(denied(sub), 'the reviewer command is blocked');
   guardBash({ tool_name: 'Bash', cwd: repo, session_id: 's1', tool_input: { command: `printf %s ${orch} | rm -rf /` } }, { env, autoAllow: 'off' });
   for (const f of [...files(join(repo, names.stateDir, 'local')), ...files(pd)]) {
-    const t = readFileSync(f, 'utf8');
+    const t = readFileSync(f, 'utf8').replaceAll(`${PFX}<redacted>`, '');
     assert.ok(!t.includes(PFX) && !t.includes(orch) && !t.includes(rev), `${f} holds a token`);
   }
 });

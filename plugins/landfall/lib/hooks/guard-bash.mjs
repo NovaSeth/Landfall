@@ -91,13 +91,16 @@ const decision = (permissionDecision, reason) => ({
 });
 const deny = (reason) => decision('deny', reason);
 
+// A role token is never logged (SEC-13): the block log keeps the command text with every token run redacted.
+const PFX = ['lf', '1_'].join('');
+const TOKEN_RUN = new RegExp(`${PFX}[A-Za-z0-9_-]*`, 'g');
 // The default shadow log: one JSON line in the plugin data directory (the per-repository log under the state directory
 // comes with lib/state). No directory → no log.
 function defaultShadowLog(env) {
   return (entry) => {
     const dir = env.CLAUDE_PLUGIN_DATA;
     if (typeof dir !== 'string' || !isAbsolute(dir)) return;
-    try { appendFileSync(join(dir, 'shadow.jsonl'), `${JSON.stringify(entry)}\n`); } catch { /* a log never blocks a command */ }
+    try { appendFileSync(join(dir, 'shadow.jsonl'), `${JSON.stringify(entry).replace(TOKEN_RUN, `${PFX}<redacted>`)}\n`); } catch { /* a log never blocks a command */ }
   };
 }
 const AUTO_ALLOW = 'auto-allow';
