@@ -382,7 +382,8 @@ test('T-MG-192: a merge of main into the branch after the review keeps it eligib
   r.git('add', '-A', '--', '.', `:(exclude)${names.stateDir}`);
   r.git('commit', '-q', '-m', 'own change after the review');
   r.git('checkout', '-q', 'main');
-  const res = await cli(['train', merged, own], r);
+  const res = await cli(['train', merged, own, '--yes'], r);
+  assert.ok(res.env.data?.tasks, JSON.stringify(res.env).slice(0, 1500));
   const why = (id) => res.env.data.tasks.find((x) => x.task === id);
   assert.doesNotMatch(why(merged).why ?? '', /changed since its review/, JSON.stringify(res.env));
   assert.match(why(own).why, /branch changed since its review/);

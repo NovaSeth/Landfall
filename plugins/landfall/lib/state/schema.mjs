@@ -92,6 +92,7 @@ function check(spec, v, path, errors) {
         if (!Object.hasOwn(v, k) && spec.opt?.includes(k)) continue;
         check(fieldSpec, v[k], join(path, k), errors);
       }
+      if (!errors.length && spec.rule) { const bad = spec.rule(v); if (bad) err(errors, path, 'invalid-value', bad); }
       return;
     }
     default:

@@ -95,6 +95,8 @@ export const VERIFY_KINDS = Object.freeze({
       train: { t: 'obj', f: { commit: str(64, { re: PATTERNS.sha }), head: str(64, { re: PATTERNS.sha }), batch: str(80, { re: /^batch-\d{8}T\d{6}(?:-\d+)?$/ }) } },
     },
     opt: ['machine', 'cache', 'heavyWaitMs', 'gatesMs', 'mode', 'train'],
+    // T-MG-192: the train block belongs to a train record and to no other.
+    rule: (v) => ((v.mode?.kind === 'train') === (v.train !== undefined) ? null : 'train: only a record of mode train carries it, and it needs it'),
   }),
   // The output tails of the latest verify of a task: machine-local (local/ is never committed), JSON text.
   verifyLog: defineKind('verifyLog', 1, {

@@ -20,7 +20,8 @@ import { addedSteps, applyClass, classify, rank, recordedKeys, routeFor, routerT
 import { KINDS, afterOf, mergedOf } from '../state/index.mjs';
 import { appliedTier, reviewNeed, reviewState } from './artifacts.mjs';
 import { batchMerge } from './batch.mjs';
-import { activeWhere, gitIn, storeOf } from './run.mjs';
+import { targetOf } from './merge.mjs';
+import { activeWhere, gitIn, sameChange, storeOf } from './run.mjs';
 
 const OBJECT_ID = /^[0-9a-f]{40,64}$/;
 
@@ -67,7 +68,7 @@ export function eligible({ store, task, where, env, base, sha, scope, at }) {
   if (reviewNeed(actual, appliedTier(store)) === 'none') return { why: null, route };
   const head = [...task.events].reverse().find((e) => e.event === 'review')?.data?.head;
   if (typeof head !== 'string' || !OBJECT_ID.test(head)) return { why: 'its review records no reviewed commit (record the review again with review record)', route };
-  if (head !== sha && gitIn(where, env, ['diff', '--quiet', '--end-of-options', head, sha, ...scope]).status !== 0) {
+  if (head !== sha && !sameChange(where, env, head, sha, targetOf(where, env))) {
     return { why: `the branch changed since its review at ${head.slice(0, 12)} (review the new commits, then record the review)`, route };
   }
   return { why: null, route };

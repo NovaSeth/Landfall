@@ -13,14 +13,14 @@
 // never makes a review external: one that claims kind external is refused. Known limit: the reviewer id of a claude
 // review is what the file says.
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
 import { authorHandle, stateRel } from '../decisions/index.mjs';
 import { readRegularFile } from '../fsx/index.mjs';
 import { RUN_ID, ownOutDir, runsStore } from '../runs/index.mjs';
 import { KINDS, StateError, authorize, consume, restore } from '../state/index.mjs';
 import { VERIFY_KINDS, reviewKey } from './kinds.mjs';
-import { activeWhere, gitIn, storeOf, unknownTask } from './run.mjs';
+import { activeWhere, gitIn, sameChange, storeOf, unknownTask } from './run.mjs';
 
 const INPUT_MAX = 1024 * 1024;
 const OBJECT_ID = /^[0-9a-f]{40,64}$/;
@@ -142,13 +142,22 @@ export function recordReview({ cwd, env, names, id, from, run, token, at = new D
     if (!reviewer) throw refused('reviewer-not-dispatched', `${id} was not dispatched to a reviewer (or its implementer reported after): a claude review is recorded only by the dispatched reviewer (SEC-13)`, `dispatch a reviewer first: '${names.bin} task set ${id} dispatched --executor <plugin>:reviewer --base <sha>'`);
   }
   const tip = typeof task.branch === 'string' && task.branch !== '' && !task.branch.startsWith('-') ? gitIn(where, env, ['rev-parse', '--verify', '-q', `${task.branch}^{commit}`]).stdout.trim() : '';
-  if (claimed !== undefined && claimed !== tip) throw refused('review-head-moved', `the review is of ${claimed.slice(0, 12)}, but ${task.branch} is at ${tip.slice(0, 12) || 'no commit'}`, 'review the new commits, then record the review again');
-  const head = rec ? rec.head ?? tip : tip;
+  const taken = store.list('review').filter((k) => k.startsWith(`${id}/`)).map((k) => Number(k.slice(k.lastIndexOf('-r') + 2)));
+  // T-MG-192: the commit the reviewer read: the head, else the Range head of this round's review brief, else the tip when
+  // it is older than the review file; a merge of the target after the review (no own commit) leaves the review valid.
+  if (rec && !OBJECT_ID.test(rec.head ?? '')) throw refused('run-head-missing', `${rec.runId} records no reviewed commit`, `run '${names.bin} exec --task ${id} --role reviewer' again`);
+  let head = rec ? rec.head : claimed ?? /^Range: [0-9a-f]+\.\.([0-9a-f]{40,64})/m.exec(store.readText(`tasks/${id}/review-r${Math.max(0, ...taken) + 1}-brief.md`) ?? '')?.[1];
+  if (head === undefined && tip === '') head = '';
+  if (head === undefined) {
+    const tipTime = Number(gitIn(where, env, ['log', '-1', '--format=%ct', tip]).stdout.trim()) * 1000;
+    if (!(tipTime < statSync(isAbsolute(from) ? from : join(cwd, from)).mtimeMs)) throw refused('review-head-unknown', `the review names no commit and ${task.branch} has a newer commit than the review file`, 'add "head" to the review JSON, or render the review brief (its Range names the commit)');
+    head = tip;
+  }
+  if (!rec && head !== tip && !sameChange(where, env, head, tip)) throw refused('review-head-moved', `the review is of ${head.slice(0, 12)}, but ${task.branch} is at ${tip.slice(0, 12) || 'no commit'}`, 'review the new commits, then record the review again');
   const doc = rec
     ? { verdict: input.verdict, reviewer: { kind: 'external', id: `${rec.provider}:reviewer` }, findings: input.findings, run: rec.runId, sha256: createHash('sha256').update(bytes).digest('hex') }
     : { verdict: input.verdict, reviewer: input.reviewer, findings: input.findings };
   const spent = !rec && auth.hash ? consume({ dir: where.dir, names, hash: auth.hash }) : null;
-  const taken = store.list('review').filter((k) => k.startsWith(`${id}/`)).map((k) => Number(k.slice(k.lastIndexOf('-r') + 2)));
   let round = Math.max(0, ...taken) + 1;
   try {
     while (round <= ROUND_MAX && !store.create('review', reviewKey(id, round), doc)) round++;
