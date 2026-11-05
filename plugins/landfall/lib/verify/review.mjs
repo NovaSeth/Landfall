@@ -20,7 +20,7 @@ import { readRegularFile } from '../fsx/index.mjs';
 import { RUN_ID, ownOutDir, runsStore } from '../runs/index.mjs';
 import { KINDS, StateError, authorize, consume, restore } from '../state/index.mjs';
 import { VERIFY_KINDS, reviewKey } from './kinds.mjs';
-import { activeWhere, gitIn, sameChange, storeOf, unknownTask } from './run.mjs';
+import { activeWhere, codeState, gitIn, sameChange, storeOf, unknownTask } from './run.mjs';
 
 const INPUT_MAX = 1024 * 1024;
 const OBJECT_ID = /^[0-9a-f]{40,64}$/;
@@ -153,7 +153,7 @@ export function recordReview({ cwd, env, names, id, from, run, token, at = new D
     if (!(tipTime < statSync(isAbsolute(from) ? from : join(cwd, from)).mtimeMs)) throw refused('review-head-unknown', `the review names no commit and ${task.branch} has a newer commit than the review file`, 'add "head" to the review JSON, or render the review brief (its Range names the commit)');
     head = tip;
   }
-  if (!rec && head !== tip && !sameChange(where, env, head, tip)) throw refused('review-head-moved', `the review is of ${head.slice(0, 12)}, but ${task.branch} is at ${tip.slice(0, 12) || 'no commit'}`, 'review the new commits, then record the review again');
+  if (!rec && head !== tip && !sameChange(where, env, head, tip, 'main', codeState(where, env).scope)) throw refused('review-head-moved', `the review is of ${head.slice(0, 12)}, but ${task.branch} is at ${tip.slice(0, 12) || 'no commit'}`, 'review the new commits, then record the review again');
   const doc = rec
     ? { verdict: input.verdict, reviewer: { kind: 'external', id: `${rec.provider}:reviewer` }, findings: input.findings, run: rec.runId, sha256: createHash('sha256').update(bytes).digest('hex') }
     : { verdict: input.verdict, reviewer: input.reviewer, findings: input.findings };
