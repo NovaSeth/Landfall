@@ -523,3 +523,45 @@ writeFileSync('docs/cli.md', out);
   assert.deepEqual(res.env.data.tasks.find((x) => x.task === two).regenerated, ['docs/cli.md']);
   assert.equal(r.git('show', 'HEAD:docs/cli.md'), 'docs\nA1\nB1');
 });
+
+// ---- T-MG-209: fast guards before the full gate; the bisect runs only the failing files; every culprit is left out ----
+const BREAKS = (name) => addTest(`${name}.test.mjs`, `test('${name} breaks', () => { throw new Error('boom'); });`);
+
+test('T-MG-209: a fastGuards failure stops before the full gate: the culprit is found with the guards only', async (t) => {
+  const r = repo(t, { guards: ['test ! -f bad.flag'], trustGuards: true });
+  const bad = r.task('feat/bad', (w) => w('bad.flag', 'x\n'));
+  const res = await cli(['train', bad, '--yes'], r);
+  assert.deepEqual(outcomes(res), [[bad, 'failed']]);
+  assert.match(res.env.data.tasks[0].why, /fastGuards fail: test ! -f bad\.flag/);
+  assert.equal(r.runs(), 0, 'the full gate never ran');
+  const tip = r.git('rev-parse', 'HEAD');
+  const clean = r.task('feat/clean', addTest('clean.test.mjs'));
+  const bad2 = r.task('feat/bad2', (w) => w('bad.flag', 'y\n'));
+  const res2 = await cli(['train', clean, bad2, '--yes'], r);
+  assert.deepEqual(outcomes(res2), [[clean, 'merged'], [bad2, 'failed']]);
+  assert.equal(r.runs(), 1, 'one full gate: the integrated set without the guard culprit');
+  assert.equal(r.git('rev-parse', 'HEAD') === tip, false);
+});
+
+test('T-MG-209: the bisect runs only the test files that failed; the merged set passes one full gate', async (t) => {
+  const r = repo(t);
+  const ids = [r.task('feat/a', addTest('a.test.mjs')), r.task('feat/b', BREAKS('b')), r.task('feat/c', addTest('c.test.mjs')), r.task('feat/d', addTest('d.test.mjs'))];
+  const res = await cli(['train', ...ids, '--yes'], r);
+  assert.deepEqual(outcomes(res), [[ids[0], 'merged'], [ids[1], 'failed'], [ids[2], 'merged'], [ids[3], 'merged']]);
+  assert.equal(r.runs(), 2, 'the full gate, the bisect steps on b.test.mjs only, the full gate of what merges');
+  assert.ok(res.env.data.tasks[1].tests.some((x) => x.includes('b breaks')));
+});
+
+test('T-MG-209: two culprits among four tasks: the other two merge, each culprit names its failing tests', async (t) => {
+  const r = repo(t);
+  const ids = [r.task('feat/a', addTest('a.test.mjs')), r.task('feat/b', BREAKS('b')), r.task('feat/c', addTest('c.test.mjs')), r.task('feat/d', BREAKS('d'))];
+  const res = await cli(['train', ...ids, '--yes'], r);
+  assert.equal(res.code, 1);
+  assert.deepEqual(outcomes(res), [[ids[0], 'merged'], [ids[1], 'failed'], [ids[2], 'merged'], [ids[3], 'failed']]);
+  assert.ok(res.env.data.tasks[1].tests.some((x) => x.includes('b breaks')) && !res.env.data.tasks[1].tests.some((x) => x.includes('d breaks')));
+  assert.ok(res.env.data.tasks[3].tests.some((x) => x.includes('d breaks')));
+  assert.equal(r.runs(), 2);
+  const head = r.git('rev-parse', 'HEAD');
+  for (const b of ['feat/a', 'feat/c']) r.git('merge-base', '--is-ancestor', b, head);
+  assert.equal(r.git('branch', '--list', `${names.codename}/batch-*`), '');
+});
