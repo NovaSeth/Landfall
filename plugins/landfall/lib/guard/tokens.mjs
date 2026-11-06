@@ -147,16 +147,16 @@ const tooComplex = (w) => w.includes('[') && (w.length > MAX_WORD || w.split('['
 const quoteBracket = (text) => {
   let hit = false; let sender = ''; let q = ''; let w = null;
   const flush = () => {
-    const sends = sender.replace(/\s+/g, ' ').split('|').some((p) => sendsPart(p.replace(/\\\r?\n|['"\\]/g, '').toLowerCase()));
+    const sends = sender.replace(/[\s()]+/g, ' ').split('|').some((p) => sendsPart(p.replace(/\\\r?\n|['"\\]/g, '').toLowerCase()));
     // a segment with a dollar-quote or a quote still open on a sender line is a hit: the span rule cannot judge it
     if (sends && (hit || q || sender.includes("$'"))) return true;
     hit = false; sender = ''; return false;
   };
   for (let i = 0; i < text.length; i++) {
     const ch = text[i];
-    if (!q && (ch === ';' || ch === '&' || ch === '\n' || ch === '\r' || ch === '(' || ch === ')')) { w = null; if (flush()) return true; continue; }
+    if (!q && (ch === ';' || ch === '&')) { w = null; if (flush()) return true; continue; }
     sender += ch;
-    if (!q && /\s/.test(ch)) { w = null; continue; }
+    if (!q && /[\s()]/.test(ch)) { w = null; continue; }
     w ??= { open: false, mark: false };
     if (ch === '\\' && q !== "'") { if (w.open) w.mark = true; if (++i < text.length) sender += text[i]; continue; }
     if (ch === '"' || ch === "'") { if (!q) q = ch; else if (q === ch) q = ''; if (w.open) w.mark = true; continue; }
@@ -172,7 +172,7 @@ const secretGlob = (s) => s.split(/\s+/).some((w) => tooComplex(w) || brackets(w
   return re !== null && SECRET_NAMES.some((n) => re.test(n) && (n[0] !== '.' || g[0] === '.' || g[0] === BR));
 }));
 const secretIn = (s) => SECRET.test(s) || secretGlob(s);
-const exfilVariants = (vs, lit) => vs.some((v) => v.split(/[;&\n\r]/).some((s) => {
+const exfilVariants = (vs, lit) => vs.some((v) => v.split(/[;&]/).some((s) => {
   s = s.replace(/\s+/g, ' ');
   const ps = s.split('|'); const k = ps.findIndex(sendsPart);
   if (k < 0) return false;
