@@ -40,7 +40,7 @@ const val = 'Zx81' + 'Qw7Er6Ty5Ui4Op3'; // SYNTH
 
 const scratch = (t, prefix) => {
   const d = realpathSync(mkdtempSync(join(tmpdir(), prefix)));
-  t.after(() => rmSync(d, { recursive: true, force: true }));
+  t.after(() => rmSync(d, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
   return d;
 };
 const git = (d, ...a) => {
