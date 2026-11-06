@@ -334,7 +334,7 @@ export async function runSupervise({ args, names, io, pluginRoot }) {
   if (attached({ dir: w.dir, names })) {
     release(got.lease, opts);
     patch((cur) => ({ ...cur, status: 'failed', endedAt: new Date().toISOString(), error: 'exec-attached' }));
-    return fail('exec-attached', "the supervisor still runs inside the session's process tree, so the provider would inherit its authority", 'start it with landfall exec and let that command return');
+    return fail('exec-attached', "the supervisor still runs inside the session's process tree, so the provider would inherit its authority", 'start it with the exec command and let that command return');
   }
   const began = Date.now();
   const child = start(rec.bin, argv.slice(1), { unit: 'providers', cwd, env: childEnv(adapter, io.env, got.env), detached: true, stdin: 'pipe' });

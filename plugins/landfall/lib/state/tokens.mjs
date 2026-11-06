@@ -95,7 +95,7 @@ export function authorize({ dir, names, token, need, now = new Date(), caller = 
     throw refused(old ? 'token-expired' : 'token-unknown', old ? 'the token has expired or its session ended' : 'the token is not known here (spent, released or never minted)', 'a reviewer asks the orchestrator to dispatch again');
   }
   if ((need === 'orchestrator') !== (found.role === 'orchestrator')) throw refused('token-role', `a ${found.role} token does not serve this call (it needs ${need === 'orchestrator' ? 'the orchestrator' : 'a reviewer'} token)`);
-  if (!descends(doc.table, caller, doc.orchestrator.holder)) throw refused('token-caller', `the token is used outside the process tree of session ${doc.orchestrator.session} (process ${caller} does not descend from Claude Code process ${doc.orchestrator.holder.pid}, or the process table cannot be read)`, "dispatch and record from that session's own Bash tool; an external run (landfall exec) cannot");
+  if (!descends(doc.table, caller, doc.orchestrator.holder)) throw refused('token-caller', `the token is used outside the process tree of session ${doc.orchestrator.session} (process ${caller} does not descend from Claude Code process ${doc.orchestrator.holder.pid}, or the process table cannot be read)`, "dispatch and record from that session's own Bash tool; an external run (the exec command) cannot");
   return { hash, role: found.role };
 }
 
