@@ -14,7 +14,7 @@ import { lstatSync } from 'node:fs';
 import { join } from 'node:path';
 import { invalidState } from './document.mjs';
 import { newerSchema } from './errors.mjs';
-import { unsafe } from './store.mjs';
+import { unsafe } from './paths.mjs';
 import { format, validate } from './schema.mjs';
 import { upgradeDoc } from './upgrade.mjs';
 

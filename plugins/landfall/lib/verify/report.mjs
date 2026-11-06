@@ -2,7 +2,7 @@
 // Round 0 checks the RED/GREEN frontmatter and the Status line; --round appends a fix round and keeps earlier bytes.
 // Context comes from io (cwd, env), never from process state.
 import { isAbsolute, resolve as resolvePath } from 'node:path';
-import { EXIT } from '../cli/commands.mjs';
+import { EXIT } from '../cli/exit.mjs';
 import { readRegularFile } from '../fsx/index.mjs';
 import { KINDS, StateError, setTask, writeTaskText } from '../state/index.mjs';
 import { reportHasEvidence } from './artifacts.mjs';

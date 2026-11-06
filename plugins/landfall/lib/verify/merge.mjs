@@ -23,7 +23,8 @@ import { authorHandle, readRecords } from '../decisions/index.mjs';
 import { emptyProfile, riskGlobsOf } from '../profile/index.mjs';
 import { KINDS, StateError, recordMerged } from '../state/index.mjs';
 import { refreshReceipt } from './done.mjs';
-import { activeWhere, codeState, evaluate, gatesSha, gitIn, stateAt, storeOf } from './run.mjs';
+import { codeState, gitIn, stateAt } from './history.mjs';
+import { activeWhere, evaluate, gatesSha, storeOf } from './run.mjs';
 
 const usage = (code, message, hint = '') => new StateError(code, 'USAGE', message, { hint });
 const fail = (code, message, hint = '') => new StateError(code, 'FAIL', message, { hint });
