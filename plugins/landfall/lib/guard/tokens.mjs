@@ -113,18 +113,50 @@ const sendsPart = (p) => {
 };
 // names a glob word may stand for (a dot name only from a glob that starts with a dot)
 const globRe = (g) => { try { return new RegExp('^' + g.replace(/[.+^${}()|\\[\]]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.') + '$'); } catch { return null; } };
-// A word holding a [ and a later ] has the span from its first [ to its last ] replaced by * (fail closed: any bracket
-// glob that could cover a secret name counts); a leading * made this way may stand for a dot name too.
-const secretGlob = (s) => s.split(/\s+/).some((w0) => {
-  const i = w0.indexOf('['), j = w0.lastIndexOf(']'), br = i >= 0 && j > i;
-  const w = br ? w0.slice(0, i) + '*' + w0.slice(j + 1) : w0;
-  return w.split(/[=@:<>]/).some((x) => {
-    const g = x.slice(x.lastIndexOf('/') + 1);
-    if (!/[*?[]/.test(g) || (!br && /^[*?[\]]*$/.test(g))) return false;
-    const re = globRe(g);
-    return re !== null && SECRET_NAMES.some((n) => re.test(n) && (n[0] !== '.' || g[0] === '.' || (br && g[0] === '*')));
-  });
-});
+// Each bracket expression of a word is one character (bash rules: [!x] [^x], a ] right after the opening is a member,
+// [:class:] [=e=] [.c.] are units, an unclosed [ is literal) and becomes BR. The word is then split into components on
+// / { } , = @ : < > and quotes; a component with * ? or BR is matched against the secret names. A component of only * or ?
+// is exempt; BR alone is one character and matches no secret name ([1], [b]: JSON, arrays, headers). A leading BR may
+// stand for the dot of a dot name.
+const BR = '\u0001';
+const bracketEnd = (w, i) => {
+  let j = i + 1;
+  if (w[j] === '!' || w[j] === '^') j++;
+  if (w[j] === ']') j++;
+  for (; j < w.length; j++) {
+    if (w[j] === ']') return j;
+    if (w[j] === '[' && ':=.'.includes(w[j + 1] ?? '')) { const e = w.indexOf(w[j + 1] + ']', j + 2); if (e >= 0) j = e + 1; }
+  }
+  return -1;
+};
+const brackets = (w) => {
+  let out = '';
+  for (let i = 0; i < w.length; i++) {
+    const e = w[i] === '[' ? bracketEnd(w, i) : -1;
+    if (e >= 0) { out += BR; i = e; } else out += w[i];
+  }
+  return out;
+};
+const GLOB_SPLIT = /[/{},=@:<>'"`]/;
+// A word on a sender line that is long or holds many [ is a hit unscanned (fail closed, GC8: the scan stays bounded).
+const MAX_WORD = 512; const MAX_OPEN = 64;
+const tooComplex = (w) => w.includes('[') && (w.length > MAX_WORD || w.split('[').length > MAX_OPEN + 1);
+// Span rule: in a word with a quote or backslash between its first [ and last ], an escaped or quoted ] may end the class
+// early. That stretch becomes SP (any run of characters): it may stand for a leading dot, and a component of only SP, * or ?
+// is exempt. The variant keeps quotes to find the span, then drops them.
+const SP = '\u0002';
+const spanned = (w) => {
+  if (tooComplex(w)) return w;
+  const a = w.indexOf('['); const b = w.lastIndexOf(']');
+  return a >= 0 && b > a && /['"\\]/.test(w.slice(a, b)) ? w.slice(0, a) + SP + w.slice(b + 1) : w;
+};
+export const spanVariant = (text) => ansiDecoded(text).toLowerCase().replace(/\S+/g, (w) => spanned(w).replace(/\\\r?\n|['"\\]/g, ''));
+const secretGlob = (s) => s.split(/\s+/).some((w) => tooComplex(w) || brackets(w).split(GLOB_SPLIT).some((g) => {
+  if (w.includes('{') && SECRET.test(g)) return true;
+  if (!/[*?\u0001\u0002]/.test(g) || /^[*?\u0002]*$/.test(g)) return false;
+  const re = globRe(g.replace(/\u0001/g, '?').replace(/\u0002/g, '*'));
+  return re !== null && SECRET_NAMES.some((n) => re.test(n) && (n[0] !== '.' || g[0] === '.' || g[0] === BR || g[0] === SP));
+}));
 const secretIn = (s) => SECRET.test(s) || secretGlob(s);
 const exfilVariants = (vs, lit) => vs.some((v) => v.split(/[;&]/).some((s) => {
   const ps = s.split('|'); const k = ps.findIndex(sendsPart);
@@ -367,7 +399,7 @@ export function wordTok(t) {
 // A command that sends a secret out (see SENDERS). lit: the lowercase text of the state directory, or null. A long text is
 // read on the cheap variants (the coarse prescan's).
 export function exfilText(text, lit = null) {
-  if (text.length <= LONG_TEXT) return exfilVariants(variants(text), lit);
+  if (text.length <= LONG_TEXT) return exfilVariants([...variants(text), spanVariant(text)], lit);
   const a = ansiDecoded(text); const strip = (x) => x.replace(/\\\r?\n|['"\\]/g, '');
   return exfilVariants([strip(a).toLowerCase(), strip(decodeEscapes(a)).toLowerCase()], lit);
 }
