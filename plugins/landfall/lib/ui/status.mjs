@@ -21,32 +21,6 @@ import { StateError, emailHash, gitIdentity, open, resolve } from '../state/inde
 const MAX_LINES = 25;
 const CLOSED = new Set(['done', 'cancelled']);
 const LEASES_SHOWN = 3;
-const HISTORY_MIN = 3; // done tasks of a class needed before their median replaces the default
-const EXPECTED_MS = Object.freeze({ trivial: 900000, standard: 2700000, critical: 7200000 }); // 15 min, 45 min, 2 h
-const NO_CLASS_MS = 2700000;
-
-const startOf = (task) => (task.events ?? []).find((e) => e.event === 'dispatched' || e.event === 'started')?.at ?? null;
-const doneOf = (task) => [...(task.events ?? [])].reverse().find((e) => e.event === 'done')?.at ?? null;
-
-// Median start-to-done milliseconds per class over the done tasks, computed once per call.
-function medians(all) {
-  const spans = new Map();
-  for (const t of all) {
-    if (t.status !== 'done' || !t.class) continue;
-    const span = Date.parse(doneOf(t)) - Date.parse(startOf(t));
-    if (!Number.isFinite(span)) continue;
-    if (!spans.has(t.class)) spans.set(t.class, []);
-    spans.get(t.class).push(span);
-  }
-  const out = new Map();
-  for (const [cls, xs] of spans) {
-    if (xs.length < HISTORY_MIN) continue;
-    xs.sort((a, b) => a - b);
-    const m = xs.length >> 1;
-    out.set(cls, xs.length % 2 ? xs[m] : (xs[m - 1] + xs[m]) / 2);
-  }
-  return out;
-}
 
 function stateLine(where, bin) {
   if (where.active) return { status: 'active', text: `active · ${where.dir} (${where.linked ? 'linked' : 'in the repository'})` };
@@ -81,11 +55,12 @@ function tasksOf(where, names, env) {
   const hash = email ? emailHash(email) : null;
   const doc = store.read(LOOP.name, null);
   const outside = outsideMerges({ where, env, tasks: all });
+  const budgets = readBudgets(where.dir, all);
   const table = nextSteps({
     tasks: all, runs: readRuns(join(where.local, 'runs')).runs, handles: team.map((d) => d.handle), me: team.find((d) => d.emailSha256 === hash)?.handle ?? null,
-    plan: null, lanesOn: store.read('config', null)?.flags?.lanes === 'on', caps: doc?.caps ?? DEFAULT_CAPS, now: Date.now(), bin: names.bin, budgets: readBudgets(where.dir, all), problem: null, dirty: () => [], outside,
+    plan: null, lanesOn: store.read('config', null)?.flags?.lanes === 'on', caps: doc?.caps ?? DEFAULT_CAPS, now: Date.now(), bin: names.bin, budgets, problem: null, dirty: () => [], outside,
   });
-  return { all, open: all.filter((t) => !CLOSED.has(t.status)), rows: [...table.steps, ...table.info], outside, loop: doc };
+  return { all, open: all.filter((t) => !CLOSED.has(t.status)), rows: [...table.steps, ...table.info], outside, loop: doc, budgets };
 }
 
 const rowText = (r, status) => {
@@ -123,15 +98,12 @@ export function status({ names, io }) {
     if (rows.length <= room) body.push(...rows);
     else body.push(...rows.slice(0, room - 1), `  … ${rows.length - (room - 1)} more: \`${names.bin} task list\``);
   }
-  const history = medians(t.all);
-  const summary = (x) => {
-    const med = history.get(x.class);
-    return {
-      id: x.id, kind: x.kind, title: x.title, status: x.status, class: x.class, owner: x.owner, lane: x.lane, round: x.round,
-      startedAt: startOf(x), lastEventAt: x.events?.at(-1)?.at ?? null,
-      expectedMs: med ?? EXPECTED_MS[x.class] ?? NO_CLASS_MS, expectedFrom: med === undefined ? 'default' : 'history',
-    };
-  };
+  const summary = (x) => ({
+    id: x.id, kind: x.kind, title: x.title, status: x.status, class: x.class, owner: x.owner, lane: x.lane, round: x.round,
+    startedAt: x.events?.findLast((e) => e.event === 'dispatched' || e.event === 'fix-round')?.at ?? null,
+    lastEventAt: x.events?.at(-1)?.at ?? null,
+    expectedMs: t.budgets[x.id] === undefined ? null : t.budgets[x.id] * 60000, expectedFrom: 'default',
+  });
   return {
     data: {
       repo: where.repo,
