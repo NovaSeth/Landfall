@@ -18,6 +18,7 @@ const pluginDir = join(root, 'plugins', dirName);
 const names = JSON.parse(readFileSync(join(pluginDir, 'lib', 'name.json'), 'utf8'));
 const { runHook } = await import(pathToFileURL(join(pluginDir, 'lib', 'hooks', 'registry.mjs')).href);
 const { guardBash } = await import(pathToFileURL(join(pluginDir, 'lib', 'hooks', 'guard-bash.mjs')).href);
+const { stateOf } = await import(pathToFileURL(join(pluginDir, 'lib', 'hooks', 'loop-state.mjs')).href);
 
 const home = realpathSync(mkdtempSync(join(tmpdir(), 'sp-home-')));
 const repo = realpathSync(mkdtempSync(join(tmpdir(), 'sp-repo-')));
@@ -212,6 +213,11 @@ test('T-MG-208 (r2 F5): an absolute cwd outside the project keeps the transcript
 });
 
 test('T-MG-208 (r2 F6): when the state cannot be resolved in time (deadline 0), a transcript or plugin data read is still denied', () => {
+  // the unresolved-state branch is the one taken: with no time left the state is unknown, while a deadline with time resolves it (B-MG-48)
+  assert.deepEqual(stateOf(repo, pdEnv, 0), { unknown: 'out of time' });
+  assert.ok(stateOf(repo, pdEnv, Infinity).where, 'with time left the state resolves');
+  const bashAt = (deadline) => guardBash(base('Bash', { command: `cat ${transcript}` }), { state: null, autoAllow: 'off', shadowLog() {}, env: pdEnv, deadline });
+  assert.ok(denied(bashAt(0)) && denied(bashAt(Infinity)), 'Bash is denied with and without time');
   for (const [tool, input] of [['Read', { file_path: transcript }], ['Read', { file_path: join(pd, 'shadow.jsonl') }]]) {
     assert.ok(denied(runHook('guard-read', JSON.stringify(base(tool, input)), { env: pdEnv, deadline: 0 })), `${tool} ${JSON.stringify(input)}`);
   }

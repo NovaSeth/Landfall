@@ -11,16 +11,16 @@ export const MOVE_LOCK = '.local-move.lock';
 
 // The lib/fsx lock errors as state errors (other errors unchanged).
 export function lockFailure(err, names) {
-  if (err?.code === 'ELOCKED') return new StateError('locked', 'ENV', err.message, { hint: `wait for the other ${names.bin} command to finish` });
-  if (err?.code === 'ESTALE') return new StateError('stale-lock', 'REFUSED', err.message, { hint: `if no ${names.bin} command is running, run '${names.bin} state unlock --stale'` });
-  if (err?.code === 'EREENTRANT') return new StateError('lock-reentry', 'INTERNAL', err.message, { hint: 'a state write was started inside another one; report this' });
+  if (err?.code === 'ELOCKED') return new StateError('locked', 'ENV', err.message, { hint: `wait for the other ${names.bin} command to finish`, cause: err });
+  if (err?.code === 'ESTALE') return new StateError('stale-lock', 'REFUSED', err.message, { hint: `if no ${names.bin} command is running, run '${names.bin} state unlock --stale'`, cause: err });
+  if (err?.code === 'EREENTRANT') return new StateError('lock-reentry', 'INTERNAL', err.message, { hint: 'a state write was started inside another one; report this', cause: err });
   return err;
 }
 
 // lib/fsx unlockStale refusals (EBUSY) as state errors (other errors unchanged).
 export function busyFailure(err, names) {
   if (err?.code !== 'EBUSY') return err;
-  return new StateError('store-busy', 'REFUSED', err.message, { hint: `run it when no ${names.bin} command is running: it removes only a lock whose owner is gone and that stayed unchanged for 2 seconds` });
+  return new StateError('store-busy', 'REFUSED', err.message, { hint: `run it when no ${names.bin} command is running: it removes only a lock whose owner is gone and that stayed unchanged for 2 seconds`, cause: err });
 }
 
 // Removes the store lock of a process that is gone (an explicit command, for a store nobody is using; lib/fsx

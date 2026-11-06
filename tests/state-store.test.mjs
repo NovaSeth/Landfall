@@ -659,3 +659,13 @@ test('append (r1 F2): a torn fragment that another line completes into invalid J
   const rows = wholeRows(h.written());
   assert.deepEqual(rows.at(-1), JSON.parse(L));
 });
+
+test('T-MG-216: lockFailure and busyFailure keep the fsx error as the cause of the state error', async () => {
+  const { lockFailure, busyFailure } = await import(pathToFileURL(join(pluginDir, 'lib', 'state', 'locks.mjs')).href);
+  for (const [code, make, expect] of [['ELOCKED', lockFailure, 'locked'], ['ESTALE', lockFailure, 'stale-lock'], ['EREENTRANT', lockFailure, 'lock-reentry'], ['EBUSY', busyFailure, 'store-busy']]) {
+    const original = Object.assign(new Error(`fsx ${code}`), { code });
+    const wrapped = make(original, names);
+    assert.equal(wrapped.code, expect);
+    assert.equal(wrapped.cause, original, code);
+  }
+});

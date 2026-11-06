@@ -565,3 +565,33 @@ test('T-MG-209: two culprits among four tasks: the other two merge, each culprit
   for (const b of ['feat/a', 'feat/c']) r.git('merge-base', '--is-ancestor', b, head);
   assert.equal(r.git('branch', '--list', `${names.codename}/batch-*`), '');
 });
+
+// ---- B-MG-46: a failing final confirm repeats the loop; failures that name no test file fall back to full-gate probes ----
+const flag = (name) => (w) => w(`${name}.flag`, 'x\n');
+
+test('B-MG-46: a failing final confirm repeats the loop: the pair that fails only together loses one task, the rest merges', async (t) => {
+  // b fails by name (narrow runs on b.test.mjs); a and c fail together without naming a test (only the full gate sees it)
+  const r = repo(t, { extra: '[ -f a.flag ] && [ -f c.flag ] && s=1;' });
+  const ids = [r.task('feat/a', flag('a')), r.task('feat/b', BREAKS('b')), r.task('feat/c', flag('c'))];
+  const res = await cli(['train', ...ids, '--yes'], r);
+  assert.equal(res.code, 1);
+  assert.deepEqual(outcomes(res), [[ids[0], 'merged'], [ids[1], 'failed'], [ids[2], 'failed']]);
+  assert.ok(res.env.data.tasks[1].tests.some((x) => x.includes('b breaks')));
+  const head = r.git('rev-parse', 'HEAD');
+  r.git('merge-base', '--is-ancestor', 'feat/a', head);
+  assert.equal(r.git('show', 'HEAD:a.flag'), 'x');
+  assert.equal(existsSync(join(r.dir, 'c.flag')), false, 'c is not on the target');
+  // full gate, narrow b steps (no run), the failing confirm on [a, c], the full-gate probe of [a], the passing [a]
+  assert.ok(r.runs() >= 4, `the confirm failed and the loop repeated: ${r.runs()} gate runs`);
+});
+
+test('B-MG-46: failures that name no test file: every bisect step runs the full gate, the culprit is still left out', async (t) => {
+  const r = repo(t, { extra: '[ -f b.flag ] && s=1;' });
+  const ids = [r.task('feat/a', flag('a')), r.task('feat/b', flag('b')), r.task('feat/c', flag('c'))];
+  const res = await cli(['train', ...ids, '--yes'], r);
+  assert.equal(res.code, 1);
+  assert.deepEqual(outcomes(res), [[ids[0], 'merged'], [ids[1], 'failed'], [ids[2], 'merged']]);
+  assert.equal(res.env.data.tasks[1].tests.length, 0, 'no failing test is named');
+  // the first full gate, the full-gate probes [a, b] and [a], then [a, c] once (its pass is the confirm)
+  assert.equal(r.runs(), 4);
+});

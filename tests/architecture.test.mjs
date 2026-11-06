@@ -108,9 +108,13 @@ function scan(pluginRoot) {
     }
     graph.set(file, targets);
     // EXIT has one home, lib/cli/exit.mjs: no module imports it from the command table (B-MG-32).
-    for (const m of code.matchAll(/\bimport\s+([^;()§]*?)\s*\bfrom\s*§(\d+)§/g)) {
-      const spec = lit(m[2]);
-      if (typeof spec === 'string' && spec.startsWith('.') && /\bEXIT\b/.test(m[1]) && relative(pluginRoot, resolve(dirname(file), spec)).split(sep).join('/') === 'lib/cli/commands.mjs') add('exit-owner', file, 'imports EXIT from lib/cli/commands.mjs (use lib/cli/exit.mjs)');
+    // Static imports and re-exports name EXIT in their clause; a dynamic import() of the command table is flagged when the file mentions EXIT.
+    const isCommands = (spec) => typeof spec === 'string' && spec.startsWith('.') && relative(pluginRoot, resolve(dirname(file), spec)).split(sep).join('/') === 'lib/cli/commands.mjs';
+    for (const m of code.matchAll(/\b(?:import|export)\s+([^;()§]*?)\s*\bfrom\s*§(\d+)§/g)) {
+      if (isCommands(lit(m[2])) && /\bEXIT\b/.test(m[1])) add('exit-owner', file, 'imports or re-exports EXIT from lib/cli/commands.mjs (use lib/cli/exit.mjs)');
+    }
+    for (const m of code.matchAll(/\bimport\s*\(\s*§(\d+)§\s*\)/g)) {
+      if (isCommands(lit(m[1])) && /\bEXIT\b/.test(code)) add('exit-owner', file, 'imports EXIT dynamically from lib/cli/commands.mjs (use lib/cli/exit.mjs)');
     }
 
     // Spawning: child_process only in git and proc (any mention: import, import(), createRequire).
@@ -283,6 +287,10 @@ const PLANTED = [
   ['output-owner', `bin/${names.bin}`, "process.stdout.write('x');\n"],
   ['exit-owner', 'lib/state/a.mjs', "import { EXIT } from '../cli/commands.mjs';\n"],
   ['exit-owner', 'lib/router/a.mjs', "import { x, EXIT as E } from '../cli/commands.mjs';\n"],
+  ['exit-owner', 'lib/state/b.mjs', "export { EXIT } from '../cli/commands.mjs';\n"],
+  ['exit-owner', 'lib/state/c.mjs', "export { x, EXIT as E } from '../cli/commands.mjs';\n"],
+  ['exit-owner', 'lib/router/b.mjs', "const { EXIT } = await import('../cli/commands.mjs');\n"],
+  ['exit-owner', 'lib/router/c.mjs', "export const code = (await import('../cli/commands.mjs')).EXIT.FAIL;\n"],
 ];
 
 function plant(files) {
