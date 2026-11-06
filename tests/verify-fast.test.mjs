@@ -221,3 +221,17 @@ test('changeSince: a change over the path cap is truncated, so fast verify fails
   const p = verify.fastPlan({ profile: { gates: GATES, facts }, change: over, repoFiles: Object.keys(FILES), trusted: () => true });
   assert.equal(p.kind, 'full', p.why);
 });
+
+// ---- T-MG-209: the narrowing helpers of the batch bisect (bisect.mjs) ----
+const bisect = await lib('verify/bisect.mjs');
+
+test('T-MG-209: culpritOf finds the first failing task by prefixes and reports a run that could not run', () => {
+  const seen = [];
+  const bad = new Set(['c', 'e']);
+  const probe = (sub) => { seen.push(sub.length); return { state: sub.some((x) => bad.has(x)) ? 'fail' : 'pass' }; };
+  const found = bisect.culpritOf(['a', 'b', 'c', 'd', 'e'], { state: 'fail' }, probe);
+  assert.equal(found.culprit, 'c');
+  assert.ok(seen.length <= 3, `binary search: ${seen}`);
+  assert.deepEqual(bisect.culpritOf(['a', 'b'], { state: 'fail' }, () => ({ state: 'error' })).error, { state: 'error' });
+  assert.equal(bisect.culpritOf(['a'], { state: 'fail' }, () => assert.fail('no probe for one task')).culprit, 'a');
+});

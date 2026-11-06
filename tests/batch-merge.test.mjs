@@ -482,15 +482,15 @@ test('a branch that changes the gates is skipped from the batch (merge it alone)
   cleaned(r, res);
 });
 
-test('a second failure after the culprit: only the prefix before the culprit merges, the rest are skipped', async (t) => {
+test('T-MG-209: a second failure after the culprit leaves that task out too; the tasks before it merge', async (t) => {
   const r = repo(t);
   const a = r.task('feat/a', 'a.test.mjs');
   const b = r.task('feat/b', 'b.test.mjs', "test('breaks', () => { throw new Error('boom'); });");
   const c = r.task('feat/c', 'c.test.mjs', "test('breaks too', () => { throw new Error('boom'); });");
   const res = await cli(['task', 'merge', a, b, c, '--yes'], r);
   assert.equal(res.code, 1);
-  assert.deepEqual(outcomes(res), [[a, 'merged'], [b, 'failed'], [c, 'skipped']]);
-  assert.match(res.env.data.tasks.find((x) => x.task === c).why, /not verified/);
+  assert.deepEqual(outcomes(res), [[a, 'merged'], [b, 'failed'], [c, 'failed']]);
+  assert.match(res.env.data.tasks.find((x) => x.task === c).why, /new failing tests: .*breaks too/);
   assert.equal(merges(r, a).length, 1);
   assert.equal(merges(r, b).length + merges(r, c).length, 0);
   r.git('merge-base', '--is-ancestor', 'feat/a', 'HEAD');
