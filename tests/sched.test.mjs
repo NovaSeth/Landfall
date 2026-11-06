@@ -9,7 +9,9 @@
 // wherever a test runs admission. This file holds no plugin name or path: both come from lib/name.json.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn, spawnSync } from 'node:child_process';
+import childProcess, { spawn, spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import os, { tmpdir } from 'node:os';
@@ -1374,3 +1376,66 @@ test('acquireWait never passes a negative number to sleep when the clock passes 
   assert.ok(slept.length >= 1 && slept.every((ms) => ms >= 0), `slept ${JSON.stringify(slept)}`);
   sched.release(held.lease, s.ctx());
 });
+
+// ---- T-MG-199: the parent pid of every row, and the walk up it ----
+
+test('processTable rows carry the parent pid', () => {
+  const t = machine.processTable();
+  assert.equal(t.rows.get(process.pid).ppid, process.ppid);
+});
+
+test('descends walks the parent chain and stops on a missing link, a cycle and a start mismatch', () => {
+  const rows = (list) => ({ method: 'ps', rows: new Map(list.map(([pid, ppid, start]) => [pid, { ppid, pgid: pid, zombie: false, start }])) });
+  const holder = { pid: 10, start: 's10' };
+  const t = rows([[10, 1, 's10'], [11, 10, 's11'], [12, 11, 's12']]);
+  assert.equal(machine.descends(t, 10, holder), true, 'the holder itself');
+  assert.equal(machine.descends(t, 12, holder), true, 'a grandchild');
+  assert.equal(machine.descends(t, 12, { pid: 10, start: 'other' }), false, 'the pid names another process');
+  assert.equal(machine.descends(rows([[11, 10, 's11'], [12, 11, 's12']]), 12, holder), false, 'a missing link');
+  assert.equal(machine.descends(rows([[20, 21, 'a'], [21, 20, 'b']]), 20, holder), false, 'a cycle');
+  const deep = [[10, 1, 's10']];
+  for (let i = 1; i <= 70; i++) deep.push([10 + i, 9 + i, `s${10 + i}`]);
+  assert.equal(machine.descends(rows(deep), 80, holder), false, 'more than 64 levels');
+  assert.equal(machine.descends(rows(deep), 60, holder), true, 'within the depth cap');
+  assert.equal(machine.descends(null, 12, holder), false, 'no table');
+});
+
+// Spy at the OS boundary so the real proc.run argument and environment handling are exercised.
+for (const check of ['ps path', 'ps environment', 'vm_stat path', 'vm_stat environment', 'missing ps']) {
+  test(`machine system tools ignore a hostile caller PATH: ${check}`, (t) => {
+    const savedPath = process.env.PATH;
+    const platform = Object.getOwnPropertyDescriptor(process, 'platform');
+    const originalExists = fs.existsSync;
+    const calls = [];
+    t.mock.method(fs, 'existsSync', (path) => path === '/proc/self/stat' ? false : originalExists(path));
+    t.mock.method(childProcess, 'spawnSync', (cmd, args, opts) => {
+      calls.push({ cmd, args, env: opts.env });
+      if (check === 'missing ps' && cmd === '/bin/ps') return { status: null, error: { code: 'ENOENT' } };
+      return { status: 0, signal: null, stdout: '1 0 1 S Thu Jan 1 00:01:40 1970\n', stderr: '' };
+    });
+    syncBuiltinESMExports();
+    t.after(() => {
+      t.mock.restoreAll();
+      syncBuiltinESMExports();
+      Object.defineProperty(process, 'platform', platform);
+      if (savedPath === undefined) delete process.env.PATH;
+      else process.env.PATH = savedPath;
+    });
+    process.env.PATH = '/hostile/caller/bin';
+    Object.defineProperty(process, 'platform', { ...platform, value: 'darwin' });
+    const table = check.startsWith('vm_stat') ? (machine.readings(), null) : machine.processTable();
+    assert.equal(calls.length, 1);
+    if (check.endsWith('path')) assert.equal(calls[0].cmd, check.startsWith('ps') ? '/bin/ps' : '/usr/bin/vm_stat');
+    if (check.endsWith('environment')) assert.equal(calls[0].env.PATH, '/bin:/usr/bin');
+    if (check === 'missing ps') assert.equal(table, null, 'no fallback to caller PATH when /bin/ps is absent');
+  });
+}
+
+for (const pid of [1, 2]) {
+  test(`descends accepts PID ${pid} under a matching PID 1 holder`, () => {
+    const table = { method: 'proc', rows: new Map([[1, { ppid: 0, start: '100' }], [2, { ppid: 1, start: '200' }]]) };
+    assert.equal(machine.descends(table, pid, { pid: 1, start: '100' }), true);
+    assert.equal(machine.descends(table, pid, { pid: 1, start: 'other' }), false, 'a reused holder pid');
+    assert.equal(machine.descends(table, 2, { pid: 5, start: '100' }), false, 'PID 1 ends a chain without its holder');
+  });
+}

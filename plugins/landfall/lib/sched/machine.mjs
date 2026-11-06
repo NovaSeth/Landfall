@@ -11,7 +11,7 @@ import os from 'node:os';
 import { isAlive } from '../fsx/index.mjs';
 import { run } from '../proc/index.mjs';
 
-const toolEnv = () => ({ PATH: `${process.env.PATH ? `${process.env.PATH}:` : ''}/bin:/usr/bin`, LC_ALL: 'C', TZ: 'UTC' });
+const toolEnv = () => ({ PATH: '/bin:/usr/bin', LC_ALL: 'C', TZ: 'UTC' });
 
 export const cores = () => Math.max(1, typeof os.availableParallelism === 'function' ? os.availableParallelism() : os.cpus().length);
 
@@ -39,7 +39,7 @@ export const availableBytes = (freemem, platformBytes, totalBytes) => Math.min(t
 
 function platformMemory() {
   if (process.platform === 'darwin') {
-    const r = run('vm_stat', [], { unit: 'sched', env: toolEnv(), timeoutMs: 5000 });
+    const r = run('/usr/bin/vm_stat', [], { unit: 'sched', env: toolEnv(), timeoutMs: 5000 });
     return { bytes: r.error === null && r.status === 0 ? parseVmStat(r.stdout) : null, method: 'vm_stat' };
   }
   if (process.platform === 'linux') {
@@ -71,18 +71,18 @@ export function readings() {
   return { ...r, freePct: freePct(r) };
 }
 
-// The process table: { method, rows: Map pid → { pgid, zombie, start (null when unreadable) } }, or null when it
+// The process table: { method, rows: Map pid → { ppid, pgid, zombie, start (null when unreadable) } }, or null when it
 // cannot be read.
 export function processTable() {
   if (existsSync('/proc/self/stat')) return procTable();
-  const r = run('ps', ['-A', '-o', 'pid=,pgid=,stat=,lstart='], { unit: 'sched', env: toolEnv(), timeoutMs: 5000 });
+  const r = run('/bin/ps', ['-A', '-o', 'pid=,ppid=,pgid=,stat=,lstart='], { unit: 'sched', env: toolEnv(), timeoutMs: 5000 });
   if (r.error !== null || r.status !== 0) return null;
   const rows = new Map();
   for (const line of r.stdout.split('\n')) {
-    const m = /^\s*(\d+)\s+(\d+)\s+(\S+)\s+(\S.*?)\s*$/.exec(line);
+    const m = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s+(\S.*?)\s*$/.exec(line);
     if (!m) continue;
-    const at = Date.parse(`${m[4].replace(/\s+/g, ' ')} UTC`);
-    rows.set(Number(m[1]), { pgid: Number(m[2]), zombie: /^[ZX]/.test(m[3]), start: Number.isFinite(at) ? String(at / 1000) : null });
+    const at = Date.parse(`${m[5].replace(/\s+/g, ' ')} UTC`);
+    rows.set(Number(m[1]), { ppid: Number(m[2]), pgid: Number(m[3]), zombie: /^[ZX]/.test(m[4]), start: Number.isFinite(at) ? String(at / 1000) : null });
   }
   return rows.size ? { method: 'ps', rows } : null;
 }
@@ -98,11 +98,25 @@ function procTable() {
   for (const name of names.filter((n) => /^\d+$/.test(n))) {
     try {
       const stat = readFileSync(`/proc/${name}/stat`, 'utf8');
-      const f = stat.slice(stat.lastIndexOf(')') + 2).split(' '); // f[0] state (field 3), f[2] pgrp (5), f[19] starttime (22)
-      rows.set(Number(name), { pgid: Number(f[2]), zombie: /^[ZX]/.test(f[0]), start: /^\d+$/.test(f[19] ?? '') ? f[19] : null });
+      const f = stat.slice(stat.lastIndexOf(')') + 2).split(' '); // f[0] state (field 3), f[1] ppid (4), f[2] pgrp (5), f[19] starttime (22)
+      rows.set(Number(name), { ppid: Number(f[1]), pgid: Number(f[2]), zombie: /^[ZX]/.test(f[0]), start: /^\d+$/.test(f[19] ?? '') ? f[19] : null });
     } catch { /* exited meanwhile */ }
   }
   return rows.size ? { method: 'proc', rows } : null;
+}
+
+// Whether pid is the holder { pid, start } or one of its descendants in the table (false: a missing link, a repeated
+// pid, a start mismatch, more than 64 levels, or no table).
+export function descends(table, pid, holder) {
+  const seen = new Set();
+  for (let p = pid; table && p >= 1 && !seen.has(p) && seen.size < 64; p = table.rows.get(p)?.ppid) {
+    const row = table.rows.get(p);
+    if (!row) return false;
+    if (p === holder.pid) return row.start === holder.start;
+    if (p === 1) return false;
+    seen.add(p);
+  }
+  return false;
 }
 
 // What the scheduler reads and does to other processes; tests inject their own.

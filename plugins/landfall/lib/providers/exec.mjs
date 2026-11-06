@@ -27,7 +27,7 @@ import { git } from '../git/index.mjs';
 import { start } from '../proc/index.mjs';
 import { OUT_NAME, capFor, dirIdOf, liveRun, nextRunId, ownOutDir, runsStore, LOG_LINE, LOG_LINES } from '../runs/index.mjs';
 import { SYSTEM, acquireWait, attachChild, identify, release, supervise } from '../sched/index.mjs';
-import { KINDS, TASK_TEXTS, checkedPath, resolve, taskTextFile } from '../state/index.mjs';
+import { KINDS, TASK_TEXTS, attached, checkedPath, resolve, taskTextFile } from '../state/index.mjs';
 import { adapters, chooseProvider, detectProviders } from './index.mjs';
 import { projectRedactions, redact } from '../verify/redact.mjs';
 import { LAST_LINE, ROLES } from './kind.mjs';
@@ -327,6 +327,14 @@ export async function runSupervise({ args, names, io, pluginRoot }) {
   if (brief === null || argv[0] !== adapter.bins[0]) {
     release(got.lease, opts);
     return tampered();
+  }
+  // The provider must not start inside the session's process tree (it would inherit the token's authority): the exec
+  // parent has normally exited by now, so the supervisor is reparented; wait for it for 3 s, else refuse (T-MG-199).
+  for (let i = 0; i < 30 && attached({ dir: w.dir, names }); i++) await new Promise((r) => setTimeout(r, 100));
+  if (attached({ dir: w.dir, names })) {
+    release(got.lease, opts);
+    patch((cur) => ({ ...cur, status: 'failed', endedAt: new Date().toISOString(), error: 'exec-attached' }));
+    return fail('exec-attached', "the supervisor still runs inside the session's process tree, so the provider would inherit its authority", 'start it with the exec command and let that command return');
   }
   const began = Date.now();
   const child = start(rec.bin, argv.slice(1), { unit: 'providers', cwd, env: childEnv(adapter, io.env, got.env), detached: true, stdin: 'pipe' });

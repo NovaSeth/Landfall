@@ -13,7 +13,7 @@ export { LAYOUTS, MIGRATIONS } from './migrations/index.mjs';
 export { checkChain, migrate } from './migrate.mjs';
 export { allocateId, retireId } from './ids.mjs';
 export { emailHash, gitIdentity, handleCandidates, registerHandle } from './team.mjs';
-export { TOKEN_KIND, authorize, consume, holderOf, live, mint, restore, revoke } from './tokens.mjs';
+export { TOKEN_KIND, attached, authorize, consume, holderOf, live, mint, restore, revoke } from './tokens.mjs';
 export { unlockStale } from './locks.mjs';
 export { setForeignLocal } from './local.mjs';
 export { checkedPath } from './paths.mjs';

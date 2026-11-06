@@ -467,3 +467,23 @@ test('T-MG-96: a line that is a bare JSON string literal is sanitized like an ob
   const line = exec.eventLine(raw, 4096);
   assert.ok(!line.includes(secret), line);
 });
+
+
+test('runSupervise refuses exec-attached under a live PID 1 holder, fails the run and releases its lease', async (t) => {
+  const tokens = await lib('state/tokens.mjs');
+  const sched = await lib('sched/index.mjs');
+  const holder = sched.identify([1]).get(1);
+  assert.equal(holder.state, 'running', 'the container entrypoint or system init is live');
+  const { p, r, rec, outFile } = await rewritten(t, (p) => {
+    const minted = tokens.mint({ dir: p.state, names, role: 'orchestrator', session: 'attached-test', host: { pid: 1, start: holder.start } });
+    assert.ok(minted.token, JSON.stringify(minted));
+    return {};
+  });
+  assert.equal(r.code, 1, show(r));
+  assert.equal(r.e.errors[0].code, 'exec-attached');
+  assert.equal(rec.status, 'failed');
+  assert.equal(rec.error, 'exec-attached');
+  assert.ok(rec.endedAt);
+  assert.deepEqual(p.externalLeases(), [], 'the acquired lease was released');
+  assert.equal(existsSync(`${outFile}.args`), false, 'no provider was started');
+});
