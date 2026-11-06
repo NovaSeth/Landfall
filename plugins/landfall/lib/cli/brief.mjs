@@ -24,7 +24,7 @@ import { fastGuardsOf, openStore, reviewFocusOf } from '../profile/index.mjs';
 import { findLessons, lessonsLine, readLessons } from '../lessons/index.mjs';
 import { executorData } from '../receipts/index.mjs';
 import { leaseEnv, snapshot } from '../sched/index.mjs';
-import { KINDS, open, resolve, writeTaskText } from '../state/index.mjs';
+import { KINDS, TEXT_MAX, open, resolve, writeTaskText } from '../state/index.mjs';
 import { FENCE_MARKER, dataLine, fenceLine } from '../text/data.mjs';
 import { reviewShown } from '../verify/artifacts.mjs';
 import { EXIT } from './exit.mjs';
@@ -44,7 +44,7 @@ export function unedited(text) {
   return m !== null && sha256(text.slice(0, m.index)) === m[1];
 }
 
-const FROM_MAX = 262144;
+const FROM_MAX = TEXT_MAX; // the cap of writeTaskText: one source
 const MAX_LISTED = 5;
 
 // The `<…>` fragments of the template that mean "fill me": every fragment of its lines except the comment line and the
@@ -182,7 +182,7 @@ function storeFrom({ id, flags, io, names, template }) {
     text = new TextDecoder('utf-8', { fatal: true }).decode(readRegularFile(isAbsolute(file) ? file : resolvePath(io.cwd, file), { max: FROM_MAX }));
   } catch (err) {
     const why = err instanceof TypeError ? 'not UTF-8 text' : err.code === 'ENOTREGULAR' ? 'not a regular file (a symbolic link, directory or device)' : err.code === 'ETOOBIG' ? `over ${FROM_MAX} bytes` : (err.code ?? 'unreadable');
-    return fail('from-unreadable', `--from ${file.slice(0, 200)}: ${why}`, 'name a regular UTF-8 file of at most 256 KB');
+    return fail('from-unreadable', `--from ${file.slice(0, 200)}: ${why}`, `name a regular UTF-8 file of at most ${FROM_MAX / 1024} KB`);
   }
   const hits = placeholderHits(text, template);
   if (hits.length) return fail('brief-placeholders', `${file.slice(0, 200)} still holds placeholders of the template: ${hits.slice(0, MAX_LISTED).join('; ')}${hits.length > MAX_LISTED ? ` (and ${hits.length - MAX_LISTED} more)` : ''}`, 'fill every <…> of the template, then store it again');

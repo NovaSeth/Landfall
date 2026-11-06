@@ -24,7 +24,7 @@ export { TRUST_HINT, TRUST_MAX, gatesShaOf, isTrusted, overridesShaOf, readTrust
 export { machineDataDir, readProjects, resolve, stateDirName, stateMarker, unlockStaleMachine, updateProject } from './resolve.mjs';
 export { activate, activationStep, deactivate, decline } from './activation.mjs';
 export { OUTCOME_KINDS, adoptOutcomes, proposeOutcome, setOutcome } from './outcome.mjs';
-export { TASK_TEXTS, adoptTaskOutcomes, afterOf, createTask, createTaskInStore, listTasks, mergedOf, recordMerged, recordOutcome, setTask, showTask, taskTextFile, writeTaskText } from './tasks.mjs';
+export { TASK_TEXTS, TEXT_MAX, adoptTaskOutcomes, afterOf, createTask, createTaskInStore, listTasks, mergedOf, recordMerged, recordOutcome, setTask, showTask, taskTextFile, writeTaskText } from './tasks.mjs';
 
 // Field errors of a document of `kind` ([] when valid) and its canonical file text.
 export const check = (kind, doc) => validate(kind.spec, doc);

@@ -72,8 +72,8 @@ test('an open task that started has startedAt and lastEventAt; a task without ev
   assert.deepEqual([by[b].startedAt, by[b].lastEventAt], [null, null]);
 });
 
-test('with 3 or more done tasks of the class the median is expectedMs (history); fewer: the class default', async (t) => {
-  // Keep the original test name while asserting T-MG-202: history never replaces the brief budget.
+test('done tasks of the class never change expectedMs: the brief budget or the default applies', async (t) => {
+  // T-MG-202: history never replaces the brief budget.
   const r = await repository(t);
   const done = (minutes) => ({ cls: 'standard', status: 'done', events: [ev('created', T0), ev('dispatched', T0 + MIN), ev('done', T0 + MIN + minutes * MIN)] });
   const open = await r.make('Open', { cls: 'standard', status: 'dispatched', events: [ev('started', T0)] });

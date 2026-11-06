@@ -381,3 +381,14 @@ test('brief --from: replaces a rendered brief, a hand-written one only with --fo
   assert.deepEqual([forced.code, forced.out.data.written], [0, 'replaced'], show(forced));
   assert.equal(readFileSync(p.file, 'utf8'), `${FILLED}2. more\n`);
 });
+
+test('brief --from: the cap is the task text cap (64 KB): a file over it is refused by name before it is read', async (t) => {
+  const p = await project(t);
+  const over = fromFile(p, 'over.md', `${FILLED}${'x'.repeat(65536)}`);
+  const r = await cli(['brief', 'T-TU-1', '--from', over, '--yes'], { ...p, json: true });
+  assert.equal(r.code, 1, show(r));
+  assert.equal(r.out.errors[0].code, 'from-unreadable');
+  assert.match(r.out.errors[0].message, /over 65536 bytes/);
+  assert.match(r.out.errors[0].hint, /64 KB/);
+  assert.equal(existsSync(p.file), false);
+});

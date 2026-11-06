@@ -214,7 +214,7 @@ export const mergedOf = (task) => (Array.isArray(task?.events) ? task.events.fil
 // round (`review brief --write`, named by its round: review-r<k>-brief.md) are documents of the task, written whole by
 // the task's owner; they are not state records (FLW-7 names the records: task.json, verify.json, the reviews).
 export const TASK_TEXTS = Object.freeze({ brief: 'brief.md', report: 'report.md', 'review-brief': 'review-r<k>-brief.md' });
-const TEXT_MAX = 65536;
+export const TEXT_MAX = 65536;
 const ROUND_MAX = 999;
 
 // The file name of task text `name` (round: the review brief's round, 1 to 999).
