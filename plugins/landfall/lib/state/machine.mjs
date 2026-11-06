@@ -19,12 +19,12 @@
 //     call asks git again. Outside any repository (git's own "not a git repository") nothing is tracked.
 //   - not foreign: 'absent' (no local/), 'ours' (this machine's marker), 'unmarked' (marked at the next write).
 // A verified git answer is cached per process per state dir ({ fresh: true } asks again; forgetShipped after a move).
-import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { lstatSync, readFileSync, realpathSync } from 'node:fs';
 import { homedir, hostname, userInfo } from 'node:os';
 import { join } from 'node:path';
 import { git } from '../git/index.mjs';
+import { run } from '../proc/index.mjs';
 
 export const MARKER = 'local/.machine';
 const GIT_MS = 2000;
@@ -34,11 +34,11 @@ const shipped = new Map();
 
 const UUID = /^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$/;
 const MACHINE_ID = /^[0-9a-f]{32}$/;
-const ioreg = () => spawnSync('/usr/sbin/ioreg', ['-rd1', '-c', 'IOPlatformExpertDevice'], { encoding: 'utf8', timeout: 1000, shell: false, stdio: ['ignore', 'pipe', 'ignore'] });
+const ioreg = () => run('/usr/sbin/ioreg', ['-rd1', '-c', 'IOPlatformExpertDevice'], { unit: 'state', timeoutMs: 1000 });
 
-export function macIdentity(run = ioreg) {
+export function macIdentity(ask = ioreg) {
   try {
-    const r = run();
+    const r = ask();
     if (r.error || r.status !== 0) return null;
     const m = /"IOPlatformUUID"\s*=\s*"([^"\n]*)"/.exec(String(r.stdout));
     return m && UUID.test(m[1]) ? m[1].toUpperCase() : null;
