@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { cellStats, normaliseExecutor, suggestExecutors } from '../plugins/landfall/lib/receipts/executors.mjs';
+import { cellStats, diffInterval, intervalOf, median, normaliseExecutor, percentile, suggestExecutors } from '../plugins/landfall/lib/receipts/executors.mjs';
 
 const P = JSON.parse(readFileSync(new URL('../plugins/landfall/lib/name.json', import.meta.url), 'utf8')).plugin;
 
@@ -63,8 +63,29 @@ test('another class does not mix in; a role without cells says fewer than 20 rec
 });
 
 test('the bootstrap interval is exported for reuse (lessons promotion)', async () => {
-  const { intervalOf } = await import('../plugins/landfall/lib/receipts/executors.mjs');
   const a = intervalOf([1, 1, 1, 0], 1, 1000);
   assert.deepEqual(a, intervalOf([1, 1, 1, 0], 1, 1000));
   assert.ok(a.lo <= 0.75 && 0.75 <= a.hi);
+});
+
+test('intervalOf keeps its pinned output for the default mean (T-MG-123)', async () => {
+  const p = [1, 1, 0, 1, 0, 1, 1, 1, 0, 1, 1, 0];
+  assert.deepEqual(intervalOf(p, 1), { lo: 0.4166666666666667, hi: 0.9166666666666666 });
+  assert.deepEqual(intervalOf(p, 7, 200), { lo: 0.4166666666666667, hi: 0.8333333333333334 });
+});
+
+test('median and percentile are nearest-rank (T-MG-123)', async () => {
+  assert.equal(percentile([], 50), null);
+  assert.equal(percentile([1, 2, 3, 4], 90), 4);
+  assert.equal(median([3, 1, 2]), 2);
+});
+
+test('diffInterval: identical samples, separated samples, determinism (T-MG-123)', async () => {
+  const same = diffInterval([1, 2, 3], [1, 2, 3]);
+  assert.equal(same.delta, 0);
+  assert.ok(same.lo <= 0 && 0 <= same.hi);
+  const far = diffInterval(Array(10).fill(10), Array(10).fill(20));
+  assert.equal(far.delta, 10);
+  assert.ok(far.lo > 0);
+  assert.deepEqual(diffInterval([1, 5, 9, 2], [4, 8, 3, 7], { seed: 5 }), diffInterval([1, 5, 9, 2], [4, 8, 3, 7], { seed: 5 }));
 });
