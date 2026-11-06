@@ -18,7 +18,7 @@ import { MSG, short } from './messages.mjs';
 import { OWNED_NAMES, globReaches, inside, realPath, stateText } from './protect.mjs';
 import { effects, shape } from './shapes.mjs';
 import { NotPlain, expandLiterals, parse, why } from './tokenizer.mjs';
-import { BIN, caseVariants, prescan, variants } from './tokens.mjs';
+import { BIN, caseVariants, exfilText, prescan, variants } from './tokens.mjs';
 
 export const LIMIT = Object.freeze({ cmd: 65536, spawns: 16, simple: 200 });
 const TEAM_MODES = new Set(['solo', 'team']);
@@ -194,6 +194,8 @@ export function evaluate(command, opts = {}) {
     };
     const textRule = rules.length ? applyRules(texts.flatMap((t) => [t, ...caseVariants(t.slice(0, LIMIT.cmd))])) : null;
     if (textRule) return { deny: textRule, warnings };
+    const lit = state ? stateText(state) : null;
+    if (texts.some((t) => exfilText(t, lit))) return { deny: MSG.exfil, warnings }; // T-MG-147: a secret to a network command, in every caller
     if (hits.size) {
       ctx.tick();
       if (expanded.length > LIMIT.cmd) why(`a command longer than ${LIMIT.cmd} characters`);
@@ -213,6 +215,7 @@ export function evaluate(command, opts = {}) {
 // A raw text (a handler that failed or answered too late) holds a guarded token, names a command-owned state file, or
 // names the state directory `stateName` (the in-repo directory name) as a literal or a glob that reaches it (A-I1).
 export function hasToken(text, stateName = null) {
+  if (exfilText(text)) return true;
   if (prescan(text, [...OWNED_NAMES, ...(stateName ? [stateName.toLowerCase()] : [])]).size > 0) return true;
   return Boolean(stateName) && globReaches(caseVariants(text)[0], stateName);
 }

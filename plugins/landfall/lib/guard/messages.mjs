@@ -27,6 +27,8 @@ export const MSG = {
     + 'secrets gate. Instead leave the hook files as they are; if a hook must change, ask the human.',
   shape: (why) => fit((w) => `SEC-3: blocked a guarded operation with no recognized simple form (${w}). Instead write plain words, bare or `
     + 'quoted, without $, backticks, ( ), { }, aliases, eval, variables or a pipe to a shell.', why),
+  exfil: 'SEC-3: blocked a network command (curl, wget, nc, scp …) in a line that names a secret (a key, .env, a credential file or the '
+    + 'state directory): it would send it out. Instead run the network command without the secret path; ask the human to send a secret.',
   timeout: 'SEC-3: blocked: cannot verify the command in time. Instead use a simpler, shorter form.',
   tooLarge: 'SEC-3: blocked: command too large to verify (SEC-3): the input is over the 16 MiB the guard reads. Instead split the work '
     + 'into smaller commands.',
