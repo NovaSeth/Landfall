@@ -78,3 +78,30 @@ test('a subagent does not read the plugin data directory; the main session does'
   assert.ok(!denied(runHook('guard-read', JSON.stringify(main), { env })));
   assert.ok(!denied(guardBash({ ...main, tool_name: 'Bash', tool_input: { command: `cat ${f}` } }, { env, autoAllow: 'off', shadowLog() {} })));
 });
+
+test('no role token lands in local/ or the plugin data after every command that takes one (record, task set, release)', () => {
+  const cli = (args, token) => spawnSync(join(pluginDir, 'bin', names.bin), [...args, '--yes', '--json'], { cwd: repo, env, encoding: 'utf8', input: token });
+  const made = cli(['task', 'new', 'Invariant task']);
+  assert.equal(made.status, 0, made.stdout + made.stderr);
+  const id = JSON.parse(made.stdout).data.id;
+  const base = run('git', ['rev-parse', 'HEAD']).stdout.trim();
+  const review = join(home, 'review.json');
+  writeFileSync(review, JSON.stringify({ verdict: 'approved', reviewer: { kind: 'claude', id: 'claude:reviewer' }, findings: [] }));
+  const results = [
+    cli(['task', 'set', id, 'dispatched', '--executor', 'claude:reviewer', '--base', base, '--token', '-'], orch),
+    cli(['review', 'record', id, '--from', review, '--token', '-'], rev),
+    cli(['review', 'record', id, '--from', review, '--token', '-'], rev), // the spent token is refused
+    cli(['task', 'set', id, 'self-verified', '--token', '-'], orch),
+  ];
+  for (const r of results) assert.ok(!(r.stdout + r.stderr).includes(PFX), 'a token is never echoed');
+  assert.equal(results[0].status, 0, results[0].stdout + results[0].stderr);
+  assert.equal(results[1].status, 0, results[1].stdout + results[1].stderr);
+  assert.equal(results[2].status, 7, 'the spent token is refused');
+  assert.equal(results[3].status, 0, results[3].stdout + results[3].stderr);
+  const stop = runHook('release-agent', JSON.stringify({ cwd: repo, session_id: 's1', agent_id: 'a1', agent_type: `${names.plugin}:reviewer` }), { env });
+  assert.ok(!denied(stop));
+  for (const f of [...files(join(repo, names.stateDir, 'local')), ...files(pd)]) {
+    const t = readFileSync(f, 'utf8').replaceAll(`${PFX}<redacted>`, '');
+    assert.ok(!t.includes(PFX) && !t.includes(orch) && !t.includes(rev), `${f} holds a token`);
+  }
+});
