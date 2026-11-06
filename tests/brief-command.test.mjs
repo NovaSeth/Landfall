@@ -362,7 +362,7 @@ test('brief --from: refuses template placeholders (up to 5, with line numbers), 
   assert.equal(r2.code, 1, show(r2));
   assert.match(r2.out.errors[0].message, /<typecheck>/);
   // a rendered brief's literal command examples (`rule <ID…>`) are not placeholders
-  const ok = fromFile(p, 'ok.md', '# T\nRules: PRI-3; read them with `landfall rule <ID…>`; `report <id> --from <file>`\n');
+  const ok = fromFile(p, 'ok.md', `# T\nRules: PRI-3; read them with \`${BIN} rule <ID…>\`; \`report <id> --from <file>\`\n`);
   assert.equal((await cli(['brief', 'T-TU-1', '--from', ok, '--yes'], p)).code, 0);
 });
 
