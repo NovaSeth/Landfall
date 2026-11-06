@@ -80,3 +80,54 @@ test('any other marker stays foreign', (t) => {
   writeFileSync(join(store, 'local', '.machine'), `${'0'.repeat(32)}\n`);
   assert.deepEqual(machine.localForeign(store), { foreign: true, why: 'marked by another machine' });
 });
+
+const ID = { value: UUID, expected: true };
+const GONE = { value: null, expected: true };
+
+test('identity written, then unavailable: ownership unknown, nothing moves aside, recovers', (t) => {
+  t.after(() => machine.setIdentityProbe(null));
+  const store = repo(t);
+  machine.setIdentityProbe(() => ID);
+  state.open(store, { names }).write('config', null, { flags: { lanes: 'off' } });
+  const marker = readFileSync(join(store, 'local', '.machine'), 'utf8').trim();
+  assert.equal(marker, machine.machineId());
+  machine.setIdentityProbe(() => GONE);
+  assert.deepEqual(machine.localForeign(store), { foreign: true, unknown: true, why: 'ownership unknown (machine identity unavailable)' });
+  assert.throws(() => state.open(store, { names }).write('config', null, { flags: { lanes: 'on' } }));
+  assert.deepEqual(readdirSync(store).filter((n) => n.startsWith('local.foreign-')), []);
+  assert.equal(readFileSync(join(store, 'local', '.machine'), 'utf8').trim(), marker);
+  machine.setIdentityProbe(() => ID);
+  assert.deepEqual(machine.localForeign(store), { foreign: false, why: 'ours' });
+});
+
+test('a failed lookup is retried and a found identity is cached', (t) => {
+  t.after(() => machine.setIdentityProbe(null));
+  let calls = 0;
+  let out = GONE;
+  machine.setIdentityProbe(() => { calls++; return out; });
+  const host = machine.machineId();
+  machine.machineId();
+  assert.equal(calls, 2);
+  out = ID;
+  assert.notEqual(machine.machineId(), host);
+  machine.machineId();
+  assert.equal(calls, 3);
+});
+
+test('a legacy marker is adopted while the identity is available; unavailable it is the current id', (t) => {
+  t.after(() => machine.setIdentityProbe(null));
+  const store = repo(t);
+  writeFileSync(join(store, 'local', '.machine'), `${machine.legacyId()}\n`);
+  machine.setIdentityProbe(() => ID);
+  assert.deepEqual(machine.localForeign(store), { foreign: false, why: 'ours' });
+  machine.setIdentityProbe(() => GONE);
+  assert.deepEqual(machine.localForeign(store), { foreign: false, why: 'ours' });
+  machine.setIdentityProbe(() => ({ value: null, expected: false }));
+  writeFileSync(join(store, 'local', '.machine'), `${'0'.repeat(32)}\n`);
+  assert.deepEqual(machine.localForeign(store), { foreign: true, why: 'marked by another machine' });
+});
+
+test('ioreg is spawned with a minimal environment', () => {
+  const src = readFileSync(join(pluginDir, 'lib', 'state', 'machine.mjs'), 'utf8');
+  assert.match(src, /ioreg[^\n]*env: \{ LC_ALL: 'C' \}/);
+});

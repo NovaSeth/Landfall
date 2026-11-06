@@ -17,6 +17,11 @@
 //   - foreign and unknown ({ unknown: true }, 'ownership unknown (…)'): git failed or did not answer in time. Not ours:
 //     readers see nothing, writers refuse (nothing is moved on a guess), nothing is adopted. Never cached: the next
 //     call asks git again. Outside any repository (git's own "not a git repository") nothing is tracked.
+//   - also unknown, 'ownership unknown (machine identity unavailable)': the platform should have an identity (macOS
+//     always, Linux with a machine-id file) but the lookup failed and the marker is not the host-name id. A found
+//     identity is cached, a failure is retried on every call.
+//   - A host-name id is derivable, so an untracked local/ copied from another Mac with a legacy marker still counts as
+//     ours (adopted only while the identity is available) until it is rewritten; tracked by git still wins.
 //   - not foreign: 'absent' (no local/), 'ours' (this machine's marker), 'unmarked' (marked at the next write).
 // A verified git answer is cached per process per state dir ({ fresh: true } asks again; forgetShipped after a move).
 import { createHash } from 'node:crypto';
@@ -34,7 +39,7 @@ const shipped = new Map();
 
 const UUID = /^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$/;
 const MACHINE_ID = /^[0-9a-f]{32}$/;
-const ioreg = () => run('/usr/sbin/ioreg', ['-rd1', '-c', 'IOPlatformExpertDevice'], { unit: 'state', timeoutMs: 1000 });
+const ioreg = () => run('/usr/sbin/ioreg', ['-rd1', '-c', 'IOPlatformExpertDevice'], { unit: 'state', env: { LC_ALL: 'C' }, timeoutMs: 1000 });
 
 export function macIdentity(ask = ioreg) {
   try {
@@ -55,7 +60,21 @@ export function linuxIdentity(read = (p) => readFileSync(p, 'utf8')) {
   return null;
 }
 
-const platformIdentity = () => (process.platform === 'darwin' ? macIdentity() : process.platform === 'linux' ? linuxIdentity() : null);
+// { value, expected }: expected when this platform should have an identity (macOS always; Linux when a machine-id file
+// exists), so a null value there means "unavailable right now", not "this machine has none".
+const probeIdentity = () => {
+  if (process.platform === 'darwin') return { value: macIdentity(), expected: true };
+  if (process.platform === 'linux') {
+    return { value: linuxIdentity(), expected: ['/etc/machine-id', '/var/lib/dbus/machine-id'].some((p) => lstatSync(p, { throwIfNoEntry: false })) };
+  }
+  return { value: null, expected: false };
+};
+let probe = probeIdentity;
+// Test seam: replace the identity probe (null restores it) and forget the cached id.
+export function setIdentityProbe(fn) {
+  probe = fn ?? probeIdentity;
+  id = null;
+}
 const wellFormed = (v) => typeof v === 'string' && (UUID.test(v) || MACHINE_ID.test(v));
 
 // The id for a host name and an identity (null or malformed: the host name stands in).
@@ -73,10 +92,17 @@ export function idFor({ hostname: host, identity }) {
 
 export const legacyId = () => idFor({ hostname: hostname(), identity: null });
 
-export function machineId() {
-  id ??= idFor({ hostname: hostname(), identity: platformIdentity() });
-  return id;
+// A found identity is cached for the process. A failed lookup is not: the next call asks again (a long-lived process
+// must not stay on the host-name id after one failed spawn).
+function current() {
+  if (id) return { id, available: true };
+  const { value, expected } = probe();
+  const found = wellFormed(value) ? value : null;
+  if (found) id = idFor({ hostname: hostname(), identity: found });
+  return { id: id ?? idFor({ hostname: hostname(), identity: null }), available: !!found || !expected };
 }
+
+export const machineId = () => current().id;
 
 const NOT_A_REPO = /^fatal: not a git repository\b/m;
 
@@ -124,5 +150,9 @@ export function localForeign(stateDir, { env = process.env, fresh = false } = {}
   if (mst && !mst.isFile()) return { foreign: true, why: 'a marker that is not a regular file' };
   if (mst) marker = readFileSync(join(stateDir, MARKER), 'utf8').trim();
   if (marker === null) return { foreign: false, why: 'unmarked' };
-  return marker === machineId() || marker === legacyId() ? { foreign: false, why: 'ours' } : { foreign: true, why: 'marked by another machine' };
+  const me = current();
+  if (marker === me.id) return { foreign: false, why: 'ours' };
+  // Without the identity the legacy id is the current id (matched above); a different marker cannot be judged.
+  if (!me.available) return { foreign: true, unknown: true, why: 'ownership unknown (machine identity unavailable)' };
+  return marker === legacyId() ? { foreign: false, why: 'ours' } : { foreign: true, why: 'marked by another machine' };
 }
