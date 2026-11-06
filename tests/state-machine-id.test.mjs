@@ -70,7 +70,7 @@ test('a legacy marker is ours, nothing moves aside, the next write rewrites it',
   const store = repo(t);
   writeFileSync(join(store, 'local', '.machine'), `${machine.legacyId()}\n`);
   assert.deepEqual(machine.localForeign(store), { foreign: false, why: 'ours' });
-  state.open(store, { names }).write('config', null, { schema: state.KINDS.config.version });
+  state.open(store, { names }).write('config', null, { flags: { lanes: 'off' } });
   assert.equal(readFileSync(join(store, 'local', '.machine'), 'utf8').trim(), state.machineId());
   assert.deepEqual(readdirSync(store).filter((n) => n.startsWith('local.foreign-')), []);
 });

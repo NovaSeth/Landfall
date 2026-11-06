@@ -1,7 +1,12 @@
-// This machine's id and the owner of a state directory's local/ (T-MG-77).
-// machineId(): derived, never stored: the first 32 hex characters of sha256(`<plugin>-machine:` + host name + `:` + uid
-// (or the user name) + `:` + the real path of the account home directory, from passwd). Every config dir, plugin data dir and HOME of one user on
-// one machine shares it (a fresh install tested through CLAUDE_CONFIG_DIR owns the same local/).
+// This machine's id and the owner of a state directory's local/ (T-MG-77, T-MG-210).
+// machineId(): derived, never stored: the first 32 hex characters of sha256(`<plugin>-machine:` + identity + `:` + uid
+// (or the user name) + `:` + the real path of the account home directory, from passwd). The identity is the platform's
+// machine identity (macOS IOPlatformUUID from ioreg, Linux the first well-formed /etc/machine-id or
+// /var/lib/dbus/machine-id), read once per process; without one (spawn error, timeout, malformed output, missing files,
+// other platforms) it is the host name, which on macOS follows DHCP and so is no identity. Every config dir, plugin data
+// dir and HOME of one user on one machine shares it (a fresh install tested through CLAUDE_CONFIG_DIR owns the same local/).
+// legacyId(): the same formula with the host name; a marker holding it is ours (lossless upgrade) and is rewritten with
+// the new id at the next write of local/ (markLocal).
 // localForeign(stateDir, { env }) → { foreign, why }: the one check every reader and writer of local/ uses.
 //   - foreign, 'tracked by git': a file under local/ is tracked by git in the state dir's repository and is present
 //     unchanged in the working tree. A shipped marker proves nothing (the id is derivable), so this wins over it. The
@@ -14,6 +19,7 @@
 //     call asks git again. Outside any repository (git's own "not a git repository") nothing is tracked.
 //   - not foreign: 'absent' (no local/), 'ours' (this machine's marker), 'unmarked' (marked at the next write).
 // A verified git answer is cached per process per state dir ({ fresh: true } asks again; forgetShipped after a move).
+import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { lstatSync, readFileSync, realpathSync } from 'node:fs';
 import { homedir, hostname, userInfo } from 'node:os';
@@ -26,8 +32,34 @@ let plugin = null;
 let id = null;
 const shipped = new Map();
 
-export function machineId() {
-  if (id) return id;
+const UUID = /^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$/;
+const MACHINE_ID = /^[0-9a-f]{32}$/;
+const ioreg = () => spawnSync('/usr/sbin/ioreg', ['-rd1', '-c', 'IOPlatformExpertDevice'], { encoding: 'utf8', timeout: 1000, shell: false, stdio: ['ignore', 'pipe', 'ignore'] });
+
+export function macIdentity(run = ioreg) {
+  try {
+    const r = run();
+    if (r.error || r.status !== 0) return null;
+    const m = /"IOPlatformUUID"\s*=\s*"([^"\n]*)"/.exec(String(r.stdout));
+    return m && UUID.test(m[1]) ? m[1].toUpperCase() : null;
+  } catch { return null; }
+}
+
+export function linuxIdentity(read = (p) => readFileSync(p, 'utf8')) {
+  for (const p of ['/etc/machine-id', '/var/lib/dbus/machine-id']) {
+    try {
+      const v = String(read(p)).trim();
+      if (MACHINE_ID.test(v)) return v;
+    } catch { /* unreadable: the next one */ }
+  }
+  return null;
+}
+
+const platformIdentity = () => (process.platform === 'darwin' ? macIdentity() : process.platform === 'linux' ? linuxIdentity() : null);
+const wellFormed = (v) => typeof v === 'string' && (UUID.test(v) || MACHINE_ID.test(v));
+
+// The id for a host name and an identity (null or malformed: the host name stands in).
+export function idFor({ hostname: host, identity }) {
   plugin ??= JSON.parse(readFileSync(new URL('../name.json', import.meta.url), 'utf8')).plugin;
   // The account's home directory (passwd), not $HOME: a process started with another HOME (a throwaway one for a fresh
   // install, a test, a child with an isolated env) is still this user on this machine.
@@ -35,7 +67,14 @@ export function machineId() {
   try { home = userInfo().homedir; } catch { home = homedir(); }
   try { home = realpathSync(home); } catch { /* a missing home: its path as given */ }
   const user = process.getuid?.() ?? userInfo().username;
-  id = createHash('sha256').update(`${plugin}-machine:${hostname()}:${user}:${home}`).digest('hex').slice(0, 32);
+  const who = wellFormed(identity) ? identity : host;
+  return createHash('sha256').update(`${plugin}-machine:${who}:${user}:${home}`).digest('hex').slice(0, 32);
+}
+
+export const legacyId = () => idFor({ hostname: hostname(), identity: null });
+
+export function machineId() {
+  id ??= idFor({ hostname: hostname(), identity: platformIdentity() });
   return id;
 }
 
@@ -85,5 +124,5 @@ export function localForeign(stateDir, { env = process.env, fresh = false } = {}
   if (mst && !mst.isFile()) return { foreign: true, why: 'a marker that is not a regular file' };
   if (mst) marker = readFileSync(join(stateDir, MARKER), 'utf8').trim();
   if (marker === null) return { foreign: false, why: 'unmarked' };
-  return marker === machineId() ? { foreign: false, why: 'ours' } : { foreign: true, why: 'marked by another machine' };
+  return marker === machineId() || marker === legacyId() ? { foreign: false, why: 'ours' } : { foreign: true, why: 'marked by another machine' };
 }
