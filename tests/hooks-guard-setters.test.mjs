@@ -12,7 +12,7 @@ const dir = readdirSync(plugins).filter((d) => existsSync(join(plugins, d, 'lib'
 const { expandLiterals } = await import(pathToFileURL(join(plugins, dir, 'lib', 'guard', 'tokenizer.mjs')).href);
 
 const S = JSON.parse(readFileSync(join(plugins, dir, 'lib', 'name.json'), 'utf8')).stateDir;
-const KEPT =(cmd) => expandLiterals(cmd).includes(cmd);
+const KEPT = (cmd) => expandLiterals(cmd).includes(cmd);
 test('T-MG-176: the four builtins are variable setters for literal substitution', () => {
   for (const b of ['print -r $n', 'vared $n', 'compgen -V $n -W x', 'zparseopts -a $n x', 'print -v$n x', 'zformat -f $n x', 'zstyle -g $n x', 'getln $n', 'strftime -s $n %Y', 'zregexparse $n x', 'sysread $n']) {
     const cmd = `n=t; for t in safe; do ${b}; cp /dev/null "$t"; done`;
