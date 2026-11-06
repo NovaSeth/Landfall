@@ -5,6 +5,7 @@
 import { readFileSync } from 'node:fs';
 import { configKey } from './config-keys.mjs';
 import { GIT_ARG, GIT_BUILTINS } from './git-options.mjs';
+import { SECRET, SECRET_NAMES } from '../secrets/patterns.mjs';
 
 // The plugin's own command (argv[0] of its CLI) and its environment prefix, from lib/name.json.
 const NAMES = JSON.parse(readFileSync(new URL('../name.json', import.meta.url), 'utf8'));
@@ -98,7 +99,6 @@ const FIND_DELETE = { test: (s) => after(s, FIND_WORD, FIND_FLAG) };
 // a glob that can match one), or the text of the state directory in an earlier command of the pipe. Not a GUARDED token (a
 // hit is a block with no simple form to recognize); evaluate and hasToken ask exfilText.
 const SENDERS = new Set(['curl', 'wget', 'nc', 'ncat', 'netcat', 'socat', 'scp', 'sftp', 'ftp', 'telnet', 'ssh', 'rsync', 'http', 'https', 'aria2c', 'openssl']);
-const SECRET = new RegExp(`(^|[\\s/=@:~<>])(\\.env(\\.(?!example|sample|template)[\\w.-]+)?|\\.netrc|\\.npmrc|\\.pgpass|\\.git-credentials|\\.ssh|\\.aws|\\.gnupg|\\.kube|\\.docker|\\.config/gh|hosts\\.yml|credentials\\.json|id_(rsa|dsa|ecdsa|ed25519)\\w*|[\\w.-]+\\.(pem|p12|pfx|key)|\\.\\w{0,2}[*?[][\\w*?[\\].-]*|[\\w.-]*[*?]\\.(pem|p12|pfx|key))(?=$|[\\s/;&|<>])`);
 // programs that only print or search their arguments: a sender named there is text (grep curl, man ssh)
 const TEXT_ONLY = new Set(['grep', 'egrep', 'fgrep', 'rg', 'echo', 'printf', 'man', 'which', 'type', 'whereis', 'help', 'apropos']);
 // a stage that runs what it is given (a substitution, a process substitution, rg --pre) is never text
@@ -110,7 +110,6 @@ const sendsPart = (p) => {
   return RUNS_ARGS.test(p) && p.split(/[\s=`$(<>]+/).some((w) => SENDERS.has(base(w)));
 };
 // names a glob word may stand for (a dot name only from a glob that starts with a dot)
-const SECRET_NAMES = ['.env', '.env.local', '.netrc', '.npmrc', '.pgpass', '.git-credentials', '.ssh', '.aws', '.gnupg', '.kube', '.docker', 'hosts.yml', 'credentials.json', 'id_rsa', 'id_dsa', 'id_ecdsa', 'id_ed25519', 'key.pem', 'cert.p12', 'cert.pfx', 'server.key'];
 const globRe = (g) => { try { return new RegExp('^' + g.replace(/[.+^${}()|\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.') + '$'); } catch { return null; } };
 const secretGlob = (s) => s.split(/\s+/).some((w) => w.split(/[=@:<>]/).some((x) => {
   const g = x.slice(x.lastIndexOf('/') + 1);

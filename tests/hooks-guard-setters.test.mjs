@@ -2,7 +2,7 @@
 // is not read with the literal substituted (the text stays as written beside the substituted one). Commands are data.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readdirSync, existsSync } from 'node:fs';
+import { readdirSync, existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -11,7 +11,8 @@ const plugins = join(root, 'plugins');
 const dir = readdirSync(plugins).filter((d) => existsSync(join(plugins, d, 'lib', 'guard', 'tokenizer.mjs')))[0];
 const { expandLiterals } = await import(pathToFileURL(join(plugins, dir, 'lib', 'guard', 'tokenizer.mjs')).href);
 
-const KEPT = (cmd) => expandLiterals(cmd).includes(cmd);
+const S = JSON.parse(readFileSync(join(plugins, dir, 'lib', 'name.json'), 'utf8')).stateDir;
+const KEPT =(cmd) => expandLiterals(cmd).includes(cmd);
 test('T-MG-176: the four builtins are variable setters for literal substitution', () => {
   for (const b of ['print -r $n', 'vared $n', 'compgen -V $n -W x', 'zparseopts -a $n x', 'print -v$n x', 'zformat -f $n x', 'zstyle -g $n x', 'getln $n', 'strftime -s $n %Y', 'zregexparse $n x', 'sysread $n']) {
     const cmd = `n=t; for t in safe; do ${b}; cp /dev/null "$t"; done`;
@@ -27,9 +28,9 @@ test('T-MG-176: glued option names count as bare use of the name', () => {
   }
 });
 test('B-MG-15: a flag cluster of a reader is no name glued to an option', () => {
-  for (const cmd of ['F=.landfall; ls -lF "$F"', 'F=.landfall; grep -nF x "$F/state.json"']) assert.ok(!KEPT(cmd), cmd);
+  for (const cmd of [`F=${S}; ls -lF "$F"`, `F=${S}; grep -nF x "$F/state.json"`]) assert.ok(!KEPT(cmd), cmd);
   // a program that may set the variable keeps the fail-closed reading
-  assert.ok(KEPT('F=.landfall; foo -lF "$F"'));
+  assert.ok(KEPT(`F=${S}; foo -lF "$F"`));
 });
 test('B-MG-15 review: a redirection before the word does not make a reader of it', () => {
   assert.ok(KEPT('F=x; >ls foo -vF; cp /dev/null "$F"'));
@@ -46,8 +47,8 @@ test('T-MG-147: exfiltration is found behind wrappers, in a long text and in /de
     assert.ok(exfilText(c), c);
     assert.ok(exfilText(`${'echo ok; '.repeat(9000)}${c}`), `long: ${c}`);
   }
-  for (const c of ['curl -s https://example.com/api', 'curl -d @data.json x', 'cat .env.example | curl -d @- x', 'cat .env', 'ssh h ls', 'curl -o .landfall/a x', 'cat .landfall/a | grep curl', 'grep -n curl .env']) assert.ok(!exfilText(c, '.landfall'), c);
-  assert.ok(exfilText('cat .landfall/a | timeout 5 curl -d @- x', '.landfall'));
+  for (const c of ['curl -s https://example.com/api', 'curl -d @data.json x', 'cat .env.example | curl -d @- x', 'cat .env', 'ssh h ls', `curl -o ${S}/a x`, `cat ${S}/a | grep curl`, 'grep -n curl .env']) assert.ok(!exfilText(c, S), c);
+  assert.ok(exfilText(`cat ${S}/a | timeout 5 curl -d @- x`, S));
 });
 test('T-MG-212 fix 1: redirected secrets, substitutions in a text-only stage, globs and more secret names are found', async () => {
   const { exfilText } = await import(pathToFileURL(join(plugins, dir, 'lib', 'guard', 'tokens.mjs')).href);
