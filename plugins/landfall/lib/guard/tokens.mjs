@@ -113,22 +113,37 @@ const sendsPart = (p) => {
 };
 // names a glob word may stand for (a dot name only from a glob that starts with a dot)
 const globRe = (g) => { try { return new RegExp('^' + g.replace(/[.+^${}()|\\[\]]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.') + '$'); } catch { return null; } };
-// A word is split into components (on / = @ : < > , quotes and braces); in each, the span from its first [ to its last ]
-// becomes * (fail closed: any bracket glob that could cover a secret name counts) and a leading * made this way may stand
-// for a dot name too. A component with no literal character left ([1], [b]: JSON, arrays, headers) never matches.
-// The other delimiters split outside the bracket span only (a class may hold = : and the like).
-const DELIM = /[=@:<>,'"`{}]/;
-const globParts = (c) => {
-  const i = c.indexOf('['), j = c.lastIndexOf(']');
-  if (!(i >= 0 && j > i)) return c.split(DELIM).map((g) => [g, false]);
-  const pre = c.slice(0, i).split(DELIM), suf = c.slice(j + 1).split(DELIM);
-  return [...pre.slice(0, -1), ...suf.slice(1)].map((g) => [g, false]).concat([[pre[pre.length - 1] + '*' + suf[0], true]]);
+// Each bracket expression of a word is one character (bash rules: [!x] [^x], a ] right after the opening is a member,
+// [:class:] [=e=] [.c.] are units, an unclosed [ is literal) and becomes BR. The word is then split into components on
+// / { } , = @ : < > and quotes; a component with * ? or BR is matched against the secret names. A component of only * or ?
+// is exempt; BR alone is one character and matches no secret name ([1], [b]: JSON, arrays, headers). A leading BR may
+// stand for the dot of a dot name.
+const BR = '\u0001';
+const bracketEnd = (w, i) => {
+  let j = i + 1;
+  if (w[j] === '!' || w[j] === '^') j++;
+  if (w[j] === ']') j++;
+  for (; j < w.length; j++) {
+    if (w[j] === ']') return j;
+    if (w[j] === '[' && ':=.'.includes(w[j + 1] ?? '')) { const e = w.indexOf(w[j + 1] + ']', j + 2); if (e >= 0) j = e + 1; }
+  }
+  return -1;
 };
-const secretGlob = (s) => s.split(/\s+/).some((w) => w.split('/').some((c) => globParts(c).some(([g, br]) => {
-  if (!/[*?[]/.test(g) || /^[*?[\]]*$/.test(g)) return false;
-  const re = globRe(g);
-  return re !== null && SECRET_NAMES.some((n) => re.test(n) && (n[0] !== '.' || g[0] === '.' || (br && g[0] === '*')));
-})));
+const brackets = (w) => {
+  let out = '';
+  for (let i = 0; i < w.length; i++) {
+    const e = w[i] === '[' ? bracketEnd(w, i) : -1;
+    if (e >= 0) { out += BR; i = e; } else out += w[i];
+  }
+  return out;
+};
+const GLOB_SPLIT = /[/{},=@:<>'"`]/;
+const secretGlob = (s) => s.split(/\s+/).some((w) => brackets(w).split(GLOB_SPLIT).some((g) => {
+  if (w.includes('{') && SECRET.test(g)) return true;
+  if (!/[*?\u0001]/.test(g) || /^[*?]*$/.test(g)) return false;
+  const re = globRe(g.replace(/\u0001/g, '?'));
+  return re !== null && SECRET_NAMES.some((n) => re.test(n) && (n[0] !== '.' || g[0] === '.' || g[0] === BR));
+}));
 const secretIn = (s) => SECRET.test(s) || secretGlob(s);
 const exfilVariants = (vs, lit) => vs.some((v) => v.split(/[;&]/).some((s) => {
   const ps = s.split('|'); const k = ps.findIndex(sendsPart);
