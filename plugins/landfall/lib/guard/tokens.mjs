@@ -103,8 +103,11 @@ const SENDERS = new Set(['curl', 'wget', 'nc', 'ncat', 'netcat', 'socat', 'scp',
 const TEXT_ONLY = new Set(['grep', 'egrep', 'fgrep', 'rg', 'echo', 'printf', 'man', 'which', 'type', 'whereis', 'help', 'apropos']);
 // a stage that runs what it is given (a substitution, a process substitution, rg --pre) is never text
 const RUNS_ARGS = /`|\$\(|[<>]\(|(^|\s)--pre(=|\s|$)/;
+// man runs its pager (-P, --pager) and its html browser (-H, --html): their words are commands
+const MAN_RUNS = /(^|\s)(-[a-z]*[ph]|--p|--h)/; // the variants are lowercase: -p and -h count too
 const sendsPart = (p) => {
   if (p.includes('/dev/tcp/') || p.includes('/dev/udp/')) return true;
+  if (base(commandWord(p)) === 'man' && MAN_RUNS.test(p) && p.split(/[\s=`$(<>"'\\]+/).some((w) => SENDERS.has(base(w)) || SENDERS.has(base(w.replace(/^-[a-z]*?[ph]/, ''))))) return true;
   if (!TEXT_ONLY.has(base(commandWord(p))) && p.split(' ').some((w) => SENDERS.has(base(w)))) return true;
   // a substitution or --pre runs its words: the sender may be glued to its opener or to --pre=
   return RUNS_ARGS.test(p) && p.split(/[\s=`$(<>]+/).some((w) => SENDERS.has(base(w)));
