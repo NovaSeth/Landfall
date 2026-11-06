@@ -93,6 +93,14 @@ const FIND_FLAG = /\s(-delete|-(exec|execdir|ok|okdir)\s+(\S*\/)?rm)(\s|$)/;
 const RM_RECURSIVE = { test: (s) => after(s, RM_WORD, RM_FLAG) };
 const FIND_DELETE = { test: (s) => after(s, FIND_WORD, FIND_FLAG) };
 
+// A secret leaving the machine (T-MG-147): a network sender as a command of the line (also behind a wrapper or after a pipe)
+// and a secret path anywhere in that line: a key, a credential file, .env, or the state directory.
+const SENDERS = new Set(['curl', 'wget', 'nc', 'ncat', 'netcat', 'socat', 'scp', 'sftp', 'ftp', 'telnet']);
+const stateRe = NAMES.stateDir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').toLowerCase();
+const SECRET = new RegExp(`(^|[\\s/=@:~])(\\.env(\\.(?!example|sample|template)[\\w.-]+)?|\\.netrc|\\.npmrc|\\.pgpass|\\.git-credentials|\\.ssh|\\.aws|\\.gnupg|id_(rsa|dsa|ecdsa|ed25519)\\w*|[\\w.-]+\\.(pem|p12|pfx)|${stateRe})(?=$|[\\s/;&|<>])`);
+export const EXFIL = 'secret to a network sender';
+const exfilLine = (s) => SECRET.test(s) && s.split('|').some((p) => SENDERS.has(base(commandWord(p))));
+
 // The tokens. Checked on the normalized variants of the text: word — a word anywhere (lowercase); cased — a word with its
 // case kept; line — a construct on a segment between ; and & that may build a guarded operation from content outside
 // the command text; text — a construct on the whole variant (a pipe after a gate: 2>&1 before the pipe holds a &).
@@ -132,6 +140,7 @@ export const GUARDED = Object.freeze([
   // directory or the repository itself (spec §7.13, lib/guard/protect.mjs)
   { id: 'recursive remove', line: (s) => RM_RECURSIVE.test(s) || FIND_DELETE.test(s) },
   // the plugin's hook entry point (`<bin> … hook`): only Claude Code runs it, from hooks.json (T-MG-149, shapes.mjs hookCli)
+  { id: EXFIL, line: exfilLine },
   { id: 'hook entry point', line: (s) => after(s, BIN_WORD, HOOK_SUB), text: pathBeforeHook },
 ]);
 

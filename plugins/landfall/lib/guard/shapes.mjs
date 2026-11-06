@@ -203,8 +203,8 @@ const DATA = new Set(['echo', 'printf', 'cat', 'tac', 'head', 'tail', 'less', 'm
   'pgrep', 'pkill', 'kill', 'killall', 'man', 'help', 'tput', 'clear', 'history']);
 const DECL = new Set(['export', 'declare', 'local', 'readonly', 'typeset']);
 // Commands that take a variable name (with an array index evaluated like arithmetic), or set the variable they name.
-const VAR_NAMES = new Set([...DECL, 'read', 'mapfile', 'readarray', 'printf', 'unset', 'test', '[', '[[', 'getopts', 'wait']);
-const VAR_SETTERS = new Set([...DECL, 'read', 'mapfile', 'readarray', 'printf', 'getopts']);
+const VAR_NAMES = new Set([...DECL, 'read', 'mapfile', 'readarray', 'printf', 'print', 'compgen', 'vared', 'zparseopts', 'unset', 'test', '[', '[[', 'getopts', 'wait']);
+const VAR_SETTERS = new Set([...DECL, 'read', 'mapfile', 'readarray', 'printf', 'print', 'compgen', 'vared', 'zparseopts', 'getopts']);
 // Interpreters: options with code in the text; options with a value (the value is not the script).
 const INTERP = { python: ['-c'], python2: ['-c'], python3: ['-c'], node: ['-e', '--eval', '-p', '--print'], nodejs: ['-e', '--eval', '-p', '--print'],
   perl: ['-e', '-E'], ruby: ['-e'], php: ['-r'], osascript: ['-e'], lua: ['-e'], Rscript: ['-e'], pwsh: ['-c', '-Command'], deno: ['eval'] };

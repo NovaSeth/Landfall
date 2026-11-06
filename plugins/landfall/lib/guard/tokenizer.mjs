@@ -131,7 +131,7 @@ const bareUse = (name) => new RegExp(`${BARE_BEFORE}${name}(?!\\w)|(?<![\\w$])-[
 // find as a read shape — hold only for a command with no unquoted glob character, no assignment word and no setter or
 // code-runner word anywhere (quotes stripped, words split at blanks, connectors, redirection marks and parentheses);
 // any other command is read as before T-MG-132.
-const GATE_WORD = /^(?:printf|read|mapfile|readarray|wait|getopts|declare|typeset|local|export|readonly|unset|let|eval|source|\.|set|shift|trap|alias|env|command|builtin|exec|nohup|setsid|nice|ionice|timeout|stdbuf|sudo|doas|xargs|sh|bash|zsh|dash|ksh|fish|node|nodejs|deno|python|python2|python3|perl|ruby|php|lua|osascript)$/;
+const GATE_WORD = /^(?:printf|print|compgen|vared|zparseopts|read|mapfile|readarray|wait|getopts|declare|typeset|local|export|readonly|unset|let|eval|source|\.|set|shift|trap|alias|env|command|builtin|exec|nohup|setsid|nice|ionice|timeout|stdbuf|sudo|doas|xargs|sh|bash|zsh|dash|ksh|fish|node|nodejs|deno|python|python2|python3|perl|ruby|php|lua|osascript)$/;
 const ASSIGN_WORD = /^[A-Za-z_]\w*(?:\[[^\]]*\])?\+?=/;
 function unquotedGlob(src) {
   let q = null;
@@ -160,6 +160,7 @@ function variableCommand(text) {
   }
   return false;
 }
+const NO_SETTER = new Set(['ls', 'grep', 'egrep', 'fgrep', 'rg', 'cat', 'head', 'tail', 'wc', 'stat', 'file', 'diff', 'cmp', 'sort', 'uniq', 'cut', 'tr', 'find', 'jq']);
 function substUnsafe(src) {
   const words = gateWords(src);
   const names = words.filter((t) => ASSIGN_WORD.test(t)).map((t) => /^[A-Za-z_]\w*/.exec(t)[0]);
@@ -170,9 +171,15 @@ function substUnsafe(src) {
   // a word -<letters>NAME: NAME a suffix after at least one option letter; more than 64 names have no proof (bounded work)
   const uniq = [...new Set(names)];
   if (uniq.length > 64) return true;
-  return words.some((t) => {
-    const m = /^-[A-Za-z]+/.exec(t);
-    return m !== null && uniq.some((n) => t.length - n.length >= 2 && t.length - n.length <= m[0].length && t.endsWith(n));
+  // programs that cannot set a shell variable: their flag clusters (ls -lF, grep -nF) are no name glued to an option (B-MG-15)
+  return segs.some((x) => {
+    const ws = gateWords(x.text).filter(Boolean);
+    const cmd = ws.find((t) => !ASSIGN_WORD.test(t));
+    if (cmd !== undefined && NO_SETTER.has(cmd.slice(cmd.lastIndexOf('/') + 1))) return false;
+    return ws.some((t) => {
+      const m = /^-[A-Za-z]+/.exec(t);
+      return m !== null && uniq.some((n) => t.length - n.length >= 2 && t.length - n.length <= m[0].length && t.endsWith(n));
+    });
   });
 }
 // The last expansion (expandLiterals → parse of its result in one evaluate call): parse closes the shapes for a text
@@ -183,7 +190,7 @@ let expansion = { out: null, closed: true };
 // unrolled body runs unconditionally in the guard's reading, so a value it sets would reach later words. Any word (quotes
 // stripped) that is an assignment, a builtin that sets, unsets or reads a variable by name, code from text, or
 // break / continue.
-const BODY_SETTER = /^(?:read|mapfile|readarray|printf|declare|export|local|readonly|typeset|getopts|unset|let|wait|eval|source|\.|break|continue|return|exit|set|shift)$/;
+const BODY_SETTER = /^(?:read|mapfile|readarray|printf|print|compgen|vared|zparseopts|declare|export|local|readonly|typeset|getopts|unset|let|wait|eval|source|\.|break|continue|return|exit|set|shift)$/;
 // words are split at blanks, connectors and redirection marks: `printf>/dev/null -v …` holds the word printf (review r2 F1)
 const bodySets = (body) => body.split(/[\s;&|<>]+/).map((t) => t.replace(/['"]/g, '')).some((t) => BODY_SETTER.test(t) || /^[A-Za-z_]\w*(?:\[[^\]]*\])?\+?=/.test(t));
 const LOOPS = 8;
