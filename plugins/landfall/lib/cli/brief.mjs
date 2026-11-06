@@ -9,11 +9,15 @@
 // The text ends with a marker line holding the sha256 of the text above it. --write stores tasks/<id>/brief.md
 // through lib/state (the task's owner): a file whose marker still matches its text is replaced; a brief written or
 // edited by hand is kept (exit 1) unless --force.
+// --from <file> stores a brief the orchestrator filled (outside the state directory) instead: a regular file of at most
+// 256 KB of UTF-8 text, refused (exit 1) while it holds a placeholder line fragment of the template; it replaces a
+// rendered brief, a hand-written one only with --force. --from implies --write.
 // Exit 0 · 1 no such task (an inactive repository has none), the task is not routed, a hand-written brief kept · 2 a
 // bad ID, role or flag, no registered handle · 7 --write without consent, a newer schema · 8 not a git repository.
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { isAbsolute, join, resolve as resolvePath } from 'node:path';
+import { readRegularFile } from '../fsx/index.mjs';
 import { findingsForTask, sourceLine } from '../findings/index.mjs';
 import { briefRules } from '../method/index.mjs';
 import { fastGuardsOf, openStore, reviewFocusOf } from '../profile/index.mjs';
@@ -38,6 +42,30 @@ const escape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 export function unedited(text) {
   const m = MARKER.exec(text);
   return m !== null && sha256(text.slice(0, m.index)) === m[1];
+}
+
+const FROM_MAX = 262144;
+const MAX_LISTED = 5;
+
+// The `<…>` fragments of the template that mean "fill me": every fragment of its lines except the comment line and the
+// inline code spans (command examples such as `rule <ID…>` stay in a filled brief), fenced blocks included.
+export function placeholdersOf(template) {
+  const out = new Set();
+  for (const line of template.split('\n')) {
+    if (line.startsWith('<!--')) continue;
+    for (const m of line.replace(/`[^`\n]*`/g, '').matchAll(/<[^<>\n]*>/g)) out.add(m[0]);
+  }
+  return [...out];
+}
+
+// The "line n: <fragment>" entries of `text` that hold a placeholder of the template.
+export function placeholderHits(text, template) {
+  const holders = placeholdersOf(template);
+  const hits = [];
+  text.split('\n').forEach((line, i) => {
+    for (const ph of holders) if (line.includes(ph)) hits.push(`line ${i + 1}: ${ph}`);
+  });
+  return hits;
 }
 
 // The text with its marker line (the review brief ends the same way).
@@ -106,7 +134,7 @@ export function brief({ args, flags, names, io, pluginRoot }) {
   const id = args.id;
   const role = flags.role ?? 'implementer';
   if (!ROLES.includes(role)) return { code: EXIT.USAGE, errors: [{ code: 'invalid-value', message: `--role ${String(role).slice(0, 40)}: expected ${ROLES.join(' or ')}`, hint: `${bin} brief ${id} --role reviewer` }] };
-  if (flags.force && !flags.write) return { code: EXIT.USAGE, errors: [{ code: 'missing-flag', message: '--force applies only with --write', hint: `${bin} brief ${id} --write --force` }] };
+  if (flags.force && !flags.write && flags.from === undefined) return { code: EXIT.USAGE, errors: [{ code: 'missing-flag', message: '--force applies only with --write or --from', hint: `${bin} brief ${id} --write --force` }] };
   KINDS.task.path(id); // a malformed ID is a usage error (invalid-key)
   const where = resolve({ cwd: io.cwd, env: io.env, names });
   const task = where.active ? open(where.dir, { names }).read('task', id) : null;
@@ -117,13 +145,14 @@ export function brief({ args, flags, names, io, pluginRoot }) {
   if (!task.class) {
     return { code: EXIT.FAIL, errors: [{ code: 'task-unrouted', message: `${id} is not routed: its class decides the depth and the rules of the brief`, hint: `${bin} route ${id} --paths <p,…> --loc <n>` }] };
   }
+  const template = readFileSync(join(pluginRoot, 'templates', 'task', 'brief.md'), 'utf8');
+  if (flags.from !== undefined) return storeFrom({ id, flags, io, names, template });
   const profile = openStore(where.dir, names).read('profile');
   const gates = (profile?.gates ?? []).map((g) => g.cmd);
   const focus = reviewFocusOf(profile);
   const fastGuards = fastGuardsOf(profile);
   const held = where.dataDir ? snapshot({ names, env: io.env }).leases.find((l) => l.owner && l.status === 'live' && l.task === id && l.project === where.worktree) : undefined; // a lease names the checkout it was taken in (lib/sched)
   const lease = held ? leaseEnv(held, names) : null;
-  const template = readFileSync(join(pluginRoot, 'templates', 'task', 'brief.md'), 'utf8');
   const review = reviewShown(open(where.dir, { names }), task.class, { names, env: io.env });
   const findings = findingsForTask(open(where.dir, { names }), id);
   const store = open(where.dir, { names });
@@ -132,10 +161,30 @@ export function brief({ args, flags, names, io, pluginRoot }) {
   const text = renderBrief({ template, task, role, gates, lease, review, focus, fastGuards, findings, lessons, evidence, names });
   const data = { task: id, role, class: task.class, kind: task.kind, title: task.title, rules: briefRules({ cls: task.class, role }), gates, lease, review, focus, text, written: null, file: null };
   if (!flags.write) return { data, text };
-  const w = writeTaskText({ cwd: io.cwd, env: io.env, names, id, name: 'brief', text, replace: (cur) => Boolean(flags.force) || unedited(cur) });
+  return stored({ data, id, names, io, text, force: flags.force, hint: `compare it with '${bin} brief ${id}'; '${bin} brief ${id} --write --force' replaces it` });
+}
+
+function stored({ data, id, names, io, text, force, hint }) {
+  const w = writeTaskText({ cwd: io.cwd, env: io.env, names, id, name: 'brief', text, replace: (cur) => Boolean(force) || unedited(cur) });
   const done = { ...data, written: w.outcome, file: w.file };
-  if (w.outcome === 'kept') {
-    return { code: EXIT.FAIL, data: done, errors: [{ code: 'brief-hand-written', message: `${w.file} was written or edited by hand: it is kept`, hint: `compare it with '${bin} brief ${id}'; '${bin} brief ${id} --write --force' replaces it` }] };
-  }
+  if (w.outcome === 'kept') return { code: EXIT.FAIL, data: done, errors: [{ code: 'brief-hand-written', message: `${w.file} was written or edited by hand: it is kept`, hint }] };
   return { data: done, text: `${w.outcome}: ${w.file}\n` };
+}
+
+// `brief <id> --from <file>`: the filled brief of the orchestrator, stored as it is.
+function storeFrom({ id, flags, io, names, template }) {
+  const { bin } = names;
+  const data = { task: id, text: null, written: null, file: null };
+  const fail = (code, message, hint) => ({ code: EXIT.FAIL, data, errors: [{ code, message, hint }] });
+  const file = String(flags.from);
+  let text;
+  try {
+    text = new TextDecoder('utf-8', { fatal: true }).decode(readRegularFile(isAbsolute(file) ? file : resolvePath(io.cwd, file), { max: FROM_MAX }));
+  } catch (err) {
+    const why = err instanceof TypeError ? 'not UTF-8 text' : err.code === 'ENOTREGULAR' ? 'not a regular file (a symbolic link, directory or device)' : err.code === 'ETOOBIG' ? `over ${FROM_MAX} bytes` : (err.code ?? 'unreadable');
+    return fail('from-unreadable', `--from ${file.slice(0, 200)}: ${why}`, 'name a regular UTF-8 file of at most 256 KB');
+  }
+  const hits = placeholderHits(text, template);
+  if (hits.length) return fail('brief-placeholders', `${file.slice(0, 200)} still holds placeholders of the template: ${hits.slice(0, MAX_LISTED).join('; ')}${hits.length > MAX_LISTED ? ` (and ${hits.length - MAX_LISTED} more)` : ''}`, 'fill every <…> of the template, then store it again');
+  return stored({ data: { ...data, text }, id, names, io, text, force: flags.force, hint: `'${bin} brief ${id} --from <file> --force --yes' replaces it` });
 }
