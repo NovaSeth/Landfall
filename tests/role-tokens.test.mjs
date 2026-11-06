@@ -212,3 +212,12 @@ test('the ancestry walk over a real process table costs under 5 ms (median of 20
   }
   assert.ok(xs.sort((x, y) => x - y)[10] < 5, `median ${xs[10]} ms`);
 });
+
+test('T-MG-207: an unknown or expired reviewer credential names the fresh-reviewer remedy', (t) => {
+  const { dir } = store(t);
+  const { token } = orch(dir);
+  const hint = 'the token ends when the reviewer stops: dispatch a fresh reviewer (a resumed one has none)';
+  const has = (code) => (e) => fails(code)(e) && e.hint.includes(hint);
+  assert.throws(() => T.authorize({ dir, names, token: `lf1_${'B'.repeat(43)}`, need: 'reviewer' }), has('token-unknown'));
+  assert.throws(() => T.authorize({ dir, names, token, need: 'orchestrator', now: new Date(NOW.getTime() + 8 * 86400000) }), has('token-expired'));
+});
