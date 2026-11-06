@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { isolatedEnv, isolateProcessEnv } from './helpers/isolated-env.mjs';
@@ -66,7 +66,7 @@ async function project(t) {
   profile.openStore(p.store, names).write('profile', null, { facts: {}, gates: [], riskPaths: ['**/auth/**'], lastScan: null });
   await p.run(['brief', 'T-TU-1', '--write']);
   p.briefFile = join(p.store, 'tasks', 'T-TU-1', 'brief.md');
-  const edited = readFileSync(p.briefFile, 'utf8').replace(/1\. <acceptance point[^\n]*\n2\. <…>\n/, '1. Login returns 401 on a bad password\n');
+  const edited = readFileSync(p.briefFile, 'utf8').replace(/1\. <acceptance point[^\n]*\n2\. <…>\n<[^\n]*\n/, '1. Login returns 401 on a bad password\n');
   assert.match(edited, /1\. Login returns 401/);
   writeFileSync(p.briefFile, edited);
   await p.run(['decide', '--title', 'Fail closed', '--why', 'security', '--cost', 'lockout']);
@@ -243,4 +243,22 @@ test('review brief: the Output paragraph states the 500-character cap of a findi
   const output = r.out.slice(r.out.indexOf('## Output'));
   assert.match(output, new RegExp(`one line of at most ${cap} characters`), output);
   assert.match(output, /details? (go|goes) into a separate file/i, output);
+});
+
+// T-MG-204: a brief without acceptance, or with a template placeholder in it, is refused with a hint to store a filled one.
+test('review brief: refuses a brief whose acceptance is missing or still a template placeholder', async (t) => {
+  const p = await project(t);
+  const before = readFileSync(p.briefFile, 'utf8');
+  for (const text of [before.replace('1. Login returns 401 on a bad password\n', '1. <acceptance point: the reviewer cites its number>\n'), before.replace(/## Acceptance[\s\S]*?(?=\n## )/, '## Acceptance\nnone\n')]) {
+    writeFileSync(p.briefFile, text);
+    const r = await cli(['review', 'brief', 'T-TU-1', '--write', '--yes'], { ...p, json: true });
+    assert.equal(r.code, 1, show(r));
+    assert.match(r.out.errors[0].hint, /brief T-TU-1 --from <file> --yes/);
+    assert.equal(existsSync(join(p.store, 'tasks', 'T-TU-1', 'review-r1-brief.md')), false, 'nothing written');
+  }
+  // a task without any brief file keeps the "no acceptance" text (trivial tasks)
+  rmSync(p.briefFile);
+  const none = await cli(['review', 'brief', 'T-TU-1', '--yes'], p);
+  assert.equal(none.code, 0, show(none));
+  assert.ok(none.out.includes('no acceptance points in the brief'));
 });

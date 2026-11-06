@@ -170,10 +170,10 @@ Read-only.
 Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
 ```
 
-### `landfall brief <id> [--role <role>] [--write] [--force] [--yes] [--json]`
+### `landfall brief <id> [--role <role>] [--write] [--from <file>] [--force] [--yes] [--json]`
 
 ```text
-usage: landfall brief <id> [--role <role>] [--write] [--force] [--yes] [--json]
+usage: landfall brief <id> [--role <role>] [--write] [--from <file>] [--force] [--yes] [--json]
 
 Render the brief of a routed task from the brief template and the state; --write saves tasks/<id>/brief.md.
 Filled from the state: title and ID, the agent of the role, the class with the reason of its route record and the
@@ -181,6 +181,9 @@ kind, branch and base once recorded, the rule IDs of the role and the class, the
 of a live lease the scheduler holds for the task here. Every other <…> placeholder is left to fill in.
 The brief ends with a marker line holding its hash: --write replaces a saved brief while nobody edited it; one
 written or edited by hand only with --force (else exit 1). Exit 1 also: no such task, the task is not routed.
+--from <file> saves the brief you filled in a file outside the state directory instead (implies --write; a regular
+UTF-8 file of at most 256 KB): exit 1 while it holds a placeholder of the template (the lines are named); it
+replaces a rendered brief, a hand-written one only with --force. Review brief takes its acceptance points from it.
 
 Arguments:
   id  task ID such as T-AB-1
@@ -188,9 +191,10 @@ Arguments:
 Options:
   --role <role>  implementer (default) or reviewer: the agent and the rules of the role
   --write        save it as tasks/<id>/brief.md in the state directory (the task's owner)
-  --force        with --write: replace a brief written or edited by hand
+  --from <file>  save the filled brief in this file as tasks/<id>/brief.md (implies --write)
+  --force        with --write or --from: replace a brief written or edited by hand
 
-Read-only. Changes files with --write: needs a terminal or --yes, otherwise exit 7 REFUSED.
+Read-only. Changes files with --write, --from: needs a terminal or --yes, otherwise exit 7 REFUSED.
 Exit codes: 0 OK · 1 FAIL · 2 USAGE · 7 REFUSED · 8 ENV
 ```
 

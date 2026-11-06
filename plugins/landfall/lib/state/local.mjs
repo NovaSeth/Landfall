@@ -115,7 +115,7 @@ function moveAside(store) {
 export function markLocal(store) {
   if (!store.active) return; // deactivate removed the state: nothing to mark
   try {
-    if (store.readText(MARKER) !== null && localStatus(store) === 'mine') return;
+    if (store.readText(MARKER)?.trim() === machineId() && localStatus(store) === 'mine') return; // a legacy marker is rewritten
     writeAtomic(store.abs(MARKER), `${machineId()}\n`);
     store.localState = 'mine';
   } catch { /* best effort */ }

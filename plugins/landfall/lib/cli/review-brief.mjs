@@ -20,7 +20,7 @@ import { openStore } from '../verify/index.mjs';
 import { reviewSchema } from '../verify/review.mjs';
 import { taskWhere } from '../verify/where.mjs';
 import { dataLine, fenceLine } from '../text/data.mjs';
-import { seal, unedited } from './brief.mjs';
+import { placeholderHits, seal, unedited } from './brief.mjs';
 import { EXIT } from './exit.mjs';
 
 // One line of a fenced data list (SEC-14): repository text on one line that cannot close the template's fence.
@@ -44,16 +44,20 @@ export function renderReviewBrief(template, fills) {
   return text.endsWith('\n') ? text : `${text}\n`;
 }
 
-// The numbered items of the `## Acceptance` section of a task brief.
-function acceptanceOf(text) {
-  if (text === null) return [];
-  const out = [];
+// The numbered items of the `## Acceptance` section of a task brief, and its lines that hold a placeholder of the
+// brief template (a brief nobody filled in).
+function acceptanceOf(text, template) {
+  const items = [];
+  const section = [];
   let inside = false;
-  for (const line of text.split('\n')) {
+  for (const line of (text ?? '').split('\n')) {
     if (line.startsWith('## ')) inside = line.startsWith('## Acceptance');
-    else if (inside && /^\d+\. /.test(line)) out.push(line);
+    else if (inside) {
+      section.push(line);
+      if (/^\d+\. /.test(line)) items.push(line);
+    }
   }
-  return out;
+  return { items, unfilled: placeholderHits(section.join('\n'), template).slice(0, 3) };
 }
 
 export function reviewBrief({ args, flags, names, io, pluginRoot }) {
@@ -115,7 +119,12 @@ export function reviewBrief({ args, flags, names, io, pluginRoot }) {
     rows = rows.map((f) => `| ${dataLine(f.id)} | ${dataLine(f.severity)} | ${dataLine(f.path).replace(/\|/g, '\\|')}:${f.line ?? '?'} | ${dataLine(f.text).replace(/\|/g, '\\|')} |`);
   }
 
-  const acceptance = acceptanceOf(store.readText(`tasks/${id}/brief.md`));
+  const briefText = store.readText(`tasks/${id}/brief.md`);
+  const { items: acceptance, unfilled } = acceptanceOf(briefText, readFileSync(join(pluginRoot, 'templates', 'task', 'brief.md'), 'utf8'));
+  // a task without any brief file (trivial) keeps the "no acceptance" text; a brief that exists must carry its acceptance
+  if (briefText !== null && (!acceptance.length || unfilled.length)) {
+    return fail('brief-unfilled', `tasks/${id}/brief.md ${unfilled.length ? `still holds template placeholders in its Acceptance section (${unfilled.join('; ')})` : 'has no numbered acceptance points'}: the reviewer would get no acceptance`, `fill the brief in a file, then '${bin} brief ${id} --from <file> --yes'`);
+  }
   const profile = profileStore(where.dir, names).read('profile');
   const review = reviewFocus({ files, security: Boolean(flags.security), routeFlags: recordedKeys(task).flags, llm: profile?.facts?.llm?.value === true });
   const risks = review.triggers.map((t) => `security trigger: ${t}`);

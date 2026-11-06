@@ -11,6 +11,6 @@ Depth follows the class (PRI-2): `{{bin}} route <task>` prints it. Read the rule
 2. Run discovery first for a new product or an MVP scope decision (FLW-2).
 3. Spec: what and why, the current state with `file:line` evidence, success criteria as metrics with thresholds, 2–3 approaches with the choice and the cost if wrong (SPC-3, SPC-4). An unknown gives its detection and fallback (SPC-5).
 4. Plan: Global Constraints, each guarded by a test, generator or linter; a Review Focus of 3–5 risk scenarios; tasks with disjoint file scopes and the shared files listed (SPC-7, SPC-9). Each task: files, interfaces, RED test first, gate commands, one checkable acceptance line (SPC-13).
-5. Write each task into its brief: `{{bin}} brief <task> --write`, then add the spec and plan slice for it to `tasks/<id>/brief.md`.
+5. Write each task into its brief: `{{bin}} brief <task> --write`, add the spec and plan slice in a file outside the state dir, store it with `{{bin}} brief <task> --from <file> --yes`.
 6. Check every task against the others and the Global Constraints; each contradiction becomes a decision with the `{{plugin}}:decide` skill (SPC-8).
 7. A late change is a dated amendment that cites its decision (SPC-6); a plan never overrides a spec decision without one (SPC-15).

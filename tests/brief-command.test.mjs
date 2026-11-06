@@ -8,7 +8,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { isolatedEnv, isolateProcessEnv } from './helpers/isolated-env.mjs';
@@ -301,4 +301,83 @@ test('fastGuards text cannot escape the bash fence of the gate block, and profil
     assert.throws(() => profile.parseValue('fastGuards', raw), (e) => e.exit === 'USAGE' && e.code === 'invalid-value', JSON.stringify(raw));
   }
   assert.deepEqual(profile.parseValue('fastGuards', 'echo `date`, node --test'), ['echo `date`', 'node --test']);
+});
+
+// T-MG-204: `brief <id> --from <file>` stores a filled brief through writeTaskText.
+const FILLED = '# Parser (brief --from <file> in a title is fine)\n\nExecutor: x\n\n## Acceptance\n1. It parses\n';
+const fromFile = (p, name, text) => {
+  const f = join(p.base, name);
+  writeFileSync(f, text);
+  return f;
+};
+
+test('brief --from: stores the file text as tasks/<id>/brief.md; consent needed; --write is implied', async (t) => {
+  const p = await project(t);
+  const f = fromFile(p, 'filled.md', FILLED);
+  const refused = await cli(['brief', 'T-TU-1', '--from', f], { ...p, json: true });
+  assert.deepEqual([refused.code, refused.out.errors[0].code], [7, 'consent-required'], show(refused));
+  assert.equal(existsSync(p.file), false, 'nothing written without consent');
+  const w = await cli(['brief', 'T-TU-1', '--from', f, '--yes'], { ...p, json: true });
+  assert.equal(w.code, 0, show(w));
+  assert.deepEqual([w.out.data.written, w.out.data.file], ['created', p.file]);
+  assert.equal(readFileSync(p.file, 'utf8'), FILLED);
+  // a later --write keeps the hand-written brief
+  const kept = await cli(['brief', 'T-TU-1', '--write', '--yes'], { ...p, json: true });
+  assert.deepEqual([kept.code, kept.out.errors[0].code], [1, 'brief-hand-written'], show(kept));
+  assert.equal(readFileSync(p.file, 'utf8'), FILLED);
+});
+
+test('brief --from: refuses a symbolic link, a directory, a missing file, more than 256 KB and non-UTF-8 text', async (t) => {
+  const p = await project(t);
+  const f = fromFile(p, 'filled.md', FILLED);
+  const link = join(p.base, 'link.md');
+  symlinkSync(f, link);
+  const big = fromFile(p, 'big.md', `${FILLED}${'x'.repeat(262145)}`);
+  const bad = join(p.base, 'bad.md');
+  writeFileSync(bad, Buffer.from([0x23, 0x20, 0xff, 0xfe, 0x0a]));
+  for (const from of [link, p.base, join(p.base, 'none.md'), big, bad]) {
+    const r = await cli(['brief', 'T-TU-1', '--from', from, '--yes'], { ...p, json: true });
+    assert.ok([1, 2].includes(r.code) && r.code !== 0, `${from}\n${show(r)}`);
+    assert.equal(existsSync(p.file), false, `${from}: nothing written`);
+  }
+});
+
+test('brief --from: refuses template placeholders (up to 5, with line numbers), accepts other angle brackets', async (t) => {
+  const p = await project(t);
+  const lines = ['# T', '', '1. <acceptance point: the reviewer cites its number>', 'Worktree: <absolute path>', 'a <symptom> b', '<yes/no>', '<minutes> <branch>', '<base SHA>', 'ok <not from the template>'];
+  const f = fromFile(p, 'ph.md', `${lines.join('\n')}\n`);
+  const r = await cli(['brief', 'T-TU-1', '--from', f, '--yes'], { ...p, json: true });
+  assert.equal(r.code, 1, show(r));
+  const msg = r.out.errors[0].message;
+  assert.match(msg, /<acceptance point: the reviewer cites its number>/);
+  assert.match(msg, /line 3/);
+  assert.match(msg, /<absolute path>/);
+  assert.match(msg, /<symptom>/);
+  assert.ok(!msg.includes('<not from the template>'));
+  assert.ok((msg.match(/line \d+/g) ?? []).length <= 5, msg);
+  assert.equal(existsSync(p.file), false);
+  // a placeholder inside a fenced block of the template counts
+  const g = fromFile(p, 'gate.md', '# T\n```bash\n<typecheck>\n```\n');
+  const r2 = await cli(['brief', 'T-TU-1', '--from', g, '--yes'], { ...p, json: true });
+  assert.equal(r2.code, 1, show(r2));
+  assert.match(r2.out.errors[0].message, /<typecheck>/);
+  // a rendered brief's literal command examples (`rule <ID…>`) are not placeholders
+  const ok = fromFile(p, 'ok.md', `# T\nRules: PRI-3; read them with \`${BIN} rule <ID…>\`; \`report <id> --from <file>\`\n`);
+  assert.equal((await cli(['brief', 'T-TU-1', '--from', ok, '--yes'], p)).code, 0);
+});
+
+test('brief --from: replaces a rendered brief, a hand-written one only with --force', async (t) => {
+  const p = await project(t);
+  await cli(['brief', 'T-TU-1', '--write', '--yes'], p);
+  const f = fromFile(p, 'filled.md', FILLED);
+  const first = await cli(['brief', 'T-TU-1', '--from', f, '--yes'], { ...p, json: true });
+  assert.deepEqual([first.code, first.out.data.written], [0, 'replaced'], show(first));
+  const g = fromFile(p, 'second.md', `${FILLED}2. more\n`);
+  const kept = await cli(['brief', 'T-TU-1', '--from', g, '--yes'], { ...p, json: true });
+  assert.deepEqual([kept.code, kept.out.errors[0].code], [1, 'brief-hand-written'], show(kept));
+  assert.match(kept.out.errors[0].hint, /--force/);
+  assert.equal(readFileSync(p.file, 'utf8'), FILLED);
+  const forced = await cli(['brief', 'T-TU-1', '--from', g, '--force', '--yes'], { ...p, json: true });
+  assert.deepEqual([forced.code, forced.out.data.written], [0, 'replaced'], show(forced));
+  assert.equal(readFileSync(p.file, 'utf8'), `${FILLED}2. more\n`);
 });
