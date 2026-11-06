@@ -31,7 +31,7 @@ const SCHEMA_FILE = new URL('../../templates/review.schema.json', import.meta.ur
 const KEYWORDS = new Set(['$schema', 'title', 'description', 'type', 'enum', 'properties', 'required', 'additionalProperties',
   'items', 'minItems', 'maxItems', 'minLength', 'maxLength', 'minimum', 'maximum', 'pattern']);
 
-const usage = (code, message, hint = '') => new StateError(code, 'USAGE', message, { hint });
+const usage = (code, message, hint = '', cause) => new StateError(code, 'USAGE', message, { hint, cause });
 const fail = (code, message, hint = '') => new StateError(code, 'FAIL', message, { hint });
 const typeOf = (v) => (v === null ? 'null' : Array.isArray(v) ? 'array' : Number.isInteger(v) ? 'integer' : typeof v);
 const fits = (type, v) => type === typeOf(v) || (type === 'number' && typeof v === 'number');
@@ -87,14 +87,14 @@ function readInput(cwd, from) {
     bytes = readRegularFile(file, { max: INPUT_MAX });
     text = bytes.toString('utf8');
   } catch (err) {
-    if (err.code === 'ENOTREGULAR') throw usage('review-unreadable', `${from} is not a regular file`, 'give the path of the review JSON file (links are not followed)');
-    if (err.code === 'ETOOBIG') throw usage('review-unreadable', `${from} is over the limit of ${INPUT_MAX} bytes`, 'a review holds at most 1000 findings');
-    throw usage('review-unreadable', `${from} cannot be read (${err.code ?? err.message})`, 'give the path of the review JSON file');
+    if (err.code === 'ENOTREGULAR') throw usage('review-unreadable', `${from} is not a regular file`, 'give the path of the review JSON file (links are not followed)', err);
+    if (err.code === 'ETOOBIG') throw usage('review-unreadable', `${from} is over the limit of ${INPUT_MAX} bytes`, 'a review holds at most 1000 findings', err);
+    throw usage('review-unreadable', `${from} cannot be read (${err.code ?? err.message})`, 'give the path of the review JSON file', err);
   }
   try {
     return { value: JSON.parse(text), bytes };
   } catch (err) {
-    throw usage('invalid-review', `${from} is not JSON: ${err.message}`.slice(0, 300), 'the file holds one JSON object: {"verdict", "reviewer", "findings"}');
+    throw usage('invalid-review', `${from} is not JSON: ${err.message}`.slice(0, 300), 'the file holds one JSON object: {"verdict", "reviewer", "findings"}', err);
   }
 }
 

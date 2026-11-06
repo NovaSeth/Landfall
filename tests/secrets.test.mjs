@@ -931,3 +931,13 @@ test('T-MG-85: run in a linked worktree, tree and staged scans read that worktre
   r = await scan(d);
   assert.equal(r.status, 0, show(r));
 });
+
+test('T-MG-216: an error thrown through the invalid helper keeps the system error as its cause', async (t) => {
+  const { scanSecrets } = await lib('secrets/index.mjs');
+  const d = repo(t);
+  commit(d, 'README.md', 'x\n');
+  let err;
+  try { scanSecrets({ cwd: d, env: process.env, names, mode: 'artifact', artifact: 'no-such-dir' }); } catch (e) { err = e; }
+  assert.equal(err?.code, 'artifact-missing');
+  assert.equal(err.cause?.code, 'ENOENT', 'the stat error is the cause');
+});

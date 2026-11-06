@@ -25,7 +25,7 @@ export const TOKEN_KIND = defineKind('token', 1, {
 const DAY = 86400000;
 const hashOf = (token) => createHash('sha256').update(token).digest('hex');
 const same = (a, b) => a.pid === b.pid && a.start === b.start;
-const refused = (code, message, hint = '') => new StateError(code, 'REFUSED', message, { hint });
+const refused = (code, message, hint = '', cause) => new StateError(code, 'REFUSED', message, { hint, cause });
 const open_ = (dir, names, lockTimeoutMs) => open(dir, { names, kinds: { ...KINDS, token: TOKEN_KIND }, lockTimeoutMs });
 const empty = { schema: 1, orchestrator: null, agents: [] };
 // A holder is alive when its pid runs with the recorded start; a process the table cannot place is not called dead.
@@ -41,7 +41,7 @@ function read(dir, names, now) {
     const table = processTable();
     return { ...prune(raw ?? empty, now, table), raw, table };
   } catch (e) {
-    throw refused('token-store', `${dir}/local/token.json cannot be read (${e.code ?? 'error'}): a call is refused while the role tokens are unknown`, 'repair or remove local/token.json, or update the plugin when its schema is newer');
+    throw refused('token-store', `${dir}/local/token.json cannot be read (${e.code ?? 'error'}): a call is refused while the role tokens are unknown`, 'repair or remove local/token.json, or update the plugin when its schema is newer', e);
   }
 }
 

@@ -41,7 +41,7 @@ const DIFF = ['--no-color', '--no-ext-diff', '--no-textconv', '-U0', '--inter-hu
 // Options a range may hold besides revisions: they select commits and write nothing.
 const RANGE_OPTIONS = new Set(['--not', '--all', '--branches', '--remotes', '--tags']);
 
-const invalid = (code, message, hint) => new StateError(code, 'ENV', message, { hint });
+const invalid = (code, message, hint, cause) => new StateError(code, 'ENV', message, { hint, cause });
 
 // The words of a --range value, or { error }: revisions as git log takes them, and only the options above, so no
 // option reaches git that changes what it does (an --output=<file> would write a file).
@@ -73,14 +73,14 @@ function gitToFile(ctx, [command, ...args]) {
 function readOutput(file) {
   try { return readFileSync(file, 'utf8'); } catch (err) {
     if (err.code === 'ENOENT') return '';
-    throw invalid('output-unreadable', `cannot read the git output (${err.code ?? err.message})`, 'check the temporary directory (TMPDIR)');
+    throw invalid('output-unreadable', `cannot read the git output (${err.code ?? err.message})`, 'check the temporary directory (TMPDIR)', err);
   }
 }
 function forEachLine(file, fn) {
   let fd;
   try { fd = openSync(file, 'r'); } catch (err) {
     if (err.code === 'ENOENT') return;
-    throw invalid('output-unreadable', `cannot read the git output (${err.code ?? err.message})`, 'check the temporary directory (TMPDIR)');
+    throw invalid('output-unreadable', `cannot read the git output (${err.code ?? err.message})`, 'check the temporary directory (TMPDIR)', err);
   }
   try {
     const buf = Buffer.alloc(CHUNK);
@@ -154,7 +154,7 @@ function decodeText(buf) {
 const linesOf = (text) => { const lines = text.split('\n'); if (lines[lines.length - 1] === '') lines.pop(); return lines; };
 
 function unreadable(shown, err) {
-  return invalid('file-unreadable', `cannot read ${shown} (${err.code ?? err.message})`, 'make it readable (or ignore it if it does not belong in the repository), then scan again');
+  return invalid('file-unreadable', `cannot read ${shown} (${err.code ?? err.message})`, 'make it readable (or ignore it if it does not belong in the repository), then scan again', err);
 }
 // The bytes of a regular file, or null: gone, not a regular file (a link, a submodule).
 function readBytes(abs, shown, st, tooLarge = () => {}) {
@@ -353,16 +353,16 @@ function readPatterns(where) {
   const file = join(where.dir, PATTERN_FILE);
   const rel = relative(where.repo, file);
   const shown = rel && !rel.startsWith('..') ? rel.split('\\').join('/') : file;
-  const refuse = (why) => invalid('patterns-unreadable', `cannot read the project patterns ${shown}: ${why}`, `fix ${shown} (one pattern per line) or remove it, then scan again`);
+  const refuse = (why, cause) => invalid('patterns-unreadable', `cannot read the project patterns ${shown}: ${why}`, `fix ${shown} (one pattern per line) or remove it, then scan again`, cause);
   let st;
   try { st = lstatSync(file); } catch (err) {
     if (err.code === 'ENOENT' || err.code === 'ENOTDIR') return { patterns: [], errors: [] };
-    throw refuse(err.code ?? err.message);
+    throw refuse(err.code ?? err.message, err);
   }
   if (!st.isFile()) throw refuse(st.isSymbolicLink() ? 'a symbolic link' : 'not a regular file');
   if (st.size > PATTERN_FILE_MAX) throw refuse(`larger than ${PATTERN_FILE_MAX / 1024} KB`);
   let buf;
-  try { buf = readFileSync(file); } catch (err) { throw refuse(err.code ?? err.message); }
+  try { buf = readFileSync(file); } catch (err) { throw refuse(err.code ?? err.message, err); }
   if (buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf) buf = buf.subarray(3); // a UTF-8 BOM
   if (buf.includes(0) || !isUtf8(buf)) throw refuse('not UTF-8 text (save it as UTF-8)');
   const { patterns, errors } = projectPatterns(buf.toString('latin1'));
@@ -432,7 +432,7 @@ function scanArtifact(ctx, given) {
   const top = given.length > 1 ? given.replace(/\/+$/, '') : given;
   let st;
   try { st = statSync(abs); } catch (err) {
-    throw invalid('artifact-missing', `cannot read the artifact ${given} (${err.code ?? err.message})`, 'build it first, or pass the path of a built file or directory');
+    throw invalid('artifact-missing', `cannot read the artifact ${given} (${err.code ?? err.message})`, 'build it first, or pass the path of a built file or directory', err);
   }
   const visit = (path, shown, s) => {
     if (s.isDirectory()) {
@@ -467,12 +467,12 @@ export function scanSecrets({ cwd, env, names, mode = 'tree', revs = [], artifac
     where = resolve({ cwd, env, names });
   } catch (err) {
     if (err instanceof StateError || typeof err?.code !== 'string') throw err;
-    throw invalid('state-unreadable', `cannot resolve the repository state (${err.code})`, 'check the machine data directory of the plugin');
+    throw invalid('state-unreadable', `cannot resolve the repository state (${err.code})`, 'check the machine data directory of the plugin', err);
   }
   const { patterns: extra, errors } = readPatterns(where);
   let tmp;
   try { tmp = mkdtempSync(join(tmpdir(), 'secrets-')); } catch (err) {
-    throw invalid('temp-unavailable', `cannot create a temporary directory (${err.code ?? err.message})`, 'check TMPDIR');
+    throw invalid('temp-unavailable', `cannot create a temporary directory (${err.code ?? err.message})`, 'check TMPDIR', err);
   }
   const found = new Map();
   const skipped = new Map();
