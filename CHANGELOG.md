@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.7.6
+
+The backlog batch of 2026-11-06 (decision D-MG-86: close every open task and finding), merged in seven trains. The guard follow-ups T-MG-215, T-MG-217 and T-MG-218 follow in 2.7.7.
+
+- **Machine id survives host-name changes (T-MG-210, T-MG-214):** `machineId()` hashes the platform identity (macOS `IOPlatformUUID`, Linux `/etc/machine-id`) instead of the host name, which on macOS follows DHCP; a legacy host-name marker is adopted and rewritten; when the identity cannot be read, ownership of `local/` is unknown and nothing is moved aside; a timeout is cached for 30 s.
+- **Briefs through the CLI (T-MG-204, T-MG-205):** `brief <id> --from <file>` stores a filled brief (no template placeholder left, at most 64 KB, no link followed); `review brief` refuses a brief whose acceptance is missing or still a placeholder; the review brief states the 500-character cap of a finding text and `review record` names the finding that breaks it.
+- **Trains (T-MG-209, T-MG-213, T-MG-144):** fast guards before the full gate; a failure is bisected with the failing test files only and every culprit is left out, not the tail; the eligibility check runs under the lock before the target moves; a review without a recorded binding is refused instead of binding the moving tip; the test script bounds workers at 4.
+- **Guard (T-MG-211, T-MG-212):** a token outside the one record form is refused with that form named; senders (curl, wget, nc, ssh, rsync, scp, …) naming a secret file, a secret glob or a `/dev/tcp` redirection are blocked, also behind wrappers, substitutions and `rg --pre`; `print`, `compgen`, `vared`, `zparseopts`, `zformat`, `zstyle` and `getln` count as variable setters through one shared list.
+- **Reviewer tokens (T-MG-207):** a reviewer records before its final reply; a stopped reviewer has no token, so the orchestrator dispatches a fresh one.
+- **Smaller fixes (T-MG-143, T-MG-208, T-MG-214, T-MG-216):** rethrows keep `cause`; state writes outside lib/state go through it; the lib/state import cycle is gone; the architecture test catches `EXIT` re-exports and dynamic imports; coverage of the six tests D-MG-82 removed is restored.
+
 ## 2.7.5
 
 The two tasks left out of 2.7.4, in one train.

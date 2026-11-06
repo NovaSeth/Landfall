@@ -1,4 +1,4 @@
-# Known limitations (2.7.5)
+# Known limitations (2.7.6)
 
 ## Not in this release
 - The adaptive engine runs in shadow mode. `landfall tier` explains the recommended tier. Nothing applies tier changes automatically.
