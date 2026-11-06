@@ -103,7 +103,7 @@ export function parsePlan(text) {
 
 const belongs = (t, ref) => t.id === ref || t.title === ref || t.title.startsWith(`${ref}:`) || t.title.startsWith(`${ref} `);
 
-function taskRow(t, { now, bin, lanesOn, caps, approvals, budget = DEFAULT_BUDGET_MIN }) {
+function taskRow(t, { now, bin, lanesOn, caps, approvals, own = true, budget = DEFAULT_BUDGET_MIN }) {
   const id = t.id;
   const age = Math.floor((now - lastEvent(t)) / MIN_MS);
   // over budget (ORC-9, ORC-11): the last dispatched or fix-round event is older than the brief's budget. A visible
@@ -121,7 +121,7 @@ function taskRow(t, { now, bin, lanesOn, caps, approvals, budget = DEFAULT_BUDGE
   // a review dispatched to an in-session agent is visible only once recorded: the task then waits as dispatched
   const record = `record it: \`${bin} task set ${id} dispatched --executor <reviewer> --base <sha>\``;
   const approved = (state, event) => {
-    approvals.set(id, timeOf(event));
+    if (own) approvals.set(id, timeOf(event)); // only the caller's tasks form its train and its hold age (B-MG-26)
     return action(id, state, `merge through one train: \`${bin} train ${id}\``, ['REV-11', 'ORC-25', 'FLW-8']);
   };
   const decide = (k) => action(id, `fix round ${k} after the ${caps.rounds}-round limit`,
@@ -241,10 +241,11 @@ export function nextSteps({ tasks = [], runs = [], handles = [], me = null, plan
     if (multi && me === null) steps.push(action('-', 'your git user.email has no handle in this repository', `register it: \`${bin} init\``, []));
     // Use the same approval decision for the cross-task view and each row; handoff's inFlight excludes delivered reports.
     const approvals = new Map();
-    const rows = new Map(tasks.filter(open).map((t) => [t.id, taskRow(t, { now, bin, lanesOn, caps, approvals, budget: budgets[t.id] ?? DEFAULT_BUDGET_MIN })]));
+    const rows = new Map(tasks.filter(open).map((t) => [t.id, taskRow(t, { now, bin, lanesOn, caps, approvals, own: mine(t), budget: budgets[t.id] ?? DEFAULT_BUDGET_MIN })]));
     const flying = tasks.some((t) => open(t) && !approvals.has(t.id) && REVIEWABLE.has(t.status));
-    const oldest = Math.min(...approvals.values());
-    const capped = approvals.size > 0 && now - oldest >= TRAIN_HOLD_MIN * MIN_MS;
+    const known = [...approvals.values()].filter((x) => x > 0); // an approval whose time cannot be read does not age the hold (B-MG-27)
+    const oldest = Math.min(...known);
+    const capped = known.length > 0 && now - oldest >= TRAIN_HOLD_MIN * MIN_MS;
     for (const [id] of approvals) {
       if (flying && !capped) rows.set(id, wait(id, 'approved, held for the train', 'held for one train with the tasks in flight (D-MG-80); the train runs when they settle', ['ORC-25']));
       else rows.get(id).step = `${flying ? `${approvals.size} held since ${new Date(oldest).toISOString()}; ${TRAIN_HOLD_MIN}-minute hold cap reached; ` : ''}merge through one train: \`${bin} train ${approvals.size > 1 ? '--ready' : id}\``;
