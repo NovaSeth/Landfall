@@ -203,3 +203,28 @@ test('T-MG-203: printf %s <token> | landfall review record|task set ... --token 
   assert.ok(!RE.test(withRoot(own).stdout));
   assert.ok(RE.test(withRoot(own.replace('/bin/landfall', '/bin/../lib/landfall')).stdout));
 });
+
+const installedRoot = join(home, '.claude', 'plugins', 'cache', 'landfall-plugins', 'landfall', '9.9.9');
+const installedBin = join(installedRoot, 'bin', 'landfall');
+mkdirSync(dirname(installedBin), { recursive: true });
+writeFileSync(installedBin, '#!/bin/sh\n');
+const installedBash = (command) => guardBash(base('Bash', { command }), {
+  state: null, autoAllow: 'off', shadowLog() {}, env: { ...env, CLAUDE_PLUGIN_ROOT: installedRoot },
+});
+const recordWith = (program, from = 'r.md') => `printf %s ${['lf', '1_'].join('')}${'A'.repeat(43)} | ${program} review record T-AA-1 --from ${from} --yes --token -`;
+
+test('T-MG-198 F1: the verified plugin bin under HOME/.claude can record a token', () => {
+  const result = installedBash(recordWith(installedBin));
+  assert.ok(!denied(result), result.stdout);
+});
+
+test('T-MG-198 F1: only the verified program operand is exempt from secret-path checks', () => {
+  for (const from of [join(projects, 'x.json'), join(home, '.claude', 'settings.json'), '~/.claude/x',
+    join(repo, 'link-projects', 'x.json'), installedBin]) {
+    assert.match(installedBash(recordWith(installedBin, from)).stdout, RE, from);
+  }
+  const otherBin = join(home, '.claude', 'other', 'bin', 'landfall');
+  mkdirSync(dirname(otherBin), { recursive: true });
+  writeFileSync(otherBin, '#!/bin/sh\n');
+  assert.match(installedBash(recordWith(otherBin)).stdout, RE);
+});

@@ -65,9 +65,9 @@ const RECORD = /^printf %s lf1_[A-Za-z0-9_-]{43} \| (\/[\w.\/-]*\/)?landfall (re
 function recordCmd(command, R) {
   const m = RECORD.exec(command);
   if (!m || command.match(/lf1_/gi).length !== 1) return false;
-  return !m[1] || (isAbsolute(R.root) && realPath(`${m[1]}landfall`) === realPath(join(R.root, 'bin', 'landfall')));
+  return (!m[1] || (isAbsolute(R.root) && realPath(`${m[1]}landfall`) === realPath(join(R.root, 'bin', 'landfall')))) ? m : false;
 }
-const INTERP =/^(python3?|node|perl|ruby)$/;
+const INTERP = /^(python3?|node|perl|ruby)$/;
 function bare(w) { let i = 0; while (WRAP.test(basename(w[i] ?? ''))) { i++; while (/^-|^\w+=|^\d+[smhd]?$/.test(w[i] ?? '')) i++; } return w.slice(i); }
 const values = (t) => (t.startsWith('-') ? [] : [t]).concat(t.includes('=') ? [t.slice(t.indexOf('=') + 1)] : []);
 // every word and redirection target of every simple command, in each directory a cd chain may have reached; shell bodies too
@@ -100,12 +100,15 @@ function walk(cmds, R, dirsNow, depth) {
   return false;
 }
 function bashDeny(command, R) {
+  const record = recordCmd(command, R);
+  // Scan only the verified program operand as its bare name; identical paths in arguments still go through every floor.
+  if (record && record[1]) command = command.replace(`| ${record[1]}landfall `, '| landfall ');
   let expanded = command; let cmds = null;
   try { expanded = expandLiterals(command).replace(HOME_VAR, R.home); cmds = parse(expanded, { limit: LIMIT.cmd }); } catch { /* not reducible */ }
   const texts = expanded === command ? [command] : [command, expanded];
   const flat = texts.map((t) => t.toLowerCase().replace(/\/(\.?\/)+/g, '/')); // floor: a word naming local/ or the transcripts, any spelling
   if (flat.some((t) => ['.claude/projects', ...R.list.map((l) => l.toLowerCase())].some((n) => t.includes(n)))) return true;
-  const lits = [...(recordCmd(command, R) ? [] : ['lf1_']), '$claude_config_dir', '${claude_config_dir}', ...R.list, ...['~', '$home', '${home}', R.home].map((h) => `${h}/.claude`)].map((l) => l.toLowerCase());
+  const lits = [...(record ? [] : ['lf1_']), '$claude_config_dir', '${claude_config_dir}', ...R.list, ...['~', '$home', '${home}', R.home].map((h) => `${h}/.claude`)].map((l) => l.toLowerCase());
   if (texts.some((t) => [...prescan(t, lits)].some((h) => h.startsWith('project rule literal')))) return true;
   if (texts.some((t) => reaches(caseVariants(t)[0], '.claude'))) return true;
   if (cmds === null) return texts.some((t) => /\.claude|\b(cd|pushd)\b/i.test(t)); // unparseable: unknown dir
