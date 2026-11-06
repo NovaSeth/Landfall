@@ -98,14 +98,31 @@ const FIND_DELETE = { test: (s) => after(s, FIND_WORD, FIND_FLAG) };
 // a glob that can match one), or the text of the state directory in an earlier command of the pipe. Not a GUARDED token (a
 // hit is a block with no simple form to recognize); evaluate and hasToken ask exfilText.
 const SENDERS = new Set(['curl', 'wget', 'nc', 'ncat', 'netcat', 'socat', 'scp', 'sftp', 'ftp', 'telnet', 'ssh', 'rsync', 'http', 'https', 'aria2c', 'openssl']);
-const SECRET = new RegExp(`(^|[\\s/=@:~])(\\.env(\\.(?!example|sample|template)[\\w.-]+)?|\\.netrc|\\.npmrc|\\.pgpass|\\.git-credentials|\\.ssh|\\.aws|\\.gnupg|id_(rsa|dsa|ecdsa|ed25519)\\w*|[\\w.-]+\\.(pem|p12|pfx|key)|\\.\\w{0,2}[*?[][\\w*?[\\].-]*|[\\w.-]*[*?]\\.(pem|p12|pfx|key))(?=$|[\\s/;&|<>])`);
+const SECRET = new RegExp(`(^|[\\s/=@:~<>])(\\.env(\\.(?!example|sample|template)[\\w.-]+)?|\\.netrc|\\.npmrc|\\.pgpass|\\.git-credentials|\\.ssh|\\.aws|\\.gnupg|\\.kube|\\.docker|\\.config/gh|hosts\\.yml|credentials\\.json|id_(rsa|dsa|ecdsa|ed25519)\\w*|[\\w.-]+\\.(pem|p12|pfx|key)|\\.\\w{0,2}[*?[][\\w*?[\\].-]*|[\\w.-]*[*?]\\.(pem|p12|pfx|key))(?=$|[\\s/;&|<>])`);
 // programs that only print or search their arguments: a sender named there is text (grep curl, man ssh)
 const TEXT_ONLY = new Set(['grep', 'egrep', 'fgrep', 'rg', 'echo', 'printf', 'man', 'which', 'type', 'whereis', 'help', 'apropos']);
-const sendsPart = (p) => p.includes('/dev/tcp/') || p.includes('/dev/udp/') || (!TEXT_ONLY.has(base(commandWord(p))) && p.split(' ').some((w) => SENDERS.has(base(w))));
+// a stage that runs what it is given (a substitution, a process substitution, rg --pre) is never text
+const RUNS_ARGS = /`|\$\(|[<>]\(|(^|\s)--pre(=|\s|$)/;
+const sendsPart = (p) => {
+  if (p.includes('/dev/tcp/') || p.includes('/dev/udp/')) return true;
+  if (!TEXT_ONLY.has(base(commandWord(p))) && p.split(' ').some((w) => SENDERS.has(base(w)))) return true;
+  // a substitution or --pre runs its words: the sender may be glued to its opener or to --pre=
+  return RUNS_ARGS.test(p) && p.split(/[\s=`$(<>]+/).some((w) => SENDERS.has(base(w)));
+};
+// names a glob word may stand for (a dot name only from a glob that starts with a dot)
+const SECRET_NAMES = ['.env', '.env.local', '.netrc', '.npmrc', '.pgpass', '.git-credentials', '.ssh', '.aws', '.gnupg', '.kube', '.docker', 'hosts.yml', 'credentials.json', 'id_rsa', 'id_dsa', 'id_ecdsa', 'id_ed25519', 'key.pem', 'cert.p12', 'cert.pfx', 'server.key'];
+const globRe = (g) => { try { return new RegExp('^' + g.replace(/[.+^${}()|\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.') + '$'); } catch { return null; } };
+const secretGlob = (s) => s.split(/\s+/).some((w) => w.split(/[=@:<>]/).some((x) => {
+  const g = x.slice(x.lastIndexOf('/') + 1);
+  if (!/[*?[]/.test(g) || /^[*?[\]]*$/.test(g)) return false;
+  const re = globRe(g);
+  return re !== null && SECRET_NAMES.some((n) => re.test(n) && (n[0] !== '.' || g[0] === '.' || g[0] === '['));
+}));
+const secretIn = (s) => SECRET.test(s) || secretGlob(s);
 const exfilVariants = (vs, lit) => vs.some((v) => v.split(/[;&]/).some((s) => {
   const ps = s.split('|'); const k = ps.findIndex(sendsPart);
   if (k < 0) return false;
-  if (SECRET.test(s)) return true;
+  if (secretIn(s)) return true;
   return lit !== null && (ps.slice(0, k).some((q) => q.includes(lit)) || (/\/dev\/(tcp|udp)\//.test(s) && s.includes(lit)));
 }));
 
