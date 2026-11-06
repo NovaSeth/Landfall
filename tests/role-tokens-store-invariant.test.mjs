@@ -39,7 +39,7 @@ run('git', ['config', 'user.name', 'T']);
 writeFileSync(join(repo, 'a.txt'), 'x\n');
 run('git', ['add', '.']);
 run('git', ['commit', '-qm', 'init']);
-const ini = run(join(pluginDir, 'bin', 'landfall'), ['init', '--yes']);
+const ini = run(join(pluginDir, 'bin', names.bin), ['init', '--yes']);
 assert.equal(ini.status, 0, ini.stdout + ini.stderr);
 const host = { pid: process.pid, start: identify([process.pid]).get(process.pid).start };
 const ctx = JSON.parse(sessionStart({ cwd: repo, session_id: 's1' }, { env, host }).stdout || '{}').hookSpecificOutput?.additionalContext ?? '';
@@ -48,7 +48,7 @@ const rev = TOK.exec(subagentStart({ cwd: repo, session_id: 's1', agent_id: 'a1'
 
 test('no role token lands under the state local directory or the plugin data', () => {
   assert.ok(orch && rev, 'both tokens minted');
-  const sub = guardBash({ tool_name: 'Bash', cwd: repo, agent_type: `${names.plugin}:reviewer`, session_id: 's1', tool_input: { command: `echo ${rev} | landfall review record T-PA-1 --from r.md` } }, { env, autoAllow: 'off' });
+  const sub = guardBash({ tool_name: 'Bash', cwd: repo, agent_type: `${names.plugin}:reviewer`, session_id: 's1', tool_input: { command: `echo ${rev} | ${names.bin} review record T-PA-1 --from r.md` } }, { env, autoAllow: 'off' });
   assert.ok(denied(sub), 'the reviewer command is blocked');
   guardBash({ tool_name: 'Bash', cwd: repo, session_id: 's1', tool_input: { command: `printf %s ${orch} | rm -rf /` } }, { env, autoAllow: 'off' });
   for (const f of [...files(join(repo, names.stateDir, 'local')), ...files(pd)]) {

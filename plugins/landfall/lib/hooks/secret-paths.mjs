@@ -7,6 +7,8 @@ import { caseVariants, prescan } from '../guard/tokens.mjs';
 import { LIMIT } from '../guard/index.mjs';
 import { globReaches, globRe, inside, realPath } from '../guard/protect.mjs';
 import { expandLiterals, parse } from '../guard/tokenizer.mjs';
+import { loadNames } from './loop-state.mjs';
+const names = loadNames();
 const SECRET_REASON = "SEC-13: blocked: a subagent does not read Claude Code transcripts or the plugin's data files. Instead work from your brief and the repository.";
 const HOME = /^(~|\$HOME|\$\{HOME\})(?=\/|$)/;
 const READERS = { find: /./, rg: /./, ag: /./, fd: /./, tar: /./, zip: /./, rsync: /./, du: /./, grep: /^-[a-zA-Z]*[rR]|^--(dereference-)?recursive$|^-d=?recurse/, cp: /^-[a-zA-Z]*[rRa]/, ls: /^-[a-zA-Z]*R/ };
@@ -59,13 +61,12 @@ function readDeny(input, R) {
 const reaches = (text, name) => text.split(/\s+/).some((w) => /(^|\/)[.[]|\{/.test(w) && globReaches(w, name));
 const SHELLS = /^(ba|z|da|k)?sh$|^eval$/; const GLOBBY = /[*?[]/; const HOME_VAR = /\$\{HOME\}|\$HOME\b/g;
 const WRAP = /^(env|nice|nohup|timeout|command|builtin|exec|stdbuf|xargs|sudo)$/;
-// T-MG-203: the one command that carries a token: printf %s <token> | landfall (review record | task set) <plain words> --token -
-// The program is the bare name or the plugin's own bin/landfall by absolute path (no relative prefix; no plugin root → bare only).
-const RECORD = /^printf %s lf1_[A-Za-z0-9_-]{43} \| (\/[\w.\/-]*\/)?landfall (review record|task set)( [\w.:@%+=,\/-]+)* --token -$/;
+// T-MG-203: only the CLI (bare name or the plugin's absolute bin path) may receive a token through printf %s and --token -.
+const RECORD = new RegExp(String.raw`^printf %s lf1_[A-Za-z0-9_-]{43} \| (\/[\w.\/-]*\/)?${names.bin.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} (review record|task set)( [\w.:@%+=,\/-]+)* --token -$`);
 function recordCmd(command, R) {
   const m = RECORD.exec(command);
   if (!m || command.match(/lf1_/gi).length !== 1) return false;
-  return (!m[1] || (isAbsolute(R.root) && realPath(`${m[1]}landfall`) === realPath(join(R.root, 'bin', 'landfall')))) ? m : false;
+  return (!m[1] || (isAbsolute(R.root) && realPath(`${m[1]}${names.bin}`) === realPath(join(R.root, 'bin', names.bin)))) ? m : false;
 }
 const INTERP = /^(python3?|node|perl|ruby)$/;
 function bare(w) { let i = 0; while (WRAP.test(basename(w[i] ?? ''))) { i++; while (/^-|^\w+=|^\d+[smhd]?$/.test(w[i] ?? '')) i++; } return w.slice(i); }
@@ -102,7 +103,7 @@ function walk(cmds, R, dirsNow, depth) {
 function bashDeny(command, R) {
   const record = recordCmd(command, R);
   // Scan only the verified program operand as its bare name; identical paths in arguments still go through every floor.
-  if (record && record[1]) command = command.replace(`| ${record[1]}landfall `, '| landfall ');
+  if (record && record[1]) command = command.replace(`| ${record[1]}${names.bin} `, `| ${names.bin} `);
   let expanded = command; let cmds = null;
   try { expanded = expandLiterals(command).replace(HOME_VAR, R.home); cmds = parse(expanded, { limit: LIMIT.cmd }); } catch { /* not reducible */ }
   const texts = expanded === command ? [command] : [command, expanded];
@@ -121,7 +122,6 @@ export function secretDeny(input, { env = process.env } = {}) {
   const hit = tool === 'Bash' ? typeof command === 'string' && command !== '' && bashDeny(command, R) : /^(Read|Grep|Glob)$/.test(tool) && readDeny(input, R);
   return hit ? SECRET_REASON : null;
 }
-
 // The `guard-read` row: Read, Grep, Glob.
 export const guardRead = (input, opts) => {
   const reason = secretDeny(input, opts);
