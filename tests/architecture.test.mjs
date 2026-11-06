@@ -107,6 +107,11 @@ function scan(pluginRoot) {
       if (unit === 'hooks' && !HOOK_IMPORTS.has(unitOf(pluginRoot, target))) add('hooks-import', file, `${spec} (unit ${unitOf(pluginRoot, target)})`);
     }
     graph.set(file, targets);
+    // EXIT has one home, lib/cli/exit.mjs: no module imports it from the command table (B-MG-32).
+    for (const m of code.matchAll(/\bimport\s+([^;()§]*?)\s*\bfrom\s*§(\d+)§/g)) {
+      const spec = lit(m[2]);
+      if (typeof spec === 'string' && spec.startsWith('.') && /\bEXIT\b/.test(m[1]) && relative(pluginRoot, resolve(dirname(file), spec)).split(sep).join('/') === 'lib/cli/commands.mjs') add('exit-owner', file, 'imports EXIT from lib/cli/commands.mjs (use lib/cli/exit.mjs)');
+    }
 
     // Spawning: child_process only in git and proc (any mention: import, import(), createRequire).
     if (unit !== 'git' && unit !== 'proc' && strings.some((s) => s === 'child_process' || s === 'node:child_process')) add('spawn-owner', file, 'child_process outside git and proc');
@@ -276,6 +281,8 @@ const PLANTED = [
   ['output-owner', 'lib/profile/a.mjs', "export const warn = (io, w) => io.err(`warning: ${w}\\n`);\n"],
   ['output-owner', 'lib/cli/a.mjs', 'writeSync(1, text);\n'],
   ['output-owner', `bin/${names.bin}`, "process.stdout.write('x');\n"],
+  ['exit-owner', 'lib/state/a.mjs', "import { EXIT } from '../cli/commands.mjs';\n"],
+  ['exit-owner', 'lib/router/a.mjs', "import { x, EXIT as E } from '../cli/commands.mjs';\n"],
 ];
 
 function plant(files) {
