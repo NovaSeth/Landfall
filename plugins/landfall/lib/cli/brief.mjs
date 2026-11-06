@@ -23,7 +23,7 @@ import { leaseEnv, snapshot } from '../sched/index.mjs';
 import { KINDS, open, resolve, writeTaskText } from '../state/index.mjs';
 import { FENCE_MARKER, dataLine, fenceLine } from '../text/data.mjs';
 import { reviewShown } from '../verify/artifacts.mjs';
-import { EXIT } from './commands.mjs';
+import { EXIT } from './exit.mjs';
 
 const ROLES = Object.freeze(['implementer', 'reviewer']);
 const GATE_LINES = '<typecheck>\n<lint>\n<tests with a worker limit>\n';

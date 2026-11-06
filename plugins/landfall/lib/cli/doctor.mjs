@@ -37,7 +37,7 @@ import { detectProviders } from '../providers/index.mjs';
 import { readProfile } from '../profile/index.mjs';
 import { currentCalibration, snapshot } from '../sched/index.mjs';
 import { KINDS, StateError, localForeign, machineDataDir, open as openStore, resolve as resolveRepo } from '../state/index.mjs';
-import { EXIT } from './commands.mjs';
+import { EXIT } from './exit.mjs';
 
 // SD-5: the oldest Claude Code version CI runs (tests/cli-contract.test.mjs keeps the two equal).
 export const CLAUDE_CODE_FLOOR = '2.1.300';

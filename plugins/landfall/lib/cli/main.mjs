@@ -9,7 +9,8 @@
 // .claude-plugin/plugin.json.
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { COMMANDS, DEFAULT_COMMAND, EXIT, EXIT_CODES, GLOBAL_FLAGS, flagKey, mutates } from './commands.mjs';
+import { COMMANDS, DEFAULT_COMMAND, GLOBAL_FLAGS, flagKey, mutates } from './commands.mjs';
+import { EXIT, EXIT_CODES } from './exit.mjs';
 import { commandUsage, generalUsage, groupUsage, renderCommandHelp, renderHelp } from './help.mjs';
 import { processIo, writeHook, writeResult } from './output.mjs';
 

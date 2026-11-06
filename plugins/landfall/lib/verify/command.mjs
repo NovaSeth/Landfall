@@ -5,7 +5,7 @@
 // Exit: verify and task merge by result (pass 0 · error 8 · any other 1); task done 0 when done; review record 0
 // when recorded, 2 with one error per failing field; baseline show 1 when the sha256 does not match the content.
 // Gate output is returned in `data.output` (never written to committed state; verify also keeps it under local/).
-import { EXIT } from '../cli/commands.mjs';
+import { EXIT } from '../cli/exit.mjs';
 import { ProfileError } from '../profile/index.mjs';
 import { RouteError } from '../router/index.mjs';
 import { StateError } from '../state/index.mjs';

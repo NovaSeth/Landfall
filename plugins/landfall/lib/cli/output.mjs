@@ -10,7 +10,7 @@
 //     build it with forModel
 import { isatty } from 'node:tty';
 import { forJson, forTerminal } from '../text/clean.mjs';
-import { EXIT } from './commands.mjs';
+import { EXIT } from './exit.mjs';
 import { envelope, normalizeError } from './envelope.mjs';
 
 // The streams and context of this process; tests pass their own { out, err, stdin, stdinIsTTY, env, cwd }.

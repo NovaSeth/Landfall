@@ -5,7 +5,7 @@
 // process state (COD-9). A StateError becomes its exit code with the error and hint unchanged.
 import { lstatSync, readFileSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
-import { EXIT } from '../cli/commands.mjs';
+import { EXIT } from '../cli/exit.mjs';
 import { PATTERNS, StateError, open, resolve } from '../state/index.mjs';
 import { checkDecisions, stateRel } from './check.mjs';
 import { citedIn, contextLine, inside, realTarget, relevantDecisions } from './context.mjs';

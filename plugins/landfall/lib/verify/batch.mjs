@@ -15,7 +15,8 @@ import { refreshReceipt } from './done.mjs';
 import { guardGates } from './fast.mjs';
 import { requireTrustedGates, runGate } from './gates.mjs';
 import { gateChanges, mergeTask, profileOf, targetOf, treeHeld } from './merge.mjs';
-import { activeWhere, codeState, evaluate, gatesSha, gitIn, stateAt, storeOf } from './run.mjs';
+import { codeState, gitIn, stateAt } from './history.mjs';
+import { activeWhere, evaluate, gatesSha, storeOf } from './run.mjs';
 
 const fail = (code, message, hint = '') => new StateError(code, 'FAIL', message, { hint });
 const usage = (code, message, hint = '') => new StateError(code, 'USAGE', message, { hint });
