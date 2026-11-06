@@ -99,7 +99,7 @@ export const isFixturePath = (path) => {
 export const skipsContent = (path) => /\.lockb$/.test(path);
 
 // Secret paths a command must not send out (guard/tokens.mjs): a word naming one, and the names a glob may stand for.
-export const SECRET = new RegExp(`(^|[\\s/=@:~<>])(\\.env(\\.(?!example|sample|template)[\\w.-]+)?|\\.netrc|\\.npmrc|\\.pgpass|\\.git-credentials|\\.ssh|\\.aws|\\.gnupg|\\.kube|\\.docker|\\.config/gh|hosts\\.yml|credentials\\.json|id_(rsa|dsa|ecdsa|ed25519)\\w*|[\\w.-]+\\.(pem|p12|pfx|key)|\\.\\w{0,2}[*?[][\\w*?[\\].-]*|[\\w.-]*[*?]\\.(pem|p12|pfx|key))(?=$|[\\s/;&|<>])`);
+export const SECRET = new RegExp(`(^|[\\s/=@:~<>])(\\.env(\\.(?!example|sample|template)[\\w.-]+)?|\\.netrc|\\.npmrc|\\.pgpass|\\.git-credentials|\\.ssh|\\.aws|\\.gnupg|\\.kube|\\.docker|\\.config/gh|hosts\\.yml|credentials\\.json|id_(rsa|dsa|ecdsa|ed25519)\\w*|[\\w.-]+\\.(pem|p12|pfx|key)|\\.\\w{0,2}[*?[][\\w*?[\\].!^:-]*|[\\w.-]*[*?]\\.(pem|p12|pfx|key))(?=$|[\\s/;&|<>])`);
 export const SECRET_NAMES = ['.env', '.env.local', '.netrc', '.npmrc', '.pgpass', '.git-credentials', '.ssh', '.aws', '.gnupg', '.kube', '.docker', 'hosts.yml', 'credentials.json', 'id_rsa', 'id_dsa', 'id_ecdsa', 'id_ed25519', 'key.pem', 'cert.p12', 'cert.pfx', 'server.key'];
 
 // Project patterns from the text of secrets-patterns.txt (latin1, as the lines it is matched against):
