@@ -81,7 +81,7 @@ function project(t) {
     writeFileSync(reportFile, REPORT);
     ok(cli(wt, 'report', id, '--from', reportFile));
     const reviewFile = join(iso.base, `${id}-review.json`);
-    writeFileSync(reviewFile, JSON.stringify(REVIEW));
+    writeFileSync(reviewFile, JSON.stringify({ ...REVIEW, head: git(wt, 'rev-parse', 'HEAD') })); // B-MG-17: a review binds the commit it read
     ok(cli(wt, 'task', 'set', id, 'dispatched', '--executor', 'claude:reviewer', '--base', started.data.base));
     ok(cli(wt, 'review', 'record', id, '--from', reviewFile));
     return { id, wt, branch: started.data.branch };

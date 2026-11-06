@@ -251,3 +251,13 @@ test('T-MG-192: a run record without head is refused (run-head-missing), one wit
   assert.equal(ok.code, 0, ok.text);
   assert.equal(r.store.read('task', r.id).events.findLast((e) => e.event === 'review').data.head, 'b'.repeat(40));
 });
+
+test('B-MG-18: exec of a reviewer refuses a saved review brief with no Range (brief-unbound): no run is started', async (t) => {
+  const r = repo(t);
+  mkdirSync(join(r.stateDir, 'tasks', r.id), { recursive: true });
+  writeFileSync(join(r.stateDir, 'tasks', r.id, 'review-r1-brief.md'), '# Review brief\n\nno range here\n');
+  const res = await cli(['exec', '--task', r.id, '--role', 'reviewer', '--provider', 'codex'], r);
+  assert.notEqual(res.code, 0, res.text);
+  assert.equal(first(res).code, 'brief-unbound');
+  assert.deepEqual(r.rstore.list('run'), [], 'no run record');
+});

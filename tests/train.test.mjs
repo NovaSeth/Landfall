@@ -231,7 +231,7 @@ test('F2: review record binds the reviewed commit: the tip of the task branch', 
   const r = repo(t);
   const id = r.task('feat/rec', addTest('a.test.mjs'), { review: false });
   const file = join(r.dir, '..', 'review.json');
-  writeFileSync(file, JSON.stringify(APPROVED));
+  writeFileSync(file, JSON.stringify({ ...APPROVED, head: r.git('rev-parse', 'feat/rec') })); // B-MG-17: a review names the commit it read
   const rec = await cli(['review', 'record', id, '--from', file, '--yes'], r);
   assert.equal(rec.code, 0, JSON.stringify(rec.env.errors));
   assert.equal(events(r, id, 'review').at(-1).data.head, r.git('rev-parse', 'feat/rec'));
