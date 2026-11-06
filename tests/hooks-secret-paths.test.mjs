@@ -1,5 +1,5 @@
-// Secret-path protection (SEC-13, spec 2026-11-05 D3, A8, A9): a subagent (agent_type set) reads no Claude Code transcript and
-// no token or session file of the plugin's state, through Read, Grep, Glob or Bash. The main session is unchanged.
+// Secret-path protection (SEC-13, spec 2026-11-05 D3, A8, A9, D-MG-81): a subagent (agent_type set) reads no Claude Code transcript
+// and no file of the plugin data, through Read, Grep, Glob or Bash; the state's local/ holds no secret and is not a root. The main session is unchanged.
 // Commands and paths are data: nothing here runs them.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -41,22 +41,17 @@ const base = (tool, tool_input, sub = true, extra = {}) => ({ tool_name: tool, c
 const denied = (r) => /"permissionDecision":"deny"/.test(r.stdout ?? '');
 const read = (input) => runHook('guard-read', typeof input === 'string' ? input : JSON.stringify(input), { env });
 const bash = (command, sub = true) => guardBash(base('Bash', { command }, sub), { state: null, autoAllow: 'off', shadowLog() {}, env });
-const REASON = "SEC-13: blocked: a subagent does not read Claude Code transcripts or the plugin's token and session files. Instead work from your brief and the repository.";
+const REASON = "SEC-13: blocked: a subagent does not read Claude Code transcripts or the plugin's data files. Instead work from your brief and the repository.";
 
 test('Read, Grep and Glob on a protected root are denied for a subagent with the exact reason', () => {
   const r = read(base('Read', { file_path: transcript }));
   assert.ok(denied(r), r.stdout);
   assert.equal(JSON.parse(r.stdout).hookSpecificOutput.permissionDecisionReason, REASON);
   for (const [tool, input] of [
-    ['Read', { file_path: join(state, 'local', 'token.json') }],
-    ['Read', { file_path: join(state, 'local', 'session', 'x.json') }],
     ['Grep', { pattern: 'a', path: projects }],
-    ['Grep', { pattern: 'a', path: join(state, 'local', 'session') }],
     ['Glob', { pattern: '**/*.jsonl', path: projects }],
     ['Glob', { pattern: `${projects}/**/*.jsonl` }],
-    ['Read', { file_path: join(repo, 'link-token') }],
     ['Read', { file_path: join(repo, 'link-projects', '-p', 's1.jsonl') }],
-    ['Read', { file_path: 'link-token' }],
     ['Read', { file_path: relative(repo, transcript) }],
     ['Read', { file_path: '~/.claude/projects/-p/s1.jsonl' }],
     ['Read', { file_path: '$HOME/.claude/projects/-p/s1.jsonl' }],
@@ -94,16 +89,15 @@ test('malformed input is allowed; a relative target with a relative cwd, and an 
     assert.ok(!denied(read(text)), text);
   }
   assert.ok(denied(read({ ...base('Read', { file_path: 'x.txt' }), cwd: 'relative/dir' })));
-  mkdirSync(join(state, 'local', 'session'), { recursive: true });
-  symlinkSync(join(state, 'local', 'session', 'loop'), join(state, 'local', 'session', 'loop')); // a link loop
-  assert.ok(denied(read(base('Read', { file_path: join(state, 'local', 'session', 'loop', 'x') }))));
+  symlinkSync(join(projects, 'loop'), join(projects, 'loop')); // a link loop inside a root
+  assert.ok(denied(read(base('Read', { file_path: join(projects, 'loop', 'x') }))));
 });
 
 test('the Bash read corpus is denied for a subagent and allowed for the main session', () => {
   const corpus = [
     `cat ${transcript}`, 'cat ~/.claude/projects/-p/s1.jsonl', 'cat $HOME/.claude/projects/-p/s1.jsonl', 'cat ${HOME}/.claude/projects/x',
-    `cat ${home}/.claude/projects/-p/s1.jsonl`, 'grep -r lf1_ ~', 'grep -rn foo $HOME', 'echo lf1_abc', `cat ${join(state, 'local', 'token.json')}`,
-    `cat ${names.stateDir}/local/token.json`, 'find / -name "*.jsonl"', `find ${home} -type f`, 'rg secret ~', 'ls -R ~/.claude', `tar cf - ${home}`,
+    `cat ${home}/.claude/projects/-p/s1.jsonl`, 'grep -r lf1_ ~', 'grep -rn foo $HOME', 'echo lf1_abc',
+    'find / -name "*.jsonl"', `find ${home} -type f`, 'rg secret ~', 'ls -R ~/.claude', `tar cf - ${home}`,
     'cat "$(echo ~/.claude/projects/x)"', 'cat ~/.cl*/projects/-p/s1.jsonl', 'cat ~/.claude/pro{jects,x}/-p/s1.jsonl',
   ];
   for (const c of corpus) {
@@ -127,41 +121,30 @@ const sd = (...p) => join(state, 'local', ...p);
 const RE = /SEC-13: blocked: a subagent does not read/;
 const cmdDenied = (c, sub = true) => RE.test(bash(c, sub).stdout);
 
-test('r1 F1 / r2 F1: the whole local directory is a root; Grep and Glob over it are denied, the repository root stays allowed', () => {
-  for (const [tool, input] of [['Grep', { pattern: '.', path: sd() }], ['Glob', { pattern: sd('*') }], ['Glob', { pattern: sd('**') }],
-    ['Glob', { pattern: '*', path: sd() }], ['Glob', { pattern: 'local/**', path: state }], ['Read', { file_path: sd('token.json') }],
-    ['Read', { file_path: sd('other.json') }], ['Grep', { pattern: '.', path: home }]]) {
-    assert.ok(denied(read(base(tool, input))), `${tool} ${JSON.stringify(input)}`);
+test("the state's local directory is not a root: root recursive readers and the review diff pass (D-MG-81)", () => {
+  for (const [tool, input] of [['Grep', { pattern: '.', path: sd() }], ['Glob', { pattern: sd('*') }], ['Read', { file_path: sd('review', 'T-AA-1-r1.diff') }],
+    ['Read', { file_path: sd('verify', 'T-AA-1.log') }], ['Read', { file_path: sd('token.json') }], ['Grep', { pattern: '.', path: repo }]]) {
+    assert.ok(!denied(read(base(tool, input))), `${tool} ${JSON.stringify(input)}`);
   }
-  assert.ok(!denied(read(base('Grep', { pattern: '.', path: repo }))));
-  assert.ok(!denied(read(base('Grep', { pattern: '.', path: sd() }, false))));
+  for (const c of ['grep -r tok .', 'find . -type f -exec cat {} +', 'tar cf - .', `cp -r . ${tmpdir()}/scratch`, `cat ${names.stateDir}/local/token.json`]) assert.ok(!cmdDenied(c), c);
+  for (const [tool, input] of [['Grep', { pattern: '.', path: home }], ['Read', { file_path: transcript }]]) assert.ok(denied(read(base(tool, input))), tool);
 });
 
 test('r1 F2 / r2 F2, F4: every word of a subagent command is resolved (globs, cd chain, links, shell bodies, redirections)', () => {
-  const loc = join(names.stateDir, 'local');
-  for (const c of [`cat ${loc}/tok*`, `cat ${loc}/t?ken.json`, `cd ${loc} && cat token.json`, 'cat link-token', `cat ${loc}/./token.json`,
-    `head -c 5 ${loc}/token.json`, `cat < ${loc}/token.json`, `cd ${names.stateDir} && cat local/token.json`, `sed -n 1p ${loc}/token.json`,
-    `bash -c "grep -r . ${home}"`, `cd ${home}; grep -r . .`, `bash -c 'cat ${loc}/token.json'`, `grep -r . ${loc}`, `cat ${names.stateDir}/l*/token.json`]) {
+  const tp = `${home}/.claude/projects/-p`;
+  for (const c of [`cat ${tp}/s1.j*`, `cat ${tp}/s?.jsonl`, `cd ${tp} && cat s1.jsonl`, 'cat link-projects/-p/s1.jsonl', `cat ${tp}/./s1.jsonl`,
+    `head -c 5 ${tp}/s1.jsonl`, `cat < ${tp}/s1.jsonl`, `cd ${home}/.claude && cat projects/-p/s1.jsonl`, `sed -n 1p ${tp}/s1.jsonl`,
+    `bash -c "grep -r . ${home}"`, `cd ${home}; grep -r . .`, `bash -c 'cat ${tp}/s1.jsonl'`, `grep -r . ${tp}`, `cat ${home}/.claude/p*/-p/s1.jsonl`]) {
     assert.ok(cmdDenied(c), `subagent: ${c}`);
     assert.ok(!cmdDenied(c, false), `main: ${c}`);
   }
-  for (const c of ['cat README.md', 'ls tests', 'git status', `cd ${names.stateDir} && cat state.json`, 'bash -c "ls src"']) assert.ok(!cmdDenied(c), c);
+  for (const c of ['cat README.md', 'ls tests', 'git status', `cd ${names.stateDir} && cat state.json`, `cat ${names.stateDir}/local/token.json`, 'bash -c "ls src"']) assert.ok(!cmdDenied(c), c);
 });
 
 test('r2 F3: a nested subagent transcript still protects the whole transcripts directory', () => {
   const nested = join(projects, '-p', 's1', 'subagents', 'agent-abc.jsonl');
   assert.ok(denied(read(base('Read', { file_path: transcript }, true, { transcript_path: nested }))));
   assert.ok(denied(read(base('Read', { file_path: join(projects, '-q', 'z.jsonl') }, true, { transcript_path: nested }))));
-});
-
-test('r2 F5: an absolute cwd outside the project does not drop the project state roots', () => {
-  const input = { ...base('Read', { file_path: sd('token.json') }), cwd: tmpdir() };
-  assert.ok(denied(runHook('guard-read', JSON.stringify(input), { env: { ...env, CLAUDE_PROJECT_DIR: repo } })));
-});
-
-test('r2 F6: when the state cannot be resolved in time, a subagent read of the token is still denied', () => {
-  const input = base('Read', { file_path: sd('token.json') });
-  assert.ok(denied(runHook('guard-read', JSON.stringify(input), { env, deadline: 0 })));
 });
 
 // F3 (r1): the eight tests of the deleted tests/hooks-guard-roles.test.mjs (D-MG-78) and what covers them now:
@@ -175,32 +158,73 @@ test('r2 F6: when the state cannot be resolved in time, a subagent read of the t
 const sn = names.stateDir;
 const allDenied = (cmds) => { for (const c of cmds) { assert.ok(cmdDenied(c), `subagent: ${c}`); assert.ok(!cmdDenied(c, false), `main: ${c}`); } };
 
-test('r3 F1: the state directory is never an exempt ancestor; the repository root stays allowed', () => {
-  allDenied([`grep -rn tok ${sn}`, `rg . ${sn}`, `ls -R ${sn}`, `find ${sn} -type f`]);
-  assert.ok(denied(read(base('Grep', { pattern: '.', path: sn }))));
+test('r3 F1: the state directory is no root and no ancestor of one; the repository root stays allowed (D-MG-81)', () => {
+  for (const c of [`grep -rn tok ${sn}`, `rg . ${sn}`, `ls -R ${sn}`, `find ${sn} -type f`, 'grep -r . .', 'grep -rn foo src']) assert.ok(!cmdDenied(c), c);
+  assert.ok(!denied(read(base('Grep', { pattern: '.', path: sn }))));
   assert.ok(!denied(read(base('Grep', { pattern: '.' }))));
-  assert.ok(!cmdDenied('grep -r . .') && !cmdDenied('grep -rn foo src'));
 });
 
-test('round 2: a word naming the local directory or the transcripts is denied in any spelling', () => {
-  allDenied([`ls --path=${sn}/local/token.json`, `ls -d@${sn}/local`, `cat ${sn}//local/./token.json`, `cat @${sn}/local/x`, `ls -f${sn}/local/x`,
-    `X=${sn}/local; ls $X`, `cat ${sn}///local/x`, 'cat ~/.claude//projects/x', `cat ${projects}//-p/s1.jsonl`, `cat ${sn}/./local/z`]);
+test('round 2: a word naming the transcripts is denied in any spelling', () => {
+  allDenied([`ls --path=${projects}/-p`, `ls -d@${projects}`, `cat @${projects}/x`, `ls -f${projects}/x`,
+    `X=${projects}; ls $X`, 'cat ~/.claude//projects/x', `cat ${projects}//-p/s1.jsonl`, `cat ${home}/.claude/./projects/z`]);
   assert.ok(!cmdDenied(`cat ${sn}/state.json`));
 });
 
 test('round 2: cd and pushd skip options; an unknown directory fails closed; wrappers do not hide cd or a shell body', () => {
-  allDenied([`cd -- ${sn} && cat local/token.json`, `cd -P ${sn} && cat local/token.json`, `pushd ${sn} >/dev/null && cat local/token.json`,
-    `builtin cd ${sn} && cat local/token.json`, `command cd ${sn} && cat local/token.json`,
+  const ch = `${home}/.claude`;
+  allDenied([`cd -- ${ch} && cat projects/-p/s1.jsonl`, `cd -P ${ch} && cat projects/-p/s1.jsonl`, `pushd ${ch} >/dev/null && cat projects/-p/s1.jsonl`,
+    `builtin cd ${ch} && cat projects/-p/s1.jsonl`, `command cd ${ch} && cat projects/-p/s1.jsonl`,
     'cd && cat x.txt', 'cd - && cat x.txt', 'cd "$X"; cat x.txt', 'cd $(pwd)/.. && cat x.txt']);
   for (const w of ['env', 'nice -n 5', 'nohup', 'timeout 5', 'command', 'builtin', 'exec', 'stdbuf -o0', 'xargs', 'sudo', 'env A=1']) {
-    allDenied([`${w} bash -c 'cat ${sn}/l*/token.json'`, `${w} sh -c 'cat l*/token.json' ; ${w} cd ${sn} && ${w} cat l*/token.json`]);
+    allDenied([`${w} bash -c 'cat ${ch}/p*/-p/s1.jsonl'`, `${w} sh -c 'cat pro*/-p/s1.jsonl' ; ${w} cd ${ch} && ${w} cat pro*/-p/s1.jsonl`]);
   }
   assert.ok(!cmdDenied('cd src && cat a.txt') && !cmdDenied('cd - && ls') && !cmdDenied('env FOO=1 ls src'));
 });
 
-test('round 2: an inline interpreter body naming the state directory, .claude or local/ is denied', () => {
-  allDenied(['python -c "print(open(\'local/x\').read())"', 'python3 -c "print(open(\'local/x\').read())"', 'node -e "require(\'fs\').readFileSync(\'local/x\')"',
-    'node -p "require(\'fs\').readdirSync(\'local/\')"', 'perl -e \'open F,"local/x"\'', 'ruby -e \'File.read("local/x")\'',
-    `python -c "import os;os.listdir('${sn}')"`, 'node -e "require(\'fs\').readFileSync(process.env.HOME+\'/.claude/x\')"']);
-  assert.ok(!cmdDenied('python3 -c "print(1)"') && !cmdDenied('node -e "console.log(2)"'));
+test('round 2: an inline interpreter body naming .claude is denied', () => {
+  allDenied(['python -c "print(open(\'.claude/x\').read())"', 'perl -e \'open F,"~/.claude/x"\'', 'ruby -e \'File.read(".claude/x")\'',
+    'node -e "require(\'fs\').readFileSync(process.env.HOME+\'/.claude/x\')"']);
+  assert.ok(!cmdDenied('python3 -c "print(1)"') && !cmdDenied('node -e "console.log(2)"') && !cmdDenied(`python -c "import os;os.listdir('${sn}/local')"`));
+});
+
+// T-MG-203: the one command shape that carries a token passes; every other command naming the prefix is denied.
+test(`T-MG-203: printf %s <token> | ${names.bin} review record|task set ... --token - is allowed for a subagent`, () => {
+  const t = ['lf', '1_'].join('') + 'A'.repeat(43);
+  for (const c of [`printf %s ${t} | ${names.bin} review record T-AA-1 --from r.md --yes --token -`,
+    `printf %s ${t} | ${names.bin} task set T-AA-1 dispatched --token -`]) assert.ok(!cmdDenied(c), c);
+  for (const c of [`grep ${t} .`, `echo ${t} > f`, `printf %s ${t} | sh`, `printf %s ${t} | ${names.bin} review record T-AA-1 --yes`, `printf %s ${t} ; cat x`,
+    `printf %s ${t} | ${names.bin} review record T-AA-1 --token - ${t}`, `printf %s ${t}${t} | ${names.bin} review record T-AA-1 --token -`, `printf %s ${t} | ${names.bin} review record T-AA-1 --token - > f`,
+    `printf %s ${t} | ${names.bin} review record T-AA-1 --token - && cat x`, `printf %s ${t} | ${names.bin} review record $(id) --token -`, `printf %s ${t} | ${names.bin} status --token -`,
+    `printf %s ${t} | evil/${names.bin}2 review record T-AA-1 --token -`, `printf %s ${t.slice(0, 20)} | ${names.bin} review record T-AA-1 --token -`, `echo ${t}`,
+    `printf %s ${t} | /tmp/x/${names.bin} review record T-AA-1 --token -`, `printf %s ${t} | ./${names.bin} review record T-AA-1 --token -`,
+    `printf %s ${t} | ../bin/${names.bin} review record T-AA-1 --token -`, `printf %s ${t} | ${join(pluginDir, 'bin', names.bin)} review record T-AA-1 --token -`]) assert.ok(cmdDenied(c), c);
+  const own = `printf %s ${t} | ${join(pluginDir, 'bin', names.bin)} review record T-AA-1 --token -`; // the plugin's own bin, by root
+  const withRoot = (c) => guardBash(base('Bash', { command: c }), { state: null, autoAllow: 'off', shadowLog() {}, env: { ...env, CLAUDE_PLUGIN_ROOT: pluginDir } });
+  assert.ok(!RE.test(withRoot(own).stdout));
+  assert.ok(RE.test(withRoot(own.replace(`/bin/${names.bin}`, `/bin/../lib/${names.bin}`)).stdout));
+});
+
+const installedRoot = join(home, '.claude', 'plugins', 'cache', names.marketplace, names.plugin, '9.9.9');
+const installedBin = join(installedRoot, 'bin', names.bin);
+mkdirSync(dirname(installedBin), { recursive: true });
+writeFileSync(installedBin, '#!/bin/sh\n');
+const installedBash = (command) => guardBash(base('Bash', { command }), {
+  state: null, autoAllow: 'off', shadowLog() {}, env: { ...env, CLAUDE_PLUGIN_ROOT: installedRoot },
+});
+const recordWith = (program, from = 'r.md') => `printf %s ${['lf', '1_'].join('')}${'A'.repeat(43)} | ${program} review record T-AA-1 --from ${from} --yes --token -`;
+
+test('T-MG-198 F1: the verified plugin bin under HOME/.claude can record a token', () => {
+  const result = installedBash(recordWith(installedBin));
+  assert.ok(!denied(result), result.stdout);
+});
+
+test('T-MG-198 F1: only the verified program operand is exempt from secret-path checks', () => {
+  for (const from of [join(projects, 'x.json'), join(home, '.claude', 'settings.json'), '~/.claude/x',
+    join(repo, 'link-projects', 'x.json'), installedBin]) {
+    assert.match(installedBash(recordWith(installedBin, from)).stdout, RE, from);
+  }
+  const otherBin = join(home, '.claude', 'other', 'bin', names.bin);
+  mkdirSync(dirname(otherBin), { recursive: true });
+  writeFileSync(otherBin, '#!/bin/sh\n');
+  assert.match(installedBash(recordWith(otherBin)).stdout, RE);
 });

@@ -107,7 +107,7 @@ test('the pane says, from general to detail, the project, the tasks with their s
   expect((await ui.find({ type: 'Text', text: /^petla/ }))?.text).toBe('petla · L0 (shadow) · loop done after 7 ticks')
   expect((await ui.find({ type: 'Text', text: /open · / }))?.text).toBe('2 open · 1 active · 0 planned · 1 new · 1 done')
   // the task being worked on first (an agent and a run name it), with its round, class and stage; the waiting one next; the closed one not at all
-  expect((await ui.find({ type: 'Text', text: /T-TU-1 r1/ }))?.text).toBe('▶ T-TU-1 r1 crit Login  working · review r2 approved')
+  expect((await ui.find({ type: 'Text', text: /T-TU-1 r1/ }))?.text).toBe('▶ T-TU-1 r1 [crit] Login  working · review r2 approved')
   expect(await ui.find({ type: 'Text', text: /T-TU-2/ })).toBeUndefined() // an unrouted new task is folded into the backlog line (T-MG-85)
   expect((await ui.find({ type: 'Text', text: /in backlog/ }))?.text).toBe('⏸ 1 in backlog (landfall task list)')
   expect(await ui.find({ type: 'Text', text: /T-TU-3/ })).toBeUndefined()
@@ -176,8 +176,8 @@ test('a task with status new and a live agent naming it counts as working, liste
   await $.session.start(SESSION)
   await w.clock.settle()
   const ui = await $.ui.mount(PANE)
-  expect((await ui.find({ type: 'Text', text: /T-TU-2/ }))?.text).toBe('▶ T-TU-2 - Docs  working · new, not routed')
-  expect((await ui.find({ type: 'Text', text: /T-TU-4/ }))?.text).toBe('■ T-TU-4 std Later  waiting · planned')
+  expect((await ui.find({ type: 'Text', text: /T-TU-2/ }))?.text).toBe('▶ T-TU-2 [-] Docs  working · new, not routed')
+  expect((await ui.find({ type: 'Text', text: /T-TU-4/ }))?.text).toBe('■ T-TU-4 [std] Later  waiting · planned')
   await ui.unmount()
 })
 
@@ -335,7 +335,7 @@ test('a CLI that does not answer leaves the last rows standing with the error on
   await w.clock.advance(15_000)
   const ui = await $.ui.mount(PANE)
   expect((await ui.find({ type: 'Text', text: /did not answer/ }))?.text).toBe('! landfall status did not answer: the rows are from the last answer')
-  expect((await ui.find({ type: 'Text', text: /T-TU-1 r1/ }))?.text).toBe('▶ T-TU-1 r1 crit Login  working · review r2 approved')
+  expect((await ui.find({ type: 'Text', text: /T-TU-1 r1/ }))?.text).toBe('▶ T-TU-1 r1 [crit] Login  working · review r2 approved')
   await ui.unmount()
   w.cli.fails = false
   await w.clock.advance(15_000)
@@ -361,7 +361,7 @@ test('unrouted new tasks fold into one backlog line; routed, blocked and held ta
   await $.session.start(SESSION)
   await w.clock.settle()
   const ui = await $.ui.mount(PANE)
-  expect((await ui.find({ type: 'Text', text: /T-TU-30/ }))?.text).toBe('■ T-TU-30 std t30  waiting · planned')
+  expect((await ui.find({ type: 'Text', text: /T-TU-30/ }))?.text).toBe('■ T-TU-30 [std] t30  waiting · planned')
   expect(await ui.find({ type: 'Text', text: /T-TU-31/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /T-TU-1[0-8]/ })).toBeUndefined()
   expect((await ui.find({ type: 'Text', text: /in backlog/ }))?.text).toBe('⏸ 9 in backlog (landfall task list)')
@@ -417,10 +417,10 @@ test('an untouched task shows a stop icon and is dim; a touched idle one shows a
   await w.clock.settle()
   const ui = await $.ui.mount(PANE)
   const stopped = await ui.find({ type: 'Text', text: /T-TU-7/ })
-  expect(stopped?.text).toMatch(/^■ T-TU-7 std Pane rows/)
+  expect(stopped?.text).toMatch(/^■ T-TU-7 \[std\] Pane rows/)
   expect(stopped?.props?.dimColor).toBe(true)
   const paused = await ui.find({ type: 'Text', text: /T-TU-8/ })
-  expect(paused?.text).toMatch(/^⏸ T-TU-8 std Seen/)
+  expect(paused?.text).toMatch(/^⏸ T-TU-8 \[std\] Seen/)
   expect(paused?.props?.dimColor).not.toBe(true)
   await ui.unmount()
 })
@@ -433,8 +433,8 @@ test('the bar is half full at half of the expected time and shows the spent and 
   await w.clock.settle()
   const ui = await $.ui.mount(PANE)
   const text = (await ui.find({ type: 'Text', text: /T-TU-7/ }))?.text ?? ''
-  expect(text).toContain('[■■■■■□□□□□] 22m/45m')
-  expect(text).toMatch(/ ~\d\d:\d\d/)
+  expect(text).toContain('■■■■■□□□□□ 22m/45m')
+  expect(text).toMatch(/^\S T-TU-7 ■■■■■□□□□□ 22m\/45m ~\d\d:\d\d \[std\] /)
   await ui.unmount()
 })
 
@@ -446,7 +446,7 @@ test('a task past its expected time shows how long it is over', async ($, on) =>
   await w.clock.settle()
   const ui = await $.ui.mount(PANE)
   const text = (await ui.find({ type: 'Text', text: /T-TU-7/ }))?.text ?? ''
-  expect(text).toContain('[■■■■■■■■■■] 1h05m/30m')
+  expect(text).toContain('■■■■■■■■■■ 1h05m/30m')
   expect(text).toContain('+35m over')
   await ui.unmount()
 })
@@ -471,8 +471,8 @@ test('a task without the new fields still renders', async ($, on) => {
   await w.clock.settle()
   const ui = await $.ui.mount(PANE)
   const text = (await ui.find({ type: 'Text', text: /T-TU-7/ }))?.text ?? ''
-  expect(text).toBe('■ T-TU-7 std Pane rows  waiting · planned')
-  expect(text).not.toContain('[')
+  expect(text).toBe('■ T-TU-7 [std] Pane rows  waiting · planned')
+  expect(text).not.toContain('□')
   await ui.unmount()
 })
 
@@ -557,7 +557,7 @@ test('a long title is shortened before the bar and the clock are dropped', async
   await w.clock.settle()
   const ui = await $.ui.mount(PANE)
   const text = (await ui.find({ type: 'Text', text: /T-TU-7/ }))?.text ?? ''
-  expect(text).toContain('[■■■■■□□□□□] 22m/45m')
+  expect(text).toContain('■■■■■□□□□□ 22m/45m')
   expect(text.endsWith('…')).toBe(true)
   expect([...text].length).toBeLessThanOrEqual(96)
   await ui.unmount()
@@ -745,7 +745,7 @@ test('the celebration frame is deterministic: frame 0 is the text, a middle fram
   expect(celebrationFrame('abcdef', 4, 8)).toBe('▒ ▓░ ▓')
   expect(celebrationFrame('abcdef', 7, 8)).toBe('      ')
   // the same call gives the same frame, and every frame keeps the width and the spaces of the text
-  const text = '✓ T-TU-7 std Pane rows  done'
+  const text = '✓ T-TU-7 [std] Pane rows  done'
   expect(celebrationFrame(text, 3, 8)).toBe(celebrationFrame(text, 3, 8))
   for (let f = 0; f < 8; f++) {
     const frame = celebrationFrame(text, f, 8)
@@ -776,7 +776,7 @@ test('a task that goes from open to done stays for its celebration, frames 1…N
   await w.clock.advance(15_000)
   const rows = await rowsAfter($, w, 12, 250)
   const shown = rows.slice(0, 8)
-  expect(shown[0]).toMatch(/^✓ T-TU-7 std Pane rows/)
+  expect(shown[0]).toMatch(/^✓ T-TU-7 \[std\] Pane rows/)
   expect(new Set(shown).size).toBe(8)
   expect(shown.slice(1).some(r => /[░▒▓]/.test(r))).toBe(true)
   // then the row is gone: the next line is the no-open-tasks hint
@@ -795,7 +795,7 @@ test('a slow refresh still celebrates from the first frame: the exit starts when
   await w.clock.advance(15_000)
   await w.clock.advance(2_100)
   const rows = await rowsAfter($, w, 10, 250)
-  expect(rows[0]).toMatch(/^✓ T-TU-7 std Pane rows/)
+  expect(rows[0]).toMatch(/^✓ T-TU-7 \[std\] Pane rows/)
   expect(new Set(rows.slice(0, 8)).size).toBe(8)
   for (const r of rows.slice(8)) expect(r).toBe('  no open tasks (landfall task new)')
 })

@@ -1,39 +1,30 @@
-// Secret paths (SEC-13, spec 2026-11-05 D3): a subagent reads no transcript, token or session file. Roots, as real paths and as
-// written: the transcripts directory (transcript_path, else $CLAUDE_CONFIG_DIR/projects, else ~/.claude/projects),
-// <state>/local/session/ and <state>/local/token.json. secretDeny → the reason or null for Read|Grep|Glob and Bash. Only the
-// repository root is no hit as an ancestor of the roots; the state directory is. Main session → null.
+// Secret paths (SEC-13, D3, D-MG-81): a subagent reads no transcript and no plugin data file. Roots (real paths and as written): the
+// transcripts directory (transcript_path, else $CLAUDE_CONFIG_DIR/projects, else ~/.claude/projects) and the plugin data directory
+// ($CLAUDE_PLUGIN_DATA, else <config dir>/plugins/data). secretDeny → the reason or null for Read|Grep|Glob and Bash. Main → null.
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { caseVariants, prescan } from '../guard/tokens.mjs';
 import { LIMIT } from '../guard/index.mjs';
 import { globReaches, globRe, inside, realPath } from '../guard/protect.mjs';
 import { expandLiterals, parse } from '../guard/tokenizer.mjs';
-import { stateDirName } from '../state/index.mjs';
-import { loadNames, stateOf } from './loop-state.mjs';
-const SECRET_REASON = "SEC-13: blocked: a subagent does not read Claude Code transcripts or the plugin's token and session files. Instead work from your brief and the repository.";
+import { loadNames } from './loop-state.mjs';
+const names = loadNames();
+const SECRET_REASON = "SEC-13: blocked: a subagent does not read Claude Code transcripts or the plugin's data files. Instead work from your brief and the repository.";
 const HOME = /^(~|\$HOME|\$\{HOME\})(?=\/|$)/;
 const READERS = { find: /./, rg: /./, ag: /./, fd: /./, tar: /./, zip: /./, rsync: /./, du: /./, grep: /^-[a-zA-Z]*[rR]|^--(dereference-)?recursive$|^-d=?recurse/, cp: /^-[a-zA-Z]*[rRa]/, ls: /^-[a-zA-Z]*R/ };
 const dirs = (p) => [...new Set([p, realPath(p)])];
-function roots(input, env, deadline, names) {
+function roots(input, env) { // D-MG-81: local/ holds no secret (hashes, records) and is no root; role-tokens-store-invariant.test.mjs guards it
   const home = env.HOME || homedir();
-  const name = stateDirName(names);
+  const cfg = isAbsolute(env.CLAUDE_CONFIG_DIR ?? '') ? env.CLAUDE_CONFIG_DIR : join(home, '.claude');
   const seg = isAbsolute(input.transcript_path ?? '') ? input.transcript_path.split('/') : [];
   const k = seg.lastIndexOf('projects', -2);
-  const list = [k > 0 ? seg.slice(0, k + 1).join('/') : seg.length ? dirname(dirname(input.transcript_path)) : null,
-    join(isAbsolute(env.CLAUDE_CONFIG_DIR ?? '') ? env.CLAUDE_CONFIG_DIR : join(home, '.claude'), 'projects')];
-  const repos = [];
-  for (const c of new Set([input.cwd, env.CLAUDE_PROJECT_DIR].filter((d) => typeof d === 'string' && isAbsolute(d)))) {
-    const s = stateOf(c, env, deadline);
-    const w = s.where ?? s.fallback;
-    list.push(join(c, name, 'local'), ...(w ? [w.dir, w.copy].filter(Boolean).map((d) => join(d, 'local')) : []));
-    if (w) repos.push(...[w.repo, w.worktree].map(realPath));
-  }
-  return { list: [...new Set(list.filter(Boolean).flatMap(dirs))], home, cwd: input.cwd, name: name.toLowerCase(), repos };
+  const list = [k > 0 ? seg.slice(0, k + 1).join('/') : seg.length ? dirname(dirname(input.transcript_path)) : null, join(cfg, 'projects'),
+    isAbsolute(env.CLAUDE_PLUGIN_DATA ?? '') ? env.CLAUDE_PLUGIN_DATA : join(cfg, 'plugins', 'data')];
+  return { list: [...new Set(list.filter(Boolean).flatMap(dirs))], home, cwd: input.cwd, root: env.CLAUDE_PLUGIN_ROOT ?? '' };
 }
 function touches(p, R, ancestors) {
   const forms = dirs(p);
-  const anc = ancestors && !forms.some((f) => R.repos.some((r) => inside(r, f) === ''));
-  return R.list.some((r) => forms.some((f) => inside(r, f) !== null || (anc && inside(f, r) !== null)));
+  return R.list.some((r) => forms.some((f) => inside(r, f) !== null || (ancestors && inside(f, r) !== null)));
 }
 const target = (word, R, d = R.cwd) => {
   const w = word.replace(HOME, R.home);
@@ -67,9 +58,16 @@ function readDeny(input, R) {
   const abs = target(t, R);
   return abs === null || touches(abs, R, tool !== 'Read');
 }
-const reaches = (text, name) => text.split(/\s+/).some((w) => (/(^|\/)[.[]|\{/.test(w) || w.toLowerCase().includes(name)) && globReaches(w, name));
+const reaches = (text, name) => text.split(/\s+/).some((w) => /(^|\/)[.[]|\{/.test(w) && globReaches(w, name));
 const SHELLS = /^(ba|z|da|k)?sh$|^eval$/; const GLOBBY = /[*?[]/; const HOME_VAR = /\$\{HOME\}|\$HOME\b/g;
 const WRAP = /^(env|nice|nohup|timeout|command|builtin|exec|stdbuf|xargs|sudo)$/;
+// T-MG-203: only the CLI (bare name or the plugin's absolute bin path) may receive a token through printf %s and --token -.
+const RECORD = new RegExp(String.raw`^printf %s lf1_[A-Za-z0-9_-]{43} \| (\/[\w.\/-]*\/)?${names.bin.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} (review record|task set)( [\w.:@%+=,\/-]+)* --token -$`);
+function recordCmd(command, R) {
+  const m = RECORD.exec(command);
+  if (!m || command.match(/lf1_/gi).length !== 1) return false;
+  return (!m[1] || (isAbsolute(R.root) && realPath(`${m[1]}${names.bin}`) === realPath(join(R.root, 'bin', names.bin)))) ? m : false;
+}
 const INTERP = /^(python3?|node|perl|ruby)$/;
 function bare(w) { let i = 0; while (WRAP.test(basename(w[i] ?? ''))) { i++; while (/^-|^\w+=|^\d+[smhd]?$/.test(w[i] ?? '')) i++; } return w.slice(i); }
 const values = (t) => (t.startsWith('-') ? [] : [t]).concat(t.includes('=') ? [t.slice(t.indexOf('=') + 1)] : []);
@@ -92,36 +90,38 @@ function walk(cmds, R, dirsNow, depth) {
       const t = (a.includes('--') ? a.slice(a.indexOf('--') + 1) : a.slice(1).filter((x) => !x.startsWith('-')))[0];
       dirsNow = [...dirsNow, ...dirsNow.map((d) => (!t || /[$`*?[{]/.test(t) || d === null ? null : target(t, R, d)))];
     }
-    if (INTERP.test(b)) { const code = a[a.findIndex((x) => /^-[ecp]$/.test(x)) + 1] ?? ''; if (/\.claude|local\//i.test(code) || code.toLowerCase().includes(R.name)) return true; }
+    if (INTERP.test(b)) { const code = a[a.findIndex((x) => /^-[ecp]$/.test(x)) + 1] ?? ''; if (/\.claude/i.test(code)) return true; }
     if (!SHELLS.test(b)) continue;
     const body = b === 'eval' ? a.slice(1).join(' ') : a[a.findIndex((x) => /^-[a-z]*c$/.test(x)) + 1];
     if (typeof body !== 'string' || body === '') continue;
     let inner = null;
     try { inner = parse(expandLiterals(body).replace(HOME_VAR, R.home), { limit: LIMIT.cmd }); } catch { /* not reducible */ }
-    if (depth > 3 || inner === null ? /\.claude/i.test(body) || body.toLowerCase().includes(R.name) : walk(inner, R, dirsNow, depth + 1)) return true;
+    if (depth > 3 || inner === null ? /\.claude/i.test(body) : walk(inner, R, dirsNow, depth + 1)) return true;
   }
   return false;
 }
 function bashDeny(command, R) {
+  const record = recordCmd(command, R);
+  // Scan only the verified program operand as its bare name; identical paths in arguments still go through every floor.
+  if (record && record[1]) command = command.replace(`| ${record[1]}${names.bin} `, `| ${names.bin} `);
   let expanded = command; let cmds = null;
   try { expanded = expandLiterals(command).replace(HOME_VAR, R.home); cmds = parse(expanded, { limit: LIMIT.cmd }); } catch { /* not reducible */ }
   const texts = expanded === command ? [command] : [command, expanded];
   const flat = texts.map((t) => t.toLowerCase().replace(/\/(\.?\/)+/g, '/')); // floor: a word naming local/ or the transcripts, any spelling
-  if (flat.some((t) => [`${R.name}/local`, '.claude/projects', ...R.list.map((l) => l.toLowerCase())].some((n) => t.includes(n)))) return true;
-  const lits = ['lf1_', 'local/token.json', 'local/session', '$claude_config_dir', '${claude_config_dir}', ...R.list, ...['~', '$home', '${home}', R.home].flatMap((h) => ['.claude', R.name].map((n) => `${h}/${n}`))].map((l) => l.toLowerCase());
+  if (flat.some((t) => ['.claude/projects', ...R.list.map((l) => l.toLowerCase())].some((n) => t.includes(n)))) return true;
+  const lits = [...(record ? [] : ['lf1_']), '$claude_config_dir', '${claude_config_dir}', ...R.list, ...['~', '$home', '${home}', R.home].map((h) => `${h}/.claude`)].map((l) => l.toLowerCase());
   if (texts.some((t) => [...prescan(t, lits)].some((h) => h.startsWith('project rule literal')))) return true;
   if (texts.some((t) => reaches(caseVariants(t)[0], '.claude'))) return true;
-  if (cmds === null) return texts.some((t) => /\.claude|\b(cd|pushd)\b/i.test(t) || t.toLowerCase().includes(R.name)); // unparseable: unknown dir
+  if (cmds === null) return texts.some((t) => /\.claude|\b(cd|pushd)\b/i.test(t)); // unparseable: unknown dir
   return walk(cmds, R, [R.cwd], 0);
 }
-export function secretDeny(input, { env = process.env, deadline = Infinity } = {}) {
+export function secretDeny(input, { env = process.env } = {}) {
   if (typeof input?.agent_type !== 'string' || !input.agent_type || !input.tool_input || typeof input.tool_input !== 'object') return null;
-  const R = roots(input, env, deadline, loadNames());
+  const R = roots(input, env);
   const { tool_name: tool } = input; const { command } = input.tool_input;
   const hit = tool === 'Bash' ? typeof command === 'string' && command !== '' && bashDeny(command, R) : /^(Read|Grep|Glob)$/.test(tool) && readDeny(input, R);
   return hit ? SECRET_REASON : null;
 }
-
 // The `guard-read` row: Read, Grep, Glob.
 export const guardRead = (input, opts) => {
   const reason = secretDeny(input, opts);
