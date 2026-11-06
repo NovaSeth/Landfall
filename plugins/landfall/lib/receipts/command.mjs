@@ -9,7 +9,7 @@
 // --loop and --since; spec §8.1). --json carries the integer fields (micro-dollars, milliseconds); the text derives
 // USD and seconds from them. Errors from lib/state (unknown task, not a repository, held lock) reach the CLI unchanged.
 // Printed text holds labels and numbers only (model, agent type, provider, run ID), never transcript text.
-import { EXIT } from '../cli/commands.mjs';
+import { EXIT } from '../cli/exit.mjs';
 import { showLoop } from '../loop/index.mjs';
 import { open, resolve } from '../state/index.mjs';
 import { forTerminal } from '../text/clean.mjs';

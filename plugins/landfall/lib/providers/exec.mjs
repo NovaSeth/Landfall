@@ -21,7 +21,7 @@ import { closeSync, constants, fstatSync, lstatSync, mkdtempSync, openSync, read
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, resolve as resolvePath } from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
-import { EXIT } from '../cli/commands.mjs';
+import { EXIT } from '../cli/exit.mjs';
 import { createExclusive, readRegularFile } from '../fsx/index.mjs';
 import { git } from '../git/index.mjs';
 import { start } from '../proc/index.mjs';

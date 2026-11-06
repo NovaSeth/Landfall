@@ -1,6 +1,6 @@
 // CLI handlers return data/text; cli/output.mjs is the only terminal writer.
 import { authorHandle } from '../decisions/write.mjs';
-import { EXIT } from '../cli/commands.mjs';
+import { EXIT } from '../cli/exit.mjs';
 import { KINDS, StateError, allocateId, open, resolve } from '../state/index.mjs';
 import { intervalOf } from '../receipts/executors.mjs';
 import { outcomeRecords } from '../receipts/index.mjs';

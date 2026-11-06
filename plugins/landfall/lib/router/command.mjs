@@ -12,7 +12,7 @@
 // Exit 0 done · 1 not classified yet, task changed meanwhile, invalid state · 2 usage · 7 no consent, untracked
 // repository, not the task's owner, no registered handle, newer schema · 8 not a git repository, git missing.
 import { isAbsolute, relative } from 'node:path';
-import { EXIT } from '../cli/commands.mjs';
+import { EXIT } from '../cli/exit.mjs';
 import { openStore, riskGlobsOf } from '../profile/index.mjs';
 import { StateError, emailHash, gitIdentity, open, resolve } from '../state/index.mjs';
 import { executorData as suggestionFor } from '../receipts/index.mjs';

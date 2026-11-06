@@ -21,7 +21,8 @@ import { KINDS, afterOf, mergedOf } from '../state/index.mjs';
 import { appliedTier, reviewNeed, reviewState } from './artifacts.mjs';
 import { batchMerge } from './batch.mjs';
 import { targetOf } from './merge.mjs';
-import { activeWhere, gitIn, sameChange, storeOf } from './run.mjs';
+import { gitIn, sameChange } from './history.mjs';
+import { activeWhere, storeOf } from './run.mjs';
 
 const OBJECT_ID = /^[0-9a-f]{40,64}$/;
 

@@ -3,7 +3,7 @@
 // per signal (value, thresholds, dwell) and the change cadence; with --json they are data.explain.
 // Exit 1 a state file is invalid · 7 the engine flag is off, newer schema, no consent · 8 not a git repository.
 import { relative } from 'node:path';
-import { EXIT } from '../cli/commands.mjs';
+import { EXIT } from '../cli/exit.mjs';
 import { ProfileError } from '../profile/index.mjs';
 import { StateError, resolve } from '../state/index.mjs';
 import { ENGINE_FLAGS, SHADOW_LOG, THRESHOLDS, engineThresholds, evaluate, signalLine } from './index.mjs';

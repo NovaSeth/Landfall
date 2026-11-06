@@ -5,7 +5,7 @@
 import { PROFILE_KINDS } from '../profile/index.mjs';
 import { guardGates } from '../verify/index.mjs';
 import * as state from '../state/index.mjs';
-import { EXIT } from './commands.mjs';
+import { EXIT } from './exit.mjs';
 import { ask } from './output.mjs';
 
 const QUESTION = 'Trust these for this repository on this machine? [y/N] ';
