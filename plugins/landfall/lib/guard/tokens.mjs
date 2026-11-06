@@ -23,9 +23,9 @@ const WRAP = new Set(['command', 'builtin', 'exec', 'nohup', 'time', 'setsid', '
 export const base = (w) => w.slice(w.lastIndexOf('/') + 1);
 
 // Environment variables whose value a shell, git or the dynamic loader runs or reads as configuration (G152 r3 b).
-export const ENV_EXEC = /^(BASH_ENV|ENV|BASH_FUNC_\S*|SHELLOPTS|BASHOPTS|PS4|PROMPT_COMMAND|GIT_CONFIG\w*|GIT_SSH\w*|GIT_EXEC_PATH|GIT_PAGER|GIT_EDITOR|GIT_SEQUENCE_EDITOR|GIT_ASKPASS|GIT_EXTERNAL_DIFF|GIT_PROXY_COMMAND|GIT_TEMPLATE_DIR|PAGER|EDITOR|VISUAL|SSH_ASKPASS|LD_PRELOAD|LD_LIBRARY_PATH|LD_AUDIT|DYLD_\w*|NODE_OPTIONS)$/i;
+export const ENV_EXEC = /^(BASH_ENV|ENV|BASH_FUNC_\S*|SHELLOPTS|BASHOPTS|PS4|PROMPT_COMMAND|GIT_CONFIG\w*|GIT_SSH\w*|GIT_EXEC_PATH|GIT_PAGER|GIT_EDITOR|GIT_SEQUENCE_EDITOR|GIT_ASKPASS|GIT_EXTERNAL_DIFF|GIT_PROXY_COMMAND|GIT_TEMPLATE_DIR|PAGER|MANPAGER|MANOPT|MANROFFOPT|BROWSER|EDITOR|VISUAL|SSH_ASKPASS|LD_PRELOAD|LD_LIBRARY_PATH|LD_AUDIT|DYLD_\w*|NODE_OPTIONS)$/i;
 // The same names as words in a command (not as an expansion $NAME / ${NAME}, which only reads them).
-const ENV_WORD = /(?<![\w${])(BASH_ENV|ENV|BASH_FUNC_\w*|SHELLOPTS|BASHOPTS|PS4|PROMPT_COMMAND|GIT_CONFIG\w*|GIT_SSH\w*|GIT_EXEC_PATH|GIT_PAGER|GIT_EDITOR|GIT_SEQUENCE_EDITOR|GIT_ASKPASS|GIT_EXTERNAL_DIFF|GIT_PROXY_COMMAND|GIT_TEMPLATE_DIR|PAGER|EDITOR|VISUAL|SSH_ASKPASS|LD_PRELOAD|LD_LIBRARY_PATH|LD_AUDIT|DYLD_\w*|NODE_OPTIONS)(?!\w)/;
+const ENV_WORD = /(?<![\w${])(BASH_ENV|ENV|BASH_FUNC_\w*|SHELLOPTS|BASHOPTS|PS4|PROMPT_COMMAND|GIT_CONFIG\w*|GIT_SSH\w*|GIT_EXEC_PATH|GIT_PAGER|GIT_EDITOR|GIT_SEQUENCE_EDITOR|GIT_ASKPASS|GIT_EXTERNAL_DIFF|GIT_PROXY_COMMAND|GIT_TEMPLATE_DIR|PAGER|MANPAGER|MANOPT|MANROFFOPT|BROWSER|EDITOR|VISUAL|SSH_ASKPASS|LD_PRELOAD|LD_LIBRARY_PATH|LD_AUDIT|DYLD_\w*|NODE_OPTIONS)(?!\w)/;
 
 // Outcome-gate commands (lesson 2026-10-15 04:09, TRP-2, SEC-6): a pipe after one reports the exit code of the last
 // command. script — a gate script run as the program; sub — a subcommand path of the plugin CLI; pmScript — a package
@@ -100,21 +100,37 @@ const FIND_DELETE = { test: (s) => after(s, FIND_WORD, FIND_FLAG) };
 // hit is a block with no simple form to recognize); evaluate and hasToken ask exfilText.
 const SENDERS = new Set(['curl', 'wget', 'nc', 'ncat', 'netcat', 'socat', 'scp', 'sftp', 'ftp', 'telnet', 'ssh', 'rsync', 'http', 'https', 'aria2c', 'openssl']);
 // programs that only print or search their arguments: a sender named there is text (grep curl, man ssh)
-const TEXT_ONLY = new Set(['grep', 'egrep', 'fgrep', 'rg', 'echo', 'printf', 'man', 'which', 'type', 'whereis', 'help', 'apropos']);
+const TEXT_ONLY = new Set(['grep', 'egrep', 'fgrep', 'rg', 'echo', 'printf', 'which', 'type', 'whereis', 'help', 'apropos']);
 // a stage that runs what it is given (a substitution, a process substitution, rg --pre) is never text
 const RUNS_ARGS = /`|\$\(|[<>]\(|(^|\s)--pre(=|\s|$)/;
-// man runs its pager (-P, --pager) and its html browser (-H, --html): their words are commands
-const MAN_RUNS = /(^|\s)(-[a-z]*[ph]|--p|--h)/; // the variants are lowercase: -p and -h count too
 const sendsPart = (p) => {
   if (p.includes('/dev/tcp/') || p.includes('/dev/udp/')) return true;
-  if (base(commandWord(p)) === 'man' && MAN_RUNS.test(p) && p.split(/[\s=`$(<>"'\\]+/).some((w) => SENDERS.has(base(w)) || SENDERS.has(base(w.replace(/^-[a-z]*?[ph]/, ''))))) return true;
+  // man is no text-only stage: its pager and browser options run their words (a sender may be glued to the option)
+  if (base(commandWord(p)) === 'man' && [...SENDERS].some((s) => p.includes(s))) return true;
   if (!TEXT_ONLY.has(base(commandWord(p))) && p.split(' ').some((w) => SENDERS.has(base(w)))) return true;
   // a substitution or --pre runs its words: the sender may be glued to its opener or to --pre=
   return RUNS_ARGS.test(p) && p.split(/[\s=`$(<>]+/).some((w) => SENDERS.has(base(w)));
 };
 // names a glob word may stand for (a dot name only from a glob that starts with a dot)
-const globRe = (g) => { try { return new RegExp('^' + g.replace(/[.+^${}()|\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.').replace(/\[(!|\\\^)/g, '[^') + '$'); } catch { return null; } };
-const secretGlob = (s) => s.split(/\s+/).some((w) => w.split(/[=@:<>]/).some((x) => {
+// Each bracket expression ([abc], [!x], [^x], []x], [[:alpha:]]) stands for any one character (fail closed); an unclosed [ is a literal.
+function bracketsToAny(g) {
+  let out = '';
+  for (let i = 0; i < g.length; i++) {
+    if (g[i] !== '[') { out += g[i]; continue; }
+    let j = i + 1;
+    if (g[j] === '!' || g[j] === '^') j++;
+    if (g[j] === ']') j++;
+    while (j < g.length && g[j] !== ']') {
+      if (g[j] === '[' && g[j + 1] === ':') { const e = g.indexOf(':]', j + 2); if (e >= 0) { j = e + 2; continue; } }
+      j++;
+    }
+    if (j >= g.length) { out += g.slice(i); break; }
+    out += '?'; i = j;
+  }
+  return out;
+}
+const globRe = (g) => { try { return new RegExp('^' + bracketsToAny(g).replace(/[.+^${}()|\\[\]]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.') + '$'); } catch { return null; } };
+const secretGlob = (s) => s.split(/\s+/).some((w) => w.replace(/\[:[a-z]+:\]/g, '?').split(/[=@:<>]/).some((x) => {
   const g = x.slice(x.lastIndexOf('/') + 1);
   if (!/[*?[]/.test(g) || /^[*?[\]]*$/.test(g)) return false;
   const re = globRe(g);
