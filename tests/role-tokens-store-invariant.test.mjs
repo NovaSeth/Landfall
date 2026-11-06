@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { isolateProcessEnv } from './helpers/isolated-env.mjs';
+import { isolatedEnv, isolateProcessEnv } from './helpers/isolated-env.mjs';
 
 isolateProcessEnv();
 
@@ -28,7 +28,7 @@ const home = realpathSync(mkdtempSync(join(tmpdir(), 'rti-home-')));
 const repo = realpathSync(mkdtempSync(join(tmpdir(), 'rti-repo-')));
 const pd = join(home, 'pd');
 mkdirSync(pd);
-const env = { PATH: process.env.PATH, HOME: home, CLAUDE_PLUGIN_DATA: pd, GIT_AUTHOR_NAME: 'T', GIT_AUTHOR_EMAIL: 't@example.com', GIT_COMMITTER_NAME: 'T', GIT_COMMITTER_EMAIL: 't@example.com' };
+const env = { ...isolatedEnv({ prefix: 'rti-env-' }).env, PATH: process.env.PATH, HOME: home, CLAUDE_PLUGIN_DATA: pd, GIT_AUTHOR_NAME: 'T', GIT_AUTHOR_EMAIL: 't@example.com', GIT_COMMITTER_NAME: 'T', GIT_COMMITTER_EMAIL: 't@example.com' };
 const run = (cmd, args) => spawnSync(cmd, args, { cwd: repo, env, encoding: 'utf8' });
 const denied = (r) => /"permissionDecision":"deny"/.test(r.stdout ?? '');
 const files = (d) => (existsSync(d) ? readdirSync(d).flatMap((f) => (statSync(join(d, f)).isDirectory() ? files(join(d, f)) : [join(d, f)])) : []);
@@ -80,7 +80,7 @@ test('a subagent does not read the plugin data directory; the main session does'
 });
 
 test('no role token lands in local/ or the plugin data after every command that takes one (record, task set, release)', () => {
-  const cli = (args, token) => spawnSync(join(pluginDir, 'bin', names.bin), [...args, '--yes', '--json'], { cwd: repo, env, encoding: 'utf8', input: token });
+  const cli = (args, token) => spawnSync(process.execPath, [join(pluginDir, 'bin', names.bin), ...args, '--yes', '--json'], { cwd: repo, env, encoding: 'utf8', input: token });
   const made = cli(['task', 'new', 'Invariant task']);
   assert.equal(made.status, 0, made.stdout + made.stderr);
   const id = JSON.parse(made.stdout).data.id;
