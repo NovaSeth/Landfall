@@ -152,7 +152,7 @@ test('review record: input that breaks review.schema.json exits 2 naming the fai
     [{ ...REVIEW, reviewer: { kind: 'human', id: 'me' } }, 'reviewer.kind'],
     [{ ...REVIEW, score: 3 }, 'score'],
     [{ ...REVIEW, findings: [{ ...FINDING, severity: 'major' }] }, 'findings[0].severity'],
-    [{ ...REVIEW, findings: [{ ...FINDING, text: long }] }, 'findings[0].text'],
+    [{ ...REVIEW, findings: [{ ...FINDING, text: long }] }, 'findings[0] (F1).text'],
     [{ ...REVIEW, findings: [{ ...FINDING, text: 'two\nlines' }] }, 'findings[0].text'],
     [{ ...REVIEW, findings: [{ ...FINDING, line: 0 }] }, 'findings[0].line'],
     [{ ...REVIEW, findings: [{ id: 'F1', severity: 'minor', text: 'x' }] }, 'findings[0].path'],
