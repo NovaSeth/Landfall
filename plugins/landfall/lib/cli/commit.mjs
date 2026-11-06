@@ -10,7 +10,7 @@ import { isAbsolute, relative, sep } from 'node:path';
 import { git } from '../git/index.mjs';
 import { StateError, resolve } from '../state/index.mjs';
 import { hidden } from '../text/clean.mjs';
-import { EXIT } from './commands.mjs';
+import { EXIT } from './exit.mjs';
 
 const MESSAGE_MAX = 200;
 const SUMMARY_MAX = 120;

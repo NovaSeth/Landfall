@@ -20,7 +20,7 @@ import { openStore } from '../verify/index.mjs';
 import { taskWhere } from '../verify/where.mjs';
 import { dataLine, fenceLine } from '../text/data.mjs';
 import { seal, unedited } from './brief.mjs';
-import { EXIT } from './commands.mjs';
+import { EXIT } from './exit.mjs';
 
 // One line of a fenced data list (SEC-14): repository text on one line that cannot close the template's fence.
 const quoted = (s) => fenceLine(dataLine(s));

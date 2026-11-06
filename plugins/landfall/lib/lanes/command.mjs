@@ -6,7 +6,7 @@
 // claim is invalid · 2 invalid lane name · 7 no consent, inactive repository, no handle, newer schema · 8 not a git
 // repository, origin unreachable or refusing claim refs. SD-20: when origin cannot be reached in a project whose
 // profile says people = solo, the command exits 0 with data.offline and a warning, and does nothing.
-import { EXIT } from '../cli/commands.mjs';
+import { EXIT } from '../cli/exit.mjs';
 import { factValues, openStore } from '../profile/index.mjs';
 import { StateError, emailHash, gitIdentity, open, resolve } from '../state/index.mjs';
 import { LANE_RULES, LaneError, REMOTE, checkLane, claimLane, laneState, readLane, readLanes, releaseLane, renewLane, takeoverAfter } from './index.mjs';

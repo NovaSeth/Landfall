@@ -18,7 +18,7 @@
 // it reaches the terminal unfiltered. Scheduler errors are StateErrors, turned into results by lib/cli/main.mjs.
 import { accessSync, constants, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { EXIT } from '../cli/commands.mjs';
+import { EXIT } from '../cli/exit.mjs';
 import { start } from '../proc/index.mjs';
 import { StateError } from '../state/index.mjs';
 import { admissionReasons } from './admission.mjs';
