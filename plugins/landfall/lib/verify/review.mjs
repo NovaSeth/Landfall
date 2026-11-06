@@ -60,7 +60,9 @@ export function schemaErrors(schema, value, path = '') {
   if (Array.isArray(value)) {
     if (schema.maxItems !== undefined && value.length > schema.maxItems) out.push(`${at}: ${value.length} items, the limit is ${schema.maxItems}`);
     if (schema.minItems !== undefined && value.length < schema.minItems) out.push(`${at}: at least ${schema.minItems} items`);
-    if (schema.items) value.forEach((item, i) => out.push(...schemaErrors(schema.items, item, `${path}[${i}]`)));
+    // A too-long string of an item with an id names the item and the cap in plain words (T-MG-205).
+    const named = (item, m) => (typeof item?.id === 'string' && /^[\w.:-]{1,40}$/.test(item.id) ? m.replace(/^(.*?)(\.\w+): (\d+) characters, the limit is (\d+)$/, `$1 (${item.id})$2: $3 characters, at most $4`) : m);
+    if (schema.items) value.forEach((item, i) => out.push(...schemaErrors(schema.items, item, `${path}[${i}]`).map((m) => named(item, m))));
   }
   if (typeOf(value) === 'object') {
     for (const k of schema.required ?? []) if (!Object.hasOwn(value, k)) out.push(`${field(path, k)}: missing`);

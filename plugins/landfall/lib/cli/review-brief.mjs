@@ -17,6 +17,7 @@ import { CHECKLISTS, globMatch, recordedKeys, reviewFocus } from '../router/inde
 import { KINDS, open, resolve, writeTaskText } from '../state/index.mjs';
 import { codeState } from '../verify/history.mjs';
 import { openStore } from '../verify/index.mjs';
+import { reviewSchema } from '../verify/review.mjs';
 import { taskWhere } from '../verify/where.mjs';
 import { dataLine, fenceLine } from '../text/data.mjs';
 import { seal, unedited } from './brief.mjs';
@@ -164,6 +165,7 @@ export function reviewBrief({ args, flags, names, io, pluginRoot }) {
     '<schema path>': join(pluginRoot, 'templates', 'review.schema.json'),
     '<reviewer agent>': review.focus === 'security' ? 'security-reviewer' : 'reviewer',
     '<reviewer id>': review.focus === 'security' ? 'claude:security-reviewer' : 'claude:reviewer',
+    '<text limit>': String(reviewSchema().properties.findings.items.properties.text.maxLength),
     '{{bin}}': bin,
     '{{plugin}}': names.plugin,
   });

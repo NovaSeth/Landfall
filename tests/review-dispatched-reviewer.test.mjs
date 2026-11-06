@@ -213,3 +213,16 @@ test('token matrix, review record: a failed review write keeps the reviewer toke
   assert.deepEqual([again.code, codeOf(again)], [7, 'token-unknown']);
   assert.equal(reviews(r).length, 1);
 });
+
+// T-MG-205: a finding text over the cap is refused naming the finding, its index, the length and the cap.
+test('review record: a 612-character finding text is exit 2 naming findings[2] (F3), 612 and 500; other errors keep their message', async (t) => {
+  const r = repo(t);
+  dispatched(r);
+  const f = (id, text) => ({ id, severity: 'minor', path: null, line: null, rule: null, text });
+  writeFileSync(r.file, JSON.stringify({ ...REVIEW, findings: [f('F1', 'ok'), f('F2', 'ok'), f('F3', 'x'.repeat(612))] }));
+  const res = await cli(r, rec(r));
+  assert.equal(res.code, 2, JSON.stringify(res.env));
+  assert.ok(JSON.stringify(res.env).includes('findings[2] (F3).text: 612 characters, at most 500'), JSON.stringify(res.env));
+  writeFileSync(r.file, JSON.stringify({ ...REVIEW, findings: [f('F1', '')] }));
+  assert.ok(JSON.stringify((await cli(r, rec(r))).env).includes('findings[0].text: at least 1 characters'));
+});
