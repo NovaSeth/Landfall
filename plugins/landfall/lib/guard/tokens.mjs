@@ -144,23 +144,26 @@ const tooComplex = (w) => w.includes('[') && (w.length > MAX_WORD || w.split('['
 // Quote rule (fail closed): on a sender line, a word with an unquoted [ and a quote or backslash before a later ] is a
 // hit, unscanned: an escaped or quoted ] may end the class early and hide what it stands for. One linear pass, quote-aware;
 // a [ inside quotes is text and opens nothing.
-const quoteBracket = (text) => {
-  let hit = false; let sender = ''; let q = ''; let w = null;
+// sendsRaw: a pipe stage runs a sender, judged on the raw text ($( <( kept) or the paren-stripped text (OR, fail closed).
+// nl: an unquoted newline or CR ends a segment too (the caller runs both ways).
+const sendsRaw = (sender) => { const t = sender.replace(/\s+/g, ' '); return (/[()]/.test(t) ? [t, t.replace(/[()]/g, ' ')] : [t]).some((u) => u.split('|').some((p) => sendsPart(p.replace(/['"\\]/g, '').toLowerCase()))); };
+const quoteBracket = (text, nl) => {
+  let hit = false; let sender = ''; let q = ''; let w = null; let live = false; // live: a $( or ` on this line
   const flush = () => {
-    const sends = sender.replace(/[\s()]+/g, ' ').split('|').some((p) => sendsPart(p.replace(/\\\r?\n|['"\\]/g, '').toLowerCase()));
+    const sends = sendsRaw(sender);
     // a segment with a dollar-quote or a quote still open on a sender line is a hit: the span rule cannot judge it
     if (sends && (hit || q || sender.includes("$'"))) return true;
-    hit = false; sender = ''; return false;
+    hit = false; sender = ''; live = false; return false;
   };
   for (let i = 0; i < text.length; i++) {
     const ch = text[i];
-    if (!q && (ch === ';' || ch === '&')) { w = null; if (flush()) return true; continue; }
-    sender += ch;
+    if (!q && (ch === ';' || ch === '&' || (nl && (ch === '\n' || ch === '\r')))) { w = null; if (flush()) return true; continue; }
+    sender += ch; if (ch === '`' || (ch === '(' && text[i - 1] === '$')) live = true;
     if (!q && /[\s()]/.test(ch)) { w = null; continue; }
     w ??= { open: false, mark: false };
     if (ch === '\\' && q !== "'") { if (w.open) w.mark = true; if (++i < text.length) sender += text[i]; continue; }
     if (ch === '"' || ch === "'") { if (!q) q = ch; else if (q === ch) q = ''; if (w.open) w.mark = true; continue; }
-    if (!q && ch === '[') w.open = true;
+    if ((!q || (q === '"' && live)) && ch === '[') w.open = true; // in "..." a live $( or ` makes it code
     else if (ch === ']' && w.open && w.mark) hit = true;
   }
   return flush();
@@ -172,13 +175,15 @@ const secretGlob = (s) => s.split(/\s+/).some((w) => tooComplex(w) || brackets(w
   return re !== null && SECRET_NAMES.some((n) => re.test(n) && (n[0] !== '.' || g[0] === '.' || g[0] === BR));
 }));
 const secretIn = (s) => SECRET.test(s) || secretGlob(s);
-const exfilVariants = (vs, lit) => vs.some((v) => v.split(/[;&]/).some((s) => {
-  s = s.replace(/\s+/g, ' ');
-  const ps = s.split('|'); const k = ps.findIndex(sendsPart);
+const SEGMENTS = [/[;&]/, /[;&\n\r]/]; // lines joined, and lines apart
+const hasNl = (x) => x.includes('\n') || x.includes('\r');
+const exfilVariants = (vs, lit) => [...new Set(vs)].some((v) => (hasNl(v) ? SEGMENTS : SEGMENTS.slice(0, 1)).some((sp) => v.replace(/\\\r?\n/g, '').split(sp).some((seg) => (seg.includes('(') || seg.includes(')') ? [seg, seg.replace(/[()]/g, ' ')] : [seg]).some((t) => {
+  t = t.replace(/\s+/g, ' ');
+  const ps = t.split('|'); const k = ps.findIndex(sendsPart);
   if (k < 0) return false;
-  if (secretIn(s)) return true;
-  return lit !== null && (ps.slice(0, k).some((q) => q.includes(lit)) || (/\/dev\/(tcp|udp)\//.test(s) && s.includes(lit)));
-}));
+  if (secretIn(t)) return true;
+  return lit !== null && (ps.slice(0, k).some((q) => q.includes(lit)) || (/\/dev\/(tcp|udp)\//.test(t) && t.includes(lit)));
+}))));
 
 // The tokens. Checked on the normalized variants of the text: word — a word anywhere (lowercase); cased — a word with its
 // case kept; line — a construct on a segment between ; and & that may build a guarded operation from content outside
@@ -413,10 +418,12 @@ export function wordTok(t) {
 
 // A command that sends a secret out (see SENDERS). lit: the lowercase text of the state directory, or null. A long text is
 // read on the cheap variants (the coarse prescan's).
-export function exfilText(text, lit = null) {
+// A backslash-newline continuation is gone (words glue: curl -T\\NL.env is -T.env) or a space: both are read.
+export const exfilText = (text, lit = null) => (/\\\r?\n/.test(text) ? ['', ' '] : ['']).some((j) => exfilOne(text.replace(/\\\r?\n/g, j), lit));
+function exfilOne(text, lit) {
   const a = ansiDecoded(text);
-  if (quoteBracket(text) || quoteBracket(a)) return true;
-  if (text.length <= LONG_TEXT) return exfilVariants(variants(text), lit);
+  if ((hasNl(text) ? [false, true] : [false]).some((nl) => quoteBracket(text, nl) || (a !== text && quoteBracket(a, nl)))) return true;
+  if (text.length <= LONG_TEXT) return exfilVariants(hasNl(a) ? [...variants(text), a.toLowerCase()] : variants(text), lit); // a: the lines apart
   const strip = (x) => x.replace(/\\\r?\n|['"\\]/g, '');
   return exfilVariants([strip(a).toLowerCase(), strip(decodeEscapes(a)).toLowerCase()], lit);
 }
