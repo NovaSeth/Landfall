@@ -1701,3 +1701,23 @@ test('a needs-fixes review with no blocking finding asks for no fix round: it is
   s = row(table([t(1)]), 'T-TU-1');
   assert.deepEqual(s.rules, ['REV-5', 'PRI-6']);
 });
+
+test('B-MG-26: another owner\'s old approval does not age my hold: my approved task stays held until its own age reaches the cap', () => {
+  const mine = task('T-TU-1', 'implemented', { events: [ev('implementer', 1), ev('review', 40, { verdict: 'approved', round: 1 })] });
+  const flying = task('T-TU-2', 'dispatched', { events: [ev('dispatched', 41)] });
+  const theirs = task('T-AB-4', 'verified', { owner: 'AB', events: [ev('verify', 0, {}, 'AB')] });
+  const r = table([mine, flying, theirs], { handles: ['AB', 'TU'], now: T0 + 50 * MIN });
+  const s = row(r, 'T-TU-1');
+  assert.equal(s.kind, 'wait', JSON.stringify(s));
+  assert.equal(s.state, 'approved, held for the train');
+  assert.deepEqual(r.info.map((i) => i.task), ['T-AB-4'], 'the other owner\'s task is information only');
+});
+
+test('B-MG-27: an approval with an unreadable time never ages the hold and never prints the epoch', () => {
+  const mine = task('T-TU-1', 'implemented', { events: [ev('implementer', 1), { at: 'garbage', by: 'TU', event: 'review', data: { verdict: 'approved', round: 1 } }] });
+  const flying = task('T-TU-2', 'dispatched', { events: [ev('dispatched', 2)] });
+  const r = table([mine, flying], { now: T0 + 5 * MIN });
+  const s = row(r, 'T-TU-1');
+  assert.equal(s.kind, 'wait', JSON.stringify(s));
+  assert.doesNotMatch(JSON.stringify(r), /1970/);
+});

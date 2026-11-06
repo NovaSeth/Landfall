@@ -13,7 +13,7 @@
 // never makes a review external: one that claims kind external is refused. Known limit: the reviewer id of a claude
 // review is what the file says.
 import { createHash } from 'node:crypto';
-import { readFileSync, statSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
 import { authorHandle, stateRel } from '../decisions/index.mjs';
 import { readRegularFile } from '../fsx/index.mjs';
@@ -41,7 +41,8 @@ let cached = null;
 export const reviewSchema = () => (cached ??= JSON.parse(readFileSync(SCHEMA_FILE, 'utf8')));
 
 // The messages "<field>: <what is wrong>" of `value` against the JSON Schema subset `schema` ([] when valid).
-export function schemaErrors(schema, value, path = '') {
+// `item` ({ at, id }): the innermost array item with a plain id around `value`; a too-long text then names it (T-MG-205).
+export function schemaErrors(schema, value, path = '', item = null) {
   const at = path || 'document';
   for (const k of Object.keys(schema)) if (!KEYWORDS.has(k)) throw new Error(`review schema: unsupported keyword ${k} at ${at}`);
   if (schema.type !== undefined && ![].concat(schema.type).some((t) => fits(t, value))) return [`${at}: expected ${[].concat(schema.type).join(' or ')}, got ${typeOf(value)}`];
@@ -50,7 +51,7 @@ export function schemaErrors(schema, value, path = '') {
   if (typeof value === 'string') {
     const n = [...value].length;
     if (schema.minLength !== undefined && n < schema.minLength) out.push(`${at}: at least ${schema.minLength} characters`);
-    if (schema.maxLength !== undefined && n > schema.maxLength) out.push(`${at}: ${n} characters, the limit is ${schema.maxLength}`);
+    if (schema.maxLength !== undefined && n > schema.maxLength) out.push(item ? `${item.at} (${item.id})${path.slice(item.at.length)}: ${n} characters, at most ${schema.maxLength}` : `${at}: ${n} characters, the limit is ${schema.maxLength}`);
     if (schema.pattern !== undefined && !new RegExp(schema.pattern, 'u').test(value)) out.push(`${at}: holds characters the schema does not allow (line breaks, control, zero-width or bidi characters)`);
   }
   if (typeof value === 'number') {
@@ -60,14 +61,12 @@ export function schemaErrors(schema, value, path = '') {
   if (Array.isArray(value)) {
     if (schema.maxItems !== undefined && value.length > schema.maxItems) out.push(`${at}: ${value.length} items, the limit is ${schema.maxItems}`);
     if (schema.minItems !== undefined && value.length < schema.minItems) out.push(`${at}: at least ${schema.minItems} items`);
-    // A too-long string of an item with an id names the item and the cap in plain words (T-MG-205).
-    const named = (item, m) => (typeof item?.id === 'string' && /^[\w.:-]{1,40}$/.test(item.id) ? m.replace(/^(.*?)(\.\w+): (\d+) characters, the limit is (\d+)$/, `$1 (${item.id})$2: $3 characters, at most $4`) : m);
-    if (schema.items) value.forEach((item, i) => out.push(...schemaErrors(schema.items, item, `${path}[${i}]`).map((m) => named(item, m))));
+    if (schema.items) value.forEach((v, i) => out.push(...schemaErrors(schema.items, v, `${path}[${i}]`, typeof v?.id === 'string' && /^[\w.:-]{1,40}$/.test(v.id) ? { at: `${path}[${i}]`, id: v.id } : item)));
   }
   if (typeOf(value) === 'object') {
     for (const k of schema.required ?? []) if (!Object.hasOwn(value, k)) out.push(`${field(path, k)}: missing`);
     for (const [k, v] of Object.entries(value)) {
-      if (schema.properties && Object.hasOwn(schema.properties, k)) out.push(...schemaErrors(schema.properties[k], v, field(path, k)));
+      if (schema.properties && Object.hasOwn(schema.properties, k)) out.push(...schemaErrors(schema.properties[k], v, field(path, k), item));
       else if (schema.additionalProperties === false) out.push(`${field(path, k)}: unknown field`);
     }
   }
@@ -151,11 +150,8 @@ export function recordReview({ cwd, env, names, id, from, run, token, at = new D
   if (rec && !OBJECT_ID.test(rec.head ?? '')) throw refused('run-head-missing', `${rec.runId} records no reviewed commit`, `run '${names.bin} exec --task ${id} --role reviewer' again`);
   let head = rec ? rec.head : claimed ?? /^Range: [0-9a-f]+\.\.([0-9a-f]{40,64})/m.exec(store.readText(`tasks/${id}/review-r${Math.max(0, ...taken) + 1}-brief.md`) ?? '')?.[1];
   if (head === undefined && tip === '') head = '';
-  if (head === undefined) {
-    const tipTime = Number(gitIn(where, env, ['log', '-1', '--format=%ct', tip]).stdout.trim()) * 1000;
-    if (!(tipTime < statSync(isAbsolute(from) ? from : join(cwd, from)).mtimeMs)) throw refused('review-head-unknown', `the review names no commit and ${task.branch} has a newer commit than the review file`, 'add "head" to the review JSON, or render the review brief (its Range names the commit)');
-    head = tip;
-  }
+  // B-MG-17: a review that names no commit binds nothing; the moving branch tip is never substituted
+  if (head === undefined) throw refused('review-head-unknown', `the review names no commit: it cannot be bound to ${task.branch} as it is now`, 'add "head" to the review JSON, or render the review brief (its Range names the commit)');
   if (!rec && head !== tip && !sameChange(where, env, head, tip, 'main', codeState(where, env).scope)) throw refused('review-head-moved', `the review is of ${head.slice(0, 12)}, but ${task.branch} is at ${tip.slice(0, 12) || 'no commit'}`, 'review the new commits, then record the review again');
   const doc = rec
     ? { verdict: input.verdict, reviewer: { kind: 'external', id: `${rec.provider}:reviewer` }, findings: input.findings, run: rec.runId, sha256: createHash('sha256').update(bytes).digest('hex') }
