@@ -113,7 +113,7 @@ const sendsPart = (p) => {
   return RUNS_ARGS.test(p) && p.split(/[\s=`$(<>]+/).some((w) => SENDERS.has(base(w)));
 };
 // names a glob word may stand for (a dot name only from a glob that starts with a dot)
-const globRe = (g) => { try { return new RegExp('^' + g.replace(/[.+^${}()|\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.') + '$'); } catch { return null; } };
+const globRe = (g) => { try { return new RegExp('^' + g.replace(/[.+^${}()|\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.').replace(/\[(!|\\\^)/g, '[^') + '$'); } catch { return null; } };
 const secretGlob = (s) => s.split(/\s+/).some((w) => w.split(/[=@:<>]/).some((x) => {
   const g = x.slice(x.lastIndexOf('/') + 1);
   if (!/[*?[]/.test(g) || /^[*?[\]]*$/.test(g)) return false;
