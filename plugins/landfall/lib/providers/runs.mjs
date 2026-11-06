@@ -89,8 +89,11 @@ export function runsPrune({ names, io }) {
   // The file name comes from the validated run id only (RUN_ID): a record naming another path is skipped, never deleted.
   for (const x of old.slice(0, PRUNE_MAX)) {
     if (typeof x.runId !== 'string' || !RUN_ID.test(x.runId)) continue;
-    for (const ext of ['json', 'log']) { removeLocalFile(r.w.dir, names, `local/runs/${x.runId}.${ext}`); }
-    removed.push(x.runId);
+    let failed = false;
+    for (const ext of ['json', 'log']) {
+      try { removeLocalFile(r.w.dir, names, `local/runs/${x.runId}.${ext}`); } catch { failed = true; } // one record that cannot be removed never stops the prune
+    }
+    if (!failed) removed.push(x.runId);
   }
   return { data: { removed, kept: all.length - removed.length }, text: `pruned ${removed.length} finished runs older than 30 days\n` };
 }

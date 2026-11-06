@@ -13,7 +13,8 @@ import { projectRedactions, runRedacted } from './redact.mjs';
 // `names`, `task`: the heavy lease's owner (T-MG-80: a long base gate is a full suite, so it queues like every other).
 // `meter`: passed to runHeavy (heavy.mjs), so the base gates and their lease wait count in the verify's (T-MG-121).
 export function measureAt({ where, env, names, task = null, commit, gates, gitIn, inventory, meter = null }) {
-  const dir = localTempDir(where.dir, names, 'base-');
+  let dir;
+  try { dir = localTempDir(where.dir, names, 'base-'); } catch (err) { return { doc: null, error: `no temporary directory for the base ${commit.slice(0, 12)} (${String(err.message).slice(0, 200)})` }; }
   try {
     const add = gitIn(where, env, ['worktree', 'add', '--detach', '-q', dir, commit]);
     if (add.status !== 0) return { doc: null, error: `git cannot check out the base ${commit.slice(0, 12)} (${String(add.stderr).trim().slice(0, 200)})` };
@@ -25,7 +26,7 @@ export function measureAt({ where, env, names, task = null, commit, gates, gitIn
     return { doc: { collector: inv.collector, tests: inv.tests.map(({ id, file, skipped }) => ({ id, file, skipped })), failing: inv.parts.flatMap((p) => p.failing.map(fingerprint)) }, error: null };
   } finally {
     gitIn(where, env, ['worktree', 'remove', '--force', dir]);
-    removeLocalFile(where.dir, names, relative(where.dir, dir).split(sep).join('/'), { tree: true });
+    try { removeLocalFile(where.dir, names, relative(where.dir, dir).split(sep).join('/'), { tree: true }); } catch { /* a leftover temporary directory never masks the result */ }
     gitIn(where, env, ['worktree', 'prune']);
   }
 }
