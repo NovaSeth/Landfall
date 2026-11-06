@@ -6,7 +6,7 @@ import { existsSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, resolve as resolvePath } from 'node:path';
 import { KINDS, open, resolve, setTask } from '../state/index.mjs';
 import { git } from '../git/index.mjs';
-import { EXIT } from './commands.mjs';
+import { EXIT } from './exit.mjs';
 import { insideRepo } from './commit.mjs';
 
 const SLUG = /^[a-z0-9][a-z0-9.-]{0,39}$/;

@@ -3,7 +3,7 @@
 // masked value; never the value), or incomplete disk scan · 2 usage (two modes, a range with an option git would act on) · 8 the scan could not
 // run, its result is invalid (not a git repository, git failing, an unreadable file or pattern file, a refused
 // pattern): never 0 on an error. Context comes from io (cwd, env), never from process state.
-import { EXIT } from '../cli/commands.mjs';
+import { EXIT } from '../cli/exit.mjs';
 import { StateError } from '../state/index.mjs';
 import { rangeWords, scanSecrets } from './scan.mjs';
 

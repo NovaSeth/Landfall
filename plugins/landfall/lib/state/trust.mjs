@@ -138,3 +138,36 @@ export function isTrusted({ dir: stateDir, dataDir, names, env = process.env, ki
   }
   return { trusted: Boolean(entry?.[kind]?.includes(sha)), key, adopted };
 }
+
+// T-MG-77: a gate set or threshold overrides this machine writes through the store are trusted here, only when the write
+// changes them (a fact set beside shipped gates trusts nothing) and the set it replaces was empty or trusted here
+// (fix round 1, AR-1: changing one gate beside untrusted shipped ones trusts none of them).
+const TRUSTED_FILES = {
+  'profile.json': (t) => { const g = gatesOfText(t); return g.length ? ['gates', gatesShaOf(g)] : null; },
+  'config.json': (t) => { const th = thresholdsOfText(t); return Object.keys(th).length ? ['overrides', overridesShaOf(th)] : null; },
+};
+export const isTrustedFile = (rel) => Object.hasOwn(TRUSTED_FILES, rel);
+
+// Before a write of `rel` to `store`: whether the set it replaces (`before`, a text) is empty or trusted here.
+export function trustBase(store, rel, before) {
+  const of = TRUSTED_FILES[rel];
+  if (!of) return false;
+  const prev = of(before);
+  if (!prev) return true;
+  try {
+    const dataDir = store.dataDir();
+    return Boolean(dataDir) && isTrusted({ dir: store.dir, dataDir, names: store.names, env: process.env, kind: prev[0], sha: prev[1] }).trusted;
+  } catch { return false; }
+}
+
+// After a write of `rel` from `before` to `after` (texts) over a trusted or empty set (`base`, trustBase): a changed gate
+// set or overrides are trusted. Best effort.
+export function trustWritten(store, rel, before, after, base) {
+  const of = TRUSTED_FILES[rel];
+  if (!of || !base) return;
+  const next = of(after);
+  if (!next || of(before)?.[1] === next[1]) return;
+  try {
+    recordTrust({ dataDir: store.dataDir(), names: store.names, key: repoKey(store.dir), [next[0]]: next[1] });
+  } catch { /* best effort: `trust` records it at a terminal */ }
+}

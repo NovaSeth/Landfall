@@ -1,8 +1,5 @@
 // State store (spec §4.3, §5, §5.4, SD-10, SC10): typed reads and writes of the files of one state directory.
 // open() touches nothing on disk; reads write nothing (an older file is upgraded in memory).
-// Paths: every path is checked component by component from the store root (inclusive): a symbolic link, or a
-// name that differs in case from the entry on disk, is refused (state-invalid), never followed — the lock
-// directory and backups included.
 // Writes (findings-r2, r3): every write, migration, allocation and registration holds the one store lock
 // (local/lock, lib/fsx withLock), never nested: starting one inside another (a migration in an update callback)
 // fails closed with lock-reentry (INTERNAL). A lock left by a process that is gone is not taken over: writes
@@ -17,52 +14,22 @@
 // schema the step has to upgrade, so nothing is lost before `migrate` writes it (and reads still write nothing).
 // Logs (LOGS, spec §5.2 local/shadow.jsonl): append() adds one JSON line under the store lock, rewriting the file
 // atomically; it refuses in an inactive store before anything is created.
-// Accepted residual (findings-r3): path checks and the file operation that follows are separate system calls
-// (Node has no openat or O_NOFOLLOW for directories), so a process that can already write the store could swap
-// a checked directory for a link in between. Locks never write through links, and that process could write the
-// store directly anyway; this window is not closed.
-import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
-import { hostname } from 'node:os';
+import { lstatSync, mkdirSync, readFileSync, readdirSync } from 'node:fs';
 import { dirname, isAbsolute, join } from 'node:path';
-import { appendLine, createExclusive, isAlive, makeDirs, moveTree, removeEmptyDirs, sweepTemps, unlockStale as fsxUnlockStale, withLock, writeAtomic } from '../fsx/index.mjs';
+import { appendLine, createExclusive, makeDirs, removeEmptyDirs, sweepTemps, withLock, writeAtomic } from '../fsx/index.mjs';
 import { checkWrite, invalidState, parseDoc, requireArg } from './document.mjs';
 import { StateError, newerSchema } from './errors.mjs';
 import { KINDS, LOGS } from './kinds.mjs';
-import { MARKER, forgetShipped, localForeign, machineId } from './machine.mjs';
+import { FOREIGN, claimLocal, dataDirOf, foreignLocalOf, hidden, isLocal, localStatus, markLocal } from './local.mjs';
+import { lockFailure, pauseUntilSignalled } from './locks.mjs';
 import { MIGRATIONS } from './migrations/index.mjs';
+import { checkedAbs, missing, unsafe } from './paths.mjs';
 import { format, validate } from './schema.mjs';
-import { machineDataDir, resolvedDataDir } from './resolve.mjs';
-import { gatesOfText, gatesShaOf, isTrusted, overridesShaOf, recordTrust, repoKey, thresholdsOfText } from './trust.mjs';
+import { isTrustedFile, trustBase, trustWritten } from './trust.mjs';
 import { upgradeDoc } from './upgrade.mjs';
-
-// T-MG-77: a gate set or threshold overrides this machine writes through the store are trusted here (lib/state/trust.mjs),
-// only when the write changes them (a fact set beside shipped gates trusts nothing) and the set it replaces was empty or
-// trusted here (fix round 1, AR-1: changing one gate beside untrusted shipped ones trusts none of them).
-const TRUSTED_FILES = {
-  'profile.json': (t) => { const g = gatesOfText(t); return g.length ? ['gates', gatesShaOf(g)] : null; },
-  'config.json': (t) => { const th = thresholdsOfText(t); return Object.keys(th).length ? ['overrides', overridesShaOf(th)] : null; },
-};
 
 // The most bytes of one appended line (PIPE_BUF on Linux): one write() of this size is never split.
 const APPEND_MAX = 4096;
-// The state directory's .gitignore: machine-local state, the moved-aside copies of a foreign local/ and temporary files
-// of interrupted atomic writes, the move-aside lock. ensureIgnored adds the missing lines (init, and every move-aside
-// before the rename).
-const IGNORED = ['local/', 'local.foreign-*/', '.*.tmp', '.local-move.lock'];
-export function ensureIgnored(store) {
-  const text = store.readText('.gitignore');
-  if (text === null) return store.createText('.gitignore', `${IGNORED.join('\n')}\n`);
-  const lines = text.split(/\r?\n/);
-  const missing = IGNORED.filter((line) => !lines.includes(line));
-  if (missing.length) store.writeText('.gitignore', `${text}${text === '' || text.endsWith('\n') ? '' : '\n'}${missing.join('\n')}\n`);
-  return missing.length > 0;
-}
-
-// The lock that serializes moving a foreign local/ aside (fix round 1, F4): outside the directory it moves, so a
-// writer that checked local/ before another one moved it aside and took a fresh store lock cannot move that one too.
-const MOVE_LOCK = '.local-move.lock';
-// Hidden local/ states: what readers see as empty.
-const hidden = (status) => status === 'foreign' || status === 'unknown';
 // A log row is one JSON object; anything else (a torn write, or one completed by an unrelated line) is not kept.
 const isRow = (row) => {
   try {
@@ -73,82 +40,14 @@ const isRow = (row) => {
   }
 };
 
-// Test hook: creates <dir>/paused, then waits (at most 10 s) until <dir>/go exists.
-function pauseUntilSignalled(dir) {
-  writeAtomic(join(dir, 'paused'), '');
-  const nap = new Int32Array(new SharedArrayBuffer(4));
-  for (let i = 0; i < 2000 && !existsSync(join(dir, 'go')); i++) Atomics.wait(nap, 0, 0, 5);
-}
 const natural = (a, b) => a.localeCompare(b, 'en', { numeric: true });
-const missing = (err) => err.code === 'ENOENT' || err.code === 'ENOTDIR';
-
-// What a write does with a foreign local/ (T-MG-77): 'move' (a command: move it aside, then write) or 'skip' (a hook:
-// write nothing, the lock section does not run). The hook entry (lib/cli/hook.mjs) sets 'skip' for its process.
-const FOREIGN = ['move', 'skip'];
-let foreignDefault = 'move';
-export function setForeignLocal(mode) {
-  if (!FOREIGN.includes(mode)) throw new TypeError(`state.setForeignLocal: ${mode} is not one of ${FOREIGN.join('|')}`);
-  foreignDefault = mode;
-}
 
 export function open(dir, { names, kinds = KINDS, migrations = MIGRATIONS, lockTimeoutMs = 10000, foreignLocal } = {}) {
   requireArg(names, 'names', 'open');
   if (typeof dir !== 'string' || !isAbsolute(dir)) throw new TypeError(`state.open: the state directory must be an absolute path, got ${dir}`);
   if (foreignLocal !== undefined && !FOREIGN.includes(foreignLocal)) throw new TypeError(`state.open: foreignLocal ${foreignLocal} is not one of ${FOREIGN.join('|')}`);
-  return new Store(dir, { names, kinds, migrations, lockTimeoutMs, foreignLocal: foreignLocal ?? foreignDefault });
+  return new Store(dir, { names, kinds, migrations, lockTimeoutMs, foreignLocal: foreignLocalOf(foreignLocal) });
 }
-
-// The absolute path of `rel` in the state directory `dir` after the store's checks (no symbolic link, no case alias
-// from dir inclusive), for the units that read the state directory's files themselves (lib/decisions).
-export function checkedPath(dir, rel) {
-  if (typeof dir !== 'string' || !isAbsolute(dir)) throw new TypeError(`state.checkedPath: the state directory must be an absolute path, got ${dir}`);
-  return new Store(dir, { names: {}, kinds: KINDS, migrations: MIGRATIONS, lockTimeoutMs: 0, foreignLocal: 'skip' }).abs(rel);
-}
-
-// local/ ownership (T-MG-77): lib/state/machine.mjs localForeign; local/.machine names the machine that owns local/.
-export { MARKER };
-const isLocal = (rel) => rel === 'local' || rel.startsWith('local/');
-// <UTC yyyymmddThhmmss>
-const stampOf = (d) => d.toISOString().replace(/[-:]/g, '').slice(0, 15);
-
-// The lib/fsx lock errors as state errors (other errors unchanged).
-export function lockFailure(err, names) {
-  if (err?.code === 'ELOCKED') return new StateError('locked', 'ENV', err.message, { hint: `wait for the other ${names.bin} command to finish` });
-  if (err?.code === 'ESTALE') return new StateError('stale-lock', 'REFUSED', err.message, { hint: `if no ${names.bin} command is running, run '${names.bin} state unlock --stale'` });
-  if (err?.code === 'EREENTRANT') return new StateError('lock-reentry', 'INTERNAL', err.message, { hint: 'a state write was started inside another one; report this' });
-  return err;
-}
-
-// Removes the store lock of a process that is gone (an explicit command, for a store nobody is using; lib/fsx
-// unlockStale); { removed, owner }. quietMs: how long the lock must stay unchanged (default 2 s).
-export function unlockStale(store, { quietMs } = {}) {
-  try {
-    const move = fsxUnlockStale(store.abs(MOVE_LOCK), { quietMs });
-    const out = fsxUnlockStale(store.abs('local/lock'), { quietMs });
-    return out.removed || !move.removed ? out : move;
-  } catch (err) {
-    throw busyFailure(err, store.names);
-  }
-}
-
-// lib/fsx unlockStale refusals (EBUSY) as state errors (other errors unchanged).
-export function busyFailure(err, names) {
-  if (err?.code !== 'EBUSY') return err;
-  return new StateError('store-busy', 'REFUSED', err.message, { hint: `run it when no ${names.bin} command is running: it removes only a lock whose owner is gone and that stayed unchanged for 2 seconds` });
-}
-
-// realpath names where an entry is now: on macOS it asks the system for the path of the opened entry, so an
-// entry renamed meanwhile (a lock released to lock.released-<token>) comes back under its new name. A case alias
-// is the same entry (same inode) under a path that differs from ours only in case; anything else moved
-// meanwhile and is treated as if lstat had missed it (findings S3).
-function caseAlias(cur, onDisk, st) {
-  const fold = (p) => p.normalize('NFC').toLowerCase();
-  if (fold(onDisk) !== fold(cur)) return false;
-  const now = lstatSync(onDisk, { throwIfNoEntry: false });
-  return now !== undefined && now.ino === st.ino && now.dev === st.dev;
-}
-
-export const unsafe = (path, why) => new StateError('state-invalid', 'FAIL', `${path} ${why}; the state never follows links or case aliases`, { hint: 'replace it with a plain directory or file of exactly that name' });
 
 // Public: active, read, list, write, create, update, append. The other methods are internal to lib/state.
 export class Store {
@@ -180,161 +79,18 @@ export class Store {
   // The absolute path of `rel` after checking it: the root and every existing component of rel must be plain
   // entries (no symbolic link) whose name on disk is exactly the one asked for.
   abs(rel) {
-    const parts = rel === '' ? [] : rel.split('/');
-    if (parts.some((p) => p === '' || p === '.' || p === '..')) throw new TypeError(`state: bad store path ${rel}`);
-    // Entries can vanish while they are checked (another process removing its lock): check again.
-    for (let attempt = 0; ; attempt++) {
-      try {
-        this.checkPath(parts);
-        return join(this.dir, rel);
-      } catch (err) {
-        if (!missing(err) || attempt >= 5) throw err;
-      }
-    }
+    return checkedAbs(this.dir, rel);
   }
 
-  checkPath(parts) {
-    let st;
-    try {
-      st = lstatSync(this.dir);
-    } catch (err) {
-      if (missing(err)) return;
-      throw err;
-    }
-    if (st.isSymbolicLink()) throw unsafe(this.dir, 'is a symbolic link');
-    const root = realpathSync.native(this.dir);
-    let cur = root;
-    let curSt = st;
-    const done = [];
-    for (const part of parts) {
-      st = lstatSync(join(cur, part), { throwIfNoEntry: false });
-      if (!st) break;
-      done.push(part);
-      if (st.isSymbolicLink()) throw unsafe(join(this.dir, ...done), 'is a symbolic link');
-      if (!st.isDirectory() && done.length < parts.length) break;
-      cur = join(cur, part);
-      curSt = st;
-    }
-    if (cur !== root) {
-      const onDisk = realpathSync.native(cur);
-      if (onDisk !== cur && caseAlias(cur, onDisk, curSt)) throw unsafe(join(this.dir, ...done), `differs in case from its name on disk (${onDisk.slice(root.length + 1)})`);
-    }
-  }
+  // ---- local/ ownership (T-MG-77): local.mjs ----
 
-  // ---- local/ ownership (T-MG-77) ----
-
-  // 'absent' (no local/) · 'mine' (this machine's marker; also when the path check of local/ fails: the reader's own
-  // check reports it) · 'unmarked' (no marker and nothing shipped: marked at the next write; adoption of its gates is
-  // trust.mjs's, on machine-side evidence only) · 'foreign' (shipped: tracked by git, another machine's marker, a
-  // marker that is not a file) · 'unknown' (git gave no answer: hidden like foreign, never moved, writes refused).
   localStatus() {
-    if (this.localState === undefined) this.localState = this.ownerOfLocal();
-    return this.localState;
-  }
-
-  ownerOfLocal(fresh = false) {
-    try { this.abs('local'); } catch { return 'mine'; }
-    const { foreign, unknown, why } = localForeign(this.dir, { fresh });
-    this.localWhy = why;
-    if (unknown) return 'unknown';
-    if (foreign) return 'foreign';
-    return { absent: 'absent', ours: 'mine' }[why] ?? 'unmarked';
-  }
-
-  unknownOwner() {
-    return new StateError('git-failed', 'ENV', `the owner of ${join(this.dir, 'local')} is unknown: ${this.localWhy}; nothing was written`, { hint: 'check that git runs in this directory, then run the command again' });
-  }
-
-  // Before a write: a foreign local/ is moved aside to local.foreign-<stamp>/ (one rename; the store lock lives inside
-  // local/, so the rename comes first). Moves are serialized by MOVE_LOCK (outside local/); under it git is asked
-  // again (another process may have moved it aside and started a fresh local/ meanwhile), the repository gets its trust
-  // entry without adoption, .gitignore its missing lines, then the rename: the fresh local/ that replaces a shipped
-  // one is never adopted, not even by a reader between the rename and the end of the write (fix round 2, F1). A trust
-  // entry that cannot be written aborts the move and the write (trust-write-failed, naming trust.json). Without a
-  // machine data directory there is no projects.json, so nothing can adopt. An unknown owner refuses the write:
-  // nothing moves on a guess.
-  claimLocal() {
-    this.localState = undefined;
-    if (this.localStatus() === 'unknown') throw this.unknownOwner();
-    if (this.localStatus() !== 'foreign') return;
-    withLock(this.abs(MOVE_LOCK), () => this.moveAside(), { timeoutMs: this.lockTimeoutMs });
-    this.localState = undefined;
-  }
-
-  moveAside() {
-    this.localState = this.ownerOfLocal(true);
-    if (this.localState === 'unknown') throw this.unknownOwner();
-    if (this.localState !== 'foreign') return;
-    const from = this.abs('local');
-    const dataDir = this.dataDir();
-    if (dataDir) {
-      try {
-        recordTrust({ dataDir, names: this.names, key: repoKey(this.dir) });
-      } catch (err) {
-        throw new StateError('trust-write-failed', 'ENV', `${join(dataDir, 'trust.json')} could not be written (${err.message}); ${from} was not moved aside and nothing was written`, { hint: 'check that file and its directory, then run the command again' });
-      }
-    }
-    ensureIgnored(this);
-    // A lock inside it whose owner runs on this host: a live writer (another machine data directory), never moved.
-    let owner = null;
-    try { owner = JSON.parse(readFileSync(join(from, 'lock', 'owner.json'), 'utf8')); } catch { /* none or unreadable */ }
-    if (owner && owner.host === hostname() && Number.isInteger(owner.pid) && isAlive(owner.pid)) {
-      throw new StateError('locked', 'ENV', `${from} is foreign but its lock is held by the running process ${owner.pid}`, { hint: `wait for the other ${this.names.bin} command to finish` });
-    }
-    const stamp = stampOf(new Date());
-    let to = join(this.dir, `local.foreign-${stamp}`);
-    for (let n = 2; lstatSync(to, { throwIfNoEntry: false }); n++) to = join(this.dir, `local.foreign-${stamp}-${n}`);
-    const pause = process.env[`${this.names.envPrefix}TEST_MOVE_PAUSE`];
-    if (pause) pauseUntilSignalled(pause);
-    try {
-      moveTree(from, to);
-      this.movedAside = to;
-    } catch (err) {
-      if (!missing(err)) throw err;
-    }
-    forgetShipped(this.dir); // what git tracks under local/ was moved aside with it
-  }
-
-  // After a write succeeded (under the lock; a section that wrote nothing marks nothing): local/ carries this machine's
-  // marker. Marking trusts nothing (fix round 1, F1). Best effort: a marker that cannot be written leaves local/ unmarked.
-  markLocal() {
-    if (!this.active) return; // deactivate removed the state: nothing to mark
-    try {
-      if (this.readText(MARKER) !== null && this.localStatus() === 'mine') return;
-      writeAtomic(this.abs(MARKER), `${machineId()}\n`);
-      this.localState = 'mine';
-    } catch { /* best effort */ }
+    return localStatus(this);
   }
 
   // The machine data directory of this store's commands (resolve's, else the process environment's), or null.
   dataDir() {
-    const known = resolvedDataDir(this.dir);
-    if (known) return known;
-    try { return this.names?.plugin ? machineDataDir(this.names, process.env) : null; } catch { return null; }
-  }
-
-  // Before a write of `rel` (fix round 1, AR-1): whether the set it replaces (`before`, a text) is empty or trusted here.
-  trustBase(rel, before) {
-    const of = TRUSTED_FILES[rel];
-    if (!of) return false;
-    const prev = of(before);
-    if (!prev) return true;
-    try {
-      const dataDir = this.dataDir();
-      return Boolean(dataDir) && isTrusted({ dir: this.dir, dataDir, names: this.names, env: process.env, kind: prev[0], sha: prev[1] }).trusted;
-    } catch { return false; }
-  }
-
-  // After a write of `rel` from `before` to `after` (texts) over a trusted or empty set (`base`, trustBase): a
-  // changed gate set or overrides are trusted. Best effort.
-  trustWritten(rel, before, after, base) {
-    const of = TRUSTED_FILES[rel];
-    if (!of || !base) return;
-    const next = of(after);
-    if (!next || of(before)?.[1] === next[1]) return;
-    try {
-      recordTrust({ dataDir: this.dataDir(), names: this.names, key: repoKey(this.dir), [next[0]]: next[1] });
-    } catch { /* best effort: `trust` records it at a terminal */ }
+    return dataDirOf(this);
   }
 
   readText(rel) {
@@ -407,11 +163,11 @@ export class Store {
       if (this.foreignLocal === 'skip') {
         this.localState = undefined;
         if (hidden(this.localStatus())) { this.skipped = true; return undefined; }
-      } else this.claimLocal();
+      } else claimLocal(this);
       return withLock(this.abs('local/lock'), () => {
         this.wrote = false;
         const out = fn();
-        if (this.wrote) this.markLocal();
+        if (this.wrote) markLocal(this);
         return out;
       }, { timeoutMs: this.lockTimeoutMs });
     } catch (err) {
@@ -532,11 +288,11 @@ export class Store {
     checkWrite(kind, next, { where: join(this.dir, rel), key });
     return this.locked(() => {
       this.checks(kind, rel);
-      const before = TRUSTED_FILES[rel] ? this.readText(rel) : null;
-      const base = this.trustBase(rel, before);
+      const before = isTrustedFile(rel) ? this.readText(rel) : null;
+      const base = trustBase(this, rel, before);
       const text = format(kind.spec, next);
       this.writeText(rel, text);
-      this.trustWritten(rel, before, text, base);
+      trustWritten(this, rel, before, text, base);
       return next;
     });
   }
@@ -570,9 +326,9 @@ export class Store {
       const next = this.stamp(kind, out);
       checkWrite(kind, next, { where: this.abs(rel), key });
       const written = format(kind.spec, next);
-      const base = this.trustBase(rel, text);
+      const base = trustBase(this, rel, text);
       this.writeText(rel, written);
-      this.trustWritten(rel, text, written, base);
+      trustWritten(this, rel, text, written, base);
       return next;
     });
   }

@@ -5,7 +5,7 @@
 // Exit 1 a said fact outranks the observed value, or a state file is invalid · 2 bad key, value, source or
 // evidence · 7 inactive repository (set), newer schema, no consent · 8 not a git repository, git missing.
 import { StateError, resolve } from '../state/index.mjs';
-import { EXIT } from '../cli/commands.mjs';
+import { EXIT } from '../cli/exit.mjs';
 import { FACT_KEYS, ProfileError } from './keys.mjs';
 import { applyGates, readProfile, riskGlobsOf, runObserve, setFact, setGate } from './index.mjs';
 

@@ -3,7 +3,8 @@
 // rule, "<ID>. <text>". Exit 0 all found · 2 a malformed or unknown ID (the rules found are still printed; with
 // --json, data.partial is true). A stale index is a broken copy: it throws, so the CLI reports INTERNAL (70).
 import { RULE_ID, lookupRules, openMethod } from '../method/index.mjs';
-import { COMMANDS, EXIT } from './commands.mjs';
+import { COMMANDS } from './commands.mjs';
+import { EXIT } from './exit.mjs';
 import { commandUsage } from './help.mjs';
 
 const EXAMPLE = 'COD-7';

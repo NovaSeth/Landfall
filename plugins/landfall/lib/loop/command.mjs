@@ -7,7 +7,7 @@
 // (spec §8.1 partial data): data.partial, the reasons as errors and "partial" in the TICK line; the exit stays the
 // tick's. Errors from lib/state (inactive repository, newer schema, lock) reach the CLI unchanged. Printed only by
 // lib/cli/output.mjs.
-import { EXIT } from '../cli/commands.mjs';
+import { EXIT } from '../cli/exit.mjs';
 import { getRule, openMethod } from '../method/index.mjs';
 import { DATA_MARKER, dataLine } from '../text/data.mjs';
 import { CARRIED_PLAN, UNMEASURED, fixedPrompt, parseCaps, showLoop, startLoop, stopLoop, tick as runTick } from './index.mjs';
