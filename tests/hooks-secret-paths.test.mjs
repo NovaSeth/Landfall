@@ -103,7 +103,7 @@ test('the Bash read corpus is denied for a subagent and allowed for the main ses
   for (const c of corpus) {
     const r = bash(c);
     assert.ok(denied(r), `subagent: ${c}`);
-    assert.match(r.stdout, /SEC-13: blocked: a subagent does not read Claude Code transcripts/, c);
+    assert.match(r.stdout, c === 'echo lf1_abc' ?/SEC-13: blocked: a role token is accepted only in the form/ : /SEC-13: blocked: a subagent does not read Claude Code transcripts/, c);
     assert.ok(!/SEC-13: blocked: a subagent does not read/.test(bash(c, false).stdout), `main: ${c}`);
   }
   const eval_ = bash('eval "$X" ~/.claude');
@@ -118,7 +118,7 @@ test('daily subagent commands still pass', () => {
 
 // Fix round 1 (security review r1 F1-F3, Codex review r2 F1-F6). The state lives in the repository here (the hard case).
 const sd = (...p) => join(state, 'local', ...p);
-const RE = /SEC-13: blocked: a subagent does not read/;
+const RE = /SEC-13: blocked: (a subagent does not read|a role token is accepted only)/; // either secret-path denial (T-MG-206: a token outside the record form names the accepted form)
 const cmdDenied = (c, sub = true) => RE.test(bash(c, sub).stdout);
 
 test("the state's local directory is not a root: root recursive readers and the review diff pass (D-MG-81)", () => {
@@ -227,4 +227,33 @@ test('T-MG-198 F1: only the verified program operand is exempt from secret-path 
   mkdirSync(dirname(otherBin), { recursive: true });
   writeFileSync(otherBin, '#!/bin/sh\n');
   assert.match(installedBash(recordWith(otherBin)).stdout, RE);
+});
+
+// T-MG-211 B-MG-30: in the record form --from names only a path outside the secret roots (transcripts, plugin data), however spelled.
+test('T-MG-211 B-MG-30: --from into a secret root is denied in the token-record form', () => {
+  const data = join(home, '.claude', 'plugins', 'data');
+  mkdirSync(data, { recursive: true });
+  writeFileSync(join(data, 'x.json'), '{}');
+  symlinkSync(data, join(repo, 'link-data'));
+  const rec = (from, form = `--from ${from}`) => `printf %s ${['lf', '1_'].join('')}${'A'.repeat(43)} | ${names.bin} task set T-AA-1 ${form} --token -`;
+  for (const from of [join(data, 'x.json'), 'link-data/x.json', 'link-projects/-p/s1.jsonl', transcript, relative(repo, transcript), '/../' + join(data, 'x.json').slice(1)]) {
+    assert.ok(cmdDenied(rec(from)), from);
+    assert.ok(cmdDenied(rec(from, `--from=${from}`)), `=${from}`);
+  }
+  assert.ok(!cmdDenied(rec('r.md')) && !cmdDenied(rec('/etc/passwd')));
+});
+
+// T-MG-211 T-MG-206: a token in any other shape is refused with the reason that names the accepted form, not the transcript reason.
+test('T-MG-211 T-MG-206: a tokened command outside the record form names the accepted form', () => {
+  const t = ['lf', '1_'].join('') + 'A'.repeat(43);
+  const rec = `printf %s ${t} | ${names.bin} review record T-AA-1 --from r.md --yes --token -`;
+  const reason = (c) => JSON.parse(bash(c).stdout || '{"hookSpecificOutput":{}}').hookSpecificOutput.permissionDecisionReason;
+  for (const c of [`${rec} 2>&1 | tail -3`, `cd /tmp && ${rec}`, `${rec} && cat x`, `echo ${t}`, `grep ${t} .`, `printf %s ${t} | ${names.bin} status --token -`]) {
+    const r = reason(c);
+    assert.match(r, /^SEC-13: /, c);
+    assert.ok(r.includes(`printf %s <token> | ${names.bin} review record|task set`) && r.includes('--token -') && !/transcripts/.test(r), `${c} -> ${r}`);
+  }
+  assert.equal(reason(`cat ${transcript}`), REASON); // a real secret read keeps its own reason
+  assert.equal(reason(`${rec} ; cat ${transcript}`), REASON);
+  assert.equal(bash(rec).stdout, '');
 });

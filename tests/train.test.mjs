@@ -231,7 +231,7 @@ test('F2: review record binds the reviewed commit: the tip of the task branch', 
   const r = repo(t);
   const id = r.task('feat/rec', addTest('a.test.mjs'), { review: false });
   const file = join(r.dir, '..', 'review.json');
-  writeFileSync(file, JSON.stringify(APPROVED));
+  writeFileSync(file, JSON.stringify({ ...APPROVED, head: r.git('rev-parse', 'feat/rec') })); // B-MG-17: a review names the commit it read
   const rec = await cli(['review', 'record', id, '--from', file, '--yes'], r);
   assert.equal(rec.code, 0, JSON.stringify(rec.env.errors));
   assert.equal(events(r, id, 'review').at(-1).data.head, r.git('rev-parse', 'feat/rec'));
@@ -480,4 +480,46 @@ test('T-MG-192: a merge of main into the branch after the review keeps it eligib
   const why = (id) => res.env.data.tasks.find((x) => x.task === id);
   assert.doesNotMatch(why(merged).why ?? '', /changed since its review/, JSON.stringify(res.env));
   assert.match(why(own).why, /branch changed since its review/);
+});
+
+test('B-MG-19: a task that stops being eligible as the state lock is taken merges nothing: the target does not move', async (t) => {
+  const r = repo(t);
+  const a = r.task('feat/a', addTest('a.test.mjs'));
+  const b = r.task('feat/b', addTest('b.test.mjs'));
+  const tip = r.git('rev-parse', 'HEAD');
+  const proto = Object.getPrototypeOf(r.store);
+  const original = proto.batch;
+  t.after(() => { proto.batch = original; });
+  let revoked = false;
+  proto.batch = function patched(fn) {
+    if (!revoked) { // the first lock after the gates: a needs-fixes review of `b` lands just before it
+      revoked = true;
+      this.write('review', verify.reviewKey(b, 2), { schema: verify.VERIFY_KINDS.review.version, ...APPROVED, verdict: 'needs-fixes', findings: [{ id: 'F1', severity: 'blocking', path: 'b.test.mjs', line: 1, rule: null, text: 'fails open' }] });
+    }
+    return original.call(this, fn);
+  };
+  const res = await cli(['train', a, b, '--yes'], r);
+  assert.equal(revoked, true);
+  assert.equal(res.code, 1, JSON.stringify(res.env.data?.tasks));
+  assert.equal(r.git('rev-parse', 'HEAD'), tip, 'the target did not move');
+  assert.deepEqual(outcomes(res).map(([, o]) => o), ['skipped', 'skipped']);
+  assert.equal(events(r, a, 'merged').length + events(r, a, 'done').length + events(r, b, 'merged').length + events(r, b, 'done').length, 0);
+});
+
+test('B-MG-16, B-MG-20: two tasks that both change docs/cli.md merge; the generator output is committed before the gate', async (t) => {
+  const gen = `import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+const src = ['a.txt', 'b.txt'].map((f) => readFileSync(f, 'utf8')).join('');
+mkdirSync('docs', { recursive: true });
+const out = 'docs\\n' + src.toUpperCase();
+if (process.argv.includes('--check')) process.exit(readFileSync('docs/cli.md', 'utf8') === out ? 0 : 1);
+writeFileSync('docs/cli.md', out);
+`;
+  const r = repo(t, { trustGuards: true, files: { 'scripts/gen.mjs': gen, 'a.txt': 'a0\n', 'b.txt': 'b0\n', 'docs/cli.md': 'docs\nA0\nB0\n' }, guards: ['node scripts/gen.mjs --check'] });
+  const one = r.task('feat/one', (w) => { w('a.txt', 'a1\n'); w('docs/cli.md', 'docs\nA1\nB0\n'); });
+  const two = r.task('feat/two', (w) => { w('b.txt', 'b1\n'); w('docs/cli.md', 'docs\nA0\nB1\n'); });
+  const res = await cli(['train', one, two, '--yes'], r);
+  assert.equal(res.code, 0, JSON.stringify(res.env));
+  assert.deepEqual(outcomes(res), [[one, 'merged'], [two, 'merged']]);
+  assert.deepEqual(res.env.data.tasks.find((x) => x.task === two).regenerated, ['docs/cli.md']);
+  assert.equal(r.git('show', 'HEAD:docs/cli.md'), 'docs\nA1\nB1');
 });

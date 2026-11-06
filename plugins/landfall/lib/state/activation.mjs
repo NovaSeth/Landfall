@@ -65,7 +65,7 @@ function trustLink(where, dir, names, env) {
     for (const d of [...created].reverse()) {
       if (!removeEmptyDir(d)) break;
     }
-    throw new StateError('trust-write-failed', 'ENV', `${join(where.dataDir, 'trust.json')} could not be written (${err.message}); ${dir} was not linked`, { hint: 'check that file and its directory, then run the command again' });
+    throw new StateError('trust-write-failed', 'ENV', `${join(where.dataDir, 'trust.json')} could not be written (${err.message}); ${dir} was not linked`, { hint: 'check that file and its directory, then run the command again', cause: err });
   }
 }
 

@@ -6,13 +6,12 @@
 // stop signals the supervisor (SIGTERM) only when the recorded identity (pid + start time + method) is the current
 // one of that pid; gone or another process: the run is marked failed, nothing is signalled; unreadable: refused.
 // Exit 0 · 1 unknown run · 2 bad --timeout · 3 wait: still running · 7 inactive repository, stop: identity unreadable.
-import { unlinkSync } from 'node:fs';
 import { RUN_ID } from '../runs/kind.mjs';
 import { join } from 'node:path';
 import { EXIT } from '../cli/exit.mjs';
 import { TERMINAL, readRunRecords, runsStore } from '../runs/index.mjs';
 import { SYSTEM, identify, judge } from '../sched/index.mjs';
-import { StateError, resolve } from '../state/index.mjs';
+import { StateError, removeLocalFile, resolve } from '../state/index.mjs';
 
 const DAY_MS = 86400e3;
 const KEEP_DAYS = 30;
@@ -90,8 +89,11 @@ export function runsPrune({ names, io }) {
   // The file name comes from the validated run id only (RUN_ID): a record naming another path is skipped, never deleted.
   for (const x of old.slice(0, PRUNE_MAX)) {
     if (typeof x.runId !== 'string' || !RUN_ID.test(x.runId)) continue;
-    for (const ext of ['json', 'log']) { try { unlinkSync(join(r.w.dir, 'local', 'runs', `${x.runId}.${ext}`)); } catch { /* already gone */ } }
-    removed.push(x.runId);
+    let failed = false;
+    for (const ext of ['json', 'log']) {
+      try { removeLocalFile(r.w.dir, names, `local/runs/${x.runId}.${ext}`); } catch { failed = true; } // one record that cannot be removed never stops the prune
+    }
+    if (!failed) removed.push(x.runId);
   }
   return { data: { removed, kept: all.length - removed.length }, text: `pruned ${removed.length} finished runs older than 30 days\n` };
 }

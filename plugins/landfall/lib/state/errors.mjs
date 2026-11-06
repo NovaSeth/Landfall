@@ -2,8 +2,8 @@
 // (REFUSED, USAGE, FAIL, ENV, INTERNAL; the numbers live in lib/cli/commands.mjs), a message and a hint, so a
 // command returns { code: EXIT[err.exit], errors: [err] } unchanged.
 export class StateError extends Error {
-  constructor(code, exit, message, { hint = '', details } = {}) {
-    super(message);
+  constructor(code, exit, message, { hint = '', details, cause } = {}) {
+    super(message, cause === undefined ? undefined : { cause });
     this.name = 'StateError';
     this.code = code;
     this.exit = exit;
@@ -26,6 +26,7 @@ export function fsFailure(err) {
   if (!FS_ENV.has(err?.code)) return err;
   return new StateError('write-failed', 'ENV', `${err.syscall ?? 'access'} ${err.path ?? 'the state directory'}: ${err.code}`, {
     hint: 'check the permissions and free space of that directory, then retry',
+    cause: err,
   });
 }
 

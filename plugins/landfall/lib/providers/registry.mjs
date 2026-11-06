@@ -47,7 +47,7 @@ function update(dir, names, change) {
       return next;
     });
   } catch (err) {
-    if (err?.code === 'ELOCKED' || err?.code === 'ESTALE') throw new StateError('providers-busy', 'ENV', err.message, { hint: 'another command holds the providers lock; retry in a moment' });
+    if (err?.code === 'ELOCKED' || err?.code === 'ESTALE') throw new StateError('providers-busy', 'ENV', err.message, { hint: 'another command holds the providers lock; retry in a moment', cause: err });
     throw err;
   }
 }

@@ -137,3 +137,17 @@ for (const linked of [true, false]) {
     p.noTempWorktree();
   });
 }
+
+test('measureAt returns the error result when local/ cannot be used or the cleanup fails (T-MG-143 F2)', async (t) => {
+  const { mkdtempSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { measureAt } = await lib('verify/base.mjs');
+  const base = mkdtempSync(join(tmpdir(), 'measure-at-'));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  const dir = join(base, names.stateDir);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'local'), 'a file where the directory should be');
+  const r = measureAt({ where: { dir }, env: {}, names, commit: 'a'.repeat(40), gates: [], gitIn: () => ({ status: 0, stderr: '' }), inventory: () => ({}) });
+  assert.equal(r.doc, null);
+  assert.match(r.error, /base/);
+});

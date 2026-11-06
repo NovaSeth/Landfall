@@ -331,16 +331,25 @@ function selectPassing(context, set, out) {
 }
 
 function fastForward(context, set, integrated, verified, out) {
-  const { targetProfile, where, env, result, names, train, ready, list, tip } = context;
+  const { targetProfile, where, env, result, names, train } = context;
   const finalChanges = targetProfile.rel === null ? [] : gateChanges(profileOf(targetProfile.text), profileOf(stateAt(where, env, integrated, 'profile.json').text));
   if (finalChanges.length) {
     for (const t of set) { t.outcome = 'skipped'; t.why = 'gate-change-required'; }
     result.reasons.push({ code: 'gate-change-required', message: `the integrated batch changes the gates in ${join(targetProfile.rel, 'profile.json')}: ${describeChanges(finalChanges)}; nothing was merged`, hint: `merge the tasks one by one: ${names.bin} task merge <id>` });
     return finish(result);
   }
+  // A train checks its tasks and moves the target under one state lock (B-MG-19): a task that stopped being eligible
+  // meanwhile never reaches the target. The record takes the lock again and checks once more.
+  const stopped = train ? context.store.batch((s) => advance(context, set, integrated, s)) : advance(context, set, integrated, context.store);
+  return stopped ?? record(context, set, integrated, verified, out);
+}
+
+// null: the target now holds `integrated`; else the finished result with nothing merged.
+function advance(context, set, integrated, s) {
+  const { where, env, result, names, train, ready, list, tip } = context;
   // Compare-and-swap only the original ref; check the checkout before and after, rolling back if it moved (F5).
   // Dry-run the two-tree checkout update first so local state writes survive; a changed train blocks the whole set.
-  const refused = train ? set.map((t) => [t, again(context, t)]).filter(([, why]) => why) : [];
+  const refused = train ? set.map((t) => [t, again(context, t, s)]).filter(([, why]) => why) : [];
   if (refused.length) {
     for (const t of set) { t.outcome = 'skipped'; t.why = refused.find(([x]) => x === t)?.[1] ?? `not merged: ${refused.map(([x]) => x.task).join(', ')} changed during the train gate (run the train again)`; }
     result.reasons.push({ code: 'train-changed', message: `${refused.map(([x]) => x.task).join(', ')} no longer pass the train's checks; nothing was merged`, hint: `${names.bin} train ${ready ? '--ready' : list.join(' ')}` });
@@ -356,7 +365,7 @@ function fastForward(context, set, integrated, verified, out) {
   if (!holds(context, integrated)) { swap(context, tip, integrated); return moved(context, set); }
   const rt = gitIn(where, env, ['read-tree', '-m', '-u', tip, integrated]);
   if (rt.status !== 0) { swap(context, tip, integrated); return ffFailed(result, set, firstLine(rt)); }
-  return record(context, set, integrated, verified, out);
+  return null;
 }
 
 function moved(context, set) {

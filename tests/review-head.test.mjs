@@ -101,8 +101,27 @@ test('no head, the brief names a commit and the branch gained an own commit afte
   assert.equal(res.env.errors[0].code, 'review-head-moved');
 });
 
-test('no head and no brief: a tip older than the review file is the reviewed commit', async (t) => {
+test('B-MG-17: no head and no brief: a tip older than the review file is never the reviewed commit (review-head-unknown, nothing recorded)', async (t) => {
   const r = repo(t);
+  const res = await record(r);
+  assert.equal(res.code, 7, JSON.stringify(res.env));
+  assert.equal(res.env.errors[0].code, 'review-head-unknown');
+  assert.equal(r.store.read('task', r.id).events.some((e) => e.event === 'review'), false);
+  assert.equal(r.store.list('review').length, 0);
+});
+
+test('B-MG-17: a headless approval after the branch advanced is refused, never bound to the new tip', async (t) => {
+  const r = repo(t);
+  moveBranch(r, { merge: false });
+  const res = await record(r);
+  assert.equal(res.code, 7, JSON.stringify(res.env));
+  assert.equal(res.env.errors[0].code, 'review-head-unknown');
+  assert.equal(r.store.list('review').length, 0);
+});
+
+test('a head in the JSON is the reviewed commit', async (t) => {
+  const r = repo(t);
+  writeFileSync(r.file, JSON.stringify({ ...REVIEW, head: r.reviewed }));
   const res = await record(r);
   assert.equal(res.code, 0, JSON.stringify(res.env));
   assert.equal(headOf(r), r.reviewed);
