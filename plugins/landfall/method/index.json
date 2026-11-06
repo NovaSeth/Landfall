@@ -271,7 +271,7 @@
     "REV-8": {"topic":"review","file":"review.md","line":32,"section":"Fix rounds","pack":"core","summary":"A finding that shows a defective pattern, not one spot, is checked in every lane and fixed once in…","must":true,"hash":"d379dc4b609e"},
     "REV-9": {"topic":"review","file":"review.md","line":33,"section":"Fix rounds","pack":"core","summary":"An implementer does not fix a finding it disputes","hash":"2f9fd2a1ba90"},
     "REV-10": {"topic":"review","file":"review.md","line":36,"section":"Task gate","pack":"core","summary":"Before review: gate commands green, the secrets scan run without a pipe with its exit code…","hash":"a38c51b0ae67"},
-    "REV-11": {"topic":"review","file":"review.md","line":37,"section":"Task gate","pack":"core","summary":"Before merge the orchestrator collects approved tasks of every class into one train (ORC-25)","hash":"0a492ffe94f8"},
+    "REV-11": {"topic":"review","file":"review.md","line":37,"section":"Task gate","pack":"core","summary":"Before merge the orchestrator collects approved tasks of every class into one train (ORC-25)","hash":"40283643d031"},
     "REV-12": {"topic":"review","file":"review.md","line":40,"section":"Area gate","pack":"core","summary":"Open the area gate when every task of the area is in `main`","hash":"17ab574f2d27"},
     "REV-13": {"topic":"review","file":"review.md","line":41,"section":"Area gate","pack":"core","summary":"Only a functional defect, wrong data, an unusable screen, or a Critical or High security finding…","hash":"5e617ed49530"},
     "REV-14": {"topic":"review","file":"review.md","line":42,"section":"Area gate","pack":"core","summary":"After each area gate write a report for the PO in the product's language","hash":"90435ed005db"},

@@ -34,7 +34,7 @@
 
 ### Task gate
 **REV-10.** Before review: gate commands green (typecheck, lint, tests), the secrets scan run without a pipe with its exit code checked, branch E2E when the brief requires it, a clean tree and one commit per step.
-**REV-11.** Before merge the orchestrator collects approved tasks of every class into one train (ORC-25), because a report from an older base guarantees nothing. Once tasks in flight settle or the 45-minute hold cap passes, it runs `train --ready`: one gate on the integrated tree is each task's verify (FLW-8), and the train merges and records them done. A lone approved task with nothing in flight takes `train <id>` at once.
+**REV-11.** Before merge the orchestrator collects approved tasks of every class into one train (ORC-25), because a report from an older base guarantees nothing. Once tasks in flight settle or the 45-minute hold cap passes, it runs `train --ready`: one gate on the integrated tree is each task's verify (FLW-8), and the train merges through `task merge` semantics and records them done. A lone approved task with nothing in flight takes `close <id>` at once.
 
 ### Area gate
 **REV-12.** Open the area gate when every task of the area is in `main`: cross-review of the area diff by another provider's model (fallback: a fresh reviewer with a different prompt), each remark verified in code before acceptance; full E2E on a fresh build with behavior and data assertions; one fix round after it, closed by a scoped re-review.
