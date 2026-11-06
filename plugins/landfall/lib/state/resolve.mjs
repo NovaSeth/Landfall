@@ -22,7 +22,7 @@ import { StateError } from './errors.mjs';
 import { MACHINE_KINDS } from './kinds.mjs';
 import { MIGRATIONS } from './migrations/index.mjs';
 import { format } from './schema.mjs';
-import { busyFailure, lockFailure } from './store.mjs';
+import { busyFailure, lockFailure } from './locks.mjs';
 import { upgradeDoc } from './upgrade.mjs';
 
 const PROJECTS = MACHINE_KINDS.projects;
