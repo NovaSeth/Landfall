@@ -4,7 +4,7 @@
 import { configKey } from './config-keys.mjs';
 import { DATA_SUBS, GIT_ARG, GIT_FLAG, GIT_LONG, GIT_SHORT, LONG_KIND, MERGE_LIKE, longOpt } from './git-options.mjs';
 import { MSG, short } from './messages.mjs';
-import { isHookPath } from './shapes.mjs';
+import { isHookPath } from './hook-path.mjs';
 import { why } from './tokenizer.mjs';
 
 // The push target is main: main, heads/main, refs/heads/main (git completes a short target), also a * pattern covering main.

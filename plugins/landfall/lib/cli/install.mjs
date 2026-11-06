@@ -9,7 +9,7 @@
 import { realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { run } from '../proc/index.mjs';
-import { EXIT } from './commands.mjs';
+import { EXIT } from './exit.mjs';
 
 const TIMEOUT_MS = 180000; // a marketplace clone over a slow network; well under the Bash tool's 600 s cap
 // `claude` runs from a neutral directory, never the repository: Claude Code may read project settings from its cwd.

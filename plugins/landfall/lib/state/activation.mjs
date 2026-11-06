@@ -20,12 +20,13 @@ import { StateError, guarded } from './errors.mjs';
 import { KINDS, LIMITS, PATTERNS } from './kinds.mjs';
 import { readProjects, resolve, updateProject } from './resolve.mjs';
 import { format, validate } from './schema.mjs';
-import { ensureIgnored, open } from './store.mjs';
+import { ensureIgnored } from './local.mjs';
+import { open } from './store.mjs';
 import { gitIdentity, handleCandidates, registerHandle } from './team.mjs';
 import { recordTrust, repoKey } from './trust.mjs';
 
 const CLASSES = ['trivial', 'standard', 'critical'];
-// The state directory's .gitignore (local/, local.foreign-*/, .*.tmp, .local-move.lock): store.mjs ensureIgnored, also
+// The state directory's .gitignore (local/, local.foreign-*/, .*.tmp, .local-move.lock): local.mjs ensureIgnored, also
 // run before a foreign local/ is moved aside (T-MG-77).
 const now = () => new Date().toISOString();
 const inRepo = (where, names) => join(where.repo, names.stateDir);

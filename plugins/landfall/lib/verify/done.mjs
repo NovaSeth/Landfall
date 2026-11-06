@@ -23,7 +23,8 @@ import { KINDS, StateError, open } from '../state/index.mjs';
 import { reviewState } from './artifacts.mjs';
 import { grewOnly } from './baseline.mjs';
 import { taskWhere } from './where.mjs';
-import { activeWhere, codeState, gatesSha, gitIn, storeOf, unknownTask, workingSha } from './run.mjs';
+import { codeState, gitIn } from './history.mjs';
+import { activeWhere, gatesSha, storeOf, unknownTask, workingSha } from './run.mjs';
 
 const fail = (code, message, hint = '') => new StateError(code, 'FAIL', message, { hint });
 
