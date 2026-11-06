@@ -12,7 +12,7 @@ import { StateError, guarded } from './errors.mjs';
 import { MACHINE_KINDS } from './kinds.mjs';
 import { MIGRATIONS } from './migrations/index.mjs';
 import { format } from './schema.mjs';
-import { lockFailure } from './store.mjs';
+import { lockFailure } from './locks.mjs';
 import { upgradeDoc } from './upgrade.mjs';
 
 const CONFIG = MACHINE_KINDS.machineConfig;

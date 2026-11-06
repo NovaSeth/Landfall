@@ -209,7 +209,7 @@ test('verify: a hidden path with a control character in the diff runs the full s
 
 test('changeSince: a change over the path cap is truncated, so fast verify fails closed', async (t) => {
   const r = repo(t);
-  const run = await lib('verify/run.mjs');
+  const run = await lib('verify/history.mjs');
   for (let i = 0; i < 4; i++) r.write(`docs/n/f${i}.md`, 'x\n');
   const where = { worktree: r.dir };
   const head = r.git('rev-parse', 'HEAD');

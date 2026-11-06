@@ -9,7 +9,7 @@
 import { unlinkSync } from 'node:fs';
 import { RUN_ID } from '../runs/kind.mjs';
 import { join } from 'node:path';
-import { EXIT } from '../cli/commands.mjs';
+import { EXIT } from '../cli/exit.mjs';
 import { TERMINAL, readRunRecords, runsStore } from '../runs/index.mjs';
 import { SYSTEM, identify, judge } from '../sched/index.mjs';
 import { StateError, resolve } from '../state/index.mjs';

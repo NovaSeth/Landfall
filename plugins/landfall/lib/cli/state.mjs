@@ -14,7 +14,7 @@ import { readRuns } from '../receipts/index.mjs';
 import * as state from '../state/index.mjs';
 import { openStore } from '../verify/index.mjs';
 import { roundsCap } from '../verify/artifacts.mjs';
-import { EXIT } from './commands.mjs';
+import { EXIT } from './exit.mjs';
 
 const target = (io, names) => ({ cwd: io.cwd, env: io.env, names });
 

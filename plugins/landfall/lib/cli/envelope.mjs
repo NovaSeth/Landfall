@@ -2,7 +2,7 @@
 // {"cli":1,"command","ok","code","exit","data","errors":[{"code","message","hint"}]}; ok is true exactly when
 // code is 0. Error codes are kebab-case; messages and hints are clipped to their limits. lib/cli/output.mjs writes
 // the line.
-import { EXIT_CODES } from './commands.mjs';
+import { EXIT_CODES } from './exit.mjs';
 
 export const ENVELOPE_VERSION = 1;
 export const LIMITS = { message: 300, hint: 200 };

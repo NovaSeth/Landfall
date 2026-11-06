@@ -20,7 +20,8 @@ import { readRegularFile } from '../fsx/index.mjs';
 import { RUN_ID, ownOutDir, runsStore } from '../runs/index.mjs';
 import { KINDS, StateError, authorize, consume, restore } from '../state/index.mjs';
 import { VERIFY_KINDS, reviewKey } from './kinds.mjs';
-import { activeWhere, codeState, gitIn, sameChange, storeOf, unknownTask } from './run.mjs';
+import { codeState, gitIn, sameChange } from './history.mjs';
+import { activeWhere, storeOf, unknownTask } from './run.mjs';
 
 const INPUT_MAX = 1024 * 1024;
 const OBJECT_ID = /^[0-9a-f]{40,64}$/;
