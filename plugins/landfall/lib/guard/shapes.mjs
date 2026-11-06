@@ -15,6 +15,7 @@ import { gitShape } from './git-shape.mjs';
 import { GIT_ARG } from './git-options.mjs';
 import { isHookPath } from './hook-path.mjs';
 import { MSG, short } from './messages.mjs';
+import { DECL_WORDS, SETTER_WORDS } from './setters.mjs';
 import { braceShape, findDeleteShape, removeShape, stateWrite, writeRedir } from './protect.mjs';
 import { why } from './tokenizer.mjs';
 import { BIN, CODE_RUNNERS, ENV_EXEC, ENV_PREFIX, GATES, KEYWORDS, SHELLS, base, gateById, variants, wordTok } from './tokens.mjs';
@@ -201,10 +202,10 @@ const DATA = new Set(['echo', 'printf', 'cat', 'tac', 'head', 'tail', 'less', 'm
   'sha256sum', 'base64', 'xxd', 'od', 'hexdump', 'strings', 'pbcopy', 'pbpaste', 'curl', 'wget', 'kubectl', 'helm', 'adb', 'cargo',
   'pre-commit', 'commitlint', 'vitest', 'jest', 'mocha', 'pytest', 'tsc', 'eslint', 'prettier', 'biome', 'ruff', 'black', 'mypy', 'ps',
   'pgrep', 'pkill', 'kill', 'killall', 'man', 'help', 'tput', 'clear', 'history']);
-const DECL = new Set(['export', 'declare', 'local', 'readonly', 'typeset']);
+const DECL = new Set(DECL_WORDS);
 // Commands that take a variable name (with an array index evaluated like arithmetic), or set the variable they name.
-const VAR_NAMES = new Set([...DECL, 'read', 'mapfile', 'readarray', 'printf', 'print', 'compgen', 'vared', 'zparseopts', 'unset', 'test', '[', '[[', 'getopts', 'wait']);
-const VAR_SETTERS = new Set([...DECL, 'read', 'mapfile', 'readarray', 'printf', 'print', 'compgen', 'vared', 'zparseopts', 'getopts']);
+const VAR_NAMES = new Set([...DECL, ...SETTER_WORDS, 'unset', 'test', '[', '[[', 'wait']);
+const VAR_SETTERS = new Set([...DECL, ...SETTER_WORDS]);
 // Interpreters: options with code in the text; options with a value (the value is not the script).
 const INTERP = { python: ['-c'], python2: ['-c'], python3: ['-c'], node: ['-e', '--eval', '-p', '--print'], nodejs: ['-e', '--eval', '-p', '--print'],
   perl: ['-e', '-E'], ruby: ['-e'], php: ['-r'], osascript: ['-e'], lua: ['-e'], Rscript: ['-e'], pwsh: ['-c', '-Command'], deno: ['eval'] };
