@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.7.4
+
+Hardening and simplification batch after 2.7.3, merged in two trains (T-MG-199 and T-MG-201 follow in 2.7.5).
+
+- **Token hardening (T-MG-198, T-MG-203, D-MG-81):** the Bash guard reads directories recursively against the secret paths; plugin data is a read root, `local/` is not; the guard block log redacts role tokens. The one allowed subagent command carrying a token is `printf %s <token> | landfall (review record|task set) … --token -`, with the bare CLI or the plugin's own bin.
+- **Dashboard (T-MG-200, T-MG-202):** a task row reads id, bar, time, `[class]`, then the title; the bar measures the current stage against the brief budget, and a task nobody works on has no bar.
+- **Simpler internals (T-MG-138, T-MG-139, T-MG-140, T-MG-141, T-MG-142):** exit codes live in a leaf module; guard shapes dispatch through a table of command families; the state store cycle is gone (paths, local and locks split out); verify's run is split into history, collect, reroute and evaluate phases; batch-merge helpers live at module level, with dependency linking in `verify/deps-link.mjs`.
+- **Receipts (T-MG-123):** the seeded bootstrap covers medians and differences.
+
 ## 2.7.3
 
 Security batch: role capability tokens replace the parsing role gate of 2.7.2 (decisions D-MG-72, D-MG-75).
