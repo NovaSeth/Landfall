@@ -112,30 +112,19 @@ const sendsPart = (p) => {
   return RUNS_ARGS.test(p) && p.split(/[\s=`$(<>]+/).some((w) => SENDERS.has(base(w)));
 };
 // names a glob word may stand for (a dot name only from a glob that starts with a dot)
-// Each bracket expression ([abc], [!x], [^x], []x], [[:alpha:]]) stands for any one character (fail closed); an unclosed [ is a literal.
-function bracketsToAny(g) {
-  let out = '';
-  for (let i = 0; i < g.length; i++) {
-    if (g[i] !== '[') { out += g[i]; continue; }
-    let j = i + 1;
-    if (g[j] === '!' || g[j] === '^') j++;
-    if (g[j] === ']') j++;
-    while (j < g.length && g[j] !== ']') {
-      if (g[j] === '[' && g[j + 1] === ':') { const e = g.indexOf(':]', j + 2); if (e >= 0) { j = e + 2; continue; } }
-      j++;
-    }
-    if (j >= g.length) { out += g.slice(i); break; }
-    out += '?'; i = j;
-  }
-  return out;
-}
-const globRe = (g) => { try { return new RegExp('^' + bracketsToAny(g).replace(/[.+^${}()|\\[\]]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.') + '$'); } catch { return null; } };
-const secretGlob = (s) => s.split(/\s+/).some((w) => w.replace(/\[([:=.]).*?\1\]/g, '?').split(/[=@:<>]/).some((x) => {
-  const g = x.slice(x.lastIndexOf('/') + 1);
-  if (!/[*?[]/.test(g) || /^[*?[\]]*$/.test(g)) return false;
-  const re = globRe(g);
-  return re !== null && SECRET_NAMES.some((n) => re.test(n) && (n[0] !== '.' || g[0] === '.' || g[0] === '['));
-}));
+const globRe = (g) => { try { return new RegExp('^' + g.replace(/[.+^${}()|\\[\]]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.') + '$'); } catch { return null; } };
+// A word holding a [ and a later ] has the span from its first [ to its last ] replaced by * (fail closed: any bracket
+// glob that could cover a secret name counts); a leading * made this way may stand for a dot name too.
+const secretGlob = (s) => s.split(/\s+/).some((w0) => {
+  const i = w0.indexOf('['), j = w0.lastIndexOf(']'), br = i >= 0 && j > i;
+  const w = br ? w0.slice(0, i) + '*' + w0.slice(j + 1) : w0;
+  return w.split(/[=@:<>]/).some((x) => {
+    const g = x.slice(x.lastIndexOf('/') + 1);
+    if (!/[*?[]/.test(g) || (!br && /^[*?[\]]*$/.test(g))) return false;
+    const re = globRe(g);
+    return re !== null && SECRET_NAMES.some((n) => re.test(n) && (n[0] !== '.' || g[0] === '.' || (br && g[0] === '*')));
+  });
+});
 const secretIn = (s) => SECRET.test(s) || secretGlob(s);
 const exfilVariants = (vs, lit) => vs.some((v) => v.split(/[;&]/).some((s) => {
   const ps = s.split('|'); const k = ps.findIndex(sendsPart);
