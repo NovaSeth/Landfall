@@ -196,7 +196,7 @@ export class Store {
       if (created) sweepTemps(dirname(file));
       return created;
     } catch (err) {
-      if (err.code === 'EFSUNSUPPORTED') throw new StateError('fs-unsupported', 'REFUSED', err.message, { hint: 'keep the state directory on a local file system with hard links (or link an external one with --state-dir)' });
+      if (err.code === 'EFSUNSUPPORTED') throw new StateError('fs-unsupported', 'REFUSED', err.message, { hint: 'keep the state directory on a local file system with hard links (or link an external one with --state-dir)', cause: err });
       throw err;
     } finally {
       if (!created) removeEmptyDirs(dirname(file), made);
@@ -345,7 +345,7 @@ export class Store {
     try {
       appendLine(file, bytes, { before: pause ? () => pauseUntilSignalled(pause) : undefined });
     } catch (err) {
-      if (err?.code === 'ENOTREGULAR' || err?.code === 'ELOOP') throw new StateError('state-invalid', 'FAIL', `${file} is not a regular file`, { hint: 'remove it; the plugin recreates the log' });
+      if (err?.code === 'ENOTREGULAR' || err?.code === 'ELOOP') throw new StateError('state-invalid', 'FAIL', `${file} is not a regular file`, { hint: 'remove it; the plugin recreates the log', cause: err });
       throw err;
     }
   }

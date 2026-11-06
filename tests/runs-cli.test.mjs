@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { isolatedEnv, isolateProcessEnv } from './helpers/isolated-env.mjs';
@@ -199,4 +199,20 @@ test('runs list only reads and marks old records; runs prune deletes them with -
   const sum = await p.ok(['runs', 'show', b, '--summary']);
   assert.equal(sum.e.data.status, 'done');
   assert.equal((await p.cli(['runs', 'show', a])).code, 1);
+});
+
+test('runs prune goes on when one record cannot be removed (T-MG-143 F1): it is not counted, the others are removed', async (t) => {
+  const p = await project(t);
+  const ids = [];
+  for (const task of ['T-TU-1', 'T-TU-2']) {
+    const id = (await startRun(p, task, 'reviewer', 'fakeok')).e.data.runId;
+    await p.ended(id);
+    age(p, id, 40);
+    ids.push(id);
+  }
+  const stuck = [ids[0]];
+  for (const id of stuck) { rmSync(join(p.runsDir, `${id}.log`), { force: true }); mkdirSync(join(p.runsDir, `${id}.log`, 'inner'), { recursive: true }); }
+  const pr = await p.ok(['runs', 'prune']);
+  assert.deepEqual(pr.e.data.removed, [ids[1]], 'only the record that was removed is counted');
+  assert.ok(!existsSync(join(p.runsDir, `${ids[1]}.json`)), 'the other old record is gone');
 });

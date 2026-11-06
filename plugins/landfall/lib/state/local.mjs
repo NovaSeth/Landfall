@@ -86,7 +86,7 @@ function moveAside(store) {
     try {
       recordTrust({ dataDir, names: store.names, key: repoKey(store.dir) });
     } catch (err) {
-      throw new StateError('trust-write-failed', 'ENV', `${join(dataDir, 'trust.json')} could not be written (${err.message}); ${from} was not moved aside and nothing was written`, { hint: 'check that file and its directory, then run the command again' });
+      throw new StateError('trust-write-failed', 'ENV', `${join(dataDir, 'trust.json')} could not be written (${err.message}); ${from} was not moved aside and nothing was written`, { hint: 'check that file and its directory, then run the command again', cause: err });
     }
   }
   ensureIgnored(store);
