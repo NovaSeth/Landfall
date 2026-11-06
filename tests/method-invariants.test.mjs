@@ -51,7 +51,7 @@ const PINNED_RULES = {
   'REV-6': ['ADDRESSED or NOT ADDRESSED', "only the round's diff"],
   'REV-7': ['MUST NOT start a third', 'refuses a fix round past the cap'],
   'REV-10': ['secrets scan run without a pipe', 'clean tree'],
-  'REV-11': ['merges `origin/main` into the task branch and re-runs verify'],
+  'REV-11': ['one gate on the integrated tree is each task\'s verify (FLW-8)'], // D-MG-80: the train integrates main
   'REV-13': ['Critical or High security finding', 'blocks a gate'],
   'REV-16': ['MUST NOT quarantine Review Focus tests'],
   'REV-17': ['`review record`', 'approved | needs-fixes', 'closes nothing'],

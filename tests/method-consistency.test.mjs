@@ -51,7 +51,8 @@ test('the dispatch skill: verify failure goes back before any fix-round record, 
   // T-MG-178 (intended change): steps 4–8 shrank to 4 dispatch (review and fix rounds included) and 5 close
   assert.doesNotMatch(step(d, 5), /Fail: `?task set <id> fix-round/, step(d, 5));
   assert.doesNotMatch(step(d, 5), /\| --ready/, step(d, 5));
-  assert.match(step(d, 5), /close <ids…> --yes/);
+  assert.match(step(d, 5), /Lone, none in flight: `[^`]*train <id> --yes`/); // D-MG-80: a lone task merges through the train too
+  assert.doesNotMatch(step(d, 5), /close <ids…>/); // D-MG-80
   assert.match(step(d, 5), /verify failed: back to the implementer/);
   // T-MG-186: critical or several approved go through the train
   assert.match(step(d, 5), /train <ids…> --yes/);
