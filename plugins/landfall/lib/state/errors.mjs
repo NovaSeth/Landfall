@@ -1,5 +1,5 @@
 // Errors of the state unit: a kebab-case code, the name of the spec §8.1 exit code the CLI turns it into
-// (REFUSED, USAGE, FAIL, ENV, INTERNAL; the numbers live in lib/cli/commands.mjs), a message and a hint, so a
+// (REFUSED, USAGE, FAIL, ENV, INTERNAL; the numbers live in lib/cli/exit.mjs), a message and a hint, so a
 // command returns { code: EXIT[err.exit], errors: [err] } unchanged.
 export class StateError extends Error {
   constructor(code, exit, message, { hint = '', details, cause } = {}) {

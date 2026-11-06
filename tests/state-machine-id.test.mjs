@@ -131,3 +131,27 @@ test('ioreg is spawned with a minimal environment', () => {
   const src = readFileSync(join(pluginDir, 'lib', 'state', 'machine.mjs'), 'utf8');
   assert.match(src, /ioreg[^\n]*env: \{ LC_ALL: 'C' \}/);
 });
+
+test('a timed-out lookup is not asked again for 30 s; a fast error is retried at once', (t) => {
+  t.after(() => { machine.setIdentityProbe(null); Date.now = realNow; });
+  const realNow = Date.now;
+  let now = realNow();
+  Date.now = () => now;
+  let calls = 0;
+  let out = { value: null, expected: true, timedOut: true };
+  machine.setIdentityProbe(() => { calls++; return out; });
+  machine.machineId();
+  machine.machineId();
+  assert.equal(calls, 1, 'the timeout is cached');
+  now += 29000;
+  machine.machineId();
+  assert.equal(calls, 1, 'still cached after 29 s');
+  now += 2000;
+  out = GONE;
+  machine.machineId();
+  assert.equal(calls, 2, 'asked again after 30 s');
+  machine.machineId();
+  assert.equal(calls, 3, 'a fast error is retried on every call');
+  out = ID;
+  assert.notEqual(machine.machineId(), machine.idFor({ hostname: hostname(), identity: null }));
+});

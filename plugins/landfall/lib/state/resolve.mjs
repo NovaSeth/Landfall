@@ -14,36 +14,25 @@
 // with every check inside; an older projects.json is read through the migration chain and written back at the
 // current schema. A refusal leaves nothing (the lock and a machine data directory it created are removed).
 import { existsSync, lstatSync, readFileSync, realpathSync } from 'node:fs';
-import { basename, dirname, isAbsolute, join, resolve as resolvePath, sep } from 'node:path';
+import { basename, dirname, join, resolve as resolvePath, sep } from 'node:path';
 import { unlockStale as fsxUnlockStale, withLock, writeAtomic } from '../fsx/index.mjs';
 import { git } from '../git/index.mjs';
 import { checkWrite, parseDoc, requireArg } from './document.mjs';
 import { StateError } from './errors.mjs';
 import { MACHINE_KINDS } from './kinds.mjs';
+import { machineDataDir } from './machine-dir.mjs';
 import { MIGRATIONS } from './migrations/index.mjs';
 import { format } from './schema.mjs';
 import { busyFailure, lockFailure } from './locks.mjs';
 import { upgradeDoc } from './upgrade.mjs';
 
+export { machineDataDir };
 const PROJECTS = MACHINE_KINDS.projects;
-const absolute = (v) => (typeof v === 'string' && isAbsolute(v) ? v : null);
 
 // The machine data directory resolve() found for a state directory in this process (the command's environment, which
 // may differ from process.env when a command runs in-process); the store asks it for the owner of local/.
 const dataDirs = new Map();
 export const resolvedDataDir = (dir) => dataDirs.get(dir) ?? null;
-
-// Spec §5.3: $CLAUDE_PLUGIN_DATA → $CLAUDE_CODE_PLUGIN_CACHE_DIR/data/<id> → ${CLAUDE_CONFIG_DIR:-$HOME/.claude}
-// /plugins/data/<id>, <id> = <plugin>-<marketplace>. Relative values are ignored; null when nothing is set.
-export function machineDataDir(names, env) {
-  requireArg(names, 'names', 'machineDataDir');
-  requireArg(env, 'env', 'machineDataDir');
-  const id = `${names.plugin}-${names.marketplace}`;
-  if (absolute(env.CLAUDE_PLUGIN_DATA)) return env.CLAUDE_PLUGIN_DATA;
-  if (absolute(env.CLAUDE_CODE_PLUGIN_CACHE_DIR)) return join(env.CLAUDE_CODE_PLUGIN_CACHE_DIR, 'data', id);
-  const config = absolute(env.CLAUDE_CONFIG_DIR) ?? (absolute(env.HOME) ? join(env.HOME, '.claude') : null);
-  return config ? join(config, 'plugins', 'data', id) : null;
-}
 
 // The name of the in-repo state directory (one path segment), for the fail-closed checks of the hooks when the state
 // cannot be resolved and no directory is known (findings-r2 A-I1): lib/state stays the one place that knows it.

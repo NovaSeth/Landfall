@@ -19,7 +19,7 @@
 //     call asks git again. Outside any repository (git's own "not a git repository") nothing is tracked.
 //   - also unknown, 'ownership unknown (machine identity unavailable)': the platform should have an identity (macOS
 //     always, Linux with a machine-id file) but the lookup failed and the marker is not the host-name id. A found
-//     identity is cached, a failure is retried on every call.
+//     identity is cached, a failure is retried on every call, a timeout after 30 s.
 //   - A host-name id is derivable, so an untracked local/ copied from another Mac with a legacy marker still counts as
 //     ours (adopted only while the identity is available) until it is rewritten; tracked by git still wins.
 //   - not foreign: 'absent' (no local/), 'ours' (this machine's marker), 'unmarked' (marked at the next write).
@@ -35,20 +35,25 @@ export const MARKER = 'local/.machine';
 const GIT_MS = 2000;
 let plugin = null;
 let id = null;
+let timedOutAt = 0; // when a lookup last timed out (0: none)
+const TIMEOUT_MEMORY_MS = 30000;
 const shipped = new Map();
 
 const UUID = /^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$/;
 const MACHINE_ID = /^[0-9a-f]{32}$/;
 const ioreg = () => run('/usr/sbin/ioreg', ['-rd1', '-c', 'IOPlatformExpertDevice'], { unit: 'state', env: { LC_ALL: 'C' }, timeoutMs: 1000 });
 
-export function macIdentity(ask = ioreg) {
+// { value, timedOut }: a timeout is told apart from a fast error (B-MG-39).
+function macProbe(ask) {
   try {
     const r = ask();
-    if (r.error || r.status !== 0) return null;
+    if (r.error || r.status !== 0) return { value: null, timedOut: r.error === 'timeout' || r.error?.code === 'ETIMEDOUT' };
     const m = /"IOPlatformUUID"\s*=\s*"([^"\n]*)"/.exec(String(r.stdout));
-    return m && UUID.test(m[1]) ? m[1].toUpperCase() : null;
-  } catch { return null; }
+    return { value: m && UUID.test(m[1]) ? m[1].toUpperCase() : null, timedOut: false };
+  } catch { return { value: null, timedOut: false }; }
 }
+
+export const macIdentity = (ask = ioreg) => macProbe(ask).value;
 
 export function linuxIdentity(read = (p) => readFileSync(p, 'utf8')) {
   for (const p of ['/etc/machine-id', '/var/lib/dbus/machine-id']) {
@@ -63,7 +68,7 @@ export function linuxIdentity(read = (p) => readFileSync(p, 'utf8')) {
 // { value, expected }: expected when this platform should have an identity (macOS always; Linux when a machine-id file
 // exists), so a null value there means "unavailable right now", not "this machine has none".
 const probeIdentity = () => {
-  if (process.platform === 'darwin') return { value: macIdentity(), expected: true };
+  if (process.platform === 'darwin') return { ...macProbe(ioreg), expected: true };
   if (process.platform === 'linux') {
     return { value: linuxIdentity(), expected: ['/etc/machine-id', '/var/lib/dbus/machine-id'].some((p) => lstatSync(p, { throwIfNoEntry: false })) };
   }
@@ -74,6 +79,7 @@ let probe = probeIdentity;
 export function setIdentityProbe(fn) {
   probe = fn ?? probeIdentity;
   id = null;
+  timedOutAt = 0;
 }
 const wellFormed = (v) => typeof v === 'string' && (UUID.test(v) || MACHINE_ID.test(v));
 
@@ -93,10 +99,14 @@ export function idFor({ hostname: host, identity }) {
 export const legacyId = () => idFor({ hostname: hostname(), identity: null });
 
 // A found identity is cached for the process. A failed lookup is not: the next call asks again (a long-lived process
-// must not stay on the host-name id after one failed spawn).
+// must not stay on the host-name id after one failed spawn). A timeout is remembered for 30 s, so a hanging ioreg
+// cannot block every call for its whole time limit.
 function current() {
   if (id) return { id, available: true };
-  const { value, expected } = probe();
+  const fallback = () => ({ id: idFor({ hostname: hostname(), identity: null }), available: false });
+  if (timedOutAt && Date.now() - timedOutAt < TIMEOUT_MEMORY_MS) return fallback();
+  const { value, expected, timedOut } = probe();
+  timedOutAt = timedOut ? Date.now() : 0;
   const found = wellFormed(value) ? value : null;
   if (found) id = idFor({ hostname: hostname(), identity: found });
   return { id: id ?? idFor({ hostname: hostname(), identity: null }), available: !!found || !expected };

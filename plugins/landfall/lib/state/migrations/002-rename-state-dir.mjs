@@ -11,7 +11,7 @@ import { dirname, join } from 'node:path';
 import { moveTree, writeAtomic } from '../../fsx/index.mjs';
 import { git } from '../../git/index.mjs';
 import { StateError } from '../errors.mjs';
-import { machineDataDir } from '../resolve.mjs';
+import { machineDataDir } from '../machine-dir.mjs';
 
 const PREVIOUS = Object.freeze({ stateDir: '.caw', dataDir: 'caw-caw-plugins' });
 

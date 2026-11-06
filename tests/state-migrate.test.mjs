@@ -468,3 +468,31 @@ test('013-state-role-tokens: migrate changes only the schema of state.json; a re
   assert.throws(() => old.write('state', null, stateDoc({ schema: 2 })), is('schema-newer', 'REFUSED'));
   assert.deepEqual(snapshot(dir), kept, 'the refused writes changed nothing');
 });
+
+test('B-MG-31: the files of lib/state (migrations included) have no import cycle', () => {
+  const base = join(pluginDir, 'lib', 'state');
+  const edges = new Map();
+  const scan = (dir) => {
+    for (const f of readdirSync(dir, { withFileTypes: true })) {
+      const p = join(dir, f.name);
+      if (f.isDirectory()) { scan(p); continue; }
+      if (!f.name.endsWith('.mjs')) continue;
+      const src = readFileSync(p, 'utf8');
+      const targets = [...src.matchAll(/\bfrom\s+'(\.[^']*\.mjs)'/g)].map((m) => join(dir, m[1]));
+      edges.set(p, targets.filter((t) => t.startsWith(base)));
+    }
+  };
+  scan(base);
+  const visiting = [];
+  const done = new Set();
+  const walk = (f) => {
+    if (done.has(f)) return;
+    const at = visiting.indexOf(f);
+    assert.equal(at, -1, `import cycle: ${[...visiting.slice(at), f].map((x) => x.slice(base.length + 1)).join(' -> ')}`);
+    visiting.push(f);
+    for (const g of edges.get(f) ?? []) walk(g);
+    visiting.pop();
+    done.add(f);
+  };
+  for (const f of edges.keys()) walk(f);
+});
