@@ -10,6 +10,8 @@ import { expandLiterals, parse } from '../guard/tokenizer.mjs';
 import { loadNames } from './loop-state.mjs';
 const names = loadNames();
 const SECRET_REASON = "SEC-13: blocked: a subagent does not read Claude Code transcripts or the plugin's data files. Instead work from your brief and the repository.";
+// T-MG-206: a role token in any other shape is refused with the accepted form named, not the transcript reason.
+const TOKEN_REASON = `SEC-13: blocked: a role token is accepted only in the form \`printf %s <token> | ${names.bin} review record|task set … --token -\`, as its own Bash call with nothing after \`--token -\`.`;
 const HOME = /^(~|\$HOME|\$\{HOME\})(?=\/|$)/;
 const READERS = { find: /./, rg: /./, ag: /./, fd: /./, tar: /./, zip: /./, rsync: /./, du: /./, grep: /^-[a-zA-Z]*[rR]|^--(dereference-)?recursive$|^-d=?recurse/, cp: /^-[a-zA-Z]*[rRa]/, ls: /^-[a-zA-Z]*R/ };
 const dirs = (p) => [...new Set([p, realPath(p)])];
@@ -120,7 +122,9 @@ export function secretDeny(input, { env = process.env } = {}) {
   const R = roots(input, env);
   const { tool_name: tool } = input; const { command } = input.tool_input;
   const hit = tool === 'Bash' ? typeof command === 'string' && command !== '' && bashDeny(command, R) : /^(Read|Grep|Glob)$/.test(tool) && readDeny(input, R);
-  return hit ? SECRET_REASON : null;
+  if (!hit) return null;
+  // only the token prefix made it a hit (the command denies no more with every token run neutralised): name the accepted form
+  return tool === 'Bash' && /lf1_/i.test(command) && !bashDeny(command.replace(/lf1_/gi, 'lf1-'), R) ? TOKEN_REASON : SECRET_REASON;
 }
 // The `guard-read` row: Read, Grep, Glob.
 export const guardRead = (input, opts) => {

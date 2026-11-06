@@ -387,3 +387,13 @@ test('fsx: writeAtomic replaces content without leftovers; createExclusive never
   assert.equal(readFileSync(lock, 'utf8'), 'a');
   assert.throws(() => createExclusive(join(dir, 'missing-dir', 'x'), 'c'), /ENOENT/);
 });
+
+test('T-MG-143: verify/base.mjs and providers/runs.mjs write the state directory only through lib/state', () => {
+  const { pluginDir } = locate();
+  const WRITERS = ['mkdirSync', 'mkdtempSync', 'writeFileSync', 'unlinkSync', 'rmSync', 'renameSync'];
+  for (const rel of ['lib/verify/base.mjs', 'lib/providers/runs.mjs']) {
+    const code = lex(readFileSync(join(pluginDir, rel), 'utf8')).code ?? readFileSync(join(pluginDir, rel), 'utf8');
+    const used = WRITERS.filter((fn) => new RegExp(`\\b${fn}\\b`).test(code));
+    assert.deepEqual(used, [], `${rel} calls fs ${used.join(', ')} on the state directory: use lib/state (localTempDir, removeLocalFile)`);
+  }
+});

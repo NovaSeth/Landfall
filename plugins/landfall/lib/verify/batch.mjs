@@ -1,5 +1,6 @@
 // Batch merge (T-MG-80): check each task, merge eligible branches in a temporary worktree, and gate the integrated tree.
-// Conflicts are left out; failing prefixes are bisected, then the remainder is confirmed (or only a passing prefix merges).
+// Conflicts are left out; the fastGuards run first, a failing batch is bisected on its failing test files (bisect.mjs),
+// every culprit is left out and the rest passes one full gate.
 // HEAD, index and worktree must hold through the gates (F1); the target and integrated gate profiles must agree (F5).
 // Fast-forward uses compare-and-swap on the original target ref, then updates the checkout; every task gets a merge record.
 // Matching lockfiles permit dependency links; unavailable dependencies or gates fall back to sequential merges, except trains.
@@ -13,6 +14,7 @@ import { KINDS, StateError, gatesShaOf, isTrusted, mergedOf, recordMerged } from
 import { dependencyLinks } from './deps-link.mjs';
 import { refreshReceipt } from './done.mjs';
 import { guardGates } from './fast.mjs';
+import { culpritOf,failingFiles, guardsOf, narrowRun, narrowable } from './bisect.mjs';
 import { requireTrustedGates, runGate } from './gates.mjs';
 import { gateChanges, mergeTask, profileOf, targetOf, treeHeld } from './merge.mjs';
 import { codeState, gitIn, stateAt } from './history.mjs';
@@ -187,8 +189,8 @@ function integration(context) {
     const add = gitIn(where, env, ['worktree', 'add', '-q', '-b', branch, wt, tip]);
     if (add.status !== 0) throw new StateError('git-failed', 'ENV', `git cannot create the integration worktree (${String(add.stderr).trim().slice(0, 200)})`, { hint: 'check git worktree list and the temporary directory' });
     created = true;
-    const run = { ...context, wt, here, dependencies, built: null, scopeHere: codeState(here, env).scope, passed: new Map() };
-    const set = build(run, context.candidates);
+    const run = { ...context, wt, here, dependencies, built: null, scopeHere: codeState(here, env).scope };
+    const set = guardStage(run, build(run, context.candidates));
     if (set.length === 0) return finish(result);
     const out = gates(run, set);
     const selected = selectPassing(run, set, out);
@@ -257,12 +259,17 @@ function build(context, set) {
   return ok;
 }
 
-function gates(context, set) {
-  const { dependencies, here, env, branch, result, trusted, train, names, at, tip, version, scopeHere, passed } = context;
+// The integration branch's HEAD checked out clean again, the dependencies linked.
+function fresh({ dependencies, here, env, branch }) {
   dependencies.unlink();
   gitIn(here, env, ['checkout', '-q', '-f', '-B', branch, 'HEAD']);
   gitIn(here, env, ['clean', '-q', '-fd', '-e', '/node_modules']);
   dependencies.link();
+}
+
+function gates(context, set) {
+  const { dependencies, here, env, result, trusted, train, names, at, tip, version, scopeHere } = context;
+  fresh(context);
   const commit = gitIn(here, env, ['rev-parse', 'HEAD']).stdout.trim();
   const tree = gitIn(here, env, ['write-tree']).stdout.trim();
   result.gateRuns += 1;
@@ -275,72 +282,119 @@ function gates(context, set) {
   const all = [...byTask.values()];
   for (const o of all) o.publish?.(); // the gate-cache entry, only now that the tree held (fix round 2, F1)
   const worst = all.find((o) => o.doc.result === 'error') ?? all.find((o) => o.doc.result !== 'pass') ?? all[0];
-  if (worst.doc.result === 'pass') passed.set(set.map((t) => t.task).join(' '), { commit, byTask });
-  return { ...worst, commit, byTask };
+  return { ...worst, commit, byTask, runs: memo.runs ?? [] };
 }
 
+// A failed culprit: its own failing tests (the narrow run's, else its own check of the full run) and why.
+function blamed(context, culprit, blame) {
+  const own = blame.run.byTask?.get(culprit.task);
+  const b = own && own.doc.result !== 'pass' ? own : blame.run;
+  culprit.outcome = 'failed';
+  culprit.tests = (blame.tests ?? b.doc.failures.new).slice(0, 10);
+  culprit.why = culprit.tests.length ? `new failing tests: ${culprit.tests.join(', ')}` : (blame.why ?? b.reasons.find((x) => x.code !== 'gate-error')?.message ?? 'the gates fail').slice(0, 300);
+  if (blame.run.byTask) { context.result.verify = b.doc; context.result.output = b.output; }
+}
+
+// A run of `sub` for the bisect: the narrow run (opts: guards, files) or, without either, the full gate set.
+function probe(context, sub, opts) {
+  const set = build(context, sub);
+  if (!opts.files && !opts.guards) {
+    const r = gates(context, set);
+    return { state: r.doc.result === 'pass' ? 'pass' : r.doc.result === 'error' ? 'error' : 'fail', run: r, tests: null, why: null };
+  }
+  fresh(context);
+  const r = narrowRun(context, opts);
+  return { ...r, run: { doc: context.result.verify, output: context.result.output, reasons: [{ code: 'gate-error', message: r.why }] } };
+}
+
+// Before the full gate (T-MG-209): the trusted fastGuards on the integrated tree; the tasks that break them are left
+// out, found by bisecting with the guards only. The set that is left goes on to the full gate.
+function guardStage(context, set) {
+  const guards = guardsOf(context);
+  if (!guards.length) return set;
+  const run = (sub) => probe(context, sub, { guards });
+  let rem = set;
+  let r = run(rem);
+  for (let k = 0; r.state === 'fail' && rem.length && k < set.length; k++) {
+    const { culprit, blame, error } = culpritOf(rem, r, run);
+    if (error) break;
+    blamed(context, culprit, blame);
+    rem = rem.filter((t) => t !== culprit);
+    if (rem.length) r = run(rem);
+  }
+  return rem.length ? build(context, rem) : [];
+}
+
+// The bisect (T-MG-209): after the full gate failed, every step runs only the test files that failed; every culprit
+// is left out, not the tail; the rest passes one full gate before it is fast-forwarded (FLW-8).
+// Bounded (GC4): each narrow phase removes a task, at most one full confirm round per task.
 function selectPassing(context, set, out) {
-  const { result, train, passed } = context;
-  let final = set;
-  let integrated = out.commit;
-  let verified = out.byTask; // the per-task evaluations of the passing run whose commit the target gets
+  const { result, train } = context;
   if (out.doc.result === 'error' && train) return { done: finish(errored(result, out, set)) };
   if (out.doc.result === 'error') throw new SequentialFallback(`the first batch gate run could not run: ${out.reasons.find((r) => r.level !== 'warn')?.message ?? 'gate error'}`);
-  if (out.doc.result !== 'pass') {
-    // Binary search over the prefixes: prefix(k) = set[0..k]; prefix(-1) is the target tip, prefix(N-1) failed.
-    let lo = 0;
-    let hi = set.length - 1;
-    let failedRun = out;
-    while (lo < hi) {
-      const mid = Math.floor((lo + hi) / 2);
-      const sub = build(context, set.slice(0, mid + 1));
-      const r = gates(context, sub);
-      if (r.doc.result === 'error') return { done: finish(errored(result, r, set)) };
-      if (r.doc.result === 'pass') lo = mid + 1;
-      else { hi = mid; failedRun = r; }
+  if (out.doc.result === 'pass') return { final: set, integrated: out.commit, verified: out.byTask };
+  const known = new Set();
+  let files = null;
+  const learn = (run) => {
+    const docs = [...run.byTask.values()].map((o) => o.doc.failures);
+    for (const d of docs) for (const p of d.preexisting) known.add(p);
+    const now = narrowable(context) ? failingFiles(context, run) : null;
+    files = files && now ? new Set([...files, ...now]) : now;
+  };
+  learn(out);
+  result.verify = out.doc;
+  result.output = out.output;
+  let remaining = set;
+  let failing = { state: 'fail', run: out, tests: null, why: null };
+  let passed = null; // a full gate run of exactly the remaining set that passed
+  for (let rounds = 0; ; rounds++) {
+    while (remaining.length) {
+      const run = (sub) => probe(context, sub, { files, known });
+      const r = failing ?? run(remaining);
+      failing = null;
+      if (r.state === 'pass') { passed = r.run.byTask ? r.run : null; break; }
+      if (r.state === 'error') return { done: finish(errored(result, r.run, set)) };
+      const { culprit, blame, error } = culpritOf(remaining, r, run);
+      if (error) return { done: finish(errored(result, error.run, set)) };
+      blamed(context, culprit, blame);
+      remaining = remaining.filter((t) => t !== culprit);
+      passed = null;
     }
-    const culprit = set[lo];
-    // the culprit's own check when it failed (its report, its baseline), else the run's first failure
-    const own = failedRun.byTask.get(culprit.task);
-    const blame = own && own.doc.result !== 'pass' ? own : failedRun;
-    culprit.outcome = 'failed';
-    culprit.tests = blame.doc.failures.new.slice(0, 10);
-    culprit.why = culprit.tests.length ? `new failing tests: ${culprit.tests.join(', ')}` : (blame.reasons.find((x) => x.code !== 'gate-error')?.message ?? 'the gates fail').slice(0, 300);
-    result.verify = blame.doc;
-    result.output = blame.output;
-    const rest = set.filter((t) => t !== culprit);
-    final = rest.length ? build(context, rest) : [];
-    integrated = null;
-    if (final.length) {
-      const confirm = gates(context, final);
-      if (confirm.doc.result === 'pass') { integrated = confirm.commit; verified = confirm.byTask; }
-      else {
-        // A second failure among the rest: only the prefix before the culprit (a passing run) merges.
-        const after = set.slice(lo + 1);
-        for (const t of after) if (t.outcome === null) { t.outcome = 'skipped'; t.why = `not verified: the batch fails also without ${culprit.task} (merge them again)`; }
-        final = lo > 0 ? set.slice(0, lo) : [];
-        const prefix = final.length ? passed.get(final.map((t) => t.task).join(' ')) ?? null : null;
-        integrated = prefix?.commit ?? null;
-        verified = prefix?.byTask ?? null;
-        if (integrated === null) final = [];
-      }
-    }
+    const final = remaining.length ? build(context, remaining) : [];
     if (final.length === 0) return { done: finish(result) };
+    const confirm = passed ?? gates(context, final);
+    if (confirm.doc.result === 'error') return { done: finish(errored(result, confirm, set)) };
+    if (confirm.doc.result === 'pass') return { final, integrated: confirm.commit, verified: confirm.byTask };
+    if (rounds + 1 >= set.length) {
+      for (const t of final) if (t.outcome === null) { t.outcome = 'skipped'; t.why = 'not verified: the batch still fails without the tasks left out (merge them again)'; }
+      return { done: finish(result) };
+    }
+    learn(confirm);
+    failing = { state: 'fail', run: confirm, tests: null, why: null };
+    remaining = final;
   }
-  return { final, integrated, verified };
 }
 
 function fastForward(context, set, integrated, verified, out) {
-  const { targetProfile, where, env, result, names, train, ready, list, tip } = context;
+  const { targetProfile, where, env, result, names, train } = context;
   const finalChanges = targetProfile.rel === null ? [] : gateChanges(profileOf(targetProfile.text), profileOf(stateAt(where, env, integrated, 'profile.json').text));
   if (finalChanges.length) {
     for (const t of set) { t.outcome = 'skipped'; t.why = 'gate-change-required'; }
     result.reasons.push({ code: 'gate-change-required', message: `the integrated batch changes the gates in ${join(targetProfile.rel, 'profile.json')}: ${describeChanges(finalChanges)}; nothing was merged`, hint: `merge the tasks one by one: ${names.bin} task merge <id>` });
     return finish(result);
   }
+  // A train checks its tasks and moves the target under one state lock (B-MG-19): a task that stopped being eligible
+  // meanwhile never reaches the target. The record takes the lock again and checks once more.
+  const stopped = train ? context.store.batch((s) => advance(context, set, integrated, s)) : advance(context, set, integrated, context.store);
+  return stopped ?? record(context, set, integrated, verified, out);
+}
+
+// null: the target now holds `integrated`; else the finished result with nothing merged.
+function advance(context, set, integrated, s) {
+  const { where, env, result, names, train, ready, list, tip } = context;
   // Compare-and-swap only the original ref; check the checkout before and after, rolling back if it moved (F5).
   // Dry-run the two-tree checkout update first so local state writes survive; a changed train blocks the whole set.
-  const refused = train ? set.map((t) => [t, again(context, t)]).filter(([, why]) => why) : [];
+  const refused = train ? set.map((t) => [t, again(context, t, s)]).filter(([, why]) => why) : [];
   if (refused.length) {
     for (const t of set) { t.outcome = 'skipped'; t.why = refused.find(([x]) => x === t)?.[1] ?? `not merged: ${refused.map(([x]) => x.task).join(', ')} changed during the train gate (run the train again)`; }
     result.reasons.push({ code: 'train-changed', message: `${refused.map(([x]) => x.task).join(', ')} no longer pass the train's checks; nothing was merged`, hint: `${names.bin} train ${ready ? '--ready' : list.join(' ')}` });
@@ -356,7 +410,7 @@ function fastForward(context, set, integrated, verified, out) {
   if (!holds(context, integrated)) { swap(context, tip, integrated); return moved(context, set); }
   const rt = gitIn(where, env, ['read-tree', '-m', '-u', tip, integrated]);
   if (rt.status !== 0) { swap(context, tip, integrated); return ffFailed(result, set, firstLine(rt)); }
-  return record(context, set, integrated, verified, out);
+  return null;
 }
 
 function moved(context, set) {

@@ -92,7 +92,7 @@ export function authorize({ dir, names, token, need, now = new Date(), caller = 
   if (!found) {
     const was = doc.raw; // the one read of this call: a failure of it is token-store above
     const old = was?.orchestrator?.hash === hash || was?.agents.some((a) => a.hash === hash);
-    throw refused(old ? 'token-expired' : 'token-unknown', old ? 'the token has expired or its session ended' : 'the token is not known here (spent, released or never minted)', 'a reviewer asks the orchestrator to dispatch again');
+    throw refused(old ? 'token-expired' : 'token-unknown', old ? 'the token has expired or its session ended' : 'the token is not known here (spent, released or never minted)', 'the token ends when the reviewer stops: dispatch a fresh reviewer (a resumed one has none)');
   }
   if ((need === 'orchestrator') !== (found.role === 'orchestrator')) throw refused('token-role', `a ${found.role} token does not serve this call (it needs ${need === 'orchestrator' ? 'the orchestrator' : 'a reviewer'} token)`);
   if (!descends(doc.table, caller, doc.orchestrator.holder)) throw refused('token-caller', `the token is used outside the process tree of session ${doc.orchestrator.session} (process ${caller} does not descend from Claude Code process ${doc.orchestrator.holder.pid}, or the process table cannot be read)`, "dispatch and record from that session's own Bash tool; an external run (the exec command) cannot");

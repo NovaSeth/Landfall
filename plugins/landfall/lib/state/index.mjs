@@ -16,6 +16,7 @@ export { emailHash, gitIdentity, handleCandidates, registerHandle } from './team
 export { TOKEN_KIND, attached, authorize, consume, holderOf, live, mint, restore, revoke } from './tokens.mjs';
 export { unlockStale } from './locks.mjs';
 export { setForeignLocal } from './local.mjs';
+export { localTempDir, removeLocalFile } from './localfs.mjs';
 export { checkedPath } from './paths.mjs';
 export { open } from './store.mjs';
 export { localForeign, machineId } from './machine.mjs';

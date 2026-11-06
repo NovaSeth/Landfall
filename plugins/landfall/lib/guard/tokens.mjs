@@ -5,6 +5,7 @@
 import { readFileSync } from 'node:fs';
 import { configKey } from './config-keys.mjs';
 import { GIT_ARG, GIT_BUILTINS } from './git-options.mjs';
+import { SECRET, SECRET_NAMES } from '../secrets/patterns.mjs';
 
 // The plugin's own command (argv[0] of its CLI) and its environment prefix, from lib/name.json.
 const NAMES = JSON.parse(readFileSync(new URL('../name.json', import.meta.url), 'utf8'));
@@ -92,6 +93,37 @@ const FIND_WORD = /(^|[\s/(|;&])find\s/;
 const FIND_FLAG = /\s(-delete|-(exec|execdir|ok|okdir)\s+(\S*\/)?rm)(\s|$)/;
 const RM_RECURSIVE = { test: (s) => after(s, RM_WORD, RM_FLAG) };
 const FIND_DELETE = { test: (s) => after(s, FIND_WORD, FIND_FLAG) };
+
+// A secret leaving the machine (T-MG-147): a network sender as any word of a line (behind any wrapper and its arguments, or
+// after a pipe), or a /dev/tcp / /dev/udp redirection, and a secret path in that line: a key, a credential file, .env (also
+// a glob that can match one), or the text of the state directory in an earlier command of the pipe. Not a GUARDED token (a
+// hit is a block with no simple form to recognize); evaluate and hasToken ask exfilText.
+const SENDERS = new Set(['curl', 'wget', 'nc', 'ncat', 'netcat', 'socat', 'scp', 'sftp', 'ftp', 'telnet', 'ssh', 'rsync', 'http', 'https', 'aria2c', 'openssl']);
+// programs that only print or search their arguments: a sender named there is text (grep curl, man ssh)
+const TEXT_ONLY = new Set(['grep', 'egrep', 'fgrep', 'rg', 'echo', 'printf', 'man', 'which', 'type', 'whereis', 'help', 'apropos']);
+// a stage that runs what it is given (a substitution, a process substitution, rg --pre) is never text
+const RUNS_ARGS = /`|\$\(|[<>]\(|(^|\s)--pre(=|\s|$)/;
+const sendsPart = (p) => {
+  if (p.includes('/dev/tcp/') || p.includes('/dev/udp/')) return true;
+  if (!TEXT_ONLY.has(base(commandWord(p))) && p.split(' ').some((w) => SENDERS.has(base(w)))) return true;
+  // a substitution or --pre runs its words: the sender may be glued to its opener or to --pre=
+  return RUNS_ARGS.test(p) && p.split(/[\s=`$(<>]+/).some((w) => SENDERS.has(base(w)));
+};
+// names a glob word may stand for (a dot name only from a glob that starts with a dot)
+const globRe = (g) => { try { return new RegExp('^' + g.replace(/[.+^${}()|\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.') + '$'); } catch { return null; } };
+const secretGlob = (s) => s.split(/\s+/).some((w) => w.split(/[=@:<>]/).some((x) => {
+  const g = x.slice(x.lastIndexOf('/') + 1);
+  if (!/[*?[]/.test(g) || /^[*?[\]]*$/.test(g)) return false;
+  const re = globRe(g);
+  return re !== null && SECRET_NAMES.some((n) => re.test(n) && (n[0] !== '.' || g[0] === '.' || g[0] === '['));
+}));
+const secretIn = (s) => SECRET.test(s) || secretGlob(s);
+const exfilVariants = (vs, lit) => vs.some((v) => v.split(/[;&]/).some((s) => {
+  const ps = s.split('|'); const k = ps.findIndex(sendsPart);
+  if (k < 0) return false;
+  if (secretIn(s)) return true;
+  return lit !== null && (ps.slice(0, k).some((q) => q.includes(lit)) || (/\/dev\/(tcp|udp)\//.test(s) && s.includes(lit)));
+}));
 
 // The tokens. Checked on the normalized variants of the text: word — a word anywhere (lowercase); cased — a word with its
 // case kept; line — a construct on a segment between ; and & that may build a guarded operation from content outside
@@ -322,4 +354,12 @@ export function prescan(text, literals = []) {
 export function wordTok(t) {
   const vs = variants(t); let cs = null;
   return GUARDED.some((g) => (g.word && vs.some((v) => g.word.test(v))) || (g.cased && (cs ??= caseVariants(t)).some((v) => g.cased.test(v))));
+}
+
+// A command that sends a secret out (see SENDERS). lit: the lowercase text of the state directory, or null. A long text is
+// read on the cheap variants (the coarse prescan's).
+export function exfilText(text, lit = null) {
+  if (text.length <= LONG_TEXT) return exfilVariants(variants(text), lit);
+  const a = ansiDecoded(text); const strip = (x) => x.replace(/\\\r?\n|['"\\]/g, '');
+  return exfilVariants([strip(a).toLowerCase(), strip(decodeEscapes(a)).toLowerCase()], lit);
 }

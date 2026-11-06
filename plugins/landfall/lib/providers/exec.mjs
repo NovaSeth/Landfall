@@ -135,6 +135,8 @@ export function exec({ flags, names, io, pluginRoot }) {
     brief = got.text;
     // T-MG-192: the run binds the commit the review brief names (its Range head); a branch that moved since is refused
     named = /^Range: [0-9a-f]+\.\.([0-9a-f]{40,64})/m.exec(brief)?.[1];
+    // B-MG-18: a brief that names no commit binds nothing; the run would record no head, so none is started
+    if (!named) return fail('brief-unbound', `the review brief of ${id} names no reviewed commit (no Range line)`, `${bin} review brief ${id} --write --force`);
     const b = task.branch;
     const tip = named && typeof b === 'string' && b !== '' && !b.startsWith('-') ? git(['rev-parse', '--verify', '-q', `${b}^{commit}`], { cwd: w.repo, env: io.env }).stdout.trim() : named;
     if (tip !== named) return fail('brief-stale', `the review brief is of ${named.slice(0, 12)}, but ${b} is at ${tip.slice(0, 12) || 'no commit'}`, `${bin} review brief ${id} --write --force`);

@@ -62,8 +62,8 @@ export function locked(dataDir, fn, { timeoutMs = 5000, names } = {}) {
   try {
     return withLock(lockOf(dataDir), fn, { timeoutMs });
   } catch (err) {
-    if (err?.code === 'ELOCKED') throw new StateError('scheduler-busy', 'ENV', err.message, { hint: 'another scheduler call holds its lock; retry in a moment' });
-    if (err?.code === 'ESTALE') throw new StateError('scheduler-busy', 'REFUSED', err.message, { hint: `if no ${names.bin} command is running, run '${names.bin} slots --unlock-stale'` });
+    if (err?.code === 'ELOCKED') throw new StateError('scheduler-busy', 'ENV', err.message, { hint: 'another scheduler call holds its lock; retry in a moment', cause: err });
+    if (err?.code === 'ESTALE') throw new StateError('scheduler-busy', 'REFUSED', err.message, { hint: `if no ${names.bin} command is running, run '${names.bin} slots --unlock-stale'`, cause: err });
     throw err;
   }
 }
@@ -74,6 +74,6 @@ export function unlockStale(opts = {}) {
     return fsxUnlockStale(lockOf(dataDirOf(opts)), { quietMs: opts.quietMs });
   } catch (err) {
     if (err?.code !== 'EBUSY') throw err;
-    throw new StateError('scheduler-busy', 'REFUSED', err.message, { hint: `run it when no ${opts.names.bin} command is running: it removes only a lock whose owner is gone and that stayed unchanged for 2 seconds` });
+    throw new StateError('scheduler-busy', 'REFUSED', err.message, { hint: `run it when no ${opts.names.bin} command is running: it removes only a lock whose owner is gone and that stayed unchanged for 2 seconds`, cause: err });
   }
 }

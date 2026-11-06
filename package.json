@@ -9,7 +9,7 @@
     "node": ">=22"
   },
   "scripts": {
-    "test": "node --test tests/*.test.mjs tests/e2e/*.test.mjs",
+    "test": "node --test --test-concurrency=4 tests/*.test.mjs tests/e2e/*.test.mjs",
     "check-secrets": "node plugins/*/bin/* secrets"
   },
   "bin": {

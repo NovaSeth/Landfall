@@ -103,7 +103,7 @@ test('the Bash read corpus is denied for a subagent and allowed for the main ses
   for (const c of corpus) {
     const r = bash(c);
     assert.ok(denied(r), `subagent: ${c}`);
-    assert.match(r.stdout, /SEC-13: blocked: a subagent does not read Claude Code transcripts/, c);
+    assert.match(r.stdout, c === 'echo lf1_abc' ?/SEC-13: blocked: a role token is accepted only in the form/ : /SEC-13: blocked: a subagent does not read Claude Code transcripts/, c);
     assert.ok(!/SEC-13: blocked: a subagent does not read/.test(bash(c, false).stdout), `main: ${c}`);
   }
   const eval_ = bash('eval "$X" ~/.claude');
@@ -118,7 +118,7 @@ test('daily subagent commands still pass', () => {
 
 // Fix round 1 (security review r1 F1-F3, Codex review r2 F1-F6). The state lives in the repository here (the hard case).
 const sd = (...p) => join(state, 'local', ...p);
-const RE = /SEC-13: blocked: a subagent does not read/;
+const RE = /SEC-13: blocked: (a subagent does not read|a role token is accepted only)/; // either secret-path denial (T-MG-206: a token outside the record form names the accepted form)
 const cmdDenied = (c, sub = true) => RE.test(bash(c, sub).stdout);
 
 test("the state's local directory is not a root: root recursive readers and the review diff pass (D-MG-81)", () => {
@@ -187,6 +187,62 @@ test('round 2: an inline interpreter body naming .claude is denied', () => {
   assert.ok(!cmdDenied('python3 -c "print(1)"') && !cmdDenied('node -e "console.log(2)"') && !cmdDenied(`python -c "import os;os.listdir('${sn}/local')"`));
 });
 
+// T-MG-208 (D-MG-82): what the six removed or flipped local/ tests protected, for the roots that remain (transcripts, plugin data).
+const pd = join(home, 'plugin-data');
+mkdirSync(pd, { recursive: true });
+writeFileSync(join(pd, 'shadow.jsonl'), '{}\n');
+const pdEnv = { ...env, CLAUDE_PLUGIN_DATA: pd };
+const pdBash = (command, sub = true) => guardBash(base('Bash', { command }, sub), { state: null, autoAllow: 'off', shadowLog() {}, env: pdEnv });
+const pdDenied = (c, sub = true) => RE.test(pdBash(c, sub).stdout);
+
+test('T-MG-208 (r1 F1, r2 F1): Grep and Glob over the plugin data and the transcripts are denied, the repository root stays allowed', () => {
+  for (const [tool, input] of [['Grep', { pattern: '.', path: pd }], ['Glob', { pattern: join(pd, '*') }], ['Glob', { pattern: '*', path: pd }], ['Read', { file_path: join(pd, 'shadow.jsonl') }],
+    ['Grep', { pattern: '.', path: projects }], ['Glob', { pattern: join(projects, '**') }]]) {
+    assert.ok(denied(runHook('guard-read', JSON.stringify(base(tool, input)), { env: pdEnv })), `${tool} ${JSON.stringify(input)}`);
+    assert.ok(!denied(runHook('guard-read', JSON.stringify(base(tool, input, false)), { env: pdEnv })), `main ${tool}`);
+  }
+  assert.ok(!denied(runHook('guard-read', JSON.stringify(base('Grep', { pattern: '.', path: repo })), { env: pdEnv })));
+});
+
+test('T-MG-208 (r2 F5): an absolute cwd outside the project keeps the transcript and plugin data roots', () => {
+  for (const [tool, input] of [['Read', { file_path: transcript }], ['Grep', { pattern: '.', path: projects }], ['Read', { file_path: join(pd, 'shadow.jsonl') }], ['Grep', { pattern: '.', path: pd }]]) {
+    const i = { ...base(tool, input), cwd: tmpdir() };
+    assert.ok(denied(runHook('guard-read', JSON.stringify(i), { env: { ...pdEnv, CLAUDE_PROJECT_DIR: repo } })), `${tool} ${JSON.stringify(input)}`);
+  }
+});
+
+test('T-MG-208 (r2 F6): when the state cannot be resolved in time (deadline 0), a transcript or plugin data read is still denied', () => {
+  for (const [tool, input] of [['Read', { file_path: transcript }], ['Read', { file_path: join(pd, 'shadow.jsonl') }]]) {
+    assert.ok(denied(runHook('guard-read', JSON.stringify(base(tool, input)), { env: pdEnv, deadline: 0 })), `${tool} ${JSON.stringify(input)}`);
+  }
+});
+
+test('T-MG-208 (r3 F1): a plugin data root inside the repository is denied; with the roots outside it the repository root and the state directory stay allowed', () => {
+  const inRepo = join(repo, 'pdata');
+  mkdirSync(inRepo, { recursive: true });
+  const b = (c) => RE.test(guardBash(base('Bash', { command: c }), { state: null, autoAllow: 'off', shadowLog() {}, env: { ...env, CLAUDE_PLUGIN_DATA: inRepo } }).stdout);
+  assert.ok(b('cat pdata/x') && b(`ls -R ${inRepo}`) && b('grep -r . .'));
+  for (const c of ['grep -r . .', 'grep -rn foo src', `grep -rn tok ${sn}`, `ls -R ${sn}`]) assert.ok(!pdDenied(c), c);
+});
+
+test('T-MG-208 (round 2): a word naming the plugin data is denied in any spelling', () => {
+  const alt = `${dirname(pd)}/./plugin-data`;
+  for (const c of [`cat ${pd}/shadow.jsonl`, `ls --path=${pd}`, `ls -d@${pd}`, `cat @${pd}/x`, `ls -f${pd}/x`, `X=${pd}; ls $X`, `cat ${pd}//shadow.jsonl`, `cat ${alt}/x`,
+    `cd ${pd} && cat shadow.jsonl`, `cat ${pd}/sh*`, `grep -r . ${pd}`, `bash -c 'cat ${pd}/shadow.jsonl'`]) {
+    assert.ok(pdDenied(c), `subagent: ${c}`);
+    assert.ok(!pdDenied(c, false), `main: ${c}`);
+  }
+});
+
+test('T-MG-208 (round 2): an inline interpreter body naming the transcripts or the plugin data is denied', () => {
+  for (const c of [`python -c "print(open('${pd}/shadow.jsonl').read())"`, `node -e "require('fs').readFileSync('${pd}/shadow.jsonl')"`, `perl -e 'open F,"${pd}/x"'`,
+    `ruby -e 'File.read("${projects}/-p/s1.jsonl")'`, `node -e "require('fs').readdirSync('${projects}')"`, `python3 -c "open('${transcript}')"`]) {
+    assert.ok(pdDenied(c), `subagent: ${c}`);
+    assert.ok(!pdDenied(c, false), `main: ${c}`);
+  }
+  assert.ok(!pdDenied('python3 -c "print(1)"') && !pdDenied('node -e "console.log(2)"'));
+});
+
 // T-MG-203: the one command shape that carries a token passes; every other command naming the prefix is denied.
 test(`T-MG-203: printf %s <token> | ${names.bin} review record|task set ... --token - is allowed for a subagent`, () => {
   const t = ['lf', '1_'].join('') + 'A'.repeat(43);
@@ -227,4 +283,33 @@ test('T-MG-198 F1: only the verified program operand is exempt from secret-path 
   mkdirSync(dirname(otherBin), { recursive: true });
   writeFileSync(otherBin, '#!/bin/sh\n');
   assert.match(installedBash(recordWith(otherBin)).stdout, RE);
+});
+
+// T-MG-211 B-MG-30: in the record form --from names only a path outside the secret roots (transcripts, plugin data), however spelled.
+test('T-MG-211 B-MG-30: --from into a secret root is denied in the token-record form', () => {
+  const data = join(home, '.claude', 'plugins', 'data');
+  mkdirSync(data, { recursive: true });
+  writeFileSync(join(data, 'x.json'), '{}');
+  symlinkSync(data, join(repo, 'link-data'));
+  const rec = (from, form = `--from ${from}`) => `printf %s ${['lf', '1_'].join('')}${'A'.repeat(43)} | ${names.bin} task set T-AA-1 ${form} --token -`;
+  for (const from of [join(data, 'x.json'), 'link-data/x.json', 'link-projects/-p/s1.jsonl', transcript, relative(repo, transcript), '/../' + join(data, 'x.json').slice(1)]) {
+    assert.ok(cmdDenied(rec(from)), from);
+    assert.ok(cmdDenied(rec(from, `--from=${from}`)), `=${from}`);
+  }
+  assert.ok(!cmdDenied(rec('r.md')) && !cmdDenied(rec('/etc/passwd')));
+});
+
+// T-MG-211 T-MG-206: a token in any other shape is refused with the reason that names the accepted form, not the transcript reason.
+test('T-MG-211 T-MG-206: a tokened command outside the record form names the accepted form', () => {
+  const t = ['lf', '1_'].join('') + 'A'.repeat(43);
+  const rec = `printf %s ${t} | ${names.bin} review record T-AA-1 --from r.md --yes --token -`;
+  const reason = (c) => JSON.parse(bash(c).stdout || '{"hookSpecificOutput":{}}').hookSpecificOutput.permissionDecisionReason;
+  for (const c of [`${rec} 2>&1 | tail -3`, `cd /tmp && ${rec}`, `${rec} && cat x`, `echo ${t}`, `grep ${t} .`, `printf %s ${t} | ${names.bin} status --token -`]) {
+    const r = reason(c);
+    assert.match(r, /^SEC-13: /, c);
+    assert.ok(r.includes(`printf %s <token> | ${names.bin} review record|task set`) && r.includes('--token -') && !/transcripts/.test(r), `${c} -> ${r}`);
+  }
+  assert.equal(reason(`cat ${transcript}`), REASON); // a real secret read keeps its own reason
+  assert.equal(reason(`${rec} ; cat ${transcript}`), REASON);
+  assert.equal(bash(rec).stdout, '');
 });
