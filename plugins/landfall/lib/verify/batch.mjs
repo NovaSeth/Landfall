@@ -89,7 +89,8 @@ function holds({ where, env, targetRef }, sha) {
   return symbolic(where, env) === targetRef && head(where, env) === sha && (targetRef === null || gitIn(where, env, ['rev-parse', '--verify', '-q', targetRef]).stdout.trim() === sha);
 }
 function swap({ where, env, targetRef, names, batch }, to, from) {
-  return gitIn(where, env, ['update-ref', ...(targetRef === null ? ['--no-deref'] : []), '-m', `${names.bin} task merge: ${batch}`, targetRef ?? 'HEAD', to, from]);
+  const ref = targetRef ?? 'HEAD';
+  return gitIn(where, env, ['update-ref', ...(targetRef === null ? ['--no-deref'] : []), '-m', `${names.bin} task merge: ${batch}`, ref, to, from]);
 }
 function again(context, t, store = context.store) {
   const c = checkTask(context, t.task, store);
