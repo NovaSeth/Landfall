@@ -3,8 +3,8 @@
 // through the same collectors as the run itself, and the worktree is removed also when a gate or git fails.
 // Result: { doc: { collector, tests, failing } | null, error: null | message }. A gate that cannot run there (error or
 // timeout) or a worktree git cannot create is an error: the reference is unknown, so verify never passes on it.
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { relative, sep } from 'node:path';
+import { localTempDir, removeLocalFile } from '../state/index.mjs';
 import { fingerprint } from './baseline.mjs';
 import { runHeavy } from './heavy.mjs';
 import { projectRedactions, runRedacted } from './redact.mjs';
@@ -13,9 +13,7 @@ import { projectRedactions, runRedacted } from './redact.mjs';
 // `names`, `task`: the heavy lease's owner (T-MG-80: a long base gate is a full suite, so it queues like every other).
 // `meter`: passed to runHeavy (heavy.mjs), so the base gates and their lease wait count in the verify's (T-MG-121).
 export function measureAt({ where, env, names, task = null, commit, gates, gitIn, inventory, meter = null }) {
-  const local = join(where.dir, 'local');
-  mkdirSync(local, { recursive: true });
-  const dir = mkdtempSync(join(local, 'base-'));
+  const dir = localTempDir(where.dir, names, 'base-');
   try {
     const add = gitIn(where, env, ['worktree', 'add', '--detach', '-q', dir, commit]);
     if (add.status !== 0) return { doc: null, error: `git cannot check out the base ${commit.slice(0, 12)} (${String(add.stderr).trim().slice(0, 200)})` };
@@ -27,7 +25,7 @@ export function measureAt({ where, env, names, task = null, commit, gates, gitIn
     return { doc: { collector: inv.collector, tests: inv.tests.map(({ id, file, skipped }) => ({ id, file, skipped })), failing: inv.parts.flatMap((p) => p.failing.map(fingerprint)) }, error: null };
   } finally {
     gitIn(where, env, ['worktree', 'remove', '--force', dir]);
-    rmSync(dir, { recursive: true, force: true });
+    removeLocalFile(where.dir, names, relative(where.dir, dir).split(sep).join('/'), { tree: true });
     gitIn(where, env, ['worktree', 'prune']);
   }
 }

@@ -19,7 +19,7 @@
 // Acquiring a lock this process already holds (under any spelling of its path) fails with EREENTRANT: a nested
 // critical section is a programming error.
 import { randomBytes } from 'node:crypto';
-import { closeSync, constants, fstatSync, fsyncSync, linkSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, renameSync, rmSync, rmdirSync, writeFileSync, writeSync } from 'node:fs';
+import { closeSync, constants, fstatSync, fsyncSync, linkSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readSync, readdirSync, renameSync, rmSync, rmdirSync, unlinkSync, writeFileSync, writeSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { performance } from 'node:perf_hooks';
@@ -79,7 +79,7 @@ export function createExclusive(file, data = '', { mode = 0o644 } = {}) {
       linkSync(tmp, file);
     } catch (err) {
       if (err.code === 'EEXIST') return false;
-      if (NO_LINKS.has(err.code)) throw Object.assign(new Error(`${file}: the file system has no hard links (${err.code}), so a file cannot be created exclusively`), { code: 'EFSUNSUPPORTED' });
+      if (NO_LINKS.has(err.code)) throw Object.assign(new Error(`${file}: the file system has no hard links (${err.code}), so a file cannot be created exclusively`, { cause: err }), { code: 'EFSUNSUPPORTED' });
       throw err;
     }
     syncDir(dirname(file));
@@ -117,6 +117,9 @@ export function removeEmptyDir(path) {
 
 // Removes a file or a directory tree; a symbolic link is removed itself, never followed. A missing path is fine.
 export const removeTree = (path) => rmSync(path, { recursive: true, force: true });
+// A new directory <prefix>XXXXXX (the parent exists); its path. Removes one file (ENOENT when absent).
+export const makeTempDir = (prefix) => mkdtempSync(prefix);
+export const removeFile = (path) => unlinkSync(path);
 // Moves a file or directory tree on the same volume (one rename; the target must not exist for a directory).
 export const moveTree = (from, to) => renameSync(from, to);
 

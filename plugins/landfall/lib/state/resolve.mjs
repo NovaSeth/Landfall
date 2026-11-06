@@ -90,7 +90,7 @@ function projectOf(worktree, cwd, gitDir, commonDir, env, remainingMs) {
     common = resolvePath(here, commonDir);
     if (resolvePath(here, gitDir) === common || basename(common) !== '.git') return worktree;
   } catch (err) {
-    throw new StateError('git-failed', 'ENV', `the main checkout of ${worktree} cannot be read (${err.code ?? err.message})`, { hint: 'check the worktrees with git worktree list' });
+    throw new StateError('git-failed', 'ENV', `the main checkout of ${worktree} cannot be read (${err.code ?? err.message})`, { hint: 'check the worktrees with git worktree list', cause: err });
   }
   const left = remainingMs();
   const failed = (why) => new StateError('git-failed', 'ENV', `git cannot tell whether ${common} is bare (${why})`, { hint: 'check the worktrees with git worktree list' });
@@ -103,7 +103,7 @@ function projectOf(worktree, cwd, gitDir, commonDir, env, remainingMs) {
   try {
     return realpathSync.native(dirname(common));
   } catch (err) {
-    throw new StateError('git-failed', 'ENV', `the main checkout of ${worktree} cannot be read (${err.code ?? err.message})`, { hint: 'check the worktrees with git worktree list' });
+    throw new StateError('git-failed', 'ENV', `the main checkout of ${worktree} cannot be read (${err.code ?? err.message})`, { hint: 'check the worktrees with git worktree list', cause: err });
   }
 }
 

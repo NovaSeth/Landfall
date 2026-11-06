@@ -23,7 +23,7 @@ export function dependencyLinks(where, wt, SequentialFallback) {
       linked = true;
     } catch (err) {
       if (err instanceof SequentialFallback) throw err;
-      throw new SequentialFallback(`cannot link the main checkout's node_modules (${err.code ?? 'filesystem error'})`);
+      throw new SequentialFallback(`cannot link the main checkout's node_modules (${err.code ?? 'filesystem error'})`, { cause: err });
     }
   };
   return { link: linkDependencies, unlink: unlinkDependencies, get linked() { return linked; } };
