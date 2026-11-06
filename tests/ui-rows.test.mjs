@@ -50,6 +50,13 @@ async function cli(args, { cwd, env, stdin = null, json = true }) {
 const rows = (p, input) => cli(['ui', 'rows'], { cwd: p.cwd, env: p.env, json: false, stdin: Readable.from([typeof input === 'string' ? input : JSON.stringify(input)]) });
 const parsed = (r) => r.text.split('\n').filter(Boolean).map((l) => JSON.parse(l));
 
+// T-MG-204: review brief refuses an unfilled brief, so the fixture stores a filled one (brief --from).
+const filledBrief = (dir, id) => {
+  const file = join(dir, `filled-${id}.md`);
+  writeFileSync(file, `# Fixture ${id}\n\n## Acceptance\n1. The fixture task works\n`);
+  return file;
+};
+
 async function project(t) {
   const iso = isolatedEnv({ gitConfig: identity, prefix: 'ui-rows-' });
   const repo = join(iso.base, 'repo');
@@ -69,7 +76,7 @@ async function project(t) {
   await p.ok(['init']);
   await p.ok(['task', 'new', 'Parser']);
   await p.ok(['route', 'T-TU-1', '--paths', 'src/a.js', '--loc', '10']);
-  await p.ok(['brief', 'T-TU-1', '--write']);
+  await p.ok(['brief', 'T-TU-1', '--from', filledBrief(iso.base, 'T-TU-1')]);
   await p.ok(['task', 'set', 'T-TU-1', 'started', '--branch', 'main', '--base', git(repo, env, ['rev-parse', 'HEAD'])]);
   await p.ok(['review', 'brief', 'T-TU-1', '--write']);
   await p.ok(['providers', 'add', 'fakeslow', '--argv', `${process.execPath} ${FAKE} slow {out} {sandbox} {cwd}`, '--sandbox-map', 'reviewer=read-only']);
