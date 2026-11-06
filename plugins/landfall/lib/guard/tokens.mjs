@@ -130,7 +130,7 @@ function bracketsToAny(g) {
   return out;
 }
 const globRe = (g) => { try { return new RegExp('^' + bracketsToAny(g).replace(/[.+^${}()|\\[\]]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.') + '$'); } catch { return null; } };
-const secretGlob = (s) => s.split(/\s+/).some((w) => w.replace(/\[:[a-z]+:\]/g, '?').split(/[=@:<>]/).some((x) => {
+const secretGlob = (s) => s.split(/\s+/).some((w) => w.replace(/\[([:=.]).*?\1\]/g, '?').split(/[=@:<>]/).some((x) => {
   const g = x.slice(x.lastIndexOf('/') + 1);
   if (!/[*?[]/.test(g) || /^[*?[\]]*$/.test(g)) return false;
   const re = globRe(g);
