@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.7.7
+
+The guard follow-up chain left out of 2.7.6, merged in one train (decisions D-MG-95, D-MG-97, D-MG-98: none merges alone).
+
+- **Exfiltration guard (T-MG-215, T-MG-217, T-MG-218, T-MG-219):** on a line that runs a sender (curl, wget, nc, ssh, scp, rsync, …), a word that can name a secret file is a hit in every glob form: each bracket expression counts as one character (paired by bash rules, nested `[:…:]`, `[=…=]`, `[.….]` included), brace and comma boundaries split components, a quote or backslash inside a bracket is a hit, and bracket words over 512 characters or 64 brackets are hits without a scan (GC8). The check evaluates every parse variant (raw and paren-stripped, newline-split and joined, continuations removed) and blocks on any hit. `man` is no longer text-only, so its pager options and variables cannot run a sender. Remaining false blocks (`jq '.[0]'`, unquoted JSON bodies, `man ssh` on a secret line) and gaps (nested brace expansion, variables built at run time, `\\` before a newline) are in the known limitations.
+
 ## 2.7.6
 
 The backlog batch of 2026-11-06 (decision D-MG-86: close every open task and finding), merged in seven trains. The guard follow-ups T-MG-215, T-MG-217 and T-MG-218 follow in 2.7.7.
