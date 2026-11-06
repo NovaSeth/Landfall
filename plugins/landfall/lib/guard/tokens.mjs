@@ -141,21 +141,33 @@ const GLOB_SPLIT = /[/{},=@:<>'"`]/;
 // A word on a sender line that is long or holds many [ is a hit unscanned (fail closed, GC8: the scan stays bounded).
 const MAX_WORD = 512; const MAX_OPEN = 64;
 const tooComplex = (w) => w.includes('[') && (w.length > MAX_WORD || w.split('[').length > MAX_OPEN + 1);
-// Span rule: in a word with a quote or backslash between its first [ and last ], an escaped or quoted ] may end the class
-// early. That stretch becomes SP (any run of characters): it may stand for a leading dot, and a component of only SP, * or ?
-// is exempt. The variant keeps quotes to find the span, then drops them.
-const SP = '\u0002';
-const spanned = (w) => {
-  if (tooComplex(w)) return w;
-  const a = w.indexOf('['); const b = w.lastIndexOf(']');
-  return a >= 0 && b > a && /['"\\]/.test(w.slice(a, b)) ? w.slice(0, a) + SP + w.slice(b + 1) : w;
+// Quote rule (fail closed): on a sender line, a word with an unquoted [ and a quote or backslash before a later ] is a
+// hit, unscanned: an escaped or quoted ] may end the class early and hide what it stands for. One linear pass, quote-aware;
+// a [ inside quotes is text and opens nothing.
+const quoteBracket = (text) => {
+  let hit = false; let sender = ''; let q = ''; let w = null;
+  const flush = () => {
+    if (hit && sender.split('|').some((p) => sendsPart(p.replace(/\\\r?\n|['"\\]/g, '').toLowerCase()))) return true;
+    hit = false; sender = ''; return false;
+  };
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (!q && (ch === ';' || ch === '&')) { w = null; if (flush()) return true; continue; }
+    sender += ch;
+    if (!q && /\s/.test(ch)) { w = null; continue; }
+    w ??= { open: false, mark: false };
+    if (ch === '\\' && q !== "'") { if (w.open) w.mark = true; if (++i < text.length) sender += text[i]; continue; }
+    if (ch === '"' || ch === "'") { if (!q) q = ch; else if (q === ch) q = ''; if (w.open) w.mark = true; continue; }
+    if (!q && ch === '[') w.open = true;
+    else if (ch === ']' && w.open && w.mark) hit = true;
+  }
+  return flush();
 };
-export const spanVariant = (text) => ansiDecoded(text).toLowerCase().replace(/\S+/g, (w) => spanned(w).replace(/\\\r?\n|['"\\]/g, ''));
 const secretGlob = (s) => s.split(/\s+/).some((w) => tooComplex(w) || brackets(w).split(GLOB_SPLIT).some((g) => {
   if (w.includes('{') && SECRET.test(g)) return true;
-  if (!/[*?\u0001\u0002]/.test(g) || /^[*?\u0002]*$/.test(g)) return false;
-  const re = globRe(g.replace(/\u0001/g, '?').replace(/\u0002/g, '*'));
-  return re !== null && SECRET_NAMES.some((n) => re.test(n) && (n[0] !== '.' || g[0] === '.' || g[0] === BR || g[0] === SP));
+  if (!/[*?\u0001]/.test(g) || /^[*?]*$/.test(g)) return false;
+  const re = globRe(g.replace(/\u0001/g, '?'));
+  return re !== null && SECRET_NAMES.some((n) => re.test(n) && (n[0] !== '.' || g[0] === '.' || g[0] === BR));
 }));
 const secretIn = (s) => SECRET.test(s) || secretGlob(s);
 const exfilVariants = (vs, lit) => vs.some((v) => v.split(/[;&]/).some((s) => {
@@ -399,7 +411,9 @@ export function wordTok(t) {
 // A command that sends a secret out (see SENDERS). lit: the lowercase text of the state directory, or null. A long text is
 // read on the cheap variants (the coarse prescan's).
 export function exfilText(text, lit = null) {
-  if (text.length <= LONG_TEXT) return exfilVariants([...variants(text), spanVariant(text)], lit);
-  const a = ansiDecoded(text); const strip = (x) => x.replace(/\\\r?\n|['"\\]/g, '');
+  const a = ansiDecoded(text);
+  if (quoteBracket(text) || quoteBracket(a)) return true;
+  if (text.length <= LONG_TEXT) return exfilVariants(variants(text), lit);
+  const strip = (x) => x.replace(/\\\r?\n|['"\\]/g, '');
   return exfilVariants([strip(a).toLowerCase(), strip(decodeEscapes(a)).toLowerCase()], lit);
 }
