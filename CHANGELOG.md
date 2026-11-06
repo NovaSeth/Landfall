@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.7.5
+
+The two tasks left out of 2.7.4, in one train.
+
+- **Session token bound to the holder (T-MG-199, R2):** a role token is accepted only from a process that descends from the Claude Code process holding the session (`/bin/ps` and `vm_stat` by absolute path, fixed PATH); an external run started by `exec` is outside that tree and is refused even with a copied token, and the provider never starts inside it. When the process table cannot be read, token calls are refused.
+- **One train per batch (T-MG-201, D-MG-80):** the loop holds approved tasks of every class for one train while other tasks are in flight (at most 45 minutes), then proposes `train --ready`; a lone approved task with nothing in flight takes `train <id>` at once. REV-11 and the dispatch skill say the same.
+
 ## 2.7.4
 
 Hardening and simplification batch after 2.7.3, merged in two trains (T-MG-199 and T-MG-201 follow in 2.7.5).
